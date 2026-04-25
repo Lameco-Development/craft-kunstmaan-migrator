@@ -7,7 +7,7 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 
 ### Foundation (FND)
 
-- [ ] **FND-01**: Plugin scaffolds as a Craft 5 plugin (`composer.json` type `craft-plugin`, PSR-4 namespace `lameco\kunstmaanmigrator\` under `src/`, PHP 8.3+) and installs cleanly via `./craft plugin/install kunstmaan-migrator`.
+- [x] **FND-01**: Plugin scaffolds as a Craft 5 plugin (`composer.json` type `craft-plugin`, PSR-4 namespace `lameco\kunstmaanmigrator\` under `src/`, PHP 8.3+) and installs cleanly via `./craft plugin/install kunstmaan-migrator`. _(Phase 1 / Plan 01 — composer manifest + Plugin stub + NeverProductionTrait shipped; `composer install` succeeds, autoload contract verified.)_
 - [ ] **FND-02**: Install creates a state table `kunstmaanmigrator_state` (schema kept compatible with v1.x: `legacy_class`, `legacy_id`, `craft_id`, `migrated_at`, `status`) and attaches a `kunstmaanSourceId` Plain Text field. If a `kunstmaanSourceId` field UID already exists from the v1.x plugin, the install reuses it. Plain Text type is preserved (over a narrower Number field) so the v2 install can swap-in on a host already migrated under v1.x without altering the field type.
 - [ ] **FND-02a**: Programmatic install command (`kunstmaan-migrator/migrate/install`) runs the plugin's DB migrations on demand. Needed because Craft 5 dropped `--migrationPath` and additional migrations beyond `Install.php` (anticipated for future schema additions) have no first-class CLI route otherwise. v1.x ships this; we keep parity.
 - [ ] **FND-03**: Uninstall is a deliberate no-op on the state table and `kunstmaanSourceId` field — operator must remove manually for a full wipe.
