@@ -3,7 +3,7 @@ phase: 01-foundation-connectivity
 plan: 05
 type: execute
 wave: 3
-depends_on: [01, 02]
+depends_on: [01, 02, 03]
 files_modified:
   - phpunit.xml.dist
   - tests/bootstrap.php
