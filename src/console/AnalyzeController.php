@@ -73,10 +73,14 @@ class AnalyzeController extends Controller
         $unmapped = $plugin->localePreflight->ensure($filters);
         if ($unmapped !== null) {
             $this->stderr(
-                "  FAIL unmapped Kunstmaan locales: " . implode(', ', $unmapped) . "\n"
-                . "       Add them to config/sites.php or Settings::defaultLocales, then re-run.\n",
+                "  FAIL unmapped Kunstmaan locales: " . implode(', ', $unmapped) . "\n",
                 Console::FG_RED,
             );
+            // LOC-01: surface the paste-ready Craft `sites:` block inline. REPORT.md
+            // is never written on this path, so without this the operator has no
+            // concrete YAML to copy.
+            $detected = $plugin->localePreflight->detect();
+            $this->stdout("\n" . $plugin->reportBuilder->renderLocales($detected) . "\n");
             return ExitCode::CONFIG;
         }
         $this->stdout("  OK   locale preflight\n", Console::FG_GREEN);

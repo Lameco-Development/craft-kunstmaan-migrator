@@ -65,9 +65,13 @@ final class ReportBuilder extends Component
     /**
      * D-17 LOC-01: paste-ready Craft sites: block when locales are unmapped.
      *
+     * Public so AnalyzeController can render the same block on its locale-preflight
+     * failure path (without that, the operator hits a hard-FAIL with no concrete
+     * YAML to copy — the full REPORT.md is never written when preflight blocks).
+     *
      * @param list<string> $detected
      */
-    private function renderLocales(array $detected): string
+    public function renderLocales(array $detected): string
     {
         if ($detected === []) {
             return "## Locales\n\nNo locales detected in `kuma_node_translations`.";
