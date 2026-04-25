@@ -154,27 +154,37 @@ class MapController extends Controller
 
             switch ($action) {
                 case 'a':
-                    $plugin->mappingFile->setStatus($path, $rowIndex, 'accepted');
-                    $this->stdout("    → accepted\n\n", Console::FG_GREEN);
+                    if ($plugin->mappingFile->setStatus($path, $rowIndex, 'accepted')) {
+                        $this->stdout("    → accepted\n\n", Console::FG_GREEN);
+                    } else {
+                        $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                    }
                     break;
                 case 'd':
                     $rationale = (string) $this->prompt('  rationale (enter for default):', [
                         'required' => false,
                         'default'  => 'no Craft target — operator-decided drop in map loop',
                     ]);
-                    $plugin->mappingFile->setStatus($path, $rowIndex, 'dropped', $rationale);
-                    $this->stdout("    → dropped\n\n", Console::FG_YELLOW);
+                    if ($plugin->mappingFile->setStatus($path, $rowIndex, 'dropped', $rationale)) {
+                        $this->stdout("    → dropped\n\n", Console::FG_YELLOW);
+                    } else {
+                        $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                    }
                     break;
                 case 'r':
                     [$newHandler, $newHandle] = $this->runRemapPicker($row);
                     if ($newHandler !== null && $newHandle !== null) {
-                        $plugin->mappingFile->setStatus(
+                        $written = $plugin->mappingFile->setStatus(
                             $path, $rowIndex, 'accepted',
                             null,
                             $newHandle,
                             $newHandler,
                         );
-                        $this->stdout("    → remapped to {$newHandler}.{$newHandle} (accepted)\n\n", Console::FG_GREEN);
+                        if ($written) {
+                            $this->stdout("    → remapped to {$newHandler}.{$newHandle} (accepted)\n\n", Console::FG_GREEN);
+                        } else {
+                            $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                        }
                     } else {
                         $this->stdout("    → remap cancelled (skipped, status unchanged)\n\n", Console::FG_YELLOW);
                     }
