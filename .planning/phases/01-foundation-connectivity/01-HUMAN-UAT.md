@@ -1,15 +1,16 @@
 ---
-status: partial
+status: complete
 phase: 01-foundation-connectivity
 source: [01-VERIFICATION.md]
 started: 2026-04-25T00:00:00Z
-updated: 2026-04-25T20:10:00Z
+updated: 2026-04-25T20:25:00Z
 host: ~/Sites/cqm-craft-website (development branch reset to origin + dep lameco:db_download staging)
+remote: https://github.com/Lameco-Development/craft-kunstmaan-migrator (private)
 ---
 
 ## Current Test
 
-[awaiting human testing for tests 4, 5b, 6]
+[testing complete]
 
 ## Tests
 
@@ -159,16 +160,35 @@ evidence: |
 
 ### 6. GitHub Actions CI run on the next push
 expected: Workflow `CI / test` runs on PHP 8.3 / ubuntu-latest; executes `composer validate --strict --no-plugins`, `composer install`, `composer test`; all three steps green; total < 2 min. (ROADMAP SC5 second clause)
-result: pending
-notes: needs a push to the v2 plugin repo to trigger; not exercised in this UAT round.
+result: pass
+evidence: |
+  Repo created at github.com/Lameco-Development/craft-kunstmaan-migrator (private),
+  initial push of `main` triggered CI run #24937579313.
+
+  Workflow: CI / test
+  Trigger: push (commit 59ef1f5 — "test(01): record Phase 1 UAT results")
+  Job duration: 21s (well under < 2 min budget)
+  Steps (all ✓):
+    ✓ Set up job
+    ✓ actions/checkout@v4
+    ✓ shivammathur/setup-php@v2  (PHP 8.3, ubuntu-latest)
+    ✓ composer validate --strict --no-plugins
+    ✓ composer install --no-interaction --no-progress
+    ✓ composer test  (7 tests, 11 assertions, all green)
+    ✓ Post Run actions/checkout@v4
+    ✓ Complete job
+
+  Advisory: actions/checkout@v4 still uses Node 20 (deprecated effective
+  June 2026). Non-blocking; bump to v5 (or set
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true) before Q2 2026.
 
 ## Summary
 
 total: 6
-passed: 4
+passed: 5
 pass_partial: 1
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
