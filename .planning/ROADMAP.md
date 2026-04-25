@@ -34,7 +34,7 @@ Plans:
 - [x] 01-02-settings-legacy-db-PLAN.md — Settings model + LegacyDbService + Plugin::init() with conditional legacyDb wiring (CONN-01, CONN-02) — completed 2026-04-25
 - [x] 01-03-install-migration-PLAN.md — Install.php (state table + kunstmaanSourceId field with UID reuse) + MigrateController::actionInstall (FND-02, FND-02a, FND-03) — completed 2026-04-25
 - [x] 01-04-doctor-command-PLAN.md — DoctorController with 3 preflight checks + NeverProduction enforcement (FND-04, CONN-03 partial — mapping check defers to Phase 2 per D-17) — completed 2026-04-25
-- [ ] 01-05-tests-ci-docs-PLAN.md — PHPUnit 11 + GitHub Actions CI + README + project-doc patches (FND-05)
+- [x] 01-05-tests-ci-docs-PLAN.md — PHPUnit 11 + GitHub Actions CI + README + project-doc patches (FND-05) — completed 2026-04-25
 
 ### Phase 2: Schema, Mapping & Filters
 
