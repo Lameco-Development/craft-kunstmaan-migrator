@@ -49,6 +49,16 @@ Plans:
 4. `kunstmaan-migrator/migrate --live` refuses to start while any data-bearing legacy column has no mapping decision; `--dry-run` prints coverage warnings without blocking.
 5. The five top-level CLI commands all accept `--entities=`, `--locales=`, `--since=`, `--max-per-entity=` and produce identical filter behaviour at every stage.
 
+**Plans:** 6 plans
+
+Plans:
+- [ ] 02-01-filter-locale-primitives-PLAN.md — MigrationFilters VO + FilterFactory + LocalePreflight + Plugin.php registration (FILT-01, FILT-02, FILT-03, LOC-01, LOC-02)
+- [ ] 02-02-mapping-file-PLAN.md — MappingFile reader+writer with status-on-row + atomic IO + skip-existing merge (MAP-01, MAP-04)
+- [ ] 02-03-analyze-pipeline-PLAN.md — AnalyzeController + SchemaDumper + HeuristicProposer + LlmClassifier + ReportBuilder (MAP-01..05, LOC-01, FILT-03)
+- [ ] 02-04-map-rubber-stamp-loop-PLAN.md — MapController interactive loop + two-step picker + atomic per-keypress (MAP-05, FILT-03)
+- [ ] 02-05-coverage-audit-doctor-PLAN.md — CoverageAuditor + MappingAuditor + DoctorController 4th check (MAP-06, MAP-07, CONN-03, FILT-03)
+- [ ] 02-06-tests-and-doc-patches-PLAN.md — PHPUnit unit tests + REQUIREMENTS/ROADMAP D-12 patches (FILT-01, MAP-04, MAP-06)
+
 ### Phase 3: ETL Pipeline & Field Handlers
 
 **Goal:** End-to-end migration of a Kunstmaan dump's content into Craft, atomically per-entry, idempotent across re-runs, with all six field handlers in place and CKEditor body tokens resolved on the finalize pass.
