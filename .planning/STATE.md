@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 02 in progress — Plan 01 complete (filter+locale primitives)
-last_updated: "2026-04-25T20:20:34Z"
+status: Phase 02 in progress — Plan 02 complete (mapping-file)
+last_updated: "2026-04-25T20:26:42Z"
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 11
-  completed_plans: 6
-  percent: 55
+  completed_plans: 7
+  percent: 64
 ---
 
 # State
@@ -20,7 +20,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped.
 
-**Current focus:** Phase 02 — schema-mapping-filters (Plan 01 complete; Plans 02-06 pending)
+**Current focus:** Phase 02 — schema-mapping-filters (Plans 01-02 complete; Plans 03-06 pending)
 
 ## Milestone
 
@@ -36,10 +36,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Current Phase
 
-**Phase 2: Schema, Mapping & Filters** — Plan 01 complete (filter+locale primitives shipped). 5 plans remain (02 mapping-file, 03 analyze-pipeline, 04 map-rubber-stamp, 05 coverage-audit-doctor, 06 tests-and-doc-patches).
+**Phase 2: Schema, Mapping & Filters** — Plans 01-02 complete (filter+locale primitives + mapping-file shipped). 4 plans remain (03 analyze-pipeline, 04 map-rubber-stamp, 05 coverage-audit-doctor, 06 tests-and-doc-patches).
 
 ## Recent Activity
 
+- 2026-04-25: Phase 2 / Plan 02 (mapping-file) executed. 2 tasks, 2 commits (00aa2d3, 15acd89). MappingFile lands at src/mapping/MappingFile.php (196 LOC) as a final Yii Component consolidating v1's MappingDraftReader (303 LOC) + MappingDraftWriter (384 LOC). Eight public methods: resolvePath, load, loadProposed, buildRow, merge, setStatus, writeAtomic, writeAtomicJson. D-01 honored — single mapping.yaml with per-row status; no .draft / .drops / DESIGN-GAPS sidecars. D-04 honored — merge keys on (table, column, targetEntryType) tuple, preserves every existing row verbatim, only appends incoming rows whose tuple is unseen (operator decisions sacred per MAP-04). D-07 honored — writeAtomic uses tmp + rename with bin2hex(random_bytes(4)) suffix; setStatus rewrites the whole file via writeAtomic so the Plan 04 map loop gets atomic-always-on per-keypress for free. writeAtomicJson sibling helper added (not a v1 port) so Plan 03's SchemaDumper has the same atomic-write contract for schema-dump.json. Plugin::config() expanded from 3 to 4 components; @property-read MappingFile $mappingFile added. composer test stays green (7 tests, 11 assertions). MAP-04 satisfied; MAP-01 partial — analyze pipeline lands in Plan 03.
 - 2026-04-25: Phase 2 / Plan 01 (filter-locale-primitives) executed. 4 tasks, 4 commits (dc50088, 8fa4bcc, ac78230, eb06930). MigrationFilters value object lands at src/filter/MigrationFilters.php with exactly three readonly properties (entities, locales, since) per D-12 — no maxPerEntity reference anywhere. FilterFactory at src/filter/FilterFactory.php implements D-10 merge rules: null CLI arg falls through to Settings::default*, '' clears default, non-empty comma-splits + trims; each filter independent. LocalePreflight at src/locale/LocalePreflight.php ships detect() (DISTINCT lang FROM kuma_node_translations) and ensure(MigrationFilters): ?array (returns null on pass / unmapped list on LOC-02 fail; scopes check to filters->locales when explicitly set). Plugin::config() expanded from 1 to 3 components (legacyDbService preserved, filterFactory + localePreflight added) with matching @property-read PHPDoc lines. composer test still green (7 tests, 11 assertions). FILT-01, FILT-02, FILT-03, LOC-01, LOC-02 satisfied. Paste-ready sites: block rendering deferred to ReportBuilder in Plan 03.
 - 2026-04-25: Phase 2 context captured (`02-CONTEXT.md`, `02-DISCUSSION-LOG.md` — commit 9990f5e). 17 decisions covering: D-01..D-04 (flat `proposals:` list with status-on-row, four-tier confidence→status, drop-reason in rationale, skip-existing re-run merge); D-05..D-08 (compact one-screen rubber-stamp UX, two-step `[r]emap` picker, atomic per-keypress write, stateless resume); D-09..D-13 (Kunstmaan source-class allow-list, per-filter CLI override, column-presence `--since` on AbstractArticlePage's `date` column, `--max-per-entity` DROPPED — patches FILT-01 + ROADMAP success criterion 5); D-14..D-17 (schema-dump-minus-structural-minus-zero-fill coverage definition, hard `--live`/warn `--dry-run` gate behavior, console+MAPPING-AUDIT.md drift findings warn-only with `--audit-strict` opt-in, locale preflight on every legacy-reading command). v1 brownfield reuse plan: HeuristicProposer (407 LOC) and LlmClassifier (481 LOC) port near-verbatim; MappingDraftReader/Writer port with status-on-row reshape; MappingValidator (647 LOC) ports for the new MappingAuditor; ProposalRouter is fully replaced; AnalyzeController collapses from 2138 LOC / 9 sub-actions to a single entrypoint; v1's MigrationFilters (post-Craft scope) is reference-only — v2 redesigns for legacy-side scoping.
 - 2026-04-25: Phase 1 / Plan 05 (tests-ci-docs) executed. 4 tasks, 4 commits (614e469, 87f10dc, 2c21386, e99574a). FND-05 closed: phpunit.xml.dist + tests/bootstrap.php + tests/PluginBootstrapTest.php (3 assertions per D-21) ship a non-empty smoke suite — composer test exits 0 with OK (3 tests, 3 assertions). .github/workflows/ci.yml is single-job (PHP 8.3 / ubuntu-latest, validate + install + test) per D-22 — no Deptrac, no FQCN-lint, no matrix expansion (TST-03 plugin-load smoke test deferred to Phase 5). README.md ships operator minimum (328 words: install + 8 env vars + doctor + production-safety; UPGRADING.md long-form deferred to Phase 5 release). Three doc patches: REQUIREMENTS.md FND-02 column-list correction (10 cols + UNIQUE + INDEX); REQUIREMENTS.md CONN-03 wording amended to acknowledge mapping-file check ships in Phase 2 alongside the loader (deferred per D-17); PROJECT.md Key Decisions row "Keep v1's kunstmaanmigrator_state schema verbatim" — same column-list correction. All three docs now consistent with src/migrations/Install.php. **Phase 1 feature-complete.**
@@ -52,6 +53,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Decisions
 
+- Phase 2 / Plan 02 D-01: mapping.yaml is a single flat proposals: list with per-row status. v1's four-bucket layout (mapping.yaml + .draft + .drops + DESIGN-GAPS.md) is not ported; MappingFile knows about one file with one shape.
+- Phase 2 / Plan 02 D-04: merge keys on (table, column, targetEntryType) tuple. Existing rows preserved verbatim; incoming rows only appended if their tuple is absent. There is no overwrite path, no smart diff. MAP-04 byte-for-byte.
+- Phase 2 / Plan 02 D-07: writeAtomic = mkdir -p + write to ${path}.tmp.${bin2hex(random_bytes(4))} + rename($tmp, $path). setStatus wraps it for per-keypress atomic writes (Plan 04 map loop consumer).
+- Phase 2 / Plan 02 design-note: writeAtomicJson is a sibling helper (not a v1 port). Plan 03's SchemaDumper writes schema-dump.json through it so the tmp+rename idiom lives in one place.
+- Phase 2 / Plan 02 design-note: buildRow accepts initialStatus as an argument; MappingFile is status-agnostic. Confidence-tier → status logic (D-02) is applied by the Plan 03 analyze orchestration outside this class.
 - Phase 2 / Plan 01 D-12: MigrationFilters has exactly three readonly properties (entities, locales, since); no maxPerEntity. Verified by grep -c maxPerEntity src/filter/MigrationFilters.php returning 0.
 - Phase 2 / Plan 01 D-10: FilterFactory::fromCli implements three-state merge — null falls through to Settings::default*, '' clears default, non-empty comma-splits + trims (entities/locales) or used as-is (since). Each filter independent.
 - Phase 2 / Plan 01 D-17: LocalePreflight::ensure returns null on pass or list of unmapped locales on fail. NO silent fallthrough; caller responsible for hard-fail. Service is detection + verdict only — paste-ready sites: block rendering deferred to ReportBuilder (Plan 03).
@@ -81,9 +87,9 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Last Session
 
-- **Last:** 2026-04-25T20:20:34Z
-- **Stopped at:** Phase 2 / Plan 01 complete — filter+locale primitives shipped
-- **Resume file:** `.planning/phases/02-schema-mapping-filters/02-02-mapping-file-PLAN.md` (next plan in Phase 2)
+- **Last:** 2026-04-25T20:26:42Z
+- **Stopped at:** Phase 2 / Plan 02 complete — mapping-file shipped (MappingFile + Plugin component registration)
+- **Resume file:** `.planning/phases/02-schema-mapping-filters/02-03-analyze-pipeline-PLAN.md` (next plan in Phase 2)
 - **Blockers:** None
 - **Doc patches still queued for Phase 2 ship (Plan 06):** REQUIREMENTS.md FILT-01 (drop `--max-per-entity=N`), ROADMAP.md Phase 2 success criterion 5 (drop `--max-per-entity=` from flag list — three flags, not four)
 
