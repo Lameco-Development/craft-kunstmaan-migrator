@@ -1,0 +1,17 @@
+{# D-16: Phase 1 placeholder. The real CP Settings form lands in Phase 4 / CFG-01. #}
+{% extends "_layouts/cp" %}
+
+{% set title = "Kunstmaan Migrator — Settings" %}
+
+{% block content %}
+    <div>
+        <p><strong>Kunstmaan Migrator settings</strong> — placeholder.</p>
+        <p>The CP Settings form ships in Phase 4 (CFG-01). Until then, configure the plugin via environment variables:</p>
+        <ul>
+            <li><code>CRAFT_LEGACY_DB_SERVER</code>, <code>CRAFT_LEGACY_DB_DATABASE</code>, <code>CRAFT_LEGACY_DB_USER</code>, <code>CRAFT_LEGACY_DB_PASSWORD</code></li>
+            <li><code>CRAFT_LEGACY_DB_PORT</code> (default 3306), <code>CRAFT_LEGACY_DB_CHARSET</code> (default utf8mb4), <code>CRAFT_LEGACY_DB_TABLE_PREFIX</code></li>
+            <li><code>ANTHROPIC_API_KEY</code></li>
+        </ul>
+        <p>Run <code>./craft kunstmaan-migrator/doctor</code> to verify connectivity.</p>
+    </div>
+{% endblock %}
