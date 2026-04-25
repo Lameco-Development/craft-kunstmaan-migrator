@@ -31,6 +31,7 @@ class Settings extends Model
     // Phase 2-4 fields (D-15) — declared, unused until later phases.
     public ?string $llmModel             = null;
     public ?int    $llmTimeout           = null;
+    public ?int    $llmInterChunkDelay   = null;
     public ?string $mappingPath          = null;
     public array   $defaultEntities      = [];
     public array   $defaultLocales       = [];
@@ -88,7 +89,7 @@ class Settings extends Model
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince'], 'string'],
-            [['llmTimeout', 'defaultMaxPerEntity'], 'integer'],
+            [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
             [['defaultEntities', 'defaultLocales'], 'safe'],
             [['dryRunDefault'], 'boolean'],
         ];

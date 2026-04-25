@@ -45,6 +45,14 @@ final class LlmClassifier extends Component
 
     public int $timeoutSeconds = 60;
 
+    /**
+     * Pause between chunk requests. 0 disables it — the 429-retry path with
+     * `retry-after` honoring is the canonical rate-limit handler. Override via
+     * Settings::llmInterChunkDelay only if a deployment hits sustained 429s
+     * even after backoff. Operator-hostile values (≥30s) are clamped to 30.
+     */
+    public int $interChunkDelay = 0;
+
     public ?ClientInterface $httpClient = null;
 
     private const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages';
@@ -72,6 +80,10 @@ final class LlmClassifier extends Component
         $timeout = $settings->llmTimeout;
         if ($timeout !== null && $timeout > 0) {
             $this->timeoutSeconds = $timeout;
+        }
+        $delay = $settings->llmInterChunkDelay;
+        if ($delay !== null && $delay >= 0) {
+            $this->interChunkDelay = min($delay, 30);
         }
     }
 
@@ -130,8 +142,12 @@ final class LlmClassifier extends Component
         foreach ($grouped as $etGroup) {
             $chunks = array_chunk($etGroup, 10);
             foreach ($chunks as $chunk) {
-                if (!$first) {
-                    sleep(20);
+                if (!$first && $this->interChunkDelay > 0) {
+                    Craft::info(
+                        sprintf('Pausing %ds between LLM chunks (Settings::llmInterChunkDelay)', $this->interChunkDelay),
+                        'kunstmaan-migrator',
+                    );
+                    sleep($this->interChunkDelay);
                 }
                 $first = false;
                 $all = array_merge($all, $this->proposeOneChunk(
