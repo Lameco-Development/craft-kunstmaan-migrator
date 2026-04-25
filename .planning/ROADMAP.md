@@ -56,7 +56,7 @@ Plans:
 - [x] 02-02-mapping-file-PLAN.md — MappingFile reader+writer with status-on-row + atomic IO + skip-existing merge (MAP-04 satisfied; MAP-01 partial — schema-dump.json + REPORT.md emission lands in Plan 03) — completed 2026-04-25
 - [x] 02-03-analyze-pipeline-PLAN.md — AnalyzeController + SchemaDumper + HeuristicProposer + LlmClassifier + ReportBuilder (MAP-01..05, LOC-01, FILT-03 satisfied) — completed 2026-04-25
 - [x] 02-04-map-rubber-stamp-loop-PLAN.md — MapController interactive loop + two-step picker + atomic per-keypress (MAP-05, FILT-03) — completed 2026-04-25
-- [ ] 02-05-coverage-audit-doctor-PLAN.md — CoverageAuditor + MappingAuditor + DoctorController 4th check (MAP-06, MAP-07, CONN-03, FILT-03)
+- [x] 02-05-coverage-audit-doctor-PLAN.md — CoverageAuditor + MappingAuditor + DoctorController 4th check (MAP-06, MAP-07, CONN-03 fully satisfied — mapping-file check landed; FILT-03 doctor flag declarations) — completed 2026-04-25
 - [ ] 02-06-tests-and-doc-patches-PLAN.md — PHPUnit unit tests + REQUIREMENTS/ROADMAP D-12 patches (FILT-01, MAP-04, MAP-06)
 
 ### Phase 3: ETL Pipeline & Field Handlers
