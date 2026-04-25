@@ -21,39 +21,24 @@ use yii\base\Component;
  *   2. Exact name equality    → map  (high confidence)
  *   3. *_id stem → asset      → map  (high confidence)
  *   4. TEXT/LONGTEXT/MEDIUMTEXT + richtext field → map (high confidence)
- *   5. *_image / *_photo / *_afbeelding → asset (high confidence)
- *   6. *_date / *_at / *_datum → date (high confidence)
+ *   5. *_image / *_photo → asset (high confidence)
+ *   6. *_date / *_at → date (high confidence)
  *   7. *_url / *_link → url/link (high confidence)
  *   8. *_email / 'email' → email field (high confidence)
- *   9. Dutch semantic alias → fuzzy match (medium confidence)
  *
  * Pure logic — no I/O, no LLM, no file writes. The caller (Plan 03
  * AnalyzeController) maps each proposal's `confidence` to mapping.yaml's
  * per-row `status` per D-02 by passing $proposal + $status into
  * MappingFile::buildRow.
+ *
+ * Note on language: column names in Lameco-convention Kunstmaan projects are
+ * English (verified against ~/Sites/cqm-website — 59 unique columns, 0 Dutch).
+ * v1's Dutch-alias heuristic and *_afbeelding / *_datum suffix entries were
+ * removed as dead code. Anomalous Dutch-handle Kunstmaan projects fall through
+ * to the LlmClassifier residual path.
  */
 final class HeuristicProposer extends Component
 {
-    /**
-     * Dutch semantic alias map — maps Dutch column names to likely English
-     * Craft field handles. Used for the fuzzy-match heuristic (medium confidence).
-     */
-    private const DUTCH_ALIASES = [
-        'beschrijving'  => ['description', 'body', 'tekst', 'content'],
-        'omschrijving'  => ['description', 'body', 'content'],
-        'afbeelding'    => ['image', 'img', 'photo', 'thumbnail'],
-        'foto'          => ['image', 'photo', 'thumbnail'],
-        'datum'         => ['date', 'publishedDate', 'publishDate'],
-        'titel'         => ['title', 'heading', 'name'],
-        'naam'          => ['name', 'title'],
-        'tekst'         => ['body', 'content', 'text'],
-        'subtitel'      => ['subtitle', 'subTitle', 'subheading'],
-        'samenvatting'  => ['summary', 'excerpt', 'teaser'],
-        'intro'         => ['intro', 'introduction', 'excerpt'],
-        'url'           => ['url', 'link', 'slug'],
-        'link'          => ['url', 'link'],
-    ];
-
     /**
      * Auto-match deterministically. Returns [$matched, $residual] where:
      *   - $matched: list of proposals for columns matched by heuristic alone
@@ -96,7 +81,8 @@ final class HeuristicProposer extends Component
             }
 
             // 3. *_id → asset field by stem (high confidence).
-            if (str_ends_with($column, '_id')) {
+            // Skip when the column is literally `_id` (empty stem matches every asset field).
+            if (str_ends_with($column, '_id') && strlen($column) > 3) {
                 $stem = substr($column, 0, -3);
                 $assetHandle = $this->findAssetByStem($stem, $fields);
                 if ($assetHandle !== null) {
@@ -122,8 +108,8 @@ final class HeuristicProposer extends Component
                 }
             }
 
-            // 5. *_image / *_photo / *_afbeelding → asset field (high confidence).
-            if ($this->columnEndsWith($column, ['_image', '_photo', '_afbeelding'])) {
+            // 5. *_image / *_photo → asset field (high confidence).
+            if ($this->columnEndsWith($column, ['_image', '_photo'])) {
                 $assetField = $this->findFieldByClassification('asset', $fields);
                 if ($assetField !== null) {
                     $matched[] = $this->buildProposal(
@@ -136,8 +122,8 @@ final class HeuristicProposer extends Component
                 }
             }
 
-            // 6. *_date / *_at / *_datum → date field (high confidence).
-            if ($this->columnEndsWith($column, ['_date', '_at', '_datum'])) {
+            // 6. *_date / *_at → date field (high confidence).
+            if ($this->columnEndsWith($column, ['_date', '_at'])) {
                 $dateField = $this->findFieldByClassificationOrHandle('date', 'date', $fields);
                 if ($dateField !== null) {
                     $matched[] = $this->buildProposal(
@@ -177,19 +163,6 @@ final class HeuristicProposer extends Component
                     );
                     continue;
                 }
-            }
-
-            // 9. Dutch semantic alias → fuzzy match (medium confidence).
-            $aliasMatch = $this->dutchAliasMatch($column, $fields);
-            if ($aliasMatch !== null) {
-                $matched[] = $this->buildProposal(
-                    $v,
-                    $aliasMatch['handle'],
-                    $this->handlerForClassification($aliasMatch['classification'] ?? ''),
-                    sprintf('Dutch alias: %s → %s', $column, $aliasMatch['handle']),
-                    'medium',
-                );
-                continue;
             }
 
             $residual[] = $v;
@@ -302,64 +275,6 @@ final class HeuristicProposer extends Component
             }
         }
         return false;
-    }
-
-    /**
-     * Dutch alias fuzzy-match. Normalizes the column name (lowercase, also tries
-     * the last underscore-segment), then checks the DUTCH_ALIASES map in both
-     * directions: key→values and values→key+siblings.
-     *
-     * @param list<array{handle: string, type: string, classification?: string}> $fields
-     * @return array{handle: string, type: string, classification?: string}|null
-     */
-    private function dutchAliasMatch(string $column, array $fields): ?array
-    {
-        $normalized = strtolower($column);
-        $segments = explode('_', $normalized);
-        $lastSegment = end($segments);
-
-        $candidates = [$normalized];
-        if ($lastSegment !== $normalized) {
-            $candidates[] = $lastSegment;
-        }
-
-        // Build handle-to-field lookup for fast matching.
-        $fieldsByHandle = [];
-        foreach ($fields as $f) {
-            $h = strtolower((string) ($f['handle'] ?? ''));
-            if ($h !== '') {
-                $fieldsByHandle[$h] = $f;
-            }
-        }
-
-        foreach ($candidates as $candidate) {
-            // Case A: candidate matches a Dutch alias key → look for the values as handles.
-            if (isset(self::DUTCH_ALIASES[$candidate])) {
-                foreach (self::DUTCH_ALIASES[$candidate] as $target) {
-                    $t = strtolower($target);
-                    if (isset($fieldsByHandle[$t])) {
-                        return $fieldsByHandle[$t];
-                    }
-                }
-            }
-
-            // Case B: candidate matches a value in some alias list → try key + other values.
-            foreach (self::DUTCH_ALIASES as $key => $values) {
-                $valuesLower = array_map('strtolower', $values);
-                if (in_array($candidate, $valuesLower, true)) {
-                    if (isset($fieldsByHandle[$key])) {
-                        return $fieldsByHandle[$key];
-                    }
-                    foreach ($valuesLower as $alt) {
-                        if ($alt !== $candidate && isset($fieldsByHandle[$alt])) {
-                            return $fieldsByHandle[$alt];
-                        }
-                    }
-                }
-            }
-        }
-
-        return null;
     }
 
     private function handlerForClassification(string $classification): string
