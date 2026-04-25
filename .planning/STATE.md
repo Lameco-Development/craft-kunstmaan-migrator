@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 02 in progress — Plan 03 complete (analyze-pipeline)
-last_updated: "2026-04-25T20:40:10Z"
+status: Phase 02 in progress — Plan 04 complete (map-rubber-stamp-loop)
+last_updated: "2026-04-25T20:49:52Z"
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 11
-  completed_plans: 8
-  percent: 73
+  completed_plans: 9
+  percent: 82
 ---
 
 # State
@@ -20,7 +20,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped.
 
-**Current focus:** Phase 02 — schema-mapping-filters (Plans 01-03 complete; Plans 04-06 pending)
+**Current focus:** Phase 02 — schema-mapping-filters (Plans 01-04 complete; Plans 05-06 pending)
 
 ## Milestone
 
@@ -36,10 +36,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Current Phase
 
-**Phase 2: Schema, Mapping & Filters** — Plans 01-03 complete (filter+locale primitives + mapping-file + analyze-pipeline shipped). 3 plans remain (04 map-rubber-stamp, 05 coverage-audit-doctor, 06 tests-and-doc-patches).
+**Phase 2: Schema, Mapping & Filters** — Plans 01-04 complete (filter+locale primitives + mapping-file + analyze-pipeline + map-rubber-stamp-loop shipped). 2 plans remain (05 coverage-audit-doctor, 06 tests-and-doc-patches).
 
 ## Recent Activity
 
+- 2026-04-25: Phase 2 / Plan 04 (map-rubber-stamp-loop) executed. 1 task, 1 commit (c5195df). MapController lands at src/console/MapController.php (379 LOC) — the highest-value greenfield element of Phase 2 (no v1 analog). actionIndex flow: enforceNeverProduction (D-20 first-statement gate) → FilterFactory → LocalePreflight → MappingFile::resolvePath → branch on $autoAcceptHigh: runAutoAcceptHigh promotes proposed+high → accepted (MAP-05); else runInteractiveLoop walks proposed/needs-review rows in file order. D-05 honored — renderRowBlock emits compact one-screen block ([N/total] header, separator, proposed-target line, rationale, fillRate %, sqlType, samples truncated to 60 chars × max 3, separator). D-06 honored — runRemapPicker is two-step (handler enum a/c/d/e/l/m/p/r/u/b → numbered handle list filtered to entry-type fields via fieldHandlesForEntryType which calls Craft::$app->entries->getEntryTypeByHandle + getFieldLayout + getCustomFields, with [t]ype manually + [b]ack); typeManuallyHandle re-prompts in while(true) on invalid input until operator types valid handle or "back" (T-2-18 mitigation — invalid handles never land in mapping.yaml). D-07 honored — every [a]/[d]/[r] keypress calls MappingFile::setStatus → writeAtomic; [s]kip emits no setStatus call (does NOT mutate); [q]uit returns ExitCode::OK with persisted-decisions reminder. D-08 honored — $walkOrder locked at top via full-file load, then each iteration re-reads MappingFile::load($path) so external mutations are visible without corrupting walk order. FILT-03 honored — three CLI flags declared (autoAcceptHigh, entities, locales, since); --entities filters which rows the loop walks via applyEntitiesFilter (snake_case heuristic: NewsPage → kuma_news_page*); --locales forwarded to LocalePreflight; --since captured but no-op at this surface (mapping rows have no dates — Phase 3+ stages will consume). NO Plugin.php changes — services consumed (filterFactory, localePreflight, mappingFile) already registered by Plans 01 + 02; controller resolves via existing controllerNamespace switch. composer test exits 0 (7 tests, 11 assertions). MAP-05, FILT-03 satisfied.
 - 2026-04-25: Phase 2 / Plan 03 (analyze-pipeline) executed. 4 tasks, 4 commits (9d6a748, e83addd, d011aa4, 0b11d6f). HeuristicProposer (406 LOC) and LlmClassifier (502 LOC) ported byte-for-byte from v1's bridge/services namespace into lameco\\kunstmaanmigrator\\analyze; DUTCH_ALIASES const + 9-heuristic ordering preserved verbatim; v1 LLM defaults preserved (claude-haiku-4-5, 4096 tokens, 60s timeout, anthropic-version 2023-06-01, batch=10, sleep(20), 3-retry on 429 with 15s/30s/45s backoff + retry-after honor). MappingProposalException ported as a sibling marker class. SchemaDumper (201 LOC) is new — pure transform from legacy MySQL → schema-dump array; T-2-09 mitigation: sample collection uses LegacyDbService::streamQuery with LIMIT scanLimit cap (default 1000 rows). ReportBuilder (157 LOC) is new — emits ## Locales section with paste-ready Craft sites: block when locales unmapped (D-17 LOC-01); other sections: Header / Tables top-25-by-rows / Mapping Summary status counts. AnalyzeController (301 LOC) collapses v1's 9-sub-action 2138-LOC controller into a single actionIndex orchestrating NeverProduction-gate-first → FilterFactory → LocalePreflight → SchemaDumper → HeuristicProposer → LlmClassifier-or-skip → MappingFile::merge skip-existing → ReportBuilder. Six CLI flags declared (--noAi --autoAcceptHigh --auditStrict --entities --locales --since); ExitCode::CONFIG on locale-preflight FAIL. D-02 confidence-tier → status mapping applied at the orchestration layer (statusForHeuristic + statusForLlm helpers); --auto-accept-high promotes proposed-high → accepted (MAP-05). D-04 skip-existing merge through MappingFile preserves operator decisions verbatim. D-14 honored: LlmClassifier reads API key via Plugin::getInstance()->getSettings()->anthropicApiKey (single chained access — no direct App::env). D-15 honored: LlmClassifier::init() applies Settings::llmModel + llmTimeout overrides at component boot. D-20 honored: enforceNeverProduction is the FIRST executable statement of actionIndex. Plugin::config() expanded from 4 to 8 components (legacyDbService preserved with single-space `=> LegacyDbService::class` literal so PluginBootstrapTest stays green; new entries aligned to longest key). composer test exits 0 (7 tests, 11 assertions). MAP-01..05, LOC-01, FILT-03 satisfied. Plan-03-specific design choices: buildViolationsFromSchema is naive (every column → violation) and buildCraftFieldIndex returns [] — Plan 05 (CoverageAuditor + MappingAuditor) replaces both with cross-referenced versions. --audit-strict declared now so Plan 05 doesn't re-touch this file; consumer wires in Plan 05.
 - 2026-04-25: Phase 2 / Plan 02 (mapping-file) executed. 2 tasks, 2 commits (00aa2d3, 15acd89). MappingFile lands at src/mapping/MappingFile.php (196 LOC) as a final Yii Component consolidating v1's MappingDraftReader (303 LOC) + MappingDraftWriter (384 LOC). Eight public methods: resolvePath, load, loadProposed, buildRow, merge, setStatus, writeAtomic, writeAtomicJson. D-01 honored — single mapping.yaml with per-row status; no .draft / .drops / DESIGN-GAPS sidecars. D-04 honored — merge keys on (table, column, targetEntryType) tuple, preserves every existing row verbatim, only appends incoming rows whose tuple is unseen (operator decisions sacred per MAP-04). D-07 honored — writeAtomic uses tmp + rename with bin2hex(random_bytes(4)) suffix; setStatus rewrites the whole file via writeAtomic so the Plan 04 map loop gets atomic-always-on per-keypress for free. writeAtomicJson sibling helper added (not a v1 port) so Plan 03's SchemaDumper has the same atomic-write contract for schema-dump.json. Plugin::config() expanded from 3 to 4 components; @property-read MappingFile $mappingFile added. composer test stays green (7 tests, 11 assertions). MAP-04 satisfied; MAP-01 partial — analyze pipeline lands in Plan 03.
 - 2026-04-25: Phase 2 / Plan 01 (filter-locale-primitives) executed. 4 tasks, 4 commits (dc50088, 8fa4bcc, ac78230, eb06930). MigrationFilters value object lands at src/filter/MigrationFilters.php with exactly three readonly properties (entities, locales, since) per D-12 — no maxPerEntity reference anywhere. FilterFactory at src/filter/FilterFactory.php implements D-10 merge rules: null CLI arg falls through to Settings::default*, '' clears default, non-empty comma-splits + trims; each filter independent. LocalePreflight at src/locale/LocalePreflight.php ships detect() (DISTINCT lang FROM kuma_node_translations) and ensure(MigrationFilters): ?array (returns null on pass / unmapped list on LOC-02 fail; scopes check to filters->locales when explicitly set). Plugin::config() expanded from 1 to 3 components (legacyDbService preserved, filterFactory + localePreflight added) with matching @property-read PHPDoc lines. composer test still green (7 tests, 11 assertions). FILT-01, FILT-02, FILT-03, LOC-01, LOC-02 satisfied. Paste-ready sites: block rendering deferred to ReportBuilder in Plan 03.
@@ -54,6 +55,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Decisions
 
+- Phase 2 / Plan 04 D-05 renderRowBlock: compact one-screen block uses 60-char separator (str_repeat('─', 60)) and sample truncation to 60 chars via mb_substr + ellipsis '…'. Max 3 samples shown via array_slice. Fill rate rendered as integer percent (round(fillRate * 100)).
+- Phase 2 / Plan 04 D-06 picker letter map: handler enum a/c/d/e/l/m/p/r/u/b ('b' = back); chosen handler is stored as full string ('asset', 'ckeditor', etc.) so persistence sees stable values. Top-level prompt uses 'q' for quit; the picker uses 'b' for back to keep the verbs distinct.
+- Phase 2 / Plan 04 D-08 walk-order locking: $walkOrder computed once at top of runInteractiveLoop from full-file load; each iteration re-reads MappingFile::load($path) to see current row state but the walk order itself is immutable (prevents loop from skipping/repeating if mapping.yaml is touched mid-walk).
+- Phase 2 / Plan 04 design-note: --since captured in MigrationFilters and forwarded to LocalePreflight but a no-op at the row-walk surface (mapping rows have no dates). Phase 3+ stages will consume.
+- Phase 2 / Plan 04 design-note: NO Plugin.php changes. MapController consumes only services already registered by Plans 01 + 02 (filterFactory, localePreflight, mappingFile). Console controller resolves via existing controllerNamespace = 'lameco\\kunstmaanmigrator\\console' switch in Plugin::init(). Components map stays at 8.
 - Phase 2 / Plan 03 D-02 (status assignment): heuristic-high → accepted; heuristic-medium → proposed; heuristic-decision=drop → dropped; LLM-high → proposed; LLM-medium/low → needs-review; --no-ai or no key → all residuals → needs-review with stub rationale. Lives in AnalyzeController::statusForHeuristic + statusForLlm — services emit confidence only.
 - Phase 2 / Plan 03 D-15 wiring: LlmClassifier::init() applies Settings::llmModel and Settings::llmTimeout overrides once at Yii Component boot. v1's per-call env reads removed.
 - Phase 2 / Plan 03 design-note: AnalyzeController::buildViolationsFromSchema is a Plan-03-shaped naive transform (every column → violation row). Plan 05 (CoverageAuditor) replaces it with the coverage-aware violation set. AnalyzeController::buildCraftFieldIndex returns [] for now — Plan 05 wires the live FieldLayout walk. With empty index, heuristic only fires zero-fill auto-drop and routes the rest to LLM (or to the needs-review skip-stub when LLM is disabled).
@@ -94,9 +100,9 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Last Session
 
-- **Last:** 2026-04-25T20:40:10Z
-- **Stopped at:** Phase 2 / Plan 03 complete — analyze-pipeline shipped (HeuristicProposer + LlmClassifier ported verbatim; SchemaDumper + ReportBuilder + AnalyzeController new; 8 components total in Plugin::config())
-- **Resume file:** `.planning/phases/02-schema-mapping-filters/02-04-map-rubber-stamp-loop-PLAN.md` (next plan in Phase 2)
+- **Last:** 2026-04-25T20:49:52Z
+- **Stopped at:** Phase 2 / Plan 04 complete — map-rubber-stamp-loop shipped (MapController 379 LOC; D-05/D-06/D-07/D-08/D-20/MAP-05/FILT-03 all honored; no Plugin.php changes — components stay at 8)
+- **Resume file:** `.planning/phases/02-schema-mapping-filters/02-05-coverage-audit-doctor-PLAN.md` (next plan in Phase 2)
 - **Blockers:** None
 - **Doc patches still queued for Phase 2 ship (Plan 06):** REQUIREMENTS.md FILT-01 (drop `--max-per-entity=N`), ROADMAP.md Phase 2 success criterion 5 (drop `--max-per-entity=` from flag list — three flags, not four)
 
