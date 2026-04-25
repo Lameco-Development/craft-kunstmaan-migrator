@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\models;
 
-use Craft;
 use craft\base\Model;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
