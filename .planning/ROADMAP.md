@@ -52,7 +52,7 @@ Plans:
 **Plans:** 6 plans
 
 Plans:
-- [ ] 02-01-filter-locale-primitives-PLAN.md — MigrationFilters VO + FilterFactory + LocalePreflight + Plugin.php registration (FILT-01, FILT-02, FILT-03, LOC-01, LOC-02)
+- [x] 02-01-filter-locale-primitives-PLAN.md — MigrationFilters VO + FilterFactory + LocalePreflight + Plugin.php registration (FILT-01, FILT-02, FILT-03, LOC-01, LOC-02) — completed 2026-04-25
 - [ ] 02-02-mapping-file-PLAN.md — MappingFile reader+writer with status-on-row + atomic IO + skip-existing merge (MAP-01, MAP-04)
 - [ ] 02-03-analyze-pipeline-PLAN.md — AnalyzeController + SchemaDumper + HeuristicProposer + LlmClassifier + ReportBuilder (MAP-01..05, LOC-01, FILT-03)
 - [ ] 02-04-map-rubber-stamp-loop-PLAN.md — MapController interactive loop + two-step picker + atomic per-keypress (MAP-05, FILT-03)

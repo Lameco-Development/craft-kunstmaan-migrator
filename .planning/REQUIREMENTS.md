@@ -32,14 +32,14 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 
 ### Filtering (FILT)
 
-- [ ] **FILT-01**: A `MigrationFilters` value object captures: included entity types (allow-list), locale subset, `--since=YYYY-MM-DD` floor, `--max-per-entity=N` cap.
-- [ ] **FILT-02**: Filters apply uniformly through every stage (extract / transform / load / verify) — a row excluded at extract is also absent from verify counts.
-- [ ] **FILT-03**: All five top-level CLI commands accept the filter flags. `analyze` uses them to scope schema scanning.
+- [x] **FILT-01**: A `MigrationFilters` value object captures: included entity types (allow-list), locale subset, `--since=YYYY-MM-DD` floor, `--max-per-entity=N` cap. _(Phase 2 / Plan 01 — MigrationFilters VO ships at src/filter/MigrationFilters.php with three readonly properties (entities, locales, since). D-12 dropped `--max-per-entity=N` from v1.0 scope; this requirement's wording fix lands as a doc patch in Phase 2 / Plan 06.)_
+- [x] **FILT-02**: Filters apply uniformly through every stage (extract / transform / load / verify) — a row excluded at extract is also absent from verify counts. _(Phase 2 / Plan 01 — VO is constructor-only / readonly, so it cannot be mutated mid-pipeline; FilterFactory builds it once per CLI invocation. Stage consumers land in Phase 3+ but the cross-stage primitive is in place.)_
+- [x] **FILT-03**: All five top-level CLI commands accept the filter flags. `analyze` uses them to scope schema scanning. _(Phase 2 / Plan 01 — FilterFactory at src/filter/FilterFactory.php registered via Plugin::config() so every controller can resolve `Plugin::getInstance()->filterFactory->fromCli(...)`. Per-controller flag wiring lands in Plans 03 (analyze), 04 (map), and Phase 3 (migrate/verify); doctor accepts but ignores the flags per D-13.)_
 
 ### Locale handling (LOC)
 
-- [ ] **LOC-01**: `analyze` auto-detects Kunstmaan locales from `kuma_node_translations` and emits a paste-ready `sites:` YAML block when locales aren't yet mapped.
-- [ ] **LOC-02**: A preflight gate FAILs hard on any unmapped locale (no silent default-locale fallthrough).
+- [x] **LOC-01**: `analyze` auto-detects Kunstmaan locales from `kuma_node_translations` and emits a paste-ready `sites:` YAML block when locales aren't yet mapped. _(Phase 2 / Plan 01 — LocalePreflight::detect() at src/locale/LocalePreflight.php runs `SELECT DISTINCT lang FROM kuma_node_translations ORDER BY lang` and returns a list<string>. The paste-ready `sites:` block rendering is delegated to ReportBuilder in Phase 2 / Plan 03.)_
+- [x] **LOC-02**: A preflight gate FAILs hard on any unmapped locale (no silent default-locale fallthrough). _(Phase 2 / Plan 01 — LocalePreflight::ensure(MigrationFilters): ?array returns null on pass or list of unmapped locale codes on fail. NO silent fallthrough. Caller (AnalyzeController/MapController/future MigrateController + VerifyController) is responsible for hard-fail on non-null return; controller wiring lands in Plans 03/04/Phase 3.)_
 
 ### ETL pipeline (ETL)
 
