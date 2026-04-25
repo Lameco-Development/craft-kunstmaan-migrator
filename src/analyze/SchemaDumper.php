@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\analyze;
 
-use Craft;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use yii\base\Component;
