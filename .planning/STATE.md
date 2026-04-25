@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Executing Phase 01
-last_updated: "2026-04-25T16:12:00Z"
+last_updated: "2026-04-25T16:01:00Z"
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 2
-  percent: 40
+  completed_plans: 3
+  percent: 60
 ---
 
 # State
@@ -40,6 +40,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Recent Activity
 
+- 2026-04-25: Phase 1 / Plan 03 (install-migration) executed. 2 tasks, 2 commits (898d632, 8ba9d1a). Install.php lands the v1.x-verbatim D-06 state-table schema (10 cols, 2 indexes) guarded by tableExists; D-09 UID-reuse chain (project-config → getFieldByHandle → mint) preserves the 570-row CQM rehearsal continuity; safeDown is a verbatim no-op per FND-03 / D-10. MigrateController ships only actionInstall (Phase 3 actions deferred per D-05) with NeverProduction gate first (D-20) and MigrationManager wired on track 'kunstmaanmigrator'. FND-02, FND-02a, FND-03 satisfied.
 - 2026-04-25: Phase 1 / Plan 02 (settings-legacy-db) executed. 3 tasks, 3 commits (e27e375, 09911ea, 9c05e3b). Settings model with full v2 surface (8 read-active + 8 declared) lands; LegacyDbService Yii Component (5 read-only methods) lands; Plugin::init() promoted from stub to full Phase 1 form with conditional legacyDb registration (D-11), console controllerNamespace switch, createSettingsModel(), settingsHtml() + placeholder _settings.twig. CONN-01, CONN-02 satisfied.
 - 2026-04-25: Phase 1 / Plan 01 (composer-scaffold) executed. 4 tasks, 3 commits (0c8061e, f8c1719, b608527). composer.json validates strict, PSR-4 autoload resolves Plugin + NeverProductionTrait FQCNs, schemaVersion=1.0.0 confirmed via reflection. FND-01 satisfied.
 - 2026-04-25: Phase 1 context captured (`01-CONTEXT.md`, `01-DISCUSSION-LOG.md`). 25 implementation decisions across source layout, state schema, legacy DB wiring, settings + doctor edges, CI.
@@ -47,6 +48,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Decisions
 
+- D-05: MigrateController in Phase 1 ships ONLY actionInstall; extract / transform / load / finalize are deferred to Phase 3.
+- D-06: state-table schema is byte-for-byte v1.x (10 cols + 2 indexes); REQUIREMENTS.md FND-02 wording is now stale (Plan 05 updates it).
+- D-07: Install.php is single source of install truth — v1.x's m000000_000000_install_migration_state.php and m260425_000000_upgrade_to_v2.php are NOT carried forward.
+- D-09: UID-reuse chain is project-config → getFieldByHandle → mint. Literal 'kunstmaanSourceId' kept inline in getFieldByHandle for grep-based continuity assertions.
+- D-10: safeDown() is a verbatim no-op (returns true). Operator wipes manually for full reset. FND-03 contract.
+- D-20: NeverProduction gate is the first statement of every controller action body. Verified by ordering grep on actionInstall.
 - D-08: schemaVersion declared as 1.0.0 (treat v2 as fresh plugin; v1.x→v2 swap-in handled by Install.php's tableExists guard)
 - D-23: NeverProductionTrait ported byte-for-byte from v1 (no declare(strict_types=1))
 - D-24: SEOmatic + Retour are composer suggest entries (not require); Deptrac + Rector dropped
@@ -61,9 +68,9 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Last Session
 
-- **Last:** 2026-04-25T16:12:00Z
-- **Stopped at:** Completed Phase 1 / Plan 02 (settings-legacy-db)
-- **Resume file:** `.planning/phases/01-foundation-connectivity/01-03-install-migration-PLAN.md`
+- **Last:** 2026-04-25T16:01:00Z
+- **Stopped at:** Completed Phase 1 / Plan 03 (install-migration)
+- **Resume file:** `.planning/phases/01-foundation-connectivity/01-04-doctor-command-PLAN.md`
 - **Blockers:** None
 
 ## Reference Material
