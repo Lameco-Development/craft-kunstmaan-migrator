@@ -10,6 +10,7 @@ use craft\base\Plugin as BasePlugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
+use lameco\kunstmaanmigrator\mapping\MappingFile;
 use lameco\kunstmaanmigrator\models\Settings;
 use PDO;
 use yii\db\Connection;
@@ -20,6 +21,7 @@ use yii\db\Connection;
  * @property-read LegacyDbService $legacyDbService
  * @property-read FilterFactory $filterFactory
  * @property-read LocalePreflight $localePreflight
+ * @property-read MappingFile $mappingFile
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -38,6 +40,7 @@ class Plugin extends BasePlugin
                 'legacyDbService' => LegacyDbService::class,    // Phase 1
                 'filterFactory'   => FilterFactory::class,      // Phase 2 (Plan 01) — D-10 Settings+CLI merge
                 'localePreflight' => LocalePreflight::class,    // Phase 2 (Plan 01) — LOC-01 detect + LOC-02 ensure
+                'mappingFile'     => MappingFile::class,        // Phase 2 (Plan 02) — D-01/D-04/D-07 status-on-row IO
             ],
         ];
     }
