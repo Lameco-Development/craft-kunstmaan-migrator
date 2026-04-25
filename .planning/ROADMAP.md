@@ -132,7 +132,18 @@ What v1 had that we are NOT porting in 02.1 (deferred to Phase 3 where they belo
 16. **CoverageAuditor reconciliation** — compare our Plan 02-05 fresh write against v1's `bridge/schema/knowledgebase/CoverageAuditor` (482 LOC); land any rules we dropped.
 17. **MappingValidator reconciliation** — same audit for MappingAuditor against v1's 647 LOC original.
 
-**Plans:** TBD — now likely 6–8 plans given the v1 reuse + reconciliation work. To be created via `/gsd-plan-phase 02.1`.
+**Plans:** 9 plans
+
+Plans:
+- [ ] 02.1-01-source-path-infra-PLAN.md — Settings field + KunstmaanSourcePathResolver + Doctor 5th check + --source-strict declarations (SRC-10)
+- [ ] 02.1-02-doctrine-port-PLAN.md — DoctrineEntityParser + DetailTableResolver + 3 VOs + KunstmaanCoreTables (SRC-11, SRC-12)
+- [ ] 02.1-03-discovery-port-PLAN.md — BodyScanColumnFinder + MediaFkScanner + TopologicalOrderer + KnowledgeBase partial port (SRC-13, SRC-14)
+- [ ] 02.1-04-page-structure-scanner-PLAN.md — KunstmaanPageStructureScanner + nikic/php-parser direct require (SRC-05, SRC-06, SRC-07)
+- [ ] 02.1-05-source-scanner-orchestrator-PLAN.md — KunstmaanSourceScanner + Plugin::config() registration (SRC-01, SRC-02, SRC-03, SRC-04)
+- [ ] 02.1-06-mapping-extension-PLAN.md — MappingFile row-kind support + MapController two-mode walker (SRC-05, SRC-06)
+- [ ] 02.1-07-analyze-wiring-PLAN.md — AnalyzeController 11-step pipeline + heuristic 1.5 + LlmClassifier KB integration (SRC-08, SRC-09)
+- [ ] 02.1-08-audit-extension-PLAN.md — BlockAvailabilityValidator + Drift section + CoverageAuditor page-part coverage (SRC-15)
+- [ ] 02.1-09-reconciliation-PLAN.md — RECONCILIATION.md + REQUIREMENTS SRC codification + ROADMAP D-31 patches (SRC-16, SRC-17)
 
 ### Phase 3: ETL Pipeline & Field Handlers
 
