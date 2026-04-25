@@ -150,8 +150,8 @@ trait NeverProductionTrait
     - `grep -q '"phpunit/phpunit": "\\^11.0"' composer.json` exits 0.
     - `grep -q '"schemaVersion": "1.0.0"' composer.json` exits 0.
     - `grep -q '"handle": "kunstmaan-migrator"' composer.json` exits 0.
-    - `grep -q '"class": "lameco.\\\\kunstmaanmigrator.\\\\Plugin"' composer.json` exits 0  (escaped backslashes — match the JSON `lameco\\kunstmaanmigrator\\Plugin`).
-    - `grep -q '"lameco.\\\\kunstmaanmigrator.\\\\": "src/"' composer.json` exits 0.
+    - `grep -q '"class": "lameco\\\\kunstmaanmigrator\\\\Plugin"' composer.json` exits 0  (escaped backslashes — match the JSON `lameco\\kunstmaanmigrator\\Plugin`).
+    - `grep -q '"lameco\\\\kunstmaanmigrator\\\\": "src/"' composer.json` exits 0.
     - `grep -q '"test": "vendor/bin/phpunit"' composer.json` exits 0.
     - `grep -q '"nystudio107/craft-seomatic"' composer.json` exits 0 (in `suggest` block — NOT `require`).
     - `! grep -q '"deptrac/deptrac"' composer.json` (must be absent).

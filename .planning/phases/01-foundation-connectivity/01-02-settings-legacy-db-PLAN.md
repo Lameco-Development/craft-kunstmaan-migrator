@@ -277,8 +277,8 @@ class Plugin extends \craft\base\Plugin
     - `grep -q "App::env('CRAFT_LEGACY_DB_SERVER')" src/models/Settings.php` exits 0.
     - `grep -q "App::env('ANTHROPIC_API_KEY')" src/models/Settings.php` exits 0.
     - `grep -q "EnvAttributeParserBehavior::class" src/models/Settings.php` exits 0.
-    - `! grep -i 'echo.*password\\|var_dump.*Password\\|print_r.*Password' src/models/Settings.php` (no secret leak).
-    - `! grep -i 'echo.*anthropicApiKey\\|var_dump.*anthropicApiKey\\|print_r.*anthropicApiKey' src/models/Settings.php` (no secret leak).
+    - `! grep -iE 'echo.*password|var_dump.*Password|print_r.*Password' src/models/Settings.php` (no secret leak).
+    - `! grep -iE 'echo.*anthropicApiKey|var_dump.*anthropicApiKey|print_r.*anthropicApiKey' src/models/Settings.php` (no secret leak).
     - `php -l src/models/Settings.php` exits 0.
     - `php -r 'require __DIR__ . "/vendor/autoload.php"; class_exists("lameco\\kunstmaanmigrator\\models\\Settings", true) or exit(1);'` exits 0.
   </acceptance_criteria>

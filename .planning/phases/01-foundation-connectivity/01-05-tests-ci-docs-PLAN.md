@@ -287,7 +287,7 @@ final class PluginBootstrapTest extends \PHPUnit\Framework\TestCase
     - `grep -q 'composer validate --strict --no-plugins' .github/workflows/ci.yml` exits 0.
     - `grep -q 'composer install --no-interaction --no-progress' .github/workflows/ci.yml` exits 0.
     - `grep -q 'composer test' .github/workflows/ci.yml` exits 0.
-    - Deferred items absent: `! grep -i 'deptrac\\|fqcn\\|matrix' .github/workflows/ci.yml`.
+    - Deferred items absent: `! grep -iE 'deptrac|fqcn|matrix' .github/workflows/ci.yml`.
     - YAML parses: `python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"` exits 0 (or use `php -r 'yaml_parse_file(".github/workflows/ci.yml") !== false or exit(1);'` if PHP yaml extension is present; else use `composer require --dev symfony/yaml` already loaded — `php -r 'require __DIR__ . "/vendor/autoload.php"; Symfony\\Component\\Yaml\\Yaml::parseFile(".github/workflows/ci.yml");'`).
   </acceptance_criteria>
   <verify>
