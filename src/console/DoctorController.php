@@ -66,12 +66,28 @@ class DoctorController extends Controller
     }
 
     /**
-     * Check #1: legacy DB reachable. Port verbatim from v1 lines 105-115.
+     * Check #1: legacy DB reachable AND a default schema is selected.
+     *
+     * `SELECT 1` only proves the connection opens (host/port/user/pass valid).
+     * Every downstream stage (LocalePreflight, SchemaDumper, ...) issues
+     * unqualified queries that need a default schema, so we also verify
+     * `SELECT DATABASE()` is non-null. Catches the case where
+     * `CRAFT_LEGACY_DB_DATABASE` is unset and the DSN ends with `dbname=`.
      */
     private function checkLegacyDb(): bool
     {
         try {
-            Plugin::getInstance()->legacyDbService->queryOne('SELECT 1 AS ok');
+            $svc = Plugin::getInstance()->legacyDbService;
+            $svc->queryOne('SELECT 1 AS ok');
+            $dbname = $svc->queryScalar('SELECT DATABASE()');
+            if ($dbname === null || $dbname === '') {
+                $this->stderr(
+                    "  FAIL legacyDb connected but no default schema selected — "
+                    . "set CRAFT_LEGACY_DB_DATABASE in .env (or legacyDbDatabase in plugin settings)\n",
+                    Console::FG_RED,
+                );
+                return false;
+            }
             $this->stdout("  OK   legacyDb reachable\n", Console::FG_GREEN);
             return true;
         } catch (Throwable $e) {
