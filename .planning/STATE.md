@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 02 in progress — Plan 02 complete (mapping-file)
-last_updated: "2026-04-25T20:26:42Z"
+status: Phase 02 in progress — Plan 03 complete (analyze-pipeline)
+last_updated: "2026-04-25T20:40:10Z"
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 11
-  completed_plans: 7
-  percent: 64
+  completed_plans: 8
+  percent: 73
 ---
 
 # State
@@ -20,7 +20,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped.
 
-**Current focus:** Phase 02 — schema-mapping-filters (Plans 01-02 complete; Plans 03-06 pending)
+**Current focus:** Phase 02 — schema-mapping-filters (Plans 01-03 complete; Plans 04-06 pending)
 
 ## Milestone
 
@@ -36,10 +36,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Current Phase
 
-**Phase 2: Schema, Mapping & Filters** — Plans 01-02 complete (filter+locale primitives + mapping-file shipped). 4 plans remain (03 analyze-pipeline, 04 map-rubber-stamp, 05 coverage-audit-doctor, 06 tests-and-doc-patches).
+**Phase 2: Schema, Mapping & Filters** — Plans 01-03 complete (filter+locale primitives + mapping-file + analyze-pipeline shipped). 3 plans remain (04 map-rubber-stamp, 05 coverage-audit-doctor, 06 tests-and-doc-patches).
 
 ## Recent Activity
 
+- 2026-04-25: Phase 2 / Plan 03 (analyze-pipeline) executed. 4 tasks, 4 commits (9d6a748, e83addd, d011aa4, 0b11d6f). HeuristicProposer (406 LOC) and LlmClassifier (502 LOC) ported byte-for-byte from v1's bridge/services namespace into lameco\\kunstmaanmigrator\\analyze; DUTCH_ALIASES const + 9-heuristic ordering preserved verbatim; v1 LLM defaults preserved (claude-haiku-4-5, 4096 tokens, 60s timeout, anthropic-version 2023-06-01, batch=10, sleep(20), 3-retry on 429 with 15s/30s/45s backoff + retry-after honor). MappingProposalException ported as a sibling marker class. SchemaDumper (201 LOC) is new — pure transform from legacy MySQL → schema-dump array; T-2-09 mitigation: sample collection uses LegacyDbService::streamQuery with LIMIT scanLimit cap (default 1000 rows). ReportBuilder (157 LOC) is new — emits ## Locales section with paste-ready Craft sites: block when locales unmapped (D-17 LOC-01); other sections: Header / Tables top-25-by-rows / Mapping Summary status counts. AnalyzeController (301 LOC) collapses v1's 9-sub-action 2138-LOC controller into a single actionIndex orchestrating NeverProduction-gate-first → FilterFactory → LocalePreflight → SchemaDumper → HeuristicProposer → LlmClassifier-or-skip → MappingFile::merge skip-existing → ReportBuilder. Six CLI flags declared (--noAi --autoAcceptHigh --auditStrict --entities --locales --since); ExitCode::CONFIG on locale-preflight FAIL. D-02 confidence-tier → status mapping applied at the orchestration layer (statusForHeuristic + statusForLlm helpers); --auto-accept-high promotes proposed-high → accepted (MAP-05). D-04 skip-existing merge through MappingFile preserves operator decisions verbatim. D-14 honored: LlmClassifier reads API key via Plugin::getInstance()->getSettings()->anthropicApiKey (single chained access — no direct App::env). D-15 honored: LlmClassifier::init() applies Settings::llmModel + llmTimeout overrides at component boot. D-20 honored: enforceNeverProduction is the FIRST executable statement of actionIndex. Plugin::config() expanded from 4 to 8 components (legacyDbService preserved with single-space `=> LegacyDbService::class` literal so PluginBootstrapTest stays green; new entries aligned to longest key). composer test exits 0 (7 tests, 11 assertions). MAP-01..05, LOC-01, FILT-03 satisfied. Plan-03-specific design choices: buildViolationsFromSchema is naive (every column → violation) and buildCraftFieldIndex returns [] — Plan 05 (CoverageAuditor + MappingAuditor) replaces both with cross-referenced versions. --audit-strict declared now so Plan 05 doesn't re-touch this file; consumer wires in Plan 05.
 - 2026-04-25: Phase 2 / Plan 02 (mapping-file) executed. 2 tasks, 2 commits (00aa2d3, 15acd89). MappingFile lands at src/mapping/MappingFile.php (196 LOC) as a final Yii Component consolidating v1's MappingDraftReader (303 LOC) + MappingDraftWriter (384 LOC). Eight public methods: resolvePath, load, loadProposed, buildRow, merge, setStatus, writeAtomic, writeAtomicJson. D-01 honored — single mapping.yaml with per-row status; no .draft / .drops / DESIGN-GAPS sidecars. D-04 honored — merge keys on (table, column, targetEntryType) tuple, preserves every existing row verbatim, only appends incoming rows whose tuple is unseen (operator decisions sacred per MAP-04). D-07 honored — writeAtomic uses tmp + rename with bin2hex(random_bytes(4)) suffix; setStatus rewrites the whole file via writeAtomic so the Plan 04 map loop gets atomic-always-on per-keypress for free. writeAtomicJson sibling helper added (not a v1 port) so Plan 03's SchemaDumper has the same atomic-write contract for schema-dump.json. Plugin::config() expanded from 3 to 4 components; @property-read MappingFile $mappingFile added. composer test stays green (7 tests, 11 assertions). MAP-04 satisfied; MAP-01 partial — analyze pipeline lands in Plan 03.
 - 2026-04-25: Phase 2 / Plan 01 (filter-locale-primitives) executed. 4 tasks, 4 commits (dc50088, 8fa4bcc, ac78230, eb06930). MigrationFilters value object lands at src/filter/MigrationFilters.php with exactly three readonly properties (entities, locales, since) per D-12 — no maxPerEntity reference anywhere. FilterFactory at src/filter/FilterFactory.php implements D-10 merge rules: null CLI arg falls through to Settings::default*, '' clears default, non-empty comma-splits + trims; each filter independent. LocalePreflight at src/locale/LocalePreflight.php ships detect() (DISTINCT lang FROM kuma_node_translations) and ensure(MigrationFilters): ?array (returns null on pass / unmapped list on LOC-02 fail; scopes check to filters->locales when explicitly set). Plugin::config() expanded from 1 to 3 components (legacyDbService preserved, filterFactory + localePreflight added) with matching @property-read PHPDoc lines. composer test still green (7 tests, 11 assertions). FILT-01, FILT-02, FILT-03, LOC-01, LOC-02 satisfied. Paste-ready sites: block rendering deferred to ReportBuilder in Plan 03.
 - 2026-04-25: Phase 2 context captured (`02-CONTEXT.md`, `02-DISCUSSION-LOG.md` — commit 9990f5e). 17 decisions covering: D-01..D-04 (flat `proposals:` list with status-on-row, four-tier confidence→status, drop-reason in rationale, skip-existing re-run merge); D-05..D-08 (compact one-screen rubber-stamp UX, two-step `[r]emap` picker, atomic per-keypress write, stateless resume); D-09..D-13 (Kunstmaan source-class allow-list, per-filter CLI override, column-presence `--since` on AbstractArticlePage's `date` column, `--max-per-entity` DROPPED — patches FILT-01 + ROADMAP success criterion 5); D-14..D-17 (schema-dump-minus-structural-minus-zero-fill coverage definition, hard `--live`/warn `--dry-run` gate behavior, console+MAPPING-AUDIT.md drift findings warn-only with `--audit-strict` opt-in, locale preflight on every legacy-reading command). v1 brownfield reuse plan: HeuristicProposer (407 LOC) and LlmClassifier (481 LOC) port near-verbatim; MappingDraftReader/Writer port with status-on-row reshape; MappingValidator (647 LOC) ports for the new MappingAuditor; ProposalRouter is fully replaced; AnalyzeController collapses from 2138 LOC / 9 sub-actions to a single entrypoint; v1's MigrationFilters (post-Craft scope) is reference-only — v2 redesigns for legacy-side scoping.
@@ -53,6 +54,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Decisions
 
+- Phase 2 / Plan 03 D-02 (status assignment): heuristic-high → accepted; heuristic-medium → proposed; heuristic-decision=drop → dropped; LLM-high → proposed; LLM-medium/low → needs-review; --no-ai or no key → all residuals → needs-review with stub rationale. Lives in AnalyzeController::statusForHeuristic + statusForLlm — services emit confidence only.
+- Phase 2 / Plan 03 D-15 wiring: LlmClassifier::init() applies Settings::llmModel and Settings::llmTimeout overrides once at Yii Component boot. v1's per-call env reads removed.
+- Phase 2 / Plan 03 design-note: AnalyzeController::buildViolationsFromSchema is a Plan-03-shaped naive transform (every column → violation row). Plan 05 (CoverageAuditor) replaces it with the coverage-aware violation set. AnalyzeController::buildCraftFieldIndex returns [] for now — Plan 05 wires the live FieldLayout walk. With empty index, heuristic only fires zero-fill auto-drop and routes the rest to LLM (or to the needs-review skip-stub when LLM is disabled).
+- Phase 2 / Plan 03 design-note: --audit-strict CLI flag declared on AnalyzeController now so Plan 05 doesn't re-touch this file. Stored in $this->auditStrict; consumer (mappingAuditor->audit invocation + fail-state elevation) lands in Plan 05.
+- Phase 2 / Plan 03 v1-default preservation: LlmClassifier ports v1 verbatim — claude-haiku-4-5, maxTokens=4096, timeoutSeconds=60, anthropic-version 2023-06-01, batch=10, sleep(20) between chunks, 3-retry on 429 with 15s/30s/45s backoff + retry-after honor. HeuristicProposer ports v1 verbatim — DUTCH_ALIASES const + 9-heuristic ordering byte-for-byte.
+- Phase 2 / Plan 03 T-2-09 mitigation: SchemaDumper sample collection uses LegacyDbService::streamQuery + LIMIT scanLimit cap (default 1000 rows). Generator yields rows one at a time; never loads full table.
 - Phase 2 / Plan 02 D-01: mapping.yaml is a single flat proposals: list with per-row status. v1's four-bucket layout (mapping.yaml + .draft + .drops + DESIGN-GAPS.md) is not ported; MappingFile knows about one file with one shape.
 - Phase 2 / Plan 02 D-04: merge keys on (table, column, targetEntryType) tuple. Existing rows preserved verbatim; incoming rows only appended if their tuple is absent. There is no overwrite path, no smart diff. MAP-04 byte-for-byte.
 - Phase 2 / Plan 02 D-07: writeAtomic = mkdir -p + write to ${path}.tmp.${bin2hex(random_bytes(4))} + rename($tmp, $path). setStatus wraps it for per-keypress atomic writes (Plan 04 map loop consumer).
@@ -87,9 +94,9 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Last Session
 
-- **Last:** 2026-04-25T20:26:42Z
-- **Stopped at:** Phase 2 / Plan 02 complete — mapping-file shipped (MappingFile + Plugin component registration)
-- **Resume file:** `.planning/phases/02-schema-mapping-filters/02-03-analyze-pipeline-PLAN.md` (next plan in Phase 2)
+- **Last:** 2026-04-25T20:40:10Z
+- **Stopped at:** Phase 2 / Plan 03 complete — analyze-pipeline shipped (HeuristicProposer + LlmClassifier ported verbatim; SchemaDumper + ReportBuilder + AnalyzeController new; 8 components total in Plugin::config())
+- **Resume file:** `.planning/phases/02-schema-mapping-filters/02-04-map-rubber-stamp-loop-PLAN.md` (next plan in Phase 2)
 - **Blockers:** None
 - **Doc patches still queued for Phase 2 ship (Plan 06):** REQUIREMENTS.md FILT-01 (drop `--max-per-entity=N`), ROADMAP.md Phase 2 success criterion 5 (drop `--max-per-entity=` from flag list — three flags, not four)
 
