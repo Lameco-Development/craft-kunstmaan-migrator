@@ -7,6 +7,10 @@ namespace lameco\kunstmaanmigrator;
 use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
+use lameco\kunstmaanmigrator\analyze\HeuristicProposer;
+use lameco\kunstmaanmigrator\analyze\LlmClassifier;
+use lameco\kunstmaanmigrator\analyze\ReportBuilder;
+use lameco\kunstmaanmigrator\analyze\SchemaDumper;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
@@ -22,6 +26,10 @@ use yii\db\Connection;
  * @property-read FilterFactory $filterFactory
  * @property-read LocalePreflight $localePreflight
  * @property-read MappingFile $mappingFile
+ * @property-read SchemaDumper $schemaDumper
+ * @property-read HeuristicProposer $heuristicProposer
+ * @property-read LlmClassifier $llmClassifier
+ * @property-read ReportBuilder $reportBuilder
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -37,10 +45,14 @@ class Plugin extends BasePlugin
     {
         return [
             'components' => [
-                'legacyDbService' => LegacyDbService::class,    // Phase 1
-                'filterFactory'   => FilterFactory::class,      // Phase 2 (Plan 01) — D-10 Settings+CLI merge
-                'localePreflight' => LocalePreflight::class,    // Phase 2 (Plan 01) — LOC-01 detect + LOC-02 ensure
-                'mappingFile'     => MappingFile::class,        // Phase 2 (Plan 02) — D-01/D-04/D-07 status-on-row IO
+                'legacyDbService' => LegacyDbService::class,      // Phase 1 (literal preserved for PluginBootstrapTest)
+                'filterFactory'     => FilterFactory::class,      // Phase 2 (Plan 01) — D-10 Settings+CLI merge
+                'localePreflight'   => LocalePreflight::class,    // Phase 2 (Plan 01) — LOC-01 detect + LOC-02 ensure
+                'mappingFile'       => MappingFile::class,        // Phase 2 (Plan 02) — D-01/D-04/D-07 status-on-row IO
+                'schemaDumper'      => SchemaDumper::class,       // Phase 2 (Plan 03) — legacy MySQL → schema-dump array
+                'heuristicProposer' => HeuristicProposer::class,  // Phase 2 (Plan 03) — 9 deterministic heuristics
+                'llmClassifier'     => LlmClassifier::class,      // Phase 2 (Plan 03) — Anthropic Haiku batch caller
+                'reportBuilder'     => ReportBuilder::class,      // Phase 2 (Plan 03) — D-17 paste-ready locales block
             ],
         ];
     }
