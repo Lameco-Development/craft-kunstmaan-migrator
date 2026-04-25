@@ -35,6 +35,16 @@ class Settings extends Model
     public ?string $mappingPath          = null;
     public array   $defaultEntities      = [];
     public array   $defaultLocales       = [];
+
+    /**
+     * Explicit locale override map: legacy Kunstmaan locale → Craft site handle.
+     * Wins over both exact-match and language-prefix loose-match. Use when a
+     * single legacy locale needs to land on a specific Craft handle (e.g.
+     * `['nl' => 'nl-NL']` when Craft uses BCP 47 long-form handles).
+     *
+     * @var array<string, string>
+     */
+    public array   $localeMap            = [];
     public ?string $defaultSince         = null;
     public ?int    $defaultMaxPerEntity  = null;
     public bool    $dryRunDefault        = true;
@@ -90,7 +100,7 @@ class Settings extends Model
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince'], 'string'],
             [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
-            [['defaultEntities', 'defaultLocales'], 'safe'],
+            [['defaultEntities', 'defaultLocales', 'localeMap'], 'safe'],
             [['dryRunDefault'], 'boolean'],
         ];
     }

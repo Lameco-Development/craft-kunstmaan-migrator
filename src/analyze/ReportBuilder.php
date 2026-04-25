@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\analyze;
 
 use Craft;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\locale\LocalePreflight;
 use yii\base\Component;
 
 /**
@@ -77,20 +78,36 @@ final class ReportBuilder extends Component
             return "## Locales\n\nNo locales detected in `kuma_node_translations`.";
         }
 
+        // Collect both Craft site handles AND their BCP 47 languages — either
+        // can match a legacy Kunstmaan locale. (`?site=default` may have
+        // language `nl-NL`; the language is the locale-meaningful field.)
         $craftHandles = [];
         foreach (Craft::$app->getSites()->getAllSites() as $s) {
-            $craftHandles[] = (string) $s->handle;
+            $h = (string) $s->handle;
+            $l = (string) $s->language;
+            if ($h !== '') { $craftHandles[] = $h; }
+            if ($l !== '' && $l !== $h) { $craftHandles[] = $l; }
         }
+        $craftHandles = array_values(array_unique($craftHandles));
         $settingsLocales = (array) Plugin::getInstance()->getSettings()->defaultLocales;
+        $resolved = Plugin::getInstance()->localePreflight->resolve($detected);
 
-        $unmapped = [];
-        foreach ($detected as $l) {
-            if (!in_array($l, $craftHandles, true) && !in_array($l, $settingsLocales, true)) {
-                $unmapped[] = $l;
+        // Split detected locales by resolution type for the report.
+        $unmapped     = [];
+        $prefixHits   = []; // legacy → craft handle (suggest localeMap entry)
+        $exactHits    = [];
+        $explicitHits = []; // legacy → craft handle (already in localeMap)
+        foreach ($resolved as $legacy => $detail) {
+            if (!$detail['matched']) {
+                $unmapped[] = $legacy;
+                continue;
+            }
+            switch ($detail['via']) {
+                case 'localeMap': $explicitHits[$legacy] = $detail['target']; break;
+                case 'prefix':    $prefixHits[$legacy]   = $detail['target']; break;
+                default:          $exactHits[$legacy]    = $detail['target']; break;
             }
         }
-
-        $primaryHandle = (string) (Craft::$app->getSites()->getPrimarySite()->handle ?? 'default');
 
         $out = "## Locales\n\n"
             . "Detected Kunstmaan locales: " . implode(', ', $detected) . "\n"
@@ -98,14 +115,44 @@ final class ReportBuilder extends Component
                 . implode(', ', array_unique(array_merge($craftHandles, $settingsLocales))) . "\n"
             . "Unmapped: " . ($unmapped === [] ? '(none)' : implode(', ', $unmapped)) . "\n";
 
-        if ($unmapped !== []) {
-            $out .= "\nAdd these to your Craft `config/sites.php` (or set Settings::defaultLocales to map them):\n\n"
-                . "```php\nreturn [\n";
-            foreach ($detected as $l) {
-                $suggested = in_array($l, $craftHandles, true) ? $l : $primaryHandle;
-                $out .= "    '{$l}' => ['language' => '{$l}', 'baseUrl' => 'https://example.com/'],   // suggested handle: {$suggested}\n";
+        if ($explicitHits !== []) {
+            $out .= "\nResolved via Settings::localeMap:\n";
+            foreach ($explicitHits as $l => $t) {
+                $out .= "  - {$l} → {$t}\n";
             }
-            $out .= "    // ...\n];\n```\n\nRe-run analyze after the sites are mapped.\n";
+        }
+        if ($prefixHits !== []) {
+            $out .= "\nResolved by language-prefix (loose match):\n";
+            foreach ($prefixHits as $l => $t) {
+                $out .= "  - {$l} → {$t}\n";
+            }
+        }
+
+        if ($unmapped !== []) {
+            // For each unmapped locale, suggest BOTH a localeMap entry (if a near-match
+            // craft handle exists by language prefix that simply hasn't matched yet —
+            // shouldn't occur after the resolve() pass, but defensive) and a fresh site.
+            $out .= "\nUnmapped locale(s) — choose ONE of these per locale:\n\n"
+                . "**Option A — set `Settings::localeMap`** (recommended when a Craft site exists with a different handle):\n\n"
+                . "```php\n// config/kunstmaan-migrator.php\nreturn [\n    '*' => [\n        'localeMap' => [\n";
+            foreach ($unmapped as $l) {
+                $prefix = LocalePreflight::languagePrefix($l);
+                $hint = '';
+                foreach ($craftHandles as $h) {
+                    if (LocalePreflight::languagePrefix($h) === $prefix) {
+                        $hint = " // suggested: \$craftHandle = '{$h}'";
+                        break;
+                    }
+                }
+                $out .= "            '{$l}' => '<craft-site-handle>',{$hint}\n";
+            }
+            $out .= "        ],\n    ],\n];\n```\n\n"
+                . "**Option B — add new Craft sites** (when the legacy locale should land on its own dedicated site):\n\n"
+                . "```php\n// config/sites.php\nreturn [\n";
+            foreach ($unmapped as $l) {
+                $out .= "    '{$l}' => ['language' => '{$l}', 'baseUrl' => 'https://example.com/'],\n";
+            }
+            $out .= "    // ...\n];\n```\n\nRe-run analyze after either change.\n";
         }
 
         return $out;
