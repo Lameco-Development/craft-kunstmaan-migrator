@@ -36,7 +36,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Current Phase
 
-**Phase 02.1: Kunstmaan Source Introspection** — Not yet planned. Run `/gsd-discuss-phase 02.1` to gather context. Inserted between Phase 2 and Phase 3 because Phase 2 UAT revealed the hardcoded `kuma_*` LIKE filter in `SchemaDumper` misses every project-specific content table (`lameco_websitebundle_*`) and every M2M join table (`case_study_pages_categories`, `lameco_websitebundle_field_pages_method_pages`, etc.) — Phase 3's `migrate --live` would silently produce an empty migration without this fix.
+**Phase 02.1: Kunstmaan Source Introspection** — Not yet planned. Run `/gsd-discuss-phase 02.1` to gather context. Inserted between Phase 2 and Phase 3 because the database alone can't reconstruct the Kunstmaan content schema: (a) project content tables are project-prefixed (`lameco_websitebundle_*`), (b) page-part identity is polymorphic via Doctrine single-table inheritance (the row alone doesn't tell you whether a `kuma_main_pageparts` entry is a HeaderPagePart, TextPagePart, or ImagePagePart), and (c) the page → context → allowed-page-part-classes structure lives only in `Entity/Pages/*.php::getPagePartAdminConfigurations()` + `config/kunstmaancms/pageparts/*.yml`. Phase 3's Matrix-field construction in Craft requires all three. CQM verified: 9 page-part classes allowed in context `main` (Header/Text/Line/TOC/Link/ToTop/Image/Download/Video), all from the YAML config — invisible to a DB-only scanner.
 
 ## Previous Phase
 

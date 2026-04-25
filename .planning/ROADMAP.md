@@ -10,7 +10,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 |---|-------|------|--------------|------------------|---------|
 | 1 | Foundation & Connectivity | A scaffolded Craft 5 plugin with internal legacy-DB connectivity, the `kunstmaanmigrator_state` table, the `kunstmaanSourceId` field, the `NeverProductionTrait`, the `doctor` command, the `migrate/install` shim, and a green PHPUnit suite. | FND-01..05, FND-02a, CONN-01..03 | 5 | no |
 | 2 | Schema, Mapping & Filters | `analyze` produces a schema dump + heuristic-and-LLM proposals into a single `mapping.yaml`; the `map` rubber-stamp loop walks proposals; coverage gate hard-blocks `--live`; mapping-audit detects drift; locale auto-detect + preflight; `MigrationFilters` plumbed through every stage. | MAP-01..07, FILT-01..03, LOC-01..02 | 5 | no |
-| 02.1 | Kunstmaan Source Introspection | Read Doctrine entity classes from `KUNSTMAAN_SOURCE_PATH` to discover project-prefixed tables (`lameco_websitebundle_*`) and M2M join tables; enrich heuristics + LLM with class-level signal. Inserted between Phase 2 and Phase 3 after Phase 2 UAT revealed the hardcoded `kuma_*` LIKE filter misses every project content table. | SRC-01..06 (TBD) | 8 | no |
+| 02.1 | Kunstmaan Source Introspection | Read the Kunstmaan source codebase (project Entity classes + vendor Kunstmaan bundles + `config/kunstmaancms/pageparts/*.yml`) as the source of truth for content schema. Discovers project-prefixed tables, M2M join tables, polymorphic page-part class identity, AND the page → context → allowed-page-part-classes structure that Phase 3's Matrix-field construction depends on. Inserted between Phase 2 and Phase 3 because Phase 2 UAT revealed the DB alone can't reconstruct the page-part hierarchy. | SRC-01..10 (TBD) | 10 | no |
 | 3 | ETL Pipeline & Field Handlers | Extract → Transform → Load → Finalize stages with topological ordering, per-entry atomic load, idempotent re-runs, JIT assets (with `--preload-assets`), the six built-in field handlers, and CKEditor token rewrite. | ETL-01..07, FH-01..04, FIN-01..02 | 4 | no |
 | 4 | Adapters, Verify & Settings | Optional SEOmatic + Retour adapters (runtime-detected, not composer-required), `verify` parity gate (counts + optional URL spot-check) producing a timestamped report, CP Settings page, console verbosity, rehearsal report artifact. | ADP-01..03, VER-01..03, CFG-01..03 | 4 | yes |
 | 5 | Tests, Rehearsal & Release | Transform-stage characterization fixtures from a real dump, full unit suite green, CI workflow running validate + PHPUnit + plugin-load smoke test, rehearsal pass against the CQM dump, release checklist + tag. | TST-01..04 | 4 | no |
@@ -62,23 +62,39 @@ Plans:
 
 ### Phase 02.1: Kunstmaan Source Introspection
 
-**Goal:** The analyze pipeline discovers tables — including project-prefixed tables (e.g. `lameco_websitebundle_*`) and ManyToMany join tables (e.g. `case_study_pages_categories`) — by reading the Kunstmaan source codebase's Doctrine entity classes, not by hardcoding `LIKE 'kuma_*'`. Heuristic + LLM proposals are enriched with class-level signal (entity name, parent class, M2M targets, AdminType).
+**Goal:** The analyze pipeline reads the Kunstmaan source codebase as the source of truth for content schema — Doctrine entity classes, YAML page-part config, AND vendor Kunstmaan bundles. The database is treated as opaque storage; the source code tells the migrator what each table means, which polymorphic class each row instantiates, which page-part classes are allowed in which page contexts, and how to reconstruct the page → context → matrix-of-page-parts hierarchy in Craft.
 
-**Why this slots between Phase 2 and Phase 3:** Phase 2 UAT against the CQM dump revealed that `SchemaDumper` is hardcoded to `WHERE TABLE_NAME LIKE 'kuma\_%'` — it scans Kunstmaan's bookkeeping tables (kuma_node, kuma_users, kuma_acl_*) but misses every project-specific content table and every M2M join table. Phase 3's `migrate --live` would silently produce an empty migration without this fix.
+**Why this slots between Phase 2 and Phase 3 — the three things the DB cannot tell you:**
 
-**Requirements:** SRC-01..06 (to be added to REQUIREMENTS.md during plan-phase).
+1. **Project content tables** are project-prefixed (`lameco_websitebundle_*`) — current `LIKE 'kuma_*'` filter misses them. Even M2M join tables (`case_study_pages_categories`, `lameco_websitebundle_field_pages_method_pages`) are invisible.
+2. **Polymorphic page-part identity** — Kunstmaan stores all page-parts in tables like `kuma_main_pageparts` joined to `kuma_node_versions` by context strings, with the actual subclass encoded by Doctrine single-table inheritance. The DB row alone doesn't tell you whether a `main_pageparts` row is a `HeaderPagePart`, `TextPagePart`, `ImagePagePart`, etc.
+3. **Page → context → allowed-page-part-classes structure** — lives entirely in `src/Entity/Pages/{X}.php::getPagePartAdminConfigurations()` (returns the contexts the page uses) AND `config/kunstmaancms/pageparts/{context}.yml` (declares which page-part classes are allowed in that context). Without this, the migrator can't construct Craft Matrix fields for page-parts at all — they'd land as orphaned flat rows.
+
+Phase 3's `migrate --live` literally cannot work without this metadata. Phase 02.1 makes it available.
+
+**Requirements:** SRC-01..10 (to be added to REQUIREMENTS.md during plan-phase).
 
 **Success criteria:**
-1. `KunstmaanSourceScanner` reads `KUNSTMAAN_SOURCE_PATH` (env or `Settings::kunstmaanSourcePath`); scans `Entity/**/*.php` (project) + optionally vendor Kunstmaan bundles; degrades gracefully when path unset (greenfield mode → keep current `kuma_*` LIKE behavior).
-2. Discovered tables: every `#[ORM\Table(name: '…')]` attribute in scanned classes; every `#[ORM\JoinTable(name: '…')]` for M2M; vendor base-class tables resolved via `extends` chain.
-3. `SchemaDumper` consumes the discovered table list when source path set; falls back to `LIKE 'kuma_%'` (or `Settings::legacyDbTablePrefix`) when not.
-4. M2M join tables appear in `mapping.yaml` correctly classified (target entity types resolved on both sides; `mappedBy` followed back to the owning side).
-5. `HeuristicProposer` gains an entity-aware heuristic: column → entity property → Craft field handle (higher confidence than name matching alone).
-6. `LlmClassifier` prompts include parent-entity class signature + property docblock for each residual chunk.
-7. Doctor gains a 5th check: "Kunstmaan source path" (verifies the path exists and contains `Entity/` when set).
-8. Re-running analyze against `~/Sites/cqm-craft-website` (with source-path set to `~/Sites/cqm-website`) discovers the `lameco_websitebundle_*` content tables, the M2M join tables, and produces a meaningful coverage measurement (not 100% fill-rate-zero drops).
 
-**Plans:** TBD — to be created via `/gsd-plan-phase 02.1`.
+*Doctrine source layer (database structural truth):*
+1. `KunstmaanSourceScanner` reads `KUNSTMAAN_SOURCE_PATH` (env or `Settings::kunstmaanSourcePath`); scans `Entity/**/*.php` (project) + `vendor/kunstmaan/*/Entity/**/*.php` (vendor). Degrades gracefully when path unset (greenfield mode → current `kuma_*` LIKE behavior).
+2. Discovered tables: every `#[ORM\Table(name: '…')]` (and `@ORM\Table` legacy syntax); every `#[ORM\JoinTable(name: '…')]` for M2M; vendor base-class tables (`AbstractArticlePage`, `AbstractEntityAdminPart`, etc.) resolved via `extends` chain.
+3. `SchemaDumper` consumes the discovered table list when source path is set; falls back to `LIKE 'kuma_%'` (or `Settings::legacyDbTablePrefix`) otherwise. WARNs when DB has tables not present in scanner output (drift detection).
+4. M2M relations are resolved end-to-end: owning side (with explicit `JoinTable`) and inverse side (with `mappedBy`) cross-reference; both target classes' tables are discovered; the join table is marked as such in `mapping.yaml`.
+
+*Page-part structural layer (source-only truth):*
+5. `KunstmaanPageStructureScanner` (separate from the schema scanner) reads each `Entity/Pages/*.php` for `getPagePartAdminConfigurations()` and `getPageTemplates()` returns; reads `config/kunstmaancms/pageparts/*.yml` for context → allowed-page-part-classes mappings.
+6. Output: a structured `pageStructure.json` that says, for each Page entity: `{ tableName, contexts: [{ name, allowedPagePartClasses: [{class, table}] }], templates: [...], possibleChildTypes: [...] }`. This is the canonical input for Phase 3's Matrix-field construction.
+7. Single-table-inheritance discriminators (`#[ORM\InheritanceType('SINGLE_TABLE')]` + `#[ORM\DiscriminatorColumn]` + `#[ORM\DiscriminatorMap]`) are extracted; each `*_pageparts` row's class can be resolved by discriminator value.
+
+*Heuristic + LLM enrichment:*
+8. `HeuristicProposer` gains an entity-aware heuristic: column → entity property → Craft field handle (higher confidence than name matching alone). Inherited columns (from `AbstractArticlePage` etc.) are recognized and grouped.
+9. `LlmClassifier` prompts include the parent-entity class signature + property docblock + (for page-parts) the contexts the parent page uses, for each residual chunk.
+
+*Operator surface:*
+10. Doctor gains a 5th check: "Kunstmaan source path" — verifies the path exists, contains `src/Entity/`, and contains `config/kunstmaancms/pageparts/` (or notes when YAML config is absent → fall back to PHP-only scan). Re-running analyze against `~/Sites/cqm-craft-website` with `KUNSTMAAN_SOURCE_PATH=~/Sites/cqm-website` produces a meaningful coverage measurement (not 100% fill-rate-zero drops) and emits `pageStructure.json` alongside `schema-dump.json`.
+
+**Plans:** TBD — likely 4–6 plans given the expanded scope (Doctrine scanner; page-structure scanner; YAML reader; SchemaDumper rewire; HeuristicProposer + LlmClassifier enrichment; tests + doc patches). To be created via `/gsd-plan-phase 02.1`.
 
 ### Phase 3: ETL Pipeline & Field Handlers
 
