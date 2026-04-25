@@ -16,8 +16,8 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 
 ### Connectivity (CONN)
 
-- [ ] **CONN-01**: Plugin owns the legacy DB connection internally — no Yii component required in the consuming site's `config/app.php`. Connection params come from env vars (`CRAFT_LEGACY_DB_*`) and/or plugin settings.
-- [ ] **CONN-02**: Anthropic API key sourced from `ANTHROPIC_API_KEY` env var or plugin settings (settings override env if both present, never logged).
+- [x] **CONN-01**: Plugin owns the legacy DB connection internally — no Yii component required in the consuming site's `config/app.php`. Connection params come from env vars (`CRAFT_LEGACY_DB_*`) and/or plugin settings. _(Phase 1 / Plan 02 — Plugin::init() registers legacyDb Yii application component conditionally via !Craft::\$app->has('legacyDb', true) guard; swap-in hosts retain their config/app.php declaration, greenfield hosts get the plugin's env-driven Connection from Settings.)_
+- [x] **CONN-02**: Anthropic API key sourced from `ANTHROPIC_API_KEY` env var or plugin settings (settings override env if both present, never logged). _(Phase 1 / Plan 02 — Settings::\$anthropicApiKey resolves from ANTHROPIC_API_KEY env via App::env() with `??=` so Settings property override wins; never echoed/logged from Settings or Twig template.)_
 - [ ] **CONN-03**: `kunstmaan-migrator/doctor` command reports OK/FAIL on: legacy DB reachability, Anthropic key presence, mapping file validity (if present), write permissions on `storage/migration/`. No queue-worker check — v1's check was carried by v1's queue-heavy pipeline; v2 is CLI-inline by default.
 
 ### Schema + Mapping (MAP)
