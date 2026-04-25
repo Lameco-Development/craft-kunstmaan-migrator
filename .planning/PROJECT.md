@@ -45,7 +45,8 @@ Headline scope:
 - **Production-environment migration** — `NeverProductionTrait` hard-blocks `CRAFT_ENVIRONMENT=production`. Plugin is a dev-host tool only.
 - **Three-tier `kunstmaan/` ⇄ `craft/` ⇄ `bridge/` source layout with Deptrac** — Replaced with a flatter, vertical-slice-friendly structure. Tier isolation was over-engineered for the problem.
 - **Multiple mapping files (`mapping.yaml.draft`, `mapping-drops-{ts}.yaml`)** — Single mapping file with per-row status replaces all three.
-- **Atomic flag, runtime AI calls, always-on asset preload** — Resolved decisions from v1.1 carried forward: atomic-always, runtime-zero-AI, JIT assets.
+- **Atomic flag, runtime AI calls, always-on asset preload** — Resolved decisions from v1.1 carried forward: atomic-always (transactional rollback per entry), runtime-zero-AI, JIT assets driven by page/entry references.
+- **Migrating orphan assets** — Out of scope for v1. The migration is page-driven by design (see Migration model below) — only assets actually referenced from migrated entries get pulled in. A post-run "sync remaining" pass for un-referenced media is roadmapped (`NEXT-05`).
 
 ## Context
 
@@ -73,6 +74,16 @@ Headline scope:
 - **Filter spec:** `MigrationFilters` model piped through every stage from day one. v1 surface is entity allow-list, locale subset, `--since=YYYY-MM-DD`. Designed to grow.
 - **Tests:** PHPUnit 11 from day one, with characterization fixtures on the Transform stage. No "tests deliberately skipped in 1.0" this time.
 - **No skill bundle.** No CP runner utility. No Phase 8 D-08-XX traceability tables in user-facing docs.
+
+### Migration model
+
+The migration is **page-driven**. Entries are the unit of work; assets, taxonomies, and relations get pulled in lazily as references are encountered while transforming and loading entries. Two consequences worth naming:
+
+- **Faster, more predictable runs.** We never iterate the full legacy media table; we only touch the rows actually used by entries that pass the filter spec.
+- **Orphan media is expected.** Assets in the legacy DB that no migrated entry references are not migrated. This is intentional, not a bug. The trade-off is acceptable because Craft is the schema-leading side: if no entry needs a given asset, there's no Craft home for it.
+- **Deferred CKEditor token resolution** (`[NT<id>]` / `[M<id>]`) is part of the same model. Tokens that point at not-yet-migrated entries get re-resolved in `migrate/finalize` once all referenced entries exist.
+
+The post-run "sync remaining media" sweep is roadmapped as `NEXT-05` for cases where stakeholders want every legacy asset, referenced or not, to land in Craft.
 
 ### Operator workflow (target shape)
 
@@ -109,6 +120,7 @@ Each command accepts the filter flags (`--entities=...`, `--since=...`, `--local
 | Drop `.claude/skills/` bundle | Fragile (`cp -r` from `vendor/`), and the rubber-stamp loop is fully expressible as a CLI command. | — Pending |
 | Drop the CP "Migration Pipeline" runner utility | Three operator surfaces in v1 were one too many; the CLI is canonical. | — Pending |
 | Tests required from day one | v1's "test suite deliberately skipped in 1.0" was a regret. Transform-stage characterization tests are the cheapest insurance against regression. | — Pending |
+| Page-driven migration (entries are the unit of work; assets/relations pulled in lazily) | Faster, more predictable runs. Orphan media is acknowledged as a deliberate trade-off — Craft schema leads, so unreferenced legacy assets have no Craft home. Post-run "sync remaining media" is `NEXT-05`. | — Pending |
 
 ## Evolution
 

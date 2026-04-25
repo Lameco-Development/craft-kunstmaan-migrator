@@ -54,7 +54,7 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 
 - [ ] **FH-01**: Pluggable `FieldHandler` interface with built-in handlers: PlainText, Asset, Matrix, Relation, SplitName (Dutch composite-name splitter), CKEditor.
 - [ ] **FH-02**: Handlers are registered in a `FieldHandlerRegistry` wired from the plugin bootstrap, allowing project-level overrides.
-- [ ] **FH-03**: Asset handler supports JIT (default) and `--preload-assets` (opt-in batch ingest).
+- [ ] **FH-03**: Asset handler supports JIT (default — page-driven; only assets referenced from migrated entries are pulled in) and `--preload-assets` (opt-in batch ingest of every referenced asset before the entries loop, useful for parallelisation). Neither mode migrates orphan assets — that's `NEXT-05`.
 - [ ] **FH-04**: CKEditor handler emits `[NT<id>]` / `[M<id>]` deferred tokens for cross-entry / media references that don't yet exist at load time.
 
 ### Finalize + CKEditor rewriting (FIN)
@@ -93,6 +93,7 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 - [ ] **NEXT-02**: Read-only CP status mirror — a small CP page that surfaces last run, mapping coverage, and counts. Not a runner.
 - [ ] **NEXT-03**: Multi-provider AI — abstract the proposer behind an interface so OpenAI / local models can plug in.
 - [ ] **NEXT-04**: Cross-client rehearsal matrix (Simac, Enreach, Joulz) — exercising the migrator against more than the CQM corpus.
+- [ ] **NEXT-05**: Orphan-media sync pass — optional `migrate/sync-orphan-assets` command that walks the legacy media table and migrates any asset not yet present in Craft, for stakeholders who want every legacy asset preserved regardless of reference. Strictly opt-in; the page-driven default stays.
 
 ## Out of Scope (v1)
 
