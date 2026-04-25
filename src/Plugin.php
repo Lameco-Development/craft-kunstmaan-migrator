@@ -8,6 +8,8 @@ use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
+use lameco\kunstmaanmigrator\filter\FilterFactory;
+use lameco\kunstmaanmigrator\locale\LocalePreflight;
 use lameco\kunstmaanmigrator\models\Settings;
 use PDO;
 use yii\db\Connection;
@@ -16,6 +18,8 @@ use yii\db\Connection;
  * Kunstmaan → Craft Migrator plugin entrypoint.
  *
  * @property-read LegacyDbService $legacyDbService
+ * @property-read FilterFactory $filterFactory
+ * @property-read LocalePreflight $localePreflight
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -31,8 +35,9 @@ class Plugin extends BasePlugin
     {
         return [
             'components' => [
-                // D-15: only Phase-1 component. Phase 2-4 components land in later phases.
-                'legacyDbService' => LegacyDbService::class,
+                'legacyDbService' => LegacyDbService::class,    // Phase 1
+                'filterFactory'   => FilterFactory::class,      // Phase 2 (Plan 01) — D-10 Settings+CLI merge
+                'localePreflight' => LocalePreflight::class,    // Phase 2 (Plan 01) — LOC-01 detect + LOC-02 ensure
             ],
         ];
     }
