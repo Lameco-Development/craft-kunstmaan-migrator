@@ -10,7 +10,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 |---|-------|------|--------------|------------------|---------|
 | 1 | Foundation & Connectivity | A scaffolded Craft 5 plugin with internal legacy-DB connectivity, the `kunstmaanmigrator_state` table, the `kunstmaanSourceId` field, the `NeverProductionTrait`, the `doctor` command, the `migrate/install` shim, and a green PHPUnit suite. | FND-01..05, FND-02a, CONN-01..03 | 5 | no |
 | 2 | Schema, Mapping & Filters | `analyze` produces a schema dump + heuristic-and-LLM proposals into a single `mapping.yaml`; the `map` rubber-stamp loop walks proposals; coverage gate hard-blocks `--live`; mapping-audit detects drift; locale auto-detect + preflight; `MigrationFilters` plumbed through every stage. | MAP-01..07, FILT-01..03, LOC-01..02 | 5 | no |
-| 02.1 | Kunstmaan Source Introspection | Read the Kunstmaan source codebase (project Entity classes + vendor Kunstmaan bundles + `config/kunstmaancms/pageparts/*.yml`) as the source of truth for content schema. Discovers project-prefixed tables, M2M join tables, polymorphic page-part class identity, AND the page → context → allowed-page-part-classes structure that Phase 3's Matrix-field construction depends on. Inserted between Phase 2 and Phase 3 because Phase 2 UAT revealed the DB alone can't reconstruct the page-part hierarchy. | SRC-01..10 (TBD) | 10 | no |
+| 02.1 | Kunstmaan Source Introspection | Read the Kunstmaan source codebase (project Entity classes + vendor Kunstmaan bundles + `config/kunstmaancms/pageparts/*.yml`) as the source of truth for content schema. Discovers project-prefixed tables, M2M join tables, polymorphic page-part class identity, page → context → allowed-page-part-classes structure, AND ports v1's DoctrineEntityParser + DetailTableResolver + KnowledgeBase Markdown + BodyScanColumnFinder + MediaFkScanner + TopologicalOrderer + BlockAvailabilityValidator (don't rewrite — port wholesale). Reconciles Plan 02-05's CoverageAuditor + MappingAuditor against v1's originals to catch any rules dropped in the rewrite. | SRC-01..17 (TBD) | 17 | no |
 | 3 | ETL Pipeline & Field Handlers | Extract → Transform → Load → Finalize stages with topological ordering, per-entry atomic load, idempotent re-runs, JIT assets (with `--preload-assets`), the six built-in field handlers, and CKEditor token rewrite. | ETL-01..07, FH-01..04, FIN-01..02 | 4 | no |
 | 4 | Adapters, Verify & Settings | Optional SEOmatic + Retour adapters (runtime-detected, not composer-required), `verify` parity gate (counts + optional URL spot-check) producing a timestamped report, CP Settings page, console verbosity, rehearsal report artifact. | ADP-01..03, VER-01..03, CFG-01..03 | 4 | yes |
 | 5 | Tests, Rehearsal & Release | Transform-stage characterization fixtures from a real dump, full unit suite green, CI workflow running validate + PHPUnit + plugin-load smoke test, rehearsal pass against the CQM dump, release checklist + tag. | TST-01..04 | 4 | no |
@@ -94,7 +94,45 @@ Phase 3's `migrate --live` literally cannot work without this metadata. Phase 02
 *Operator surface:*
 10. Doctor gains a 5th check: "Kunstmaan source path" — verifies the path exists, contains `src/Entity/`, and contains `config/kunstmaancms/pageparts/` (or notes when YAML config is absent → fall back to PHP-only scan). Re-running analyze against `~/Sites/cqm-craft-website` with `KUNSTMAAN_SOURCE_PATH=~/Sites/cqm-website` produces a meaningful coverage measurement (not 100% fill-rate-zero drops) and emits `pageStructure.json` alongside `schema-dump.json`.
 
-**Plans:** TBD — likely 4–6 plans given the expanded scope (Doctrine scanner; page-structure scanner; YAML reader; SchemaDumper rewire; HeuristicProposer + LlmClassifier enrichment; tests + doc patches). To be created via `/gsd-plan-phase 02.1`.
+**v1 brownfield reuse — port wholesale, do NOT rewrite:**
+
+Survey of `~/Sites/craft-kunstmaan-migrator/src` shows v1 already solved most of this and shipped against the CQM rehearsal. Don't fall into the v2 trap of rewriting from scratch — port these classes verbatim and only reshape the surface where v2 architectural decisions require it:
+
+| v1 class | LOC | What it does | Phase 02.1 disposition |
+|---|---|---|---|
+| `kunstmaan/schema/DoctrineEntityParser` | 366 | Parses `#[ORM\Table]`, `#[ORM\Column]`, `#[ORM\ManyToOne]`, `#[ORM\ManyToMany]`, `#[ORM\JoinTable]`; resolves `Foo::class` and `\Full\Ns\Foo::class` short refs via `use` map; `getByFqcn()` / `getByTable()` / `getAll()` API | **Port verbatim**. This IS the scanner Phase 02.1 needs. |
+| `kunstmaan/schema/DetailTableResolver` | 280 | 4-tier FQCN→table resolver: (1) operator override array, (2) DoctrineEntityParser source truth, (3) information_schema prefix scan, (4) all-tables suffix scan | **Port verbatim**. Solves polymorphic page-part identity exactly as needed. |
+| `kunstmaan/schema/knowledgebase/KnowledgeBase` | 68KB | Generates Markdown KB about Pages + PageParts (table grouping; column lists; per-page page-part contexts; counts per context). Output is fed to LlmClassifier prompts. | **Port partial** — focus on `renderPagesMarkdown` + `renderPagePartsMarkdown`. This is the missing piece in our current LlmClassifier (we hardcode `'', ''` for KB markdown). |
+| `kunstmaan/schema/BodyScanColumnFinder` | 100 | Auto-discovers TEXT/LONGTEXT columns matching `(content\|intro\|summary\|body\|description)` regex — used by CKEditor body-token rewrite later | **Port now** as part of scanner output. Phase 3 consumes it. |
+| `kunstmaan/schema/MediaFkScanner` | 100 | Auto-discovers columns referencing `kuma_media.id` via information_schema (BIGINT + name regex) | **Port now**. Phase 3 consumes it. |
+| `kunstmaan/schema/TopologicalOrderer` | 130 | Pure-function depth-first orderer for `kuma_nodes` parent-first hierarchical insertion (cycle detection included) | **Port now** even though Phase 3 consumes it — the discovery surface belongs here. |
+| `bridge/schema/knowledgebase/CoverageAuditor` | 482 | v1's coverage auditor (different from the one we shipped in Plan 02-05) | **Compare + reconcile**. v2's CoverageAuditor was a fresh write; some v1 details may have been lost. |
+| `bridge/mapping/MappingValidator` | 647 | Already partially ported into our MappingAuditor (Plan 02-05) | **Re-audit**. Confirm no rules dropped during the port. |
+| `bridge/mapping/BlockAvailabilityValidator` | ~200 | Validates every `pageParts[*].target` block handle is available in at least one nodeClass that uses the page-part | **Port for 02.1** — extends MappingAuditor with block-availability checks once page-part contexts are known. |
+
+What v1 had that we are NOT porting in 02.1 (deferred to Phase 3 where they belong):
+- `bridge/transform/TransformService` (39.5K) — Phase 3's Transform stage
+- `bridge/ckeditor/CkeditorRewriterService` (19.9K) — Phase 3's finalize stage
+- `bridge/load/*` — Phase 3's Load stage (asset/taxonomy/redirect/SEO/atomic)
+- `bridge/mapping/AbstractPagePartMapper` + `AbstractNodeClassMapper` + `DeclarativeMapperDriver` — Phase 3's per-class escape-hatch mapper system. CQM had 6 custom PagePart mappers + 3 NodeClass mappers — we'll need this same surface for v2 in Phase 3.
+- `bridge/queue/*` — explicitly dropped per CLI-only decision.
+- `craft/load/handlers` — Phase 3's six built-in field handlers (Asset, Matrix, PlainText, Relation, SplitName, Taxonomy).
+
+**Craft target side — what's already provisioned in cqm-craft-website (validated):**
+
+19 sections exist: `caseCategories, caseOverviewPage, casePages, contactPage, contentPages, cookieConsentPage, errorPage, globalSettings, handoutsPage, homePage, llmSettings, newsCategories, newsOverviewPage, newsPages, searchPage, teamOverviewPage, teamPages, thanksPages, topics`. So the Craft target IS populated — the heuristic-coverage problem from Phase 2 UAT was 100% the source-side scanner missing the project tables, NOT the target side being empty. Once Phase 02.1 lands the source-driven scanner, heuristic 2 (exact name match) should fire repeatedly because the entry types and field handles exist on both sides (NewsPage→newsPages, EmployeePage→teamPages, etc.).
+
+**Additional success criteria (consolidating the v1 survey):**
+
+11. **DoctrineEntityParser** ported verbatim from v1 with the use-map FQCN resolver intact.
+12. **DetailTableResolver** ported with the 4-tier resolution priority (operator override → source code → prefix scan → suffix scan).
+13. **KnowledgeBase Markdown generator** ported and wired into `LlmClassifier::batchPropose` — replace the current `'', ''` placeholders with `$kb->renderPagesMarkdown()` and `$kb->renderPagePartsMarkdown()`. Truncation to 8000 chars stays.
+14. **BodyScanColumnFinder + MediaFkScanner + TopologicalOrderer** ported as part of the scanner output. Phase 3 consumes them — Phase 02.1 is responsible for getting the discovery right.
+15. **BlockAvailabilityValidator** ported — extends MappingAuditor with the "every target block handle is reachable from at least one parent page's allowed-page-part list" check.
+16. **CoverageAuditor reconciliation** — compare our Plan 02-05 fresh write against v1's `bridge/schema/knowledgebase/CoverageAuditor` (482 LOC); land any rules we dropped.
+17. **MappingValidator reconciliation** — same audit for MappingAuditor against v1's 647 LOC original.
+
+**Plans:** TBD — now likely 6–8 plans given the v1 reuse + reconciliation work. To be created via `/gsd-plan-phase 02.1`.
 
 ### Phase 3: ETL Pipeline & Field Handlers
 
