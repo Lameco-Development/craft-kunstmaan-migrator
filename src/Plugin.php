@@ -14,6 +14,8 @@ use lameco\kunstmaanmigrator\analyze\SchemaDumper;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
+use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
+use lameco\kunstmaanmigrator\mapping\MappingAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingFile;
 use lameco\kunstmaanmigrator\models\Settings;
 use PDO;
@@ -30,6 +32,8 @@ use yii\db\Connection;
  * @property-read HeuristicProposer $heuristicProposer
  * @property-read LlmClassifier $llmClassifier
  * @property-read ReportBuilder $reportBuilder
+ * @property-read CoverageAuditor $coverageAuditor
+ * @property-read MappingAuditor $mappingAuditor
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -53,6 +57,8 @@ class Plugin extends BasePlugin
                 'heuristicProposer' => HeuristicProposer::class,  // Phase 2 (Plan 03) — 9 deterministic heuristics
                 'llmClassifier'     => LlmClassifier::class,      // Phase 2 (Plan 03) — Anthropic Haiku batch caller
                 'reportBuilder'     => ReportBuilder::class,      // Phase 2 (Plan 03) — D-17 paste-ready locales block
+                'coverageAuditor'   => CoverageAuditor::class,    // Phase 2 (Plan 05) — D-14 MAP-06
+                'mappingAuditor'    => MappingAuditor::class,     // Phase 2 (Plan 05) — D-16 MAP-07
             ],
         ];
     }

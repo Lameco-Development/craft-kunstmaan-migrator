@@ -34,9 +34,9 @@ use yii\console\ExitCode;
  *   - ExitCode::CONFIG on locale-preflight FAIL
  *   - ExitCode::UNSPECIFIED_ERROR on any other FAIL
  *
- * --audit-strict is declared here so Plan 05 (mapping-audit) does not need
- * to re-touch this file. Its consumer (mappingAuditor->audit invocation +
- * fail-state elevation) lands when Plan 05 ships.
+ * --audit-strict (D-16): the mapping-audit step (Step 7) elevates non-empty drift
+ * findings to fail-state when this flag is set; warn-only by default. Drift findings
+ * are persisted to MAPPING-AUDIT.md regardless so operators always have an audit trail.
  */
 class AnalyzeController extends Controller
 {
@@ -208,7 +208,32 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
-        // Step 7: REPORT.md
+        // Step 7: mapping-audit (D-16). Warn-only by default; --audit-strict elevates.
+        $findings = $plugin->mappingAuditor->audit($merged['proposals']);
+        $auditPath = $storageDir . '/MAPPING-AUDIT.md';
+        $auditMd = $plugin->mappingAuditor->renderMarkdown($findings);
+        if (!$plugin->mappingFile->writeAtomic($auditPath, $auditMd)) {
+            $this->stderr("  FAIL could not write {$auditPath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        if ($findings === []) {
+            $this->stdout("  OK   mapping audit clean → {$auditPath}\n", Console::FG_GREEN);
+        } else {
+            $n = count($findings);
+            if ($this->auditStrict) {
+                $this->stderr(
+                    "  FAIL mapping audit: {$n} drift finding(s) (--audit-strict) → {$auditPath}\n",
+                    Console::FG_RED,
+                );
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->stdout(
+                "  WARN mapping audit: {$n} drift finding(s) → {$auditPath}\n",
+                Console::FG_YELLOW,
+            );
+        }
+
+        // Step 8: REPORT.md
         $reportPath = $storageDir . '/REPORT.md';
         $report = $plugin->reportBuilder->render($schemaDump, $merged['proposals']);
         if (!$plugin->mappingFile->writeAtomic($reportPath, $report)) {
