@@ -3,13 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Phase 02 verified end-to-end (UAT 1/4/5 PASSED against ~/Sites/cqm-craft-website; UAT 2 pending operator TTY; UAT 3 deferred to Phase 5). Ready for Phase 03 — ETL Pipeline & Field Handlers.
-last_updated: "2026-04-26T00:30:00Z"
+stopped_at: Phase 02.1 context gathered
+last_updated: "2026-04-25T22:29:48.247Z"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 11
   completed_plans: 11
-  percent: 33
+  percent: 100
 ---
 
 # State
@@ -130,8 +131,8 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 ## Last Session
 
 - **Last:** 2026-04-26T00:30:00Z
-- **Stopped at:** Phase 2 closed — UAT verified end-to-end against ~/Sites/cqm-craft-website (analyze + map --auto-accept-high produced 278-row mapping.yaml from 48-table CQM dump; 143 high-confidence rows promoted to accepted). Three real defects + one feature gap surfaced and fixed (D-26..D-29). Suite: 39 tests / 84 assertions, all green.
-- **Resume file:** Phase 02.1 — `/gsd-discuss-phase 02.1` (Kunstmaan Source Introspection — blocker before Phase 3 because the analyze pipeline currently misses project-prefixed tables and M2M join tables)
+- **Stopped at:** Phase 02.1 context gathered
+- **Resume file:** .planning/phases/02.1-source-introspection/02.1-CONTEXT.md
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-8 have something to match against).
 
