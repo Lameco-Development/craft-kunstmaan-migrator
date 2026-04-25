@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Executing Phase 01
-last_updated: "2026-04-25T16:01:00Z"
+last_updated: "2026-04-25T16:06:16Z"
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # State
@@ -40,6 +40,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Recent Activity
 
+- 2026-04-25: Phase 1 / Plan 04 (doctor-command) executed. 1 task, 1 commit (ea24a39). DoctorController lands the three preflight checks per D-17 (legacy DB SELECT 1 reachability, Anthropic key presence via Settings-or-env, storage/migration writability with D-18 auto-create at 0755). actionIndex first-statement-gates on enforceNeverProduction (D-20) — FND-04 now satisfied across both Phase 1 controllers. T-1-01 / T-1-03 / T-1-04 STRIDE mitigations verified by greps; T-1-08 accepted. v1's checkQueueWorker (CLI-inline default) and checkMapping (defers to Phase 2) explicitly dropped. Plain-text OK/FAIL output with Console::FG_GREEN / FG_RED / FG_CYAN. Exit 0 on full pass / 1 on any FAIL. && -against-$ok pattern ensures every check runs even after a failure. FND-04, CONN-03 (partial — 3 checks per D-17, mapping check deferred to Phase 2) satisfied.
 - 2026-04-25: Phase 1 / Plan 03 (install-migration) executed. 2 tasks, 2 commits (898d632, 8ba9d1a). Install.php lands the v1.x-verbatim D-06 state-table schema (10 cols, 2 indexes) guarded by tableExists; D-09 UID-reuse chain (project-config → getFieldByHandle → mint) preserves the 570-row CQM rehearsal continuity; safeDown is a verbatim no-op per FND-03 / D-10. MigrateController ships only actionInstall (Phase 3 actions deferred per D-05) with NeverProduction gate first (D-20) and MigrationManager wired on track 'kunstmaanmigrator'. FND-02, FND-02a, FND-03 satisfied.
 - 2026-04-25: Phase 1 / Plan 02 (settings-legacy-db) executed. 3 tasks, 3 commits (e27e375, 09911ea, 9c05e3b). Settings model with full v2 surface (8 read-active + 8 declared) lands; LegacyDbService Yii Component (5 read-only methods) lands; Plugin::init() promoted from stub to full Phase 1 form with conditional legacyDb registration (D-11), console controllerNamespace switch, createSettingsModel(), settingsHtml() + placeholder _settings.twig. CONN-01, CONN-02 satisfied.
 - 2026-04-25: Phase 1 / Plan 01 (composer-scaffold) executed. 4 tasks, 3 commits (0c8061e, f8c1719, b608527). composer.json validates strict, PSR-4 autoload resolves Plugin + NeverProductionTrait FQCNs, schemaVersion=1.0.0 confirmed via reflection. FND-01 satisfied.
@@ -65,12 +66,15 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 - D-15: Settings model declares full v2 surface upfront (8 Phase-1 read-active + 8 Phase-2-4 declared). Phase 4 / CFG-01 plugs in without refactor.
 - D-16: hasCpSettings = true; createSettingsModel() returns new Settings(); settingsHtml() renders placeholder _settings.twig (real form ships in Phase 4).
 - D-03: console controllerNamespace = lameco\kunstmaanmigrator\console, switched only on console requests (web namespace deferred to Phase 4).
+- D-17: doctor ships 3 checks (legacyDb, anthropicApiKey, storageDir). The mapping-file check listed in REQUIREMENTS.md CONN-03 defers to Phase 2 alongside the mapping loader/validator; Plan 05 patches the wording.
+- D-18: storage/migration/ is auto-created with mode 0755 on first doctor invocation if missing (greenfield convenience; v1.x had no equivalent).
+- D-19: doctor output style is plain-text OK/FAIL with two-space indent + ANSI colors (FG_GREEN / FG_RED / FG_CYAN). Exit 0 on full pass, 1 on any FAIL. && -against-$ok ensures all checks run even after a failure.
 
 ## Last Session
 
-- **Last:** 2026-04-25T16:01:00Z
-- **Stopped at:** Completed Phase 1 / Plan 03 (install-migration)
-- **Resume file:** `.planning/phases/01-foundation-connectivity/01-04-doctor-command-PLAN.md`
+- **Last:** 2026-04-25T16:06:16Z
+- **Stopped at:** Completed Phase 1 / Plan 04 (doctor-command)
+- **Resume file:** `.planning/phases/01-foundation-connectivity/01-05-tests-ci-docs-PLAN.md`
 - **Blockers:** None
 
 ## Reference Material
