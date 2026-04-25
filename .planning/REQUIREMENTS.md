@@ -8,7 +8,8 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 ### Foundation (FND)
 
 - [ ] **FND-01**: Plugin scaffolds as a Craft 5 plugin (`composer.json` type `craft-plugin`, PSR-4 namespace `lameco\kunstmaanmigrator\` under `src/`, PHP 8.3+) and installs cleanly via `./craft plugin/install kunstmaan-migrator`.
-- [ ] **FND-02**: Install creates a state table `kunstmaanmigrator_state` and attaches a `kunstmaanSourceId` Plain Text field. If a `kunstmaanSourceId` field UID already exists from the legacy v1.x plugin, the install reuses it instead of minting a new one.
+- [ ] **FND-02**: Install creates a state table `kunstmaanmigrator_state` (schema kept compatible with v1.x: `legacy_class`, `legacy_id`, `craft_id`, `migrated_at`, `status`) and attaches a `kunstmaanSourceId` Plain Text field. If a `kunstmaanSourceId` field UID already exists from the v1.x plugin, the install reuses it. Plain Text type is preserved (over a narrower Number field) so the v2 install can swap-in on a host already migrated under v1.x without altering the field type.
+- [ ] **FND-02a**: Programmatic install command (`kunstmaan-migrator/migrate/install`) runs the plugin's DB migrations on demand. Needed because Craft 5 dropped `--migrationPath` and additional migrations beyond `Install.php` (anticipated for future schema additions) have no first-class CLI route otherwise. v1.x ships this; we keep parity.
 - [ ] **FND-03**: Uninstall is a deliberate no-op on the state table and `kunstmaanSourceId` field — operator must remove manually for a full wipe.
 - [ ] **FND-04**: `NeverProductionTrait` hard-blocks every legacy-reading or destructive command when `CRAFT_ENVIRONMENT=production`.
 - [ ] **FND-05**: PHPUnit 11 test suite scaffolded under `tests/`, wired to a `composer test` script and a CI workflow. Suite is non-empty on day one (smoke test on plugin bootstrap).
@@ -17,7 +18,7 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 
 - [ ] **CONN-01**: Plugin owns the legacy DB connection internally — no Yii component required in the consuming site's `config/app.php`. Connection params come from env vars (`CRAFT_LEGACY_DB_*`) and/or plugin settings.
 - [ ] **CONN-02**: Anthropic API key sourced from `ANTHROPIC_API_KEY` env var or plugin settings (settings override env if both present, never logged).
-- [ ] **CONN-03**: `kunstmaan-migrator/doctor` command reports OK/FAIL on: legacy DB reachability, Anthropic key presence, mapping file validity, write permissions on `storage/migration/`.
+- [ ] **CONN-03**: `kunstmaan-migrator/doctor` command reports OK/FAIL on: legacy DB reachability, Anthropic key presence, mapping file validity (if present), write permissions on `storage/migration/`. No queue-worker check — v1's check was carried by v1's queue-heavy pipeline; v2 is CLI-inline by default.
 
 ### Schema + Mapping (MAP)
 
@@ -113,7 +114,7 @@ Filled in by the roadmap step. Every requirement above must map to exactly one p
 
 | REQ | Phase |
 |-----|-------|
-| FND-01 … FND-05 | 1 |
+| FND-01 … FND-05, FND-02a | 1 |
 | CONN-01 … CONN-03 | 1 |
 | MAP-01 … MAP-07 | 2 |
 | FILT-01 … FILT-03 | 2 |

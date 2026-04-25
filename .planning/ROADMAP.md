@@ -8,7 +8,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 
 | # | Phase | Goal | Requirements | Success Criteria | UI hint |
 |---|-------|------|--------------|------------------|---------|
-| 1 | Foundation & Connectivity | A scaffolded Craft 5 plugin with internal legacy-DB connectivity, the `kunstmaanmigrator_state` table, the `kunstmaanSourceId` field, the `NeverProductionTrait`, the `doctor` command, and a green PHPUnit suite. | FND-01..05, CONN-01..03 | 5 | no |
+| 1 | Foundation & Connectivity | A scaffolded Craft 5 plugin with internal legacy-DB connectivity, the `kunstmaanmigrator_state` table, the `kunstmaanSourceId` field, the `NeverProductionTrait`, the `doctor` command, the `migrate/install` shim, and a green PHPUnit suite. | FND-01..05, FND-02a, CONN-01..03 | 5 | no |
 | 2 | Schema, Mapping & Filters | `analyze` produces a schema dump + heuristic-and-LLM proposals into a single `mapping.yaml`; the `map` rubber-stamp loop walks proposals; coverage gate hard-blocks `--live`; mapping-audit detects drift; locale auto-detect + preflight; `MigrationFilters` plumbed through every stage. | MAP-01..07, FILT-01..03, LOC-01..02 | 5 | no |
 | 3 | ETL Pipeline & Field Handlers | Extract → Transform → Load → Finalize stages with topological ordering, per-entry atomic load, idempotent re-runs, JIT assets (with `--preload-assets`), the six built-in field handlers, and CKEditor token rewrite. | ETL-01..07, FH-01..04, FIN-01..02 | 4 | no |
 | 4 | Adapters, Verify & Settings | Optional SEOmatic + Retour adapters (runtime-detected, not composer-required), `verify` parity gate (counts + optional URL spot-check) producing a timestamped report, CP Settings page, console verbosity, rehearsal report artifact. | ADP-01..03, VER-01..03, CFG-01..03 | 4 | yes |
@@ -18,7 +18,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 
 **Goal:** A scaffolded Craft 5 plugin that installs cleanly, owns its legacy DB connection, and exposes a working `doctor` command. PHPUnit suite is wired and non-empty on day one — no "tests skipped in 1.0" regret this time.
 
-**Requirements:** FND-01, FND-02, FND-03, FND-04, FND-05, CONN-01, CONN-02, CONN-03.
+**Requirements:** FND-01, FND-02, FND-02a, FND-03, FND-04, FND-05, CONN-01, CONN-02, CONN-03.
 
 **Success criteria:**
 1. `composer require lameco/craft-kunstmaan-migrator` followed by `./craft plugin/install kunstmaan-migrator` succeeds on a stock Craft 5 install with no SEOmatic / Retour deps.

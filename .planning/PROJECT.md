@@ -121,6 +121,12 @@ Each command accepts the filter flags (`--entities=...`, `--since=...`, `--local
 | Drop the CP "Migration Pipeline" runner utility | Three operator surfaces in v1 were one too many; the CLI is canonical. | — Pending |
 | Tests required from day one | v1's "test suite deliberately skipped in 1.0" was a regret. Transform-stage characterization tests are the cheapest insurance against regression. | — Pending |
 | Page-driven migration (entries are the unit of work; assets/relations pulled in lazily) | Faster, more predictable runs. Orphan media is acknowledged as a deliberate trade-off — Craft schema leads, so unreferenced legacy assets have no Craft home. Post-run "sync remaining media" is `NEXT-05`. | — Pending |
+| Keep v1's `kunstmaanmigrator_state` schema verbatim | Lets a v2 install detect prior state on hosts already migrated under v1.x. Schema (`legacy_class`, `legacy_id`, `craft_id`, `migrated_at`, `status`) earns its keep over a field-only approach: a fast index for "have I seen this legacy id?" without loading every Craft entry, plus an audit trail. | — Pending |
+| `kunstmaanSourceId` field stays Plain Text | v2 is intended to replace v1.x in place on existing host sites. Preserving the v1 field UID avoids re-attaching the field; preserving the field type (Plain Text) avoids a project-config diff on already-migrated sites. Number would be narrower but isn't worth the upgrade churn. | — Pending |
+| CLI namespace stays `kunstmaan-migrator/*` (same as v1) | v2 replaces v1.x; the two are not intended to coexist. Reusing the namespace means no operator retraining and no muscle-memory churn. | — Pending |
+| Keep `migrate/install` programmatic-migration shim | Anticipating future schema additions beyond `Install.php`, and Craft 5 dropped `--migrationPath`. Cheap insurance. | — Pending |
+| `doctor` drops the queue-worker check (v1 had it) | v2 is CLI-inline by default; no queue dependency in v1.0 surface. Re-add if a future phase introduces async stages. | — Pending |
+| CP Settings page deferred to Phase 4 | Env vars suffice for development. CFG-01 stays where it is. | — Pending |
 
 ## Evolution
 
