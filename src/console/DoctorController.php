@@ -14,17 +14,31 @@ use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Doctor — preflight diagnostics for the migrator. Three checks per D-17:
+ * Doctor — preflight diagnostics for the migrator. Four checks (D-17 + Phase 2 / Plan 05):
  *   1. Legacy DB reachability (SELECT 1)
  *   2. Anthropic key presence (Settings override OR env; never echoes the value — T-1-03)
  *   3. storage/migration/ writable (auto-creates if missing — D-18 greenfield behavior)
+ *   4. mapping.yaml health (deferred from Phase 1 / D-17 — landed alongside MappingFile in Phase 2)
  *
- * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline) and
- * checkMapping (D-17 — defers to Phase 2 alongside the mapping loader).
+ * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline).
+ *
+ * FILT-03: declares --entities / --locales / --since for command-surface uniformity but
+ * ignores them — doctor doesn't read legacy data.
  */
 class DoctorController extends Controller
 {
     use NeverProductionTrait;
+
+    // FILT-03: doctor accepts the three filter flags for command-surface uniformity but
+    // ignores them — doctor doesn't read legacy data, so filters are a no-op here.
+    public ?string $entities = null;
+    public ?string $locales  = null;
+    public ?string $since    = null;
+
+    public function options($actionID): array
+    {
+        return array_merge(parent::options($actionID), ['entities', 'locales', 'since']);
+    }
 
     public function actionIndex(): int
     {
@@ -41,6 +55,7 @@ class DoctorController extends Controller
         $ok = $this->checkLegacyDb()    && $ok;
         $ok = $this->checkApiKey()      && $ok;
         $ok = $this->checkStorageDir()  && $ok;
+        $ok = $this->checkMappingFile() && $ok;
 
         $this->stdout(
             "\n" . ($ok ? "Doctor: PASS\n" : "Doctor: FAIL — fix the above before running migrate\n"),
@@ -114,6 +129,34 @@ class DoctorController extends Controller
             return true;
         } catch (Throwable $e) {
             $this->stderr("  FAIL storage check error: {$e->getMessage()}\n", Console::FG_RED);
+            return false;
+        }
+    }
+
+    /**
+     * Check #4 (deferred from Phase 1 / D-17): mapping.yaml health.
+     *
+     * Soft-warn on missing file (analyze creates it, not doctor); hard-fail on parse error
+     * or missing top-level `proposals:` key.
+     */
+    private function checkMappingFile(): bool
+    {
+        $path = Plugin::getInstance()->mappingFile->resolvePath();
+        try {
+            if (!is_file($path)) {
+                $this->stdout("  WARN mapping.yaml not found at {$path} (run analyze first)\n", Console::FG_YELLOW);
+                return true; // WARN-only — file is created by analyze, not by doctor
+            }
+            $parsed = \Symfony\Component\Yaml\Yaml::parseFile($path);
+            if (!is_array($parsed) || !array_key_exists('proposals', $parsed)) {
+                $this->stderr("  FAIL mapping.yaml at {$path} missing top-level 'proposals:' key\n", Console::FG_RED);
+                return false;
+            }
+            $rowCount = is_array($parsed['proposals']) ? count($parsed['proposals']) : 0;
+            $this->stdout("  OK   mapping.yaml at {$path} ({$rowCount} rows)\n", Console::FG_GREEN);
+            return true;
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL mapping.yaml parse error: {$e->getMessage()}\n", Console::FG_RED);
             return false;
         }
     }
