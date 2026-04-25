@@ -47,7 +47,7 @@ Plans:
 2. The 9 deterministic heuristics resolve at least 60% of columns on the CQM rehearsal dump before any LLM call is made.
 3. `kunstmaan-migrator/map` loops through unresolved rows interactively and persists decisions atomically to `mapping.yaml`.
 4. `kunstmaan-migrator/migrate --live` refuses to start while any data-bearing legacy column has no mapping decision; `--dry-run` prints coverage warnings without blocking.
-5. The five top-level CLI commands all accept `--entities=`, `--locales=`, `--since=`, `--max-per-entity=` and produce identical filter behaviour at every stage.
+5. The five top-level CLI commands all accept `--entities=`, `--locales=`, `--since=` and produce identical filter behaviour at every stage. _(D-12: per-entity row cap flag dropped from v1.0 — three flags, not four.)_
 
 **Plans:** 6 plans
 
