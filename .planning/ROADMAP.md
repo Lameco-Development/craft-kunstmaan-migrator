@@ -10,6 +10,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 |---|-------|------|--------------|------------------|---------|
 | 1 | Foundation & Connectivity | A scaffolded Craft 5 plugin with internal legacy-DB connectivity, the `kunstmaanmigrator_state` table, the `kunstmaanSourceId` field, the `NeverProductionTrait`, the `doctor` command, the `migrate/install` shim, and a green PHPUnit suite. | FND-01..05, FND-02a, CONN-01..03 | 5 | no |
 | 2 | Schema, Mapping & Filters | `analyze` produces a schema dump + heuristic-and-LLM proposals into a single `mapping.yaml`; the `map` rubber-stamp loop walks proposals; coverage gate hard-blocks `--live`; mapping-audit detects drift; locale auto-detect + preflight; `MigrationFilters` plumbed through every stage. | MAP-01..07, FILT-01..03, LOC-01..02 | 5 | no |
+| 02.1 | Kunstmaan Source Introspection | Read Doctrine entity classes from `KUNSTMAAN_SOURCE_PATH` to discover project-prefixed tables (`lameco_websitebundle_*`) and M2M join tables; enrich heuristics + LLM with class-level signal. Inserted between Phase 2 and Phase 3 after Phase 2 UAT revealed the hardcoded `kuma_*` LIKE filter misses every project content table. | SRC-01..06 (TBD) | 8 | no |
 | 3 | ETL Pipeline & Field Handlers | Extract → Transform → Load → Finalize stages with topological ordering, per-entry atomic load, idempotent re-runs, JIT assets (with `--preload-assets`), the six built-in field handlers, and CKEditor token rewrite. | ETL-01..07, FH-01..04, FIN-01..02 | 4 | no |
 | 4 | Adapters, Verify & Settings | Optional SEOmatic + Retour adapters (runtime-detected, not composer-required), `verify` parity gate (counts + optional URL spot-check) producing a timestamped report, CP Settings page, console verbosity, rehearsal report artifact. | ADP-01..03, VER-01..03, CFG-01..03 | 4 | yes |
 | 5 | Tests, Rehearsal & Release | Transform-stage characterization fixtures from a real dump, full unit suite green, CI workflow running validate + PHPUnit + plugin-load smoke test, rehearsal pass against the CQM dump, release checklist + tag. | TST-01..04 | 4 | no |
@@ -58,6 +59,26 @@ Plans:
 - [x] 02-04-map-rubber-stamp-loop-PLAN.md — MapController interactive loop + two-step picker + atomic per-keypress (MAP-05, FILT-03) — completed 2026-04-25
 - [x] 02-05-coverage-audit-doctor-PLAN.md — CoverageAuditor + MappingAuditor + DoctorController 4th check (MAP-06, MAP-07, CONN-03 fully satisfied — mapping-file check landed; FILT-03 doctor flag declarations) — completed 2026-04-25
 - [x] 02-06-tests-and-doc-patches-PLAN.md — PHPUnit unit tests for MigrationFilters/FilterFactory/MappingFile/CoverageAuditor + REQUIREMENTS/ROADMAP D-12 patches (FILT-01, MAP-04, MAP-06) — completed 2026-04-25
+
+### Phase 02.1: Kunstmaan Source Introspection
+
+**Goal:** The analyze pipeline discovers tables — including project-prefixed tables (e.g. `lameco_websitebundle_*`) and ManyToMany join tables (e.g. `case_study_pages_categories`) — by reading the Kunstmaan source codebase's Doctrine entity classes, not by hardcoding `LIKE 'kuma_*'`. Heuristic + LLM proposals are enriched with class-level signal (entity name, parent class, M2M targets, AdminType).
+
+**Why this slots between Phase 2 and Phase 3:** Phase 2 UAT against the CQM dump revealed that `SchemaDumper` is hardcoded to `WHERE TABLE_NAME LIKE 'kuma\_%'` — it scans Kunstmaan's bookkeeping tables (kuma_node, kuma_users, kuma_acl_*) but misses every project-specific content table and every M2M join table. Phase 3's `migrate --live` would silently produce an empty migration without this fix.
+
+**Requirements:** SRC-01..06 (to be added to REQUIREMENTS.md during plan-phase).
+
+**Success criteria:**
+1. `KunstmaanSourceScanner` reads `KUNSTMAAN_SOURCE_PATH` (env or `Settings::kunstmaanSourcePath`); scans `Entity/**/*.php` (project) + optionally vendor Kunstmaan bundles; degrades gracefully when path unset (greenfield mode → keep current `kuma_*` LIKE behavior).
+2. Discovered tables: every `#[ORM\Table(name: '…')]` attribute in scanned classes; every `#[ORM\JoinTable(name: '…')]` for M2M; vendor base-class tables resolved via `extends` chain.
+3. `SchemaDumper` consumes the discovered table list when source path set; falls back to `LIKE 'kuma_%'` (or `Settings::legacyDbTablePrefix`) when not.
+4. M2M join tables appear in `mapping.yaml` correctly classified (target entity types resolved on both sides; `mappedBy` followed back to the owning side).
+5. `HeuristicProposer` gains an entity-aware heuristic: column → entity property → Craft field handle (higher confidence than name matching alone).
+6. `LlmClassifier` prompts include parent-entity class signature + property docblock for each residual chunk.
+7. Doctor gains a 5th check: "Kunstmaan source path" (verifies the path exists and contains `Entity/` when set).
+8. Re-running analyze against `~/Sites/cqm-craft-website` (with source-path set to `~/Sites/cqm-website`) discovers the `lameco_websitebundle_*` content tables, the M2M join tables, and produces a meaningful coverage measurement (not 100% fill-rate-zero drops).
+
+**Plans:** TBD — to be created via `/gsd-plan-phase 02.1`.
 
 ### Phase 3: ETL Pipeline & Field Handlers
 

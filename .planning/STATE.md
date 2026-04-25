@@ -5,11 +5,11 @@ milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint 
 status: Phase 02 verified end-to-end (UAT 1/4/5 PASSED against ~/Sites/cqm-craft-website; UAT 2 pending operator TTY; UAT 3 deferred to Phase 5). Ready for Phase 03 — ETL Pipeline & Field Handlers.
 last_updated: "2026-04-26T00:30:00Z"
 progress:
-  total_phases: 5
+  total_phases: 6
   completed_phases: 2
   total_plans: 11
   completed_plans: 11
-  percent: 40
+  percent: 33
 ---
 
 # State
@@ -36,11 +36,15 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Current Phase
 
-**Phase 3: ETL Pipeline & Field Handlers** — Not yet started. Run `/gsd-discuss-phase 3` to gather context.
+**Phase 02.1: Kunstmaan Source Introspection** — Not yet planned. Run `/gsd-discuss-phase 02.1` to gather context. Inserted between Phase 2 and Phase 3 because Phase 2 UAT revealed the hardcoded `kuma_*` LIKE filter in `SchemaDumper` misses every project-specific content table (`lameco_websitebundle_*`) and every M2M join table (`case_study_pages_categories`, `lameco_websitebundle_field_pages_method_pages`, etc.) — Phase 3's `migrate --live` would silently produce an empty migration without this fix.
 
 ## Previous Phase
 
-**Phase 2: Schema, Mapping & Filters** — **Closed.** All 6 plans shipped + 7 UAT-driven fixes. Verifier: 12/12 must-haves verified in code (status: human_needed → resolved). UAT against ~/Sites/cqm-craft-website: 1/4/5 PASSED end-to-end; 2 pending operator TTY (mapping.yaml is populated, drive at any time); 3 deferred to Phase 5 rehearsal (113/278 was 100% fill-rate-zero drops because cqm-craft-website hasn't yet provisioned its target entry types — heuristics 2-8 had nothing to match against). Composer test: 39 tests / 84 assertions, all green.
+**Phase 2: Schema, Mapping & Filters** — **Closed.** All 6 plans shipped + 7 UAT-driven fixes. Verifier: 12/12 must-haves verified in code (status: human_needed → resolved). UAT against ~/Sites/cqm-craft-website: 1/4/5 PASSED end-to-end; 2 pending operator TTY (mapping.yaml is populated, drive at any time); 3 deferred to Phase 5 rehearsal (113/278 was 100% fill-rate-zero drops because cqm-craft-website hasn't yet provisioned its target entry types AND the SchemaDumper missed all project content tables — both root causes addressed by Phase 02.1). Composer test: 39 tests / 84 assertions, all green.
+
+## Roadmap Evolution
+
+- 2026-04-26: Phase 02.1 (Kunstmaan Source Introspection) inserted between Phase 2 and Phase 3. Driver: Phase 2 UAT against ~/Sites/cqm-craft-website revealed `SchemaDumper`'s hardcoded `WHERE TABLE_NAME LIKE 'kuma\_%'` scans only Kunstmaan vendor scaffolding (kuma_node, kuma_users, kuma_acl_*) and silently misses project content tables (`lameco_websitebundle_*`) AND M2M join tables (`case_study_pages_categories`, `lameco_websitebundle_field_pages_method_pages`, `documents_categories`, `news_pages_categories`, `users_document_categories`). Mitigation = `KunstmaanSourceScanner` reads Doctrine `#[ORM\Table]` + `#[ORM\JoinTable]` + `#[ORM\ManyToMany]` from `KUNSTMAAN_SOURCE_PATH` (e.g. `~/Sites/cqm-website`); `SchemaDumper` consumes the discovered table list (greenfield-friendly fallback to `kuma_*` when source path unset); `HeuristicProposer` + `LlmClassifier` enriched with class-level signal; doctor gains a 5th check.
 
 ## Recent Activity
 
@@ -125,7 +129,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 - **Last:** 2026-04-26T00:30:00Z
 - **Stopped at:** Phase 2 closed — UAT verified end-to-end against ~/Sites/cqm-craft-website (analyze + map --auto-accept-high produced 278-row mapping.yaml from 48-table CQM dump; 143 high-confidence rows promoted to accepted). Three real defects + one feature gap surfaced and fixed (D-26..D-29). Suite: 39 tests / 84 assertions, all green.
-- **Resume file:** Phase 3 — `/gsd-discuss-phase 3` (begin ETL Pipeline & Field Handlers)
+- **Resume file:** Phase 02.1 — `/gsd-discuss-phase 02.1` (Kunstmaan Source Introspection — blocker before Phase 3 because the analyze pipeline currently misses project-prefixed tables and M2M join tables)
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-8 have something to match against).
 
