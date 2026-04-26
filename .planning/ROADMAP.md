@@ -77,9 +77,9 @@ Phase 3's `migrate --live` literally cannot work without this metadata. Phase 02
 **Success criteria:**
 
 *Doctrine source layer (database structural truth):*
-1. `KunstmaanSourceScanner` reads `KUNSTMAAN_SOURCE_PATH` (env or `Settings::kunstmaanSourcePath`); scans `Entity/**/*.php` (project) + `vendor/kunstmaan/*/Entity/**/*.php` (vendor). Degrades gracefully when path unset (greenfield mode → current `kuma_*` LIKE behavior).
+1. `KunstmaanSourceScanner` reads `KUNSTMAAN_SOURCE_PATH` (env or `Settings::kunstmaanSourcePath`); scans `Entity/**/*.php` (project) + `vendor/kunstmaan/*/Entity/**/*.php` (vendor). KUNSTMAAN_SOURCE_PATH is required for analyze; doctor's 5th check FAILs (not WARNs) when unset.
 2. Discovered tables: every `#[ORM\Table(name: '…')]` (and `@ORM\Table` legacy syntax); every `#[ORM\JoinTable(name: '…')]` for M2M; vendor base-class tables (`AbstractArticlePage`, `AbstractEntityAdminPart`, etc.) resolved via `extends` chain.
-3. `SchemaDumper` consumes the discovered table list when source path is set; falls back to `LIKE 'kuma_%'` (or `Settings::legacyDbTablePrefix`) otherwise. WARNs when DB has tables not present in scanner output (drift detection).
+3. `SchemaDumper` consumes the discovered table list when source path is set. WARNs when DB has tables not present in scanner output (drift detection). (Required path; greenfield-fallback dropped per D-31 — KUNSTMAAN_SOURCE_PATH is the new floor.)
 4. M2M relations are resolved end-to-end: owning side (with explicit `JoinTable`) and inverse side (with `mappedBy`) cross-reference; both target classes' tables are discovered; the join table is marked as such in `mapping.yaml`.
 
 *Page-part structural layer (source-only truth):*
