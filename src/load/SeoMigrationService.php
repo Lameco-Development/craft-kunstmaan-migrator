@@ -554,35 +554,27 @@ class SeoMigrationService extends Component
             return [null, 0];
         }
 
-        // D-15 — includeDrafts flips both NL/EN version JOINs from
-        // public_node_version_id to node_version_id.
-        $versionCol = ($this->filters?->includeDrafts ?? false)
-            ? 'node_version_id'
-            : 'public_node_version_id';
+        // v2 MigrationFilters is {entities, locales, since} only — v1's includeDrafts /
+        // includeDeleted / includeOffline / cutoffAfter / cutoffBefore are dropped per
+        // D-09..D-13. v2 defaults: published versions only (public_node_version_id),
+        // exclude deleted nodes, require either-language online, single since floor.
+        $versionCol = 'public_node_version_id';
 
-        // D-13 — WHERE clauses built dynamically from filter state.
-        $whereParts = ['n.id = :id'];
+        $whereParts = [
+            'n.id = :id',
+            'n.deleted = 0',
+            '(nt_nl.online = 1 OR nt_en.online = 1)',
+        ];
         $params = [
             ':id' => (int) $sourceKey,
             ':langNl' => 'nl',
             ':langEn' => 'en',
         ];
 
-        if ($this->filters === null || !$this->filters->includeDeleted) {
-            $whereParts[] = 'n.deleted = 0';
-        }
-        if ($this->filters !== null && !$this->filters->includeOffline) {
-            // SEO migration is cross-language — either-online is the right gate.
-            $whereParts[] = '(nt_nl.online = 1 OR nt_en.online = 1)';
-        }
-        if ($this->filters !== null && $this->filters->cutoffAfter !== null && $this->filters->cutoffAfter !== '') {
+        if ($this->filters !== null && $this->filters->since !== null && $this->filters->since !== '') {
             // NL is canonical creation timestamp (CQM is NL-primary per Phase 5 D-03).
-            $whereParts[] = 'nt_nl.created >= :cutoffAfter';
-            $params[':cutoffAfter'] = $this->filters->cutoffAfter;
-        }
-        if ($this->filters !== null && $this->filters->cutoffBefore !== null && $this->filters->cutoffBefore !== '') {
-            $whereParts[] = 'nt_nl.created < :cutoffBefore';
-            $params[':cutoffBefore'] = $this->filters->cutoffBefore;
+            $whereParts[] = 'nt_nl.created >= :since';
+            $params[':since'] = $this->filters->since;
         }
 
         $row = $this->legacyDb->queryOne(
