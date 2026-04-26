@@ -126,6 +126,27 @@ class Plugin extends BasePlugin
         if (Craft::$app->request->getIsConsoleRequest()) {
             $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\console';
         }
+
+        // Phase 02.1 follow-up: wire the source-namespace components' sibling
+        // dependencies. Plugin::config() registers them as bare class names so
+        // each is instantiated with its public ?Foo $dep = null properties unset.
+        // Yii component config supports nested DI but we keep config() declarative
+        // and inject here once everything is registered. Without this wiring the
+        // KunstmaanSourceScanner::scan() short-circuits to emptyResult() because
+        // entityParser stays null, and AnalyzeController reports "0 entities, 0 tables".
+        $this->kunstmaanSourceScanner->pathResolver  = $this->kunstmaanSourcePathResolver;
+        $this->kunstmaanSourceScanner->entityParser  = $this->doctrineEntityParser;
+        $this->kunstmaanSourceScanner->tableResolver = $this->detailTableResolver;
+        $this->kunstmaanSourceScanner->bodyFinder    = $this->bodyScanColumnFinder;
+        $this->kunstmaanSourceScanner->mediaScanner  = $this->mediaFkScanner;
+        $this->kunstmaanSourceScanner->legacyDb      = $this->legacyDbService;
+
+        $this->kunstmaanPageStructureScanner->pathResolver  = $this->kunstmaanSourcePathResolver;
+        $this->kunstmaanPageStructureScanner->tableResolver = $this->detailTableResolver;
+
+        // MappingAuditor's block-availability check (D-36) is inert when the
+        // validator stays null. Wire it so the audit step actually fires.
+        $this->mappingAuditor->blockAvailabilityValidator = $this->blockAvailabilityValidator;
     }
 
     protected function createSettingsModel(): ?Model
