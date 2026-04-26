@@ -139,7 +139,7 @@ Plans:
 - [x] 02.1-02-doctrine-port-PLAN.md — DoctrineEntityParser + DetailTableResolver + 3 VOs + KunstmaanCoreTables (SRC-11, SRC-12) — completed 2026-04-26
 - [x] 02.1-03-discovery-port-PLAN.md — BodyScanColumnFinder + MediaFkScanner + TopologicalOrderer + KnowledgeBase partial port + KnowledgeBaseSmokeTest (SRC-13, SRC-14) — completed 2026-04-26
 - [x] 02.1-04-page-structure-scanner-PLAN.md — KunstmaanPageStructureScanner + nikic/php-parser direct require (SRC-05, SRC-06, SRC-07) — completed 2026-04-26
-- [ ] 02.1-05-source-scanner-orchestrator-PLAN.md — KunstmaanSourceScanner + Plugin::config() registration (SRC-01, SRC-02, SRC-03, SRC-04)
+- [x] 02.1-05-source-scanner-orchestrator-PLAN.md — KunstmaanSourceScanner + Plugin::config() registration (SRC-01, SRC-02, SRC-03, SRC-04) — completed 2026-04-26
 - [ ] 02.1-06-mapping-extension-PLAN.md — MappingFile row-kind support + MapController two-mode walker (SRC-05, SRC-06)
 - [ ] 02.1-07-analyze-wiring-PLAN.md — AnalyzeController 11-step pipeline + heuristic 1.5 + LlmClassifier KB integration (SRC-08, SRC-09)
 - [ ] 02.1-08-audit-extension-PLAN.md — BlockAvailabilityValidator + Drift section + CoverageAuditor page-part coverage (SRC-15)
