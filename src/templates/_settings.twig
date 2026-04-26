@@ -50,14 +50,12 @@
     instructions: 'Defaults to `CRAFT_LEGACY_DB_USER` env var.'|t('kunstmaan-migrator'),
 }) }}
 
-{{ forms.autosuggestField({
+{{ forms.passwordField({
     label: 'Legacy DB password'|t('kunstmaan-migrator'),
     id: 'legacyDbPassword',
     name: 'legacyDbPassword',
     value: settings.legacyDbPassword,
-    type: 'password',
-    suggestEnvVars: true,
-    instructions: 'Defaults to `CRAFT_LEGACY_DB_PASSWORD` env var. Stored masked; never logged.'|t('kunstmaan-migrator'),
+    instructions: 'Type `$CRAFT_LEGACY_DB_PASSWORD` (env reference) or paste a raw value. Resolved via `App::parseEnv()` at read time. Never logged.'|t('kunstmaan-migrator'),
 }) }}
 
 {{ forms.autosuggestField({
@@ -89,14 +87,12 @@
 
 <h2>{{ 'AI'|t('kunstmaan-migrator') }}</h2>
 
-{{ forms.autosuggestField({
+{{ forms.passwordField({
     label: 'Anthropic API key'|t('kunstmaan-migrator'),
     id: 'anthropicApiKey',
     name: 'anthropicApiKey',
     value: settings.anthropicApiKey,
-    type: 'password',
-    suggestEnvVars: true,
-    instructions: 'Defaults to `ANTHROPIC_API_KEY` env var; setting here overrides env per Phase 1 / D-14. Never logged — `doctor` reports presence only.'|t('kunstmaan-migrator'),
+    instructions: 'Type `$ANTHROPIC_API_KEY` (env reference, recommended) or paste a raw key. Resolved via `App::parseEnv()` at read time. Setting here overrides env per Phase 1 / D-14. Never logged — `doctor` reports presence only.'|t('kunstmaan-migrator'),
 }) }}
 
 {{ forms.autosuggestField({
