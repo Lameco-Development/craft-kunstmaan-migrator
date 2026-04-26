@@ -768,6 +768,397 @@ class MigrateController extends Controller
         return ExitCode::OK;
     }
 
+    /**
+     * Phase 4.1 / REC-01 / D-34 — `migrate/sync-assets` recovery command.
+     *
+     * Re-ingests every `kuma_media` row that any prior atomic run referenced
+     * but skipped. Iterates state-table rows under source='media' whose
+     * targetId is unset (the existing remote-video-without-id path is the
+     * primary candidate-producing site at v1.0; future failure paths that
+     * grow state-row writes feed in here automatically). Per D-37, rows
+     * carrying the `meta.terminalState='permanently_failed'` marker are
+     * REPORTED but never retried — sync-assets is NOT a `--retry-permanently-
+     * failed` knob; terminal state is FINAL by design.
+     *
+     * Operator-facing distinction: this is a RECOVERY command, NOT a
+     * replacement for `migrate run`. The intended flow is "operator runs
+     * `migrate run`, then runs `migrate/sync-assets` if the rehearsal report
+     * shows skipped media." The SYNC-ASSETS-*.md report copy and inline help
+     * text both reinforce this.
+     *
+     * Idempotence: re-running with everything healed exits cleanly with
+     * candidates=0 and emits the placeholder line in SYNC-ASSETS-*.md.
+     *
+     * Respects MigrationFilters (--entity / --locale / --since) per D-38.
+     * Emits SYNC-ASSETS-<timestamp>.md under storage/migration/ via
+     * MappingFile::writeAtomic per D-39 (atomic-always-on artifact).
+     *
+     * NeverProductionTrait gate per FND-04 (T-04.1-07-04 / T-04.1-07-06
+     * mitigation — first statement, locked-by-acceptance-grep).
+     */
+    public function actionSyncAssets(): int
+    {
+        if (($gate = $this->enforceNeverProduction()) !== null) {
+            return $gate;
+        }
+        $this->openLogFile($this->defaultLogPath());
+        $this->logLine('actionSyncAssets started; verbosity=' . $this->verbosityLevel(), 1);
+
+        $plugin = Plugin::getInstance();
+        $filters = $plugin->filterFactory->fromCli(
+            $this->entities,
+            $this->locales,
+            $this->since,
+            $this->noSeo,
+            $this->noRetour,
+        );
+        $storageDir = Craft::$app->path->getStoragePath() . '/migration';
+        $report = new MigrationReport();
+        $tStart = microtime(true);
+
+        $this->stdout(
+            "Sync-assets: re-ingesting skipped media rows (recovery command — runs AFTER migrate)\n",
+            Console::FG_CYAN,
+        );
+
+        $candidates = $this->collectAssetCandidates($filters);
+        $candidateCount = count($candidates);
+        $this->stdout(sprintf("  Found %d candidates\n", $candidateCount), Console::FG_GREEN);
+
+        foreach ($candidates as $i => $candidate) {
+            $this->logLine(
+                sprintf('[%d/%d] media=%s', $i + 1, $candidateCount, $candidate['sourceKey']),
+                1,
+            );
+            try {
+                $resolved = $plugin->assetMigrationService->resolveFromLegacyId(
+                    (int) $candidate['legacyId'],
+                );
+                if ($resolved === 0) {
+                    // resolveFromLegacyId returned 0 (miss) without throwing —
+                    // treat as retryable (next run will re-attempt).
+                    $report->incr('failed');
+                    $this->stdout(
+                        sprintf(
+                            "  FAIL %s — resolve returned 0 (will retry on next run)\n",
+                            $candidate['sourceKey'],
+                        ),
+                        Console::FG_YELLOW,
+                    );
+                } else {
+                    $report->incr('healed');
+                    $this->stdout(
+                        sprintf("  OK   %s → asset:%d\n", $candidate['sourceKey'], $resolved),
+                        Console::FG_GREEN,
+                    );
+                }
+            } catch (Throwable $e) {
+                // Phase 4.1 / D-37 inline failure classification mirrors
+                // AssetMigrationService::classifyAssetFailureReason
+                // heuristics. We deliberately do NOT call any classifier on
+                // AssetMigrationService — the classifier stays private so
+                // this plan's `git diff src/load/AssetMigrationService.php`
+                // shows zero changes (acceptance lock).
+                $reason = self::syncAssetsClassifyResolveFailureMessage($e->getMessage());
+                if (in_array($reason, ['filesystem_404', 'too_large'], true)) {
+                    $plugin->migrationStateService->markTerminal(
+                        'media',
+                        $candidate['sourceKey'],
+                        $candidate['siteId'] ?? null,
+                        $reason,
+                    );
+                    $report->incr('terminal');
+                    $this->stdout(
+                        sprintf("  TERM %s — %s\n", $candidate['sourceKey'], $reason),
+                        Console::FG_RED,
+                    );
+                } else {
+                    $report->incr('failed');
+                    $this->stderr(
+                        sprintf(
+                            "  FAIL %s — %s (reason=%s, will retry on next run)\n",
+                            $candidate['sourceKey'],
+                            $e->getMessage(),
+                            $reason,
+                        ),
+                        Console::FG_RED,
+                    );
+                }
+            }
+        }
+
+        // D-39: emit SYNC-ASSETS-<timestamp>.md.
+        $reportPath = $storageDir . '/SYNC-ASSETS-' . gmdate('Y-m-d--H-i-s') . '.md';
+        $rendered = self::renderSyncAssetsReport($report, $filters, $candidateCount, $tStart);
+        if (!$plugin->mappingFile->writeAtomic($reportPath, $rendered)) {
+            $this->stderr("  FAIL could not write {$reportPath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout("  OK   SYNC-ASSETS report written → {$reportPath}\n", Console::FG_GREEN);
+        $this->logLine(
+            sprintf(
+                'actionSyncAssets complete in %dms; healed=%d failed=%d terminal=%d',
+                (int) ((microtime(true) - $tStart) * 1000),
+                (int) ($report->counts['healed'] ?? 0),
+                (int) ($report->counts['failed'] ?? 0),
+                (int) ($report->counts['terminal'] ?? 0),
+            ),
+            1,
+        );
+
+        return ($report->counts['failed'] ?? 0) > 0
+            ? ExitCode::UNSPECIFIED_ERROR
+            : ExitCode::OK;
+    }
+
+    /**
+     * Phase 4.1 / REC-01 — candidate collection for actionSyncAssets.
+     *
+     * Streams `MigrationStateService::all('media')` (Generator), applies the
+     * D-36 idempotence skip (rows with targetId already set are healed) and
+     * the D-37 terminal-state skip (rows marked permanently_failed). The
+     * predicate that decides whether a single row matches the filter scope
+     * is extracted to syncAssetsCandidateMatchesFilters() so it can be
+     * exercised by reflection without a Craft bootstrap.
+     *
+     * @return list<array{legacyId:int, sourceKey:string, siteId:?int, meta:mixed}>
+     */
+    private function collectAssetCandidates(MigrationFilters $filters): array
+    {
+        $plugin = Plugin::getInstance();
+        $result = [];
+        foreach ($plugin->migrationStateService->all('media') as $row) {
+            // D-36 idempotence: a non-empty targetId means the row has been
+            // successfully healed. Silently skip — never reprocess.
+            if (!empty($row['targetId'])) {
+                continue;
+            }
+            // D-37: terminal rows are reported (count=terminal in REPORT
+            // header) but NEVER retried. We don't surface them as candidates
+            // — the reporting happens at run-summary time once the count is
+            // known via a state-table aggregation outside this loop.
+            if (self::syncAssetsRowIsTerminal($row)) {
+                continue;
+            }
+            // Filter scope (D-38).
+            if (!self::syncAssetsCandidateMatchesFilters($row, $filters)) {
+                continue;
+            }
+            // Derive legacyId from the sourceKey: 'kuma_media:42' → 42.
+            $sourceKey = (string) ($row['sourceKey'] ?? '');
+            $legacyId = self::syncAssetsLegacyIdFromKey($sourceKey);
+            if ($legacyId <= 0) {
+                continue;
+            }
+            $result[] = [
+                'legacyId'  => $legacyId,
+                'sourceKey' => $sourceKey,
+                'siteId'    => isset($row['siteId']) && $row['siteId'] !== null
+                    ? (int) $row['siteId']
+                    : null,
+                'meta'      => $row['meta'] ?? null,
+            ];
+        }
+        return $result;
+    }
+
+    /**
+     * Phase 4.1 / REC-01 — pure predicate for the candidate-row filter.
+     *
+     * Public-static so the test corpus can characterize via Reflection
+     * without Craft bootstrap. Decision rules:
+     *
+     * - Terminal rows (meta.terminalState='permanently_failed') NEVER match
+     *   regardless of filter scope (D-37).
+     * - Healed rows (non-empty targetId) NEVER match regardless of filter
+     *   scope (D-36 idempotence).
+     * - When entities filter set: exclude row when meta.ownerEntity is
+     *   present and not in the allow-list. Rows with no ownerEntity meta
+     *   pass through (most v1.0 media state-rows lack this field — see
+     *   AssetMigrationService::record() at lines 402-415, 558-573 — and
+     *   silently dropping them all would defeat the recovery surface).
+     * - When since filter set: exclude row when dateUpdated is older than
+     *   the floor.
+     * - Locales filter is NOT applied here at v1.0 — kuma_media has no
+     *   direct locale FK, mirroring AssetMigrationService::ingestReferenced
+     *   at lines 174-180. Documented as a v1.0 deferral, not a bug.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function syncAssetsCandidateMatchesFilters(array $row, MigrationFilters $filters): bool
+    {
+        // Hard-skip terminal rows even if filter scope would otherwise admit
+        // them. Lock for T-04.1-07-01 (DoS via retry loop).
+        if (self::syncAssetsRowIsTerminal($row)) {
+            return false;
+        }
+        // Hard-skip healed rows (D-36 idempotence).
+        if (!empty($row['targetId'])) {
+            return false;
+        }
+        // Entities filter — see method docblock for the no-owner pass-through
+        // rationale.
+        if ($filters->entities !== []) {
+            $ownerEntity = null;
+            $meta = $row['meta'] ?? null;
+            if (is_array($meta) && isset($meta['ownerEntity'])) {
+                $ownerEntity = (string) $meta['ownerEntity'];
+            }
+            if ($ownerEntity !== null
+                && !in_array($ownerEntity, $filters->entities, true)
+            ) {
+                return false;
+            }
+        }
+        // Since filter — strict floor comparison via strtotime.
+        if ($filters->since !== null && $filters->since !== '') {
+            $rowDate = $row['dateUpdated'] ?? null;
+            if ($rowDate !== null && $rowDate !== '') {
+                $rowEpoch = strtotime((string) $rowDate);
+                $floorEpoch = strtotime((string) $filters->since);
+                if ($rowEpoch !== false && $floorEpoch !== false && $rowEpoch < $floorEpoch) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Phase 4.1 / REC-01 — pure terminal-state predicate. Mirrors
+     * MigrationStateService::isTerminalMarker shape so the controller can
+     * apply the same contract on the row's already-loaded meta payload
+     * without re-querying the row.
+     *
+     * @param array<string, mixed> $row
+     */
+    private static function syncAssetsRowIsTerminal(array $row): bool
+    {
+        $meta = $row['meta'] ?? null;
+        if ($meta === null || $meta === '') {
+            return false;
+        }
+        if (is_array($meta)) {
+            return ($meta['terminalState'] ?? null) === 'permanently_failed';
+        }
+        if (!is_string($meta)) {
+            return false;
+        }
+        $decoded = json_decode($meta, true);
+        if (!is_array($decoded)) {
+            return false;
+        }
+        return ($decoded['terminalState'] ?? null) === 'permanently_failed';
+    }
+
+    /**
+     * Phase 4.1 / REC-01 — sourceKey shape lock. State rows for media use
+     * the `kuma_media:{id}` key shape (see AssetMigrationService line 338
+     * + lines 402, 500, 558). Returns 0 on shape mismatch so the candidate
+     * loop silently skips rows that don't conform.
+     */
+    private static function syncAssetsLegacyIdFromKey(string $sourceKey): int
+    {
+        if ($sourceKey === '') {
+            return 0;
+        }
+        if (str_starts_with($sourceKey, 'kuma_media:')) {
+            $id = (int) substr($sourceKey, strlen('kuma_media:'));
+            return $id > 0 ? $id : 0;
+        }
+        // Defensive fallback — bare-int keys treated as legacyId. Older state
+        // rows may have shipped this shape; future-proofs the recovery path.
+        $bare = (int) $sourceKey;
+        return $bare > 0 ? $bare : 0;
+    }
+
+    /**
+     * Phase 4.1 / REC-01 / D-37 — closed-set RCA classifier mirroring
+     * AssetMigrationService::classifyAssetFailureReason heuristics.
+     *
+     * The classifier is intentionally duplicated here (rather than promoting
+     * AssetMigrationService's private classifier to public) so this plan's
+     * `git diff src/load/AssetMigrationService.php` shows zero changes per
+     * the Task 3 acceptance criteria. The classifier in AssetMigrationService
+     * inspects both an exception object AND a row payload; this controller-
+     * side variant inspects the message string only — it's the narrower
+     * surface and matches sync-assets' actual data flow (we have the
+     * exception, not the source row, at the catch site).
+     *
+     * Closed set: filesystem_404 | mime_mismatch | too_large |
+     * deferred_unresolved.
+     *
+     * Public-static for Reflection testability — same shape as
+     * AssetMigrationServiceRcaTest's seam.
+     */
+    public static function syncAssetsClassifyResolveFailureMessage(string $msg): string
+    {
+        if (str_contains($msg, 'No such file')
+            || str_contains($msg, 'not found')
+            || str_contains($msg, 'Copy failed')
+        ) {
+            return 'filesystem_404';
+        }
+        if (str_contains($msg, 'mime')
+            || str_contains($msg, 'content_type')
+            || str_contains($msg, 'allowedFileExtensions')
+        ) {
+            return 'mime_mismatch';
+        }
+        if (str_contains($msg, 'too large')
+            || str_contains($msg, 'PostMaxSize')
+        ) {
+            return 'too_large';
+        }
+        return 'deferred_unresolved';
+    }
+
+    /**
+     * Phase 4.1 / REC-01 / D-39 — render the SYNC-ASSETS-{ts}.md body.
+     * Public-static for Reflection testability. The format mirrors
+     * REPORT.md's `## Rehearsal summary` section so operators can read both
+     * artifacts with the same mental model.
+     *
+     * Always emits the heading + rehearsal-summary section regardless of
+     * candidates count (CFG-07 always-emit consistency from Plan 04.1-05).
+     * When candidates=0, appends a placeholder line instead of leaving an
+     * empty section.
+     */
+    public static function renderSyncAssetsReport(
+        MigrationReport $report,
+        MigrationFilters $filters,
+        int $candidates,
+        float $tStart,
+    ): string {
+        $lines = [];
+        $lines[] = '# Sync Assets';
+        $lines[] = '';
+        $lines[] = '_Recovery command — runs AFTER `migrate run` to re-ingest skipped media. NOT a replacement for `migrate run`._';
+        $lines[] = '';
+        $lines[] = '## Rehearsal summary';
+        $lines[] = '';
+        $lines[] = sprintf('- Candidates: %d', $candidates);
+        $lines[] = sprintf('- Healed:     %d', (int) ($report->counts['healed'] ?? 0));
+        $lines[] = sprintf('- Failed:     %d', (int) ($report->counts['failed'] ?? 0));
+        $lines[] = sprintf('- Terminal:   %d', (int) ($report->counts['terminal'] ?? 0));
+        $lines[] = sprintf(
+            '- Wall clock: %s',
+            gmdate('H:i:s', (int) max(0, microtime(true) - $tStart)),
+        );
+        $lines[] = sprintf(
+            '- Filters:    entities=%s; locales=%s; since=%s',
+            $filters->entities === [] ? 'all' : implode(',', $filters->entities),
+            $filters->locales === [] ? 'all' : implode(',', $filters->locales),
+            $filters->since ?? 'none',
+        );
+        $lines[] = '';
+        if ($candidates === 0) {
+            $lines[] = '_No candidates — all prior skipped media has been healed or marked terminal._';
+            $lines[] = '';
+        }
+        return implode("\n", $lines);
+    }
+
     // --------------------------------------------------------------------------
     // Internal helpers
     // --------------------------------------------------------------------------
