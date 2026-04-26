@@ -42,6 +42,13 @@ return [
         // Adapter table-name overrides (Phase 4 / D-57)
         'seoTableName'            => 'kuma_seo',
         'redirectsTableName'      => 'kuma_redirects',
+
+        // Adapter Settings gates (Phase 4.1 / ADP-04). Default true preserves
+        // current behavior — set false to disable the SEOmatic / Retour adapter
+        // even when the respective plugin IS installed. Per-run override:
+        // `--no-seo` / `--no-retour` on `kunstmaan-migrator/migrate`.
+        'seoEnabled'              => true,
+        'retourEnabled'           => true,
     ],
 
     // Per-environment overlays — uncomment and customize as needed.
