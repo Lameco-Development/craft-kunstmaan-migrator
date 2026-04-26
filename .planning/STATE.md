@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Phase 3 closed — ready for Phase 4
-stopped_at: "Phase 3 complete. 14/14 plans landed. Smoke against CQM rehearsal pair PASS (doctor 6/6 OK; migrate dry-run all stages OK; REPORT.md renders D-52+D-50). gsd-verifier: 4/4 success criteria verified, 13/13 REQ-IDs satisfied."
-last_updated: "2026-04-26T18:00:00Z"
+stopped_at: Phase 4 context gathered
+last_updated: "2026-04-26T16:28:07.930Z"
 progress:
   total_phases: 6
   completed_phases: 4
@@ -180,8 +180,8 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 ## Last Session
 
 - **Last:** 2026-04-26T11:11:54Z
-- **Stopped at:** Completed 02.1-09-reconciliation-PLAN.md (Phase 02.1 closed; ready for verifier handoff — RECONCILIATION.md + 9 SUMMARYs are the canonical phase-completion artifact set)
-- **Resume file:** Phase 02.1 verifier handoff (run /gsd-verify-phase 02.1 next), or proceed to Phase 3 ETL Pipeline plan-phase
+- **Stopped at:** Phase 4 context gathered
+- **Resume file:** .planning/phases/04-adapters-verify-settings/04-CONTEXT.md
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-9 have something to match against; Phase 02.1 / Plan 07 heuristic 1.5 entity-aware match should fire repeatedly once Plan 09 reconciliation lands and accepted column rows seed acceptedRows).
 
