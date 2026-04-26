@@ -65,6 +65,11 @@ final class CoverageAuditor extends Component
         $violations = [];
         foreach ($schemaDump['columns'] ?? [] as $table => $cols) {
             $rowCount = (int) ($schemaDump['tables'][$table] ?? 0);
+            // Patched in Phase 02.1 / Plan 09 from v1 CoverageAuditor.php:82-85 per RECONCILIATION.md.
+            // Empty table → no possible coverage gap; skip the per-column walk wholesale.
+            if ($rowCount === 0) {
+                continue;
+            }
             foreach ($cols as $col) {
                 $name = (string) ($col['column'] ?? '');
                 $fillRate = (float) ($col['fillRate'] ?? 0);

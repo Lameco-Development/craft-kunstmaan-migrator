@@ -94,8 +94,23 @@ final class MappingAuditor extends Component
 
         foreach ($mappingProposals as $row) {
             $status = (string) ($row['status'] ?? '');
-            // Only audit rows that will be applied (accepted/proposed). Dropped rows are no-ops.
-            if ($status === 'dropped') { continue; }
+            // Patched in Phase 02.1 / Plan 09 from v1 MappingValidator.php:580-617 per RECONCILIATION.md.
+            // Drop-rationale length check (v1 rule 13): a status:dropped row must carry a
+            // rationale of at least 10 chars. Prevents lazy "TODO" / "n/a" drops from sneaking
+            // past review. MUST run BEFORE the dropped-skip below or it never fires.
+            if ($status === 'dropped') {
+                if (strlen((string) ($row['rationale'] ?? '')) < 10) {
+                    $findings[] = [
+                        'table'           => (string) ($row['table'] ?? ''),
+                        'column'          => (string) ($row['column'] ?? ''),
+                        'targetEntryType' => (string) ($row['targetEntryType'] ?? ''),
+                        'targetHandle'    => (string) ($row['targetHandle'] ?? ''),
+                        'kind'            => 'drop-rationale-missing',
+                        'detail'          => "dropped row has rationale shorter than 10 chars (v1 MappingValidator rule 13)",
+                    ];
+                }
+                continue;
+            }
             $entryHandle = (string) ($row['targetEntryType'] ?? '');
             $fieldHandle = (string) ($row['targetHandle'] ?? '');
             $handler     = (string) ($row['handler'] ?? '');
