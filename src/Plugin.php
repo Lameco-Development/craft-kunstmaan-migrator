@@ -28,6 +28,9 @@ use lameco\kunstmaanmigrator\load\AtomicMigrationService;
 use lameco\kunstmaanmigrator\load\AttachService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
+use lameco\kunstmaanmigrator\load\RedirectMigrationService;
+use lameco\kunstmaanmigrator\load\SeoMigrationService;
+use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
 use lameco\kunstmaanmigrator\mapping\BlockAvailabilityValidator;
 use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
@@ -44,6 +47,11 @@ use lameco\kunstmaanmigrator\source\KunstmaanSourceScanner;
 use lameco\kunstmaanmigrator\source\MediaFkScanner;
 use lameco\kunstmaanmigrator\source\TopologicalOrderer;
 use lameco\kunstmaanmigrator\transform\TransformService;
+use lameco\kunstmaanmigrator\verify\BaselineCounterService;
+use lameco\kunstmaanmigrator\verify\CaptureBaselineHtmlService;
+use lameco\kunstmaanmigrator\verify\CountGateService;
+use lameco\kunstmaanmigrator\verify\SnapshotDiffer;
+use lameco\kunstmaanmigrator\verify\SpotCheckUrlFetcher;
 use PDO;
 use yii\db\Connection;
 
@@ -84,6 +92,14 @@ use yii\db\Connection;
  * @property-read AssetMigrationService $assetMigrationService
  * @property-read EntryMigrationService $entryMigrationService
  * @property-read AttachService $attachService
+ * @property-read SeoMigrationService $seoMigrationService
+ * @property-read SeomaticPayloadBuilder $seomaticPayloadBuilder
+ * @property-read RedirectMigrationService $redirectMigrationService
+ * @property-read BaselineCounterService $baselineCounterService
+ * @property-read CountGateService $countGateService
+ * @property-read SnapshotDiffer $snapshotDiffer
+ * @property-read SpotCheckUrlFetcher $spotCheckUrlFetcher
+ * @property-read CaptureBaselineHtmlService $captureBaselineHtmlService
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -134,6 +150,15 @@ class Plugin extends BasePlugin
                 'assetMigrationService'   => AssetMigrationService::class,
                 'entryMigrationService'   => EntryMigrationService::class,
                 'attachService'           => AttachService::class,
+                // Phase 4 additions — adapter services + verify services.
+                'seoMigrationService'        => SeoMigrationService::class,
+                'seomaticPayloadBuilder'     => SeomaticPayloadBuilder::class,
+                'redirectMigrationService'   => RedirectMigrationService::class,
+                'baselineCounterService'     => BaselineCounterService::class,
+                'countGateService'           => CountGateService::class,
+                'snapshotDiffer'             => SnapshotDiffer::class,
+                'spotCheckUrlFetcher'        => SpotCheckUrlFetcher::class,
+                'captureBaselineHtmlService' => CaptureBaselineHtmlService::class,
             ],
         ];
     }
@@ -258,6 +283,41 @@ class Plugin extends BasePlugin
         // if the operator hasn't configured locales yet, surfacing a clear error.
         $this->entryMigrationService->stateService = $this->migrationStateService;
         $this->entryMigrationService->sites        = $this->resolveSitesMap();
+
+        // Phase 4 Adapter wiring — D-54 / D-56 / D-57 / PATTERNS flag #7.
+
+        // SeomaticPayloadBuilder needs migrationState for kuma_media → Craft asset id resolution.
+        $this->seomaticPayloadBuilder->migrationState = $this->migrationStateService;
+
+        // SeoMigrationService — 5 sibling deps + sites map from resolveSitesMap() (PATTERNS flag #3).
+        $this->seoMigrationService->legacyDb     = $this->legacyDbService;
+        $this->seoMigrationService->stateService = $this->migrationStateService;
+        $this->seoMigrationService->seoPayload   = $this->seomaticPayloadBuilder;
+        $this->seoMigrationService->sites        = $this->resolveSitesMap();
+        // $filters wired via FilterFactory at command-invocation time, not init() (Phase 02.1 pattern).
+
+        // RedirectMigrationService — 3 sibling deps + sites map.
+        $this->redirectMigrationService->legacyDb     = $this->legacyDbService;
+        $this->redirectMigrationService->stateService = $this->migrationStateService;
+        $this->redirectMigrationService->sites        = $this->resolveSitesMap();
+        // $filters wired at invocation time.
+
+        // CaptureBaselineHtmlService → SpotCheckUrlFetcher.
+        $this->captureBaselineHtmlService->fetcher = $this->spotCheckUrlFetcher;
+
+        // D-57: Settings table-name overrides wired here so adapter services pick them up.
+        $settings = $this->getSettings();
+        if (is_string($settings->seoTableName) && $settings->seoTableName !== '') {
+            $this->seoMigrationService->seoTableName = $settings->seoTableName;
+        }
+        if (is_string($settings->redirectsTableName) && $settings->redirectsTableName !== '') {
+            $this->redirectMigrationService->redirectsTableName = $settings->redirectsTableName;
+        }
+
+        // BaselineCounterService — pure-read; no sibling deps in v2 light shape (D-59).
+        // CountGateService — pure-read; no sibling deps (expectedCounts arg passed at call time).
+        // SnapshotDiffer — pure-function; zero deps. Ported but unused at v1.0 (deferred --deep flag).
+        // SpotCheckUrlFetcher — uses Craft::createGuzzleClient; zero plugin-internal deps.
     }
 
     /**
