@@ -157,6 +157,24 @@ Plans:
 3. A forced failure mid-run leaves Craft in a consistent state (the failing entry rolled back, all earlier entries persisted).
 4. `migrate/finalize` resolves the cross-entry `[NT<id>]` and media `[M<id>]` tokens left by the load pass; unresolvable tokens are annotated with `<!-- MIGRATION:UNRESOLVED ... -->` and reported in the run summary.
 
+**Plans:** 14 plans
+
+Plans:
+- [x] 03-01-fields-scaffold-PLAN.md — FieldHandler interface + Registry + DeferredAssetToken + ResolverContext (FH-01, FH-02) — completed 2026-04-26
+- [x] 03-02-load-vos-PLAN.md — MigrationStateReader + MigrationOptions + AssetPathResolver + 2 TaxonomyResolvers (ETL-04, ETL-05) — completed 2026-04-26
+- [x] 03-03-state-service-PLAN.md — MigrationStateService verbatim port (ETL-05) — completed 2026-04-26
+- [x] 03-04-extract-service-PLAN.md — ExtractService 533 LOC + page-part-ordering drift documented (ETL-03) — completed 2026-04-26
+- [x] 03-05-asset-migration-PLAN.md — AssetMigrationService 617 LOC + JIT/preload reshape (FH-03, ETL-05) — completed 2026-04-26
+- [x] 03-06-ckeditor-rewriter-PLAN.md — CkeditorRewriterService 529 LOC + FinalizeWalker greenfield (FIN-01, FIN-02, FH-04) — completed 2026-04-26
+- [x] 03-07-attach-and-entry-migration-PLAN.md — AttachService partial + EntryMigrationService 662 LOC (ETL-04) — completed 2026-04-26
+- [x] 03-08-handlers-text-asset-PLAN.md — PlainTextHandler (4 modes; seomatic stripped) + AssetHandler (FH-01, FH-04) — completed 2026-04-26
+- [x] 03-09-handlers-relation-matrix-PLAN.md — RelationHandler + MatrixHandler with D-49 dispatch (FH-01) — completed 2026-04-26
+- [x] 03-10-handlers-splitname-PLAN.md — SplitNameHandler with Dutch tokens preserved (FH-01) — completed 2026-04-26
+- [x] 03-11-transform-service-PLAN.md — TransformService 940 LOC with D-48 in-process pipeline reshape (ETL-01, FH-02) — completed 2026-04-26
+- [x] 03-12-atomic-migration-PLAN.md — MigrationReport VO + AtomicMigrationService 255 LOC (ETL-01, ETL-04, ETL-05, FH-04) — completed 2026-04-26
+- [x] 03-13-controller-and-wiring-PLAN.md — Plugin::config/init Phase 3 wiring + MigrateController 6 actions + Doctor 6th check (ETL-01..07, FH-02, FH-03, FIN-01) — completed 2026-04-26
+- [x] 03-14-reconciliation-PLAN.md — Phase RECONCILIATION.md + REQUIREMENTS/ROADMAP patches (ETL-07, FIN-02) — completed 2026-04-26
+
 ### Phase 4: Adapters, Verify & Settings
 
 **Goal:** SEOmatic and Retour are migrated when their plugins are installed and skipped (with WARN) when they aren't — composer no longer hard-requires either. The verify parity gate produces a timestamped report and the CP exposes a Settings screen for the operator-facing toggles.
