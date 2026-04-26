@@ -14,6 +14,7 @@ use lameco\kunstmaanmigrator\analyze\SchemaDumper;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
+use lameco\kunstmaanmigrator\mapping\BlockAvailabilityValidator;
 use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingFile;
@@ -50,6 +51,7 @@ use yii\db\Connection;
  * @property-read KnowledgeBase $knowledgeBase
  * @property-read KunstmaanPageStructureScanner $kunstmaanPageStructureScanner
  * @property-read KunstmaanSourceScanner $kunstmaanSourceScanner
+ * @property-read BlockAvailabilityValidator $blockAvailabilityValidator
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -83,6 +85,7 @@ class Plugin extends BasePlugin
                 'knowledgeBase'                 => KnowledgeBase::class,                // Phase 02.1 (Plan 03) — D-42 step 8 KB markdown
                 'kunstmaanPageStructureScanner' => KunstmaanPageStructureScanner::class, // Phase 02.1 (Plan 04) — D-40 right side
                 'kunstmaanSourceScanner'        => KunstmaanSourceScanner::class,        // Phase 02.1 (Plan 05) — D-40 left side orchestrator
+                'blockAvailabilityValidator'    => BlockAvailabilityValidator::class,    // Phase 02.1 (Plan 08) — D-36 fourth finding kind
             ],
         ];
     }
