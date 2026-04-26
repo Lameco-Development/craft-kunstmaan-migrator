@@ -14,29 +14,33 @@ use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Analyze — single-action orchestration of the schema-dump + heuristic + LLM
- * proposal pipeline + report rendering. Collapses v1's 9-sub-action
- * AnalyzeController (2138 LOC) to one entrypoint per CONTEXT.md operator
- * workflow.
+ * Analyze — single-action orchestration of the source-introspection + schema-dump +
+ * heuristic + LLM proposal pipeline + report rendering. Collapses v1's 9-sub-action
+ * AnalyzeController (2138 LOC) to one entrypoint per CONTEXT.md operator workflow.
  *
- * Pipeline:
- *   1. NeverProduction gate (FIRST statement — Phase 1 / D-20)
- *   2. Build MigrationFilters from CLI flags + Settings::default*
- *   3. LocalePreflight::ensure — hard-fail on unmapped locales (D-17 LOC-02)
- *   4. SchemaDumper::dump → schema-dump.json
- *   5. HeuristicProposer::autoMatch → high-confidence rows status: accepted (D-02)
- *   6. LlmClassifier::batchPropose for residuals (skip when --no-ai or no API key)
- *   7. MappingFile::merge with skip-existing semantics (D-04)
- *   8. ReportBuilder::render → REPORT.md
+ * Pipeline (Phase 02.1 / D-42 — 11 steps; was 8 in Phase 2 / Plan 03):
+ *   1.   NeverProduction gate (FIRST statement — Phase 1 / D-20)
+ *   1.5  KUNSTMAAN_SOURCE_PATH gate (Phase 02.1 / D-31)
+ *   2.   FilterFactory.fromCli + LocalePreflight::ensure (D-17 LOC-02)
+ *   3.   KunstmaanSourceScanner::scan → entity index + table list (D-40 left side)
+ *   4.   KunstmaanPageStructureScanner::scan → page-structure FQCN map (D-40 right)
+ *   4.5  Page-part proposal emitter — pageStructure → mapping rows (D-35, locked here per advisor)
+ *   5.   pageStructure.json write (storageDir/pageStructure.json — atomic JSON)
+ *   6.   SchemaDumper::dump (consumes scan['tables']) → schema-dump.json
+ *   7.   HeuristicProposer::autoMatch with heuristic 1.5 entity context (D-44)
+ *   8.   LlmClassifier::batchPropose — KB markdown via v1-shaped adapter (B2 fix)
+ *   9.   MappingFile::merge with skip-existing semantics (D-04 + D-34 kind-prefixed tuple)
+ *   10.  MappingAuditor::audit (Plan 8 extends with BlockAvailabilityValidator)
+ *   11.  ReportBuilder::render → REPORT.md
  *
  * Exit:
  *   - ExitCode::OK on green
- *   - ExitCode::CONFIG on locale-preflight FAIL
+ *   - ExitCode::CONFIG on locale-preflight FAIL or KUNSTMAAN_SOURCE_PATH unset/invalid
  *   - ExitCode::UNSPECIFIED_ERROR on any other FAIL
  *
- * --audit-strict (D-16): the mapping-audit step (Step 7) elevates non-empty drift
- * findings to fail-state when this flag is set; warn-only by default. Drift findings
- * are persisted to MAPPING-AUDIT.md regardless so operators always have an audit trail.
+ * --audit-strict (D-16): step 10's mapping-audit elevates non-empty drift findings
+ * to fail-state when this flag is set; warn-only by default. Drift findings persist
+ * to MAPPING-AUDIT.md regardless so operators always have an audit trail.
  */
 class AnalyzeController extends Controller
 {
@@ -68,12 +72,27 @@ class AnalyzeController extends Controller
             return $gate;
         }
 
-        $this->stdout("Analyze: scanning legacy schema\n", Console::FG_CYAN);
+        $this->stdout("Analyze: scanning legacy source + schema\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
         $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
 
-        // Step 1: locale preflight (LOC-02 D-17 hard-fail).
+        // Step 1.5 (Phase 02.1 / D-31): KUNSTMAAN_SOURCE_PATH gate. Second gate after
+        // enforceNeverProduction. Greenfield-fallback was dropped per D-31; without a
+        // valid source path the source-scanner cannot read entity files and analyze
+        // cannot proceed.
+        $sourcePath = $plugin->kunstmaanSourcePathResolver->resolve();
+        if ($sourcePath === null) {
+            $this->stderr(
+                "  FAIL KUNSTMAAN_SOURCE_PATH unset or invalid — analyze cannot proceed.\n"
+                . "       Set KUNSTMAAN_SOURCE_PATH in .env (or kunstmaanSourcePath in plugin settings).\n",
+                Console::FG_RED,
+            );
+            return ExitCode::CONFIG;
+        }
+        $this->stdout("  OK   source path resolved → {$sourcePath}\n", Console::FG_GREEN);
+
+        // Step 2: locale preflight (LOC-02 D-17 hard-fail).
         $unmapped = $plugin->localePreflight->ensure($filters);
         if ($unmapped !== null) {
             $this->stderr(
@@ -89,16 +108,83 @@ class AnalyzeController extends Controller
         }
         $this->stdout("  OK   locale preflight\n", Console::FG_GREEN);
 
-        // Step 2: schema dump.
+        $storageDir = Craft::$app->path->getStoragePath() . '/migration';
+
+        // Step 3 (Phase 02.1 / D-42): KunstmaanSourceScanner — entity index + table list.
         try {
-            $schemaDump = $plugin->schemaDumper->dump($filters);
+            $sourceScan = $plugin->kunstmaanSourceScanner->scan();
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL source scanner: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $entityCount = count($sourceScan['entities'] ?? []);
+        $sourceTables = (array) ($sourceScan['tables'] ?? []);
+        $this->stdout(
+            "  OK   source scanned ({$entityCount} entities, " . count($sourceTables) . " tables)\n",
+            Console::FG_GREEN,
+        );
+
+        // Step 4 (Phase 02.1 / D-42): KunstmaanPageStructureScanner — pageStructure FQCN map.
+        try {
+            $pageStructure = $plugin->kunstmaanPageStructureScanner->scan();
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL page-structure scanner: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout(
+            "  OK   page structure scanned (" . count($pageStructure) . " page entities)\n",
+            Console::FG_GREEN,
+        );
+
+        // Step 4.5 (Phase 02.1 / D-35, locked here per advisor): walk pageStructure and
+        // emit a kind=pagePart mapping row per (pagePartClass × parentPageClass × context)
+        // tuple. Plan 06's structural-only merge identity tuple ensures re-runs dedupe
+        // even when the operator has filled in targetEntryType.
+        $pagePartProposals = [];
+        foreach ($pageStructure as $pageFqcn => $pageRecord) {
+            $parentPageClass = $this->shortClassName((string) $pageFqcn);
+            foreach ((array) ($pageRecord['contexts'] ?? []) as $contextRecord) {
+                $contextName = (string) ($contextRecord['name'] ?? '');
+                foreach ((array) ($contextRecord['allowedPagePartClasses'] ?? []) as $allowedClass) {
+                    $pagePartClass = (string) ($allowedClass['class'] ?? '');
+                    if ($pagePartClass === '') { continue; }
+                    $shortClass = $this->shortClassName($pagePartClass);
+                    $sourceTable = (string) ($allowedClass['table'] ?? '');
+                    $rationale = "page-part class {$shortClass} in {$parentPageClass} context '{$contextName}'";
+                    $pagePartProposals[] = $plugin->mappingFile->buildPagePartRow(
+                        pagePartClass: $pagePartClass,
+                        sourceTable: $sourceTable,
+                        parentPageClass: $parentPageClass,
+                        context: $contextName,
+                        targetEntryType: '', // operator fills via map loop; structural-only merge tuple dedupes re-runs
+                        confidence: 'medium',
+                        rationale: $rationale,
+                    );
+                }
+            }
+        }
+        $this->stdout(
+            "  OK   page-part emitter produced " . count($pagePartProposals) . " proposals\n",
+            Console::FG_GREEN,
+        );
+
+        // Step 5: pageStructure.json write (atomic JSON; sibling of schema-dump.json).
+        $pageStructurePath = $storageDir . '/pageStructure.json';
+        if (!$plugin->mappingFile->writeAtomicJson($pageStructurePath, $pageStructure)) {
+            $this->stderr("  FAIL could not write {$pageStructurePath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout("  OK   pageStructure.json written → {$pageStructurePath}\n", Console::FG_GREEN);
+
+        // Step 6: schema dump (consumes Phase 02.1 source-scanner table list).
+        try {
+            $schemaDump = $plugin->schemaDumper->dump($filters, $sourceTables);
         } catch (Throwable $e) {
             $this->stderr("  FAIL schema dump: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
         $tableCount = count($schemaDump['tables'] ?? []);
         $colCount   = array_sum(array_map('count', $schemaDump['columns'] ?? []));
-        $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $schemaPath = $storageDir . '/schema-dump.json';
         if (!$plugin->mappingFile->writeAtomicJson($schemaPath, $schemaDump)) {
             $this->stderr("  FAIL could not write {$schemaPath}\n", Console::FG_RED);
@@ -106,7 +192,7 @@ class AnalyzeController extends Controller
         }
         $this->stdout("  OK   schema dumped ({$tableCount} tables, {$colCount} columns) → {$schemaPath}\n", Console::FG_GREEN);
 
-        // Step 3: heuristic proposals.
+        // Step 7: heuristic proposals.
         // HeuristicProposer::autoMatch returns [matched, residual]. The schema dump
         // alone does not carry violation rows; v1's coverage step transforms
         // schema-dump → violations. Phase 2 / Plan 03 ships only the orchestration
@@ -130,7 +216,13 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
-        // Step 4: LLM batch proposals for residuals (skip when --no-ai or key missing).
+        // Step 8: LLM batch proposals for residuals (skip when --no-ai or key missing).
+        // Phase 02.1 (B2 fix): KB markdown placeholders replaced with rendered Pages +
+        // PageParts markdown — but only via a v1-shaped MAPPING ADAPTER built from v2's
+        // flat proposals[] array. KnowledgeBase::renderPagesMarkdown / renderPagePartsMarkdown
+        // read v1's nested keys ($mapping['pageParts'] / ['nodeClasses'] / ['sections']);
+        // without the adapter, every per-row annotation would be silently lost (placeholders
+        // would be replaced but the mapping overlay would render empty).
         $llmProposals = [];
         $apiKey = (string) ($plugin->getSettings()->anthropicApiKey ?? '');
         $skipLlm = $this->noAi || $apiKey === '' || $residual === [];
@@ -144,14 +236,20 @@ class AnalyzeController extends Controller
             );
         } else {
             try {
-                // KB markdown is empty in Phase 2 / Plan 03 — Plan 05 (or later) wires
-                // the Kunstmaan + Craft KB sources. The classifier tolerates empty
-                // strings (truncate is a no-op).
+                // Build v1-shaped KB mapping adapter from v2's flat proposals[] (B2 fix).
+                // Pre-LLM proposals = heuristic-matched rows + emitted page-part rows.
+                // Heuristic rows lack an explicit `kind` discriminator and default to
+                // 'column' inside the adapter bucketer.
+                $preLlmProposals = array_merge($heuristicProposals, $pagePartProposals);
+                $adapter = self::buildKbMappingAdapter($preLlmProposals);
+                $now = new \DateTimeImmutable();
+                $kbPages     = $plugin->knowledgeBase->renderPagesMarkdown($adapter, $now);
+                $kbPageParts = $plugin->knowledgeBase->renderPagePartsMarkdown($adapter, $now);
                 $llmProposals = $plugin->llmClassifier->batchPropose(
                     $residual,
                     $craftFieldIndex,
-                    '',
-                    '',
+                    $kbPages . "\n\n" . $kbPageParts,
+                    '', // Craft-side KB stays empty until Phase 4 / verify
                 );
                 $this->stdout(
                     "  OK   LLM produced " . count($llmProposals) . " proposals\n",
@@ -163,13 +261,18 @@ class AnalyzeController extends Controller
             }
         }
 
-        // Step 5: build rows with D-02 confidence-tier → status assignment.
+        // Step 9 (build rows): D-02 confidence-tier → status assignment + page-part rows.
+        // Page-part rows produced by step 4.5 are already row-shaped (buildPagePartRow
+        // returns a status:needs-review row per D-35); they merge in alongside column rows.
         $rows = [];
         foreach ($heuristicProposals as $p) {
             $rows[] = $plugin->mappingFile->buildRow($p, $this->statusForHeuristic($p));
         }
         foreach ($llmProposals as $p) {
             $rows[] = $plugin->mappingFile->buildRow($p, $this->statusForLlm($p, $skipLlm));
+        }
+        foreach ($pagePartProposals as $p) {
+            $rows[] = $p;
         }
         // For LLM-skipped residuals (no LLM call, no proposals returned), still
         // emit a row with status: needs-review so the operator sees the gap.
@@ -201,7 +304,7 @@ class AnalyzeController extends Controller
             unset($r);
         }
 
-        // Step 6: skip-existing merge (D-04 — operator decisions sacred).
+        // Step 9 cont. (skip-existing merge — D-04 + D-34 kind-prefixed identity tuple).
         $mappingPath = $plugin->mappingFile->resolvePath();
         $existing = $plugin->mappingFile->load($mappingPath);
         $merged = $plugin->mappingFile->merge($existing, $rows);
@@ -216,7 +319,7 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
-        // Step 7: mapping-audit (D-16). Warn-only by default; --audit-strict elevates.
+        // Step 10: mapping-audit (D-16). Warn-only by default; --audit-strict elevates.
         $findings = $plugin->mappingAuditor->audit($merged['proposals']);
         $auditPath = $storageDir . '/MAPPING-AUDIT.md';
         $auditMd = $plugin->mappingAuditor->renderMarkdown($findings);
@@ -241,7 +344,7 @@ class AnalyzeController extends Controller
             );
         }
 
-        // Step 8: REPORT.md
+        // Step 11: REPORT.md
         $reportPath = $storageDir . '/REPORT.md';
         $report = $plugin->reportBuilder->render($schemaDump, $merged['proposals']);
         if (!$plugin->mappingFile->writeAtomic($reportPath, $report)) {
@@ -330,5 +433,80 @@ class AnalyzeController extends Controller
     private function buildCraftFieldIndex(): array
     {
         return [];
+    }
+
+    /**
+     * Resolve a class FQCN to its short name. Tries ReflectionClass first (handles
+     * autoloaded classes correctly); falls back to a string split on the last `\`
+     * when the class is not loadable (operator's source file may reference a class
+     * that doesn't exist on the consumer's autoload path — T-02.1-07-01 mitigation).
+     *
+     * ReflectionClass does NOT autoload via include/require for getShortName(); it
+     * only consults the loaded class table. Safe to call on operator-supplied FQCNs.
+     */
+    private function shortClassName(string $fqcn): string
+    {
+        try {
+            return (new \ReflectionClass($fqcn))->getShortName();
+        } catch (\ReflectionException) {
+            $tail = strrchr($fqcn, '\\');
+            return $tail !== false ? substr($tail, 1) : $fqcn;
+        }
+    }
+
+    /**
+     * Build a v1-shaped KB mapping adapter from v2's flat `proposals[]` array (B2 fix).
+     *
+     * KnowledgeBase::renderPagesMarkdown / renderPagePartsMarkdown read v1's nested
+     * mapping shape:
+     *   - $mapping['pageParts']   — keyed by pagePart FQCN
+     *   - $mapping['nodeClasses'] — keyed by Page entity FQCN
+     *   - $mapping['sections']    — keyed by section handle (column rows grouped)
+     *
+     * v2 stores rows in a FLAT `proposals[]` array — without this adapter, every
+     * per-row annotation is silently lost (the placeholders would be replaced but
+     * the mapping overlay would render empty).
+     *
+     * Buckets:
+     *   - kind=pagePart rows → 'pageParts' keyed by pagePartClass FQCN
+     *   - kind=column rows   → 'sections' keyed by targetEntryType
+     *                          ('_unmapped' bucket for column rows lacking targetEntryType)
+     *
+     * 'nodeClasses' is reserved for Page entity FQCN annotations (v1 sources this
+     * from a dedicated YAML key v2 doesn't ship). Leaving it empty is correct —
+     * KnowledgeBase simply renders no per-Page annotations. Future work: derive
+     * from accepted column rows whose table maps to a Page entity via heuristic 1.5.
+     *
+     * Public + static so the unit test (AnalyzeControllerKbAdapterTest) can call
+     * it without instantiating the controller (which requires Craft's Yii base
+     * wiring not available in the unit-test bootstrap).
+     *
+     * @param list<array<string, mixed>> $proposals  Pre-LLM proposals (heuristic-matched + emitted page-part rows)
+     * @return array{pageParts: array<string, array<string, mixed>>, nodeClasses: array<string, mixed>, sections: array<string, list<array<string, mixed>>>}
+     */
+    public static function buildKbMappingAdapter(array $proposals): array
+    {
+        $adapter = [
+            'pageParts'   => [],
+            'nodeClasses' => [],
+            'sections'    => [],
+        ];
+        foreach ($proposals as $row) {
+            if (!is_array($row)) { continue; }
+            $kind = (string) ($row['kind'] ?? 'column');
+            if ($kind === 'pagePart') {
+                $key = (string) ($row['pagePartClass'] ?? '');
+                if ($key !== '') {
+                    $adapter['pageParts'][$key] = $row;
+                }
+                continue;
+            }
+            // Column rows (default when 'kind' is unset — heuristic-matched proposals
+            // come from autoMatch() which doesn't carry an explicit kind).
+            $section = (string) ($row['targetEntryType'] ?? '');
+            if ($section === '') { $section = '_unmapped'; }
+            $adapter['sections'][$section][] = $row;
+        }
+        return $adapter;
     }
 }

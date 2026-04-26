@@ -41,6 +41,13 @@ final class SchemaDumper extends Component
     public int $maxRowsScanPerTable = 1000;
 
     /**
+     * @param ?list<string> $sourceTableList  When provided (Phase 02.1 / D-42 step 6 wiring),
+     *   skips the `LIKE 'kuma\_%'` discovery query and uses this caller-supplied list
+     *   instead. Phase 02.1's `KunstmaanSourceScanner.scan()['tables']` is the canonical
+     *   source — it parses `@ORM\Table(name=...)` from the operator's PHP entity files,
+     *   which is more accurate than a runtime DB prefix scan. When null, the legacy
+     *   `LIKE 'kuma\_%'` fallback path is preserved (keeps the helper unit-testable
+     *   and continues to work for callers that haven't migrated to the scanner yet).
      * @return array{
      *   generatedAt: string,
      *   driver:      string,
@@ -49,15 +56,20 @@ final class SchemaDumper extends Component
      *   locales:     list<string>,
      * }
      */
-    public function dump(MigrationFilters $filters): array
+    public function dump(MigrationFilters $filters, ?array $sourceTableList = null): array
     {
         $db = Plugin::getInstance()->legacyDbService;
         $conn = $db->db();
         $driver = $conn->getDriverName();
         $schema = $this->extractSchemaName($conn->dsn);
 
-        // 1. List candidate tables (kuma_* prefix). Apply entities filter if set.
-        $allTables = $this->listKunstmaanTables($schema);
+        // 1. List candidate tables. When the caller supplied a discovered table list
+        //    (Phase 02.1 / D-42 step 6 — KunstmaanSourceScanner.scan()['tables']), use
+        //    it directly. Otherwise fall back to the legacy `kuma_*` prefix scan.
+        //    The entities filter still applies in both modes.
+        $allTables = $sourceTableList !== null
+            ? array_values(array_filter($sourceTableList, static fn($t): bool => is_string($t) && $t !== ''))
+            : $this->listKunstmaanTables($schema);
         $tables = $this->applyEntitiesFilter($allTables, $filters);
 
         // 2. Per-table row count.
