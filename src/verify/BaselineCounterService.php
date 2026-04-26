@@ -8,6 +8,8 @@ use Craft;
 use craft\db\Query;
 use craft\elements\Category;
 use craft\elements\Entry;
+use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use Throwable;
 use yii\base\Component;
 
@@ -52,14 +54,21 @@ class BaselineCounterService extends Component
     /**
      * Capture a counts-only baseline of the current Craft state.
      *
+     * Phase 4.1 / D-29: when $filters is non-null, the snapshot embeds a
+     * `filterScope` JSON header (entities / locales / since) so the doctor
+     * 8th check can detect filter-scope drift between capture and verify.
+     * `filterScope: null` is emitted when no filters were passed (the key is
+     * always present so downstream consumers don't need to handle missing-key).
+     *
      * @return array<string, mixed>
      */
-    public function capture(): array
+    public function capture(?MigrationFilters $filters = null): array
     {
         return [
             'format' => 'counts-v1',
             'generatedAt' => gmdate('Y-m-d\TH:i:s\Z'),
-            'sections' => $this->captureSections(),
+            'filterScope' => self::buildFilterScope($filters),
+            'sections' => $this->captureSections($filters),
             'assets' => $this->captureAssets(),
             'taxonomies' => $this->captureTaxonomies(),
             'retour' => $this->captureRetour(),
@@ -68,25 +77,60 @@ class BaselineCounterService extends Component
     }
 
     /**
+     * Phase 4.1 / D-29 — pure helper rendering the filterScope JSON header
+     * shape. Public-static so the doctor 8th check (D-30) and the
+     * BaselineCounterServiceFiltersTest can call it directly without a
+     * Craft bootstrap.
+     *
+     * @return array{entities: list<string>, locales: list<string>, since: ?string}|null
+     */
+    public static function buildFilterScope(?MigrationFilters $filters): ?array
+    {
+        if ($filters === null) {
+            return null;
+        }
+        return [
+            'entities' => array_values($filters->entities),
+            'locales'  => array_values($filters->locales),
+            'since'    => $filters->since,
+        ];
+    }
+
+    /**
      * Per-section totalCount + countsBySite. NO per-entry SHA (D-59 drop).
+     *
+     * Phase 4.1 / D-29 — when $filters carries an entities allow-list, sections
+     * outside the list are skipped (not included with totalCount=0). When
+     * $filters carries a locales subset, the per-site counts are restricted
+     * to the matching Craft sites via Settings::$localeMap.
      *
      * @return array<string, array<string, mixed>>
      */
-    private function captureSections(): array
+    private function captureSections(?MigrationFilters $filters = null): array
     {
         $out = [];
         $sections = Craft::$app->entries->getAllSections();
+        $scopeSiteIds = $this->resolveScopeSiteIds($filters);
 
         foreach ($sections as $section) {
             $handle = (string) $section->handle;
 
-            $entries = Entry::find()
+            // D-29: respect entities allow-list — exclude entirely (don't emit
+            // totalCount=0 row, which would later read as a real expected=0 gate).
+            if ($filters !== null && $filters->entities !== [] && !in_array($handle, $filters->entities, true)) {
+                continue;
+            }
+
+            $query = Entry::find()
                 ->section($section)
                 ->site('*')
                 ->status(null)
                 ->drafts(null)
-                ->revisions(false)
-                ->all();
+                ->revisions(false);
+            if ($scopeSiteIds !== []) {
+                $query->siteId($scopeSiteIds);
+            }
+            $entries = $query->all();
 
             $countsBySite = [];
             $total = 0;
@@ -106,6 +150,36 @@ class BaselineCounterService extends Component
 
         ksort($out);
         return $out;
+    }
+
+    /**
+     * Phase 4.1 / D-29 — resolve filter-scoped Craft site IDs from the locale
+     * subset. Mirrors CountGateService::resolveScopeSiteIds.
+     *
+     * @return list<int>
+     */
+    private function resolveScopeSiteIds(?MigrationFilters $filters): array
+    {
+        if ($filters === null || $filters->locales === []) {
+            return [];
+        }
+        $localeMap = (array) Plugin::getInstance()->getSettings()->localeMap;
+        $siteIds = [];
+        try {
+            foreach ($filters->locales as $locale) {
+                $handle = $localeMap[$locale] ?? null;
+                if (!is_string($handle) || $handle === '') {
+                    continue;
+                }
+                $site = Craft::$app->sites->getSiteByHandle($handle);
+                if ($site !== null) {
+                    $siteIds[] = (int) $site->id;
+                }
+            }
+        } catch (Throwable) {
+            return [];
+        }
+        return array_values(array_unique($siteIds));
     }
 
     /**

@@ -8,6 +8,8 @@ use Craft;
 use craft\db\Query;
 use craft\elements\Category;
 use craft\elements\Entry;
+use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use Throwable;
 use yii\base\Component;
 
@@ -43,7 +45,7 @@ class CountGateService extends Component
      * @param array<string, mixed> $expectedCounts
      * @return array{pass: bool, gates: array<string, array<string, mixed>>}
      */
-    public function run(array $expectedCounts, float $tolerance): array
+    public function run(array $expectedCounts, float $tolerance, ?MigrationFilters $filters = null): array
     {
         $expectedSections   = (array) ($expectedCounts['sections']   ?? []);
         $expectedAssets     = (array) ($expectedCounts['assets']     ?? []);
@@ -53,18 +55,31 @@ class CountGateService extends Component
         $gates = [];
         $overallPass = true;
 
+        // Phase 4.1 / VER-04 — filter-scoped siteIds for locale-restricted runs.
+        // Empty array = no scoping (Phase 4 behavior preserved).
+        $scopeSiteIds = $this->resolveScopeSiteIds($filters);
+
         // ── Entry counts (canonical entries, primary site) ────────────
         foreach ($expectedSections as $sectionHandle => $expected) {
+            // Phase 4.1 / D-28 — filter-aware gate evaluation. Sections excluded
+            // by an entities allow-list get a SKIPPED row, not a 0/expected fail.
+            if (self::isSectionFilteredOut($sectionHandle, $filters)) {
+                $gates[$sectionHandle] = ['skip' => true, 'note' => 'filtered out (entities allow-list)'];
+                continue;
+            }
             $expected = (int) $expected;
             if ($expected === 0) {
                 $gates[$sectionHandle] = ['pass' => true, 'note' => 'expectedCount=0, skipped'];
                 continue;
             }
             try {
-                $actual = (int) Entry::find()
+                $query = Entry::find()
                     ->section($sectionHandle)
-                    ->status(null)
-                    ->count();
+                    ->status(null);
+                if ($scopeSiteIds !== []) {
+                    $query->siteId($scopeSiteIds);
+                }
+                $actual = (int) $query->count();
             } catch (Throwable) {
                 $actual = -1;
             }
@@ -173,5 +188,64 @@ class CountGateService extends Component
         }
 
         return ['pass' => $overallPass, 'gates' => $gates];
+    }
+
+    /**
+     * Phase 4.1 / D-28 — pure decision: is this section excluded by the
+     * filters' entities allow-list?
+     *
+     * Returns true ONLY when filters carry a non-empty entities list AND
+     * the section handle is not in it. Null filters or empty allow-list
+     * preserve Phase 4 behavior (everything in scope).
+     *
+     * @internal Public-static for direct unit tests without Reflection;
+     *           mirrors LocalePreflight::compareEnvDefaultLocaleToLocaleMap.
+     */
+    public static function isSectionFilteredOut(string $sectionHandle, ?MigrationFilters $filters): bool
+    {
+        if ($filters === null) {
+            return false;
+        }
+        if ($filters->entities === []) {
+            return false;
+        }
+        return !in_array($sectionHandle, $filters->entities, true);
+    }
+
+    /**
+     * Phase 4.1 / D-28 — resolve filter-scoped Craft site IDs from the locale
+     * subset (when filters carry one). Returns [] when no locale scoping
+     * applies (preserves Phase 4 unscoped behavior).
+     *
+     * Locale → siteId via Settings::$localeMap (the established Kunstmaan-locale
+     * → Craft-site-handle map; mirrors EntryMigrationService and other services
+     * that consume this map). Unmapped locales are silently skipped — the
+     * locale preflight step ensures every filter locale is mapped before the
+     * verify gate runs.
+     *
+     * @return list<int>
+     */
+    private function resolveScopeSiteIds(?MigrationFilters $filters): array
+    {
+        if ($filters === null || $filters->locales === []) {
+            return [];
+        }
+        $localeMap = (array) Plugin::getInstance()->getSettings()->localeMap;
+        $siteIds = [];
+        try {
+            foreach ($filters->locales as $locale) {
+                $handle = $localeMap[$locale] ?? null;
+                if (!is_string($handle) || $handle === '') {
+                    continue;
+                }
+                $site = Craft::$app->sites->getSiteByHandle($handle);
+                if ($site !== null) {
+                    $siteIds[] = (int) $site->id;
+                }
+            }
+        } catch (Throwable) {
+            return [];
+        }
+        return array_values(array_unique($siteIds));
     }
 }

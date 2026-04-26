@@ -50,10 +50,10 @@ class VerifyController extends Controller
 
     // ROADMAP Phase 2 success criterion 5: five top-level commands all accept --entities / --locales / --since.
     // Mirrors AnalyzeController (Phase 02.1). The flags parse via FilterFactory::fromCli at action entry.
-    // Deep plumbing into BaselineCounterService / CountGateService is deferred — see plan body
-    // "filter plumbing carve-out". The load-bearing requirement is uniform CLI surface; the parsing
-    // happens here and $filters stays in scope so a future filter-aware service overload wires
-    // without touching the controller.
+    // Phase 4.1 / VER-04 closes the previous Phase-4 carve-out: $filters now flows into
+    // CountGateService::run() and BaselineCounterService::capture() — the verify gate is
+    // filter-aware (sections excluded by entities allow-list emit SKIP rows; entry counts
+    // are scoped by Settings::$localeMap → siteId when locales are specified).
     public ?string $entities = null;
     public ?string $locales  = null;
     public ?string $since    = null;
@@ -103,9 +103,9 @@ class VerifyController extends Controller
         $plugin = Plugin::getInstance();
 
         // ROADMAP criterion 5: parse filter flags. Mirrors AnalyzeController step 2.
-        // CountGateService / BaselineCounterService are filter-naive at v1.0 (carve-out per
-        // plan body); $filters retained so future filter-aware overloads wire without
-        // touching the controller surface.
+        // Phase 4.1 / VER-04: $filters flows into CountGateService::run() (gate evaluation
+        // is now filter-aware — see CountGateService::isSectionFilteredOut + locale→siteId
+        // scoping).
         $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
 
         $tolerance = $this->countTolerance ?? $plugin->getSettings()->verifyCountTolerance ?? 0.01;
@@ -145,7 +145,7 @@ class VerifyController extends Controller
                 $report['pass'] = false;
             } else {
                 $expectedCounts = $this->baselineToExpectedCounts($baselineDecoded);
-                $countResult = $plugin->countGateService->run($expectedCounts, (float) $tolerance);
+                $countResult = $plugin->countGateService->run($expectedCounts, (float) $tolerance, $filters);
                 $report['countGate'] = $countResult['gates'];
                 if (!$countResult['pass']) {
                     $report['pass'] = false;
@@ -286,11 +286,11 @@ class VerifyController extends Controller
 
         $plugin = Plugin::getInstance();
 
-        // Criterion 5: parse filter flags for CLI uniformity. v1.0 BaselineCounterService is
-        // filter-naive (carve-out — see plan body); $filters retained so future filter-aware
-        // overload can be wired without touching the controller surface.
+        // Phase 4.1 / VER-04: $filters flows into capture() — the snapshot embeds a
+        // filterScope JSON header (entities / locales / since) so a later doctor 8th
+        // check can detect filter-scope drift between capture and verify (D-30).
         $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
-        $snapshot = $plugin->baselineCounterService->capture();
+        $snapshot = $plugin->baselineCounterService->capture($filters);
 
         $path = $this->output ?? Craft::$app->path->getStoragePath() . '/migration/baseline.json';
         // Phase 2 / D-07 atomic write seam.
