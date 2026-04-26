@@ -287,19 +287,153 @@ class DoctorController extends Controller
     /**
      * Check #8 (D-69): verify baseline presence — informational only.
      * Operators may run doctor before capturing baseline.
+     *
+     * Phase 4.1 / D-30 — escalates from INFO/OK to WARN when baseline.json's
+     * captured filterScope mismatches the current run's --entity / --locale /
+     * --since invocation. Silent when baseline carries no filterScope (legacy
+     * captures pre-Phase-4.1) and when the captured scope matches. NEVER FAILs
+     * — D-69 invariant preserved.
      */
     private function checkVerifyBaseline(): bool
     {
         $path = Craft::$app->path->getStoragePath() . '/migration/baseline.json';
-        if (is_file($path)) {
-            $this->stdout("  OK   baseline.json present at {$path}\n", Console::FG_GREEN);
-        } else {
+        if (!is_file($path)) {
             $this->stdout(
                 "  INFO baseline.json missing — run `verify capture-baseline` first if you want to gate migrate runs.\n",
                 Console::FG_YELLOW,
             );
+            return true; // D-69: always OK
         }
-        return true; // D-69: always OK.
+
+        $this->stdout("  OK   baseline.json present at {$path}\n", Console::FG_GREEN);
+
+        // Phase 4.1 / D-30 — filter-scope WARN escalation.
+        // T-04.1-05-08 mitigation: malformed JSON falls through to 'no-scope'
+        // (silent) rather than throwing.
+        $raw = @file_get_contents($path);
+        $decoded = $raw !== false ? json_decode($raw, true) : null;
+        $captured = is_array($decoded) && isset($decoded['filterScope']) && is_array($decoded['filterScope'])
+            ? $decoded['filterScope']
+            : null;
+
+        $current = [
+            'entities' => $this->parseCsvList($this->entities),
+            'locales'  => $this->parseCsvList($this->locales),
+            'since'    => ($this->since !== null && $this->since !== '') ? $this->since : null,
+        ];
+
+        $cmp = self::compareBaselineFilterScope($captured, $current);
+
+        switch ($cmp['status']) {
+            case 'no-scope':
+                // D-30: captured baseline has no filterScope (pre-Phase-4.1 capture or
+                // baseline written without filters) — silent; no extra row.
+                return true;
+            case 'matches':
+                // D-30: captured scope matches current run's scope — silent; no extra row.
+                return true;
+            case 'mismatch':
+                // D-30: verbatim copy — DO NOT paraphrase.
+                $this->stdout(sprintf(
+                    "  WARN filter-scope mismatch — baseline was captured with `%s`, current run is `%s`. Re-run capture-baseline or re-run verify with matching filters.\n",
+                    $cmp['capturedSummary'],
+                    $cmp['currentSummary'],
+                ), Console::FG_YELLOW);
+                return true; // D-30 + D-69: WARN, never FAIL.
+        }
+        return true;
+    }
+
+    /**
+     * Phase 4.1 / D-30 — pure helper. Returns one of:
+     *   ['status' => 'no-scope', 'capturedSummary' => '', 'currentSummary' => '']
+     *   ['status' => 'matches',  'capturedSummary' => string, 'currentSummary' => string]
+     *   ['status' => 'mismatch', 'capturedSummary' => string, 'currentSummary' => string]
+     *
+     * Mismatch is detected on any of:
+     *   - entities array set-difference (order-independent)
+     *   - locales  array set-difference (order-independent)
+     *   - since    string strict equality (===)
+     *
+     * Public-static so the test file (Phase 4.1 / Plan 04.1-05 / Task 4) can
+     * call it directly without Reflection. Mirrors
+     * LocalePreflight::compareEnvDefaultLocaleToLocaleMap from Plan 04.1-03.
+     *
+     * @param array<string, mixed>|null $captured baseline.json's filterScope header (null when absent)
+     * @param array<string, mixed>|null $current  current run's filter scope
+     * @return array{status: string, capturedSummary: string, currentSummary: string}
+     */
+    public static function compareBaselineFilterScope(?array $captured, ?array $current): array
+    {
+        if ($captured === null) {
+            return ['status' => 'no-scope', 'capturedSummary' => '', 'currentSummary' => ''];
+        }
+        $current = $current ?? ['entities' => [], 'locales' => [], 'since' => null];
+
+        $capturedEntities = self::normalizeList($captured['entities'] ?? []);
+        $currentEntities  = self::normalizeList($current['entities']  ?? []);
+        $capturedLocales  = self::normalizeList($captured['locales']  ?? []);
+        $currentLocales   = self::normalizeList($current['locales']   ?? []);
+        $capturedSince    = is_string($captured['since'] ?? null) && $captured['since'] !== '' ? (string) $captured['since'] : null;
+        $currentSince     = is_string($current['since']  ?? null) && $current['since']  !== '' ? (string) $current['since']  : null;
+
+        $matches = $capturedEntities === $currentEntities
+            && $capturedLocales === $currentLocales
+            && $capturedSince === $currentSince;
+
+        $summary = static fn(array $entities, array $locales, ?string $since): string => sprintf(
+            'entities=%s; locales=%s; since=%s',
+            $entities === [] ? 'all' : implode(',', $entities),
+            $locales  === [] ? 'all' : implode(',', $locales),
+            $since ?? 'none',
+        );
+
+        return [
+            'status'          => $matches ? 'matches' : 'mismatch',
+            'capturedSummary' => $summary($capturedEntities, $capturedLocales, $capturedSince),
+            'currentSummary'  => $summary($currentEntities, $currentLocales, $currentSince),
+        ];
+    }
+
+    /**
+     * Phase 4.1 / D-30 — set-equality normalisation: trim, drop empties, sort.
+     * Order-independent comparison; ['blogPosts','events'] ≡ ['events','blogPosts'].
+     *
+     * @return list<string>
+     */
+    private static function normalizeList(mixed $v): array
+    {
+        if (!is_array($v)) {
+            return [];
+        }
+        $out = [];
+        foreach ($v as $x) {
+            if (is_string($x)) {
+                $trimmed = trim($x);
+                if ($trimmed !== '') {
+                    $out[] = $trimmed;
+                }
+            }
+        }
+        sort($out, SORT_STRING);
+        return $out;
+    }
+
+    /**
+     * Phase 4.1 / D-30 — CSV → list<string> for the doctor's --entities /
+     * --locales flags (which mirror MigrateController's flag shape).
+     *
+     * @return list<string>
+     */
+    private function parseCsvList(?string $csv): array
+    {
+        if ($csv === null || $csv === '') {
+            return [];
+        }
+        return array_values(array_filter(
+            array_map('trim', explode(',', $csv)),
+            static fn(string $s): bool => $s !== '',
+        ));
     }
 
     /**
