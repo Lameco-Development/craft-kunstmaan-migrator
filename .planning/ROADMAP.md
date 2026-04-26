@@ -201,7 +201,7 @@ Plans:
 - [x] 04-09-verify-controller-and-plugin-wiring-PLAN.md — VerifyController + Plugin::config()/init() Phase 4 wiring (VER-01, VER-02, VER-03 complete; ADP-01, ADP-02 service+wiring complete pending Plan 04-10 actionSeo/actionRetour) — completed 2026-04-26
 - [x] 04-10-migrate-controller-extensions-PLAN.md — MigrateController actionSeo/actionRetour + verbosity + REPORT.md sections + asset RCA (ADP-01, ADP-02 complete via sub-actions + actionIndex bolt-ons; CFG-02 verbosity + per-run log file; CFG-03 REPORT.md three new sections + asset RCA) — completed 2026-04-26
 - [x] 04-11-doctor-7th-8th-checks-PLAN.md — Doctor adapter health + verify baseline presence checks (ADP-01..03, VER-01) — completed 2026-04-26
-- [ ] 04-12-tests-and-reconciliation-PLAN.md — PHPUnit unit tests + Phase 4 RECONCILIATION.md + ADP-03 composer-suggest guard (ADP-01..03, VER-01..03, CFG-02)
+- [x] 04-12-tests-and-reconciliation-PLAN.md — PHPUnit unit tests (60 → 83 tests, +23) + Phase 4 RECONCILIATION.md aggregate + ADP-03 composer-suggest invariant guard (ADP-01..03, VER-01..03, CFG-02 complete) — completed 2026-04-26
 
 ### Phase 5: Tests, Rehearsal & Release
 
