@@ -33,6 +33,8 @@ class Settings extends Model
     public ?int    $llmTimeout           = null;
     public ?int    $llmInterChunkDelay   = null;
     public ?string $mappingPath          = null;
+    // Phase 02.1 / D-30 (Kunstmaan source path). Defaults to KUNSTMAAN_SOURCE_PATH env.
+    public ?string $kunstmaanSourcePath  = null;
     public array   $defaultEntities      = [];
     public array   $defaultLocales       = [];
 
@@ -59,6 +61,7 @@ class Settings extends Model
                     'legacyDbCharset', 'legacyDbTablePrefix',
                     'anthropicApiKey',
                     'llmModel', 'mappingPath', 'defaultSince',
+                    'kunstmaanSourcePath',
                 ],
             ],
         ];
@@ -90,6 +93,10 @@ class Settings extends Model
         // D-14: ANTHROPIC_API_KEY env fallback. Settings property override wins when present.
         // Never logged by this class; doctor reports presence only (T-1-03).
         $this->anthropicApiKey ??= App::env('ANTHROPIC_API_KEY') ?: null;
+        // D-30: Kunstmaan source-checkout path (Phase 02.1). KUNSTMAAN_SOURCE_PATH env
+        // fallback; Settings property override wins. Resolver validates the path
+        // (realpath + is_dir + src/Entity/) — see KunstmaanSourcePathResolver.
+        $this->kunstmaanSourcePath ??= App::env('KUNSTMAAN_SOURCE_PATH') ?: null;
     }
 
     public function rules(): array
@@ -98,7 +105,7 @@ class Settings extends Model
             [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
-            [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince'], 'string'],
+            [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince', 'kunstmaanSourcePath'], 'string'],
             [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
             [['defaultEntities', 'defaultLocales', 'localeMap'], 'safe'],
             [['dryRunDefault'], 'boolean'],

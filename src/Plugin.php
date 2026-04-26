@@ -18,6 +18,7 @@ use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingFile;
 use lameco\kunstmaanmigrator\models\Settings;
+use lameco\kunstmaanmigrator\source\KunstmaanSourcePathResolver;
 use PDO;
 use yii\db\Connection;
 
@@ -34,6 +35,7 @@ use yii\db\Connection;
  * @property-read ReportBuilder $reportBuilder
  * @property-read CoverageAuditor $coverageAuditor
  * @property-read MappingAuditor $mappingAuditor
+ * @property-read KunstmaanSourcePathResolver $kunstmaanSourcePathResolver
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -59,6 +61,7 @@ class Plugin extends BasePlugin
                 'reportBuilder'     => ReportBuilder::class,      // Phase 2 (Plan 03) — D-17 paste-ready locales block
                 'coverageAuditor'   => CoverageAuditor::class,    // Phase 2 (Plan 05) — D-14 MAP-06
                 'mappingAuditor'    => MappingAuditor::class,     // Phase 2 (Plan 05) — D-16 MAP-07
+                'kunstmaanSourcePathResolver' => KunstmaanSourcePathResolver::class, // Phase 02.1 (Plan 01) — D-33 source-path resolver
             ],
         ];
     }
