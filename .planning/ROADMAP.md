@@ -195,7 +195,7 @@ Plans:
 - [x] 04-03-verify-primitives-PLAN.md — SnapshotDiffer + SpotCheckUrlFetcher verbatim port (B1 fix preserved) (VER-02 partial — primitives ready; consumer wiring in Plan 04-08 + 04-09) — completed 2026-04-26
 - [x] 04-04-count-gate-and-baseline-counter-PLAN.md — CountGateService verbatim + BaselineCounterService shape-derived (D-59) (VER-01 partial / VER-03 partial — services ready; controller wiring in Plan 04-09) — completed 2026-04-26
 - [x] 04-05-cp-settings-template-PLAN.md — CP `_settings.twig` grouped sections + editable tables + masked API key (CFG-01) — completed 2026-04-26
-- [ ] 04-06-seo-migration-service-PLAN.md — SeoMigrationService verbatim port (ADP-01)
+- [x] 04-06-seo-migration-service-PLAN.md — SeoMigrationService verbatim port (ADP-01 partial — service ready; controller wiring in Plan 04-09 + actionSeo in Plan 04-10) — completed 2026-04-26
 - [ ] 04-07-redirect-migration-service-PLAN.md — RedirectMigrationService verbatim port + hardcoded site-handle reshape (ADP-02)
 - [ ] 04-08-capture-baseline-html-service-PLAN.md — CaptureBaselineHtmlService verbatim port (VER-02)
 - [ ] 04-09-verify-controller-and-plugin-wiring-PLAN.md — VerifyController + Plugin::config()/init() Phase 4 wiring (VER-01, VER-02, VER-03, ADP-01, ADP-02)

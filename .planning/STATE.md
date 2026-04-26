@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 4 — Wave 1 complete (Plan 05 CP _settings.twig grouped form shipped — CFG-01 closed; D-62/D-63/D-64 satisfied)
-stopped_at: Phase 4 / Plan 05 completed; Wave 1 done; Wave 2 (04-06 / 04-07 / 04-08) unblocked
-last_updated: "2026-04-26T21:30:00.000Z"
+status: Phase 4 — Wave 2 in progress (Plan 06 SeoMigrationService verbatim port shipped — ADP-01 partial; D-54/D-55/D-56/D-57 satisfied)
+stopped_at: Phase 4 / Plan 06 completed; Wave 2 continues with 04-07 (RedirectMigrationService) + 04-08 (CaptureBaselineHtmlService)
+last_updated: "2026-04-26T18:50:00.000Z"
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 46
-  completed_plans: 38
-  percent: 80
+  completed_plans: 39
+  percent: 85
 ---
 
 # State
@@ -21,7 +21,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped.
 
-**Current focus:** Phase 4 — Adapters, Verify & Settings (Wave 1 in progress: Plan 01 shipped; plans 02-05 next)
+**Current focus:** Phase 4 — Adapters, Verify & Settings (Wave 2 in progress: Plans 01–06 shipped; 04-07 / 04-08 next)
 
 ## Milestone
 
@@ -37,7 +37,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 ## Current Phase
 
-**Phase 4: Adapters, Verify & Settings** — Wave 1 complete. Plans 01 / 02 / 03 / 04 / 05 shipped 2026-04-26. Plan 05 (CP `_settings.twig`) replaces the Phase 1 placeholder with a 259-line grouped-section form per D-62: five `<h2>` sections (Connectivity / AI / Defaults / Verify / Adapters) covering all 23 Settings properties from the post-Plan 04-01 model. `defaultEntities`, `defaultLocales`, and `localeMap` render via `forms.editableTableField` (D-63 — single-col with `allowReorder` for the first two; two-col legacy→craft for `localeMap`). `anthropicApiKey` is masked + carries an `ANTHROPIC_API_KEY` env-var hint string (D-64); `legacyDbPassword` similarly masked. All 14 EnvAttributeParserBehavior-decorated Settings properties render via `forms.autosuggestField` with `suggestEnvVars: true` (13 occurrences in template — autosuggest carries it for every env-aware field). Form roundtrips through Craft's standard plugin-settings save handler (no `csrfInput` / `actionInput` / `<form>` tag — Craft's `_layouts/cp` wraps block content in the form automatically when `hasCpSettings = true`); no top-level CP nav and no Utilities entry per PROJECT.md Out-of-Scope. CFG-01 closed. composer test 60/137 baseline preserved. Wave 1 done; Wave 2 unblocks: 04-06 SeoMigrationService / 04-07 RedirectMigrationService / 04-08 CaptureBaselineHtmlService.
+**Phase 4: Adapters, Verify & Settings** — Wave 2 in progress. Plans 01 / 02 / 03 / 04 / 05 / 06 shipped 2026-04-26. Plan 06 (`src/load/SeoMigrationService.php`, 606 LOC) ports v1's `bridge/load/SeoMigrationService.php` (600 LOC) byte-for-byte to the v2 flat layout. D-54 verbatim-port discipline; D-55 last-stage ordering preserved (state-driven source discovery + `STATE_SOURCE='seo_meta'` self-exclusion); D-56 optional-plugin gate at both call sites (`migrateAll` + `migrateForEntry`) — short-circuits with WARN when SEOmatic absent; D-57 `$seoTableName` override seam now genuinely flows into SQL via inlined `fetchKumaSeoRow()` (v1 had this declared but its `LegacyDbService::seoFor()` used a hardcoded `KunstmaanCoreTables::SEO` constant — the v1 override was decorative). Two forced reshapes during port: `$report->warn()` lost its context-array second arg (v2 signature is `string`-only per Plan 03-12), and `LegacyDbService::seoFor()` was inlined as a `queryOne()` call (v2 LegacyDbService deliberately keeps a narrow surface). Public DI surface (`$legacyDb` / `$stateService` / `$seoPayload` / `$filters` / `$seoTableName` / `$sites`) preserved for Plan 04-09 wiring; `$sites` reshape replaces v1's mapping.yaml `sites:` block with `Plugin::resolveSitesMap()` (the same map already feeding `EntryMigrationService::$sites` at Plugin.php:260). composer test 60/137 baseline preserved. ADP-01 partial — `SeomaticPayloadBuilder` (Plan 04-02) + `SeoMigrationService` (this plan) shipped; final closure waits on Plan 04-09 (Plugin wiring) + Plan 04-10 (`actionSeo`). Wave 2 continues: 04-07 RedirectMigrationService + 04-08 CaptureBaselineHtmlService unblocked.
 
 ## Previous Current Phase
 
