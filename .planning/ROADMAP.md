@@ -187,6 +187,22 @@ Plans:
 3. `verify capture-baseline` + `verify` produces a `VERIFY-<timestamp>.md` report under `storage/migration/` regardless of pass/fail.
 4. CP Settings page reads + writes Anthropic key, LLM model, LLM timeout, default filter values, and the `dryRunDefault` toggle.
 
+**Plans:** 12 plans
+
+Plans:
+- [ ] 04-01-settings-expansion-PLAN.md — Settings.php verify thresholds + adapter table-name overrides (CFG-01)
+- [ ] 04-02-seomatic-payload-builder-PLAN.md — SeomaticPayloadBuilder verbatim port (ADP-01)
+- [ ] 04-03-verify-primitives-PLAN.md — SnapshotDiffer + SpotCheckUrlFetcher verbatim port (B1 fix preserved) (VER-02)
+- [ ] 04-04-count-gate-and-baseline-counter-PLAN.md — CountGateService verbatim + BaselineCounterService shape-derived (D-59) (VER-01, VER-03)
+- [ ] 04-05-cp-settings-template-PLAN.md — CP `_settings.twig` grouped sections + editable tables + masked API key (CFG-01)
+- [ ] 04-06-seo-migration-service-PLAN.md — SeoMigrationService verbatim port (ADP-01)
+- [ ] 04-07-redirect-migration-service-PLAN.md — RedirectMigrationService verbatim port + hardcoded site-handle reshape (ADP-02)
+- [ ] 04-08-capture-baseline-html-service-PLAN.md — CaptureBaselineHtmlService verbatim port (VER-02)
+- [ ] 04-09-verify-controller-and-plugin-wiring-PLAN.md — VerifyController + Plugin::config()/init() Phase 4 wiring (VER-01, VER-02, VER-03, ADP-01, ADP-02)
+- [ ] 04-10-migrate-controller-extensions-PLAN.md — MigrateController actionSeo/actionRetour + verbosity + REPORT.md sections + asset RCA (ADP-01, ADP-02, CFG-02, CFG-03)
+- [ ] 04-11-doctor-7th-8th-checks-PLAN.md — Doctor adapter health + verify baseline presence checks (ADP-01..03, VER-01)
+- [ ] 04-12-tests-and-reconciliation-PLAN.md — PHPUnit unit tests + Phase 4 RECONCILIATION.md + ADP-03 composer-suggest guard (ADP-01..03, VER-01..03, CFG-02)
+
 ### Phase 5: Tests, Rehearsal & Release
 
 **Goal:** Characterization tests on the Transform stage make regressions cheap to catch, the CI workflow gates every PR, and the v1.0 release ships green against the CQM rehearsal corpus.
