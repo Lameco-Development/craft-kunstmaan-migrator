@@ -143,6 +143,12 @@ class MigrateController extends Controller
             return $gate;
         }
 
+        // D-67: open per-run log BEFORE the first stdout so stage timings and
+        // FAIL emissions can be correlated against the on-disk trail.
+        $this->openLogFile($this->defaultLogPath());
+        $this->logLine('actionIndex started; verbosity=' . $this->verbosityLevel(), 1);
+        $tRunStart = microtime(true);
+
         $this->stdout("Migrate: extract → transform → load → finalize\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
@@ -340,6 +346,9 @@ class MigrateController extends Controller
         // Step 7: REPORT.md (D-50 failures + D-52 counts).
         $this->writeReport($storageDir, $report);
 
+        $tRunMs = (int) round((microtime(true) - $tRunStart) * 1000);
+        $this->logLine(sprintf('actionIndex complete in %dms', $tRunMs), 1);
+
         $this->stdout("\nMigrate: PASS\n", Console::FG_GREEN);
         return ExitCode::OK;
     }
@@ -356,6 +365,9 @@ class MigrateController extends Controller
         if (($gate = $this->enforceNeverProduction()) !== null) {
             return $gate;
         }
+        // D-67: per-run timestamped log file for resume / debug invocations too.
+        $this->openLogFile($this->defaultLogPath());
+        $this->logLine('actionSeo started; verbosity=' . $this->verbosityLevel(), 1);
         $this->stdout("Migrate (seo): SEOmatic MetaBundles per migrated entry\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
@@ -398,6 +410,9 @@ class MigrateController extends Controller
         if (($gate = $this->enforceNeverProduction()) !== null) {
             return $gate;
         }
+        // D-67: per-run timestamped log file for resume / debug invocations too.
+        $this->openLogFile($this->defaultLogPath());
+        $this->logLine('actionRetour started; verbosity=' . $this->verbosityLevel(), 1);
         $this->stdout(
             "Migrate (retour): redirects from kuma_redirects + section-move 301s\n",
             Console::FG_CYAN,
@@ -872,6 +887,91 @@ class MigrateController extends Controller
     private function slugify(string $fqcn): string
     {
         return preg_replace('/[^A-Za-z0-9_\-]+/', '_', $fqcn) ?? 'unknown';
+    }
+
+    /**
+     * D-65: parse the verbosity flag — accepts integer (`--verbose=2`) or
+     * string forms (`-v` → 'v', `-vv` → 'vv', `-vvv` → 'vvv'). Counts chars
+     * for short-flag repetition, parses digits for the explicit form, and
+     * clamps to [0, 3] so callers can match exact ladder rungs.
+     *
+     * Ladder:
+     *   0  — quiet (default)
+     *   1  — stage timings (`-v`)
+     *   2  — per-entry detail (`-vv`)
+     *   3  — SQL trace (`-vvv`; best-effort — Yii has its own SQL log channel)
+     */
+    private function verbosityLevel(): int
+    {
+        if (is_int($this->verbose)) {
+            return max(0, min(3, $this->verbose));
+        }
+        // PHP type-juggle: false / null squeak through here too.
+        $raw = (string) $this->verbose;
+        $trim = trim($raw);
+        if ($trim === '' || $trim === '0') {
+            // Empty string surface is also produced when Yii sees `-v` with no
+            // value — treat as level 1.
+            return $raw === '' ? 0 : 1;
+        }
+        if (ctype_digit($trim)) {
+            return max(0, min(3, (int) $trim));
+        }
+        // String like 'v', 'vv', 'vvv' (when used as `-vv`) — count chars.
+        return max(0, min(3, strlen($trim)));
+    }
+
+    /**
+     * D-67: open the per-run timestamped log file. Idempotent: a re-call with
+     * the same path no-ops; a re-call with a different path closes the prior
+     * handle and opens the new one. Best-effort — failures are silent so an
+     * unwritable storage dir doesn't kill the migrate run.
+     */
+    private function openLogFile(string $path): void
+    {
+        if ($this->logFilePath === $path && $this->logFileHandle !== null) {
+            return;
+        }
+        if ($this->logFileHandle !== null) {
+            @fclose($this->logFileHandle);
+            $this->logFileHandle = null;
+        }
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+        $handle = @fopen($path, 'a');
+        if ($handle !== false) {
+            $this->logFileHandle = $handle;
+            $this->logFilePath = $path;
+        }
+    }
+
+    /**
+     * D-65 / D-67: append a line to the per-run log file when verbosity meets
+     * the supplied minimum level. ISO-8601 timestamp prefix so post-run greps
+     * can correlate with REPORT.md timing rows.
+     */
+    private function logLine(string $line, int $minVerbosity = 1): void
+    {
+        if ($this->verbosityLevel() < $minVerbosity) {
+            return;
+        }
+        if ($this->logFileHandle === null) {
+            return;
+        }
+        @fwrite($this->logFileHandle, '[' . gmdate('c') . '] ' . $line . "\n");
+    }
+
+    /**
+     * D-67: derive the canonical per-run log path under storage/migration/.
+     * Pure helper so action methods can call it once at the top and stash the
+     * result in $this->logFilePath via openLogFile().
+     */
+    private function defaultLogPath(): string
+    {
+        $timestamp = gmdate('Y-m-d--H-i-s');
+        return Craft::$app->path->getStoragePath() . '/migration/migrate-' . $timestamp . '.log';
     }
 
     /**
