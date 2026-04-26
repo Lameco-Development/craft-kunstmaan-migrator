@@ -134,7 +134,7 @@ class MapController extends Controller
         foreach ($allRows as $idx => $row) {
             $status = (string) ($row['status'] ?? '');
             if ($status !== 'proposed' && $status !== 'needs-review') { continue; }
-            if (!$this->matchesEntitiesFilter($row, $filters)) { continue; }
+            if (!self::matchesEntitiesFilter($row, $filters)) { continue; }
             $walkOrder[] = $idx;
         }
 
@@ -649,7 +649,7 @@ class MapController extends Controller
         }
         $out = [];
         foreach ($rows as $r) {
-            if ($this->matchesEntitiesFilter($r, $filters)) {
+            if (self::matchesEntitiesFilter($r, $filters)) {
                 $out[] = $r;
             }
         }
@@ -657,13 +657,42 @@ class MapController extends Controller
     }
 
     /**
+     * Decide whether a mapping row matches the operator's `--entities=` filter.
+     *
+     * Column rows match by table prefix (`kuma_<snake_case_entity>` against the row's
+     * `table` field — Phase 2 / D-08 behavior preserved). PagePart rows (Phase 02.1 /
+     * D-34) match by parent-page-class basename: an `--entities=NewsPage` invocation
+     * walks every page-part row whose `parentPageClass` ends in `\NewsPage` (or equals
+     * `NewsPage` if unnamespaced). Without this branch every pagePart row was silently
+     * dropped because `$row['table']` is empty for pagePart rows (WR-01).
+     *
+     * Public + static so the test suite can exercise it without instantiating
+     * MapController (which extends craft\console\Controller and needs Yii bootstrap).
+     *
      * @param array<string, mixed> $row
      */
-    private function matchesEntitiesFilter(array $row, MigrationFilters $filters): bool
+    public static function matchesEntitiesFilter(array $row, MigrationFilters $filters): bool
     {
         if ($filters->entities === []) {
             return true;
         }
+
+        $kind = (string) ($row['kind'] ?? 'column');
+        if ($kind === 'pagePart') {
+            $parent = (string) ($row['parentPageClass'] ?? '');
+            if ($parent === '') {
+                return false;
+            }
+            $basename = (string) (strrchr($parent, '\\') ?: $parent);
+            $basename = ltrim($basename, '\\');
+            foreach ($filters->entities as $e) {
+                if ($basename === $e) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         $table = (string) ($row['table'] ?? '');
         foreach ($filters->entities as $e) {
             $snake = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $e) ?? $e);
