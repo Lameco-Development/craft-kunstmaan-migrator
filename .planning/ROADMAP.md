@@ -142,7 +142,7 @@ Plans:
 - [x] 02.1-05-source-scanner-orchestrator-PLAN.md — KunstmaanSourceScanner + Plugin::config() registration (SRC-01, SRC-02, SRC-03, SRC-04) — completed 2026-04-26
 - [x] 02.1-06-mapping-extension-PLAN.md — MappingFile row-kind support + MapController two-mode walker (SRC-18, SRC-19) — completed 2026-04-26
 - [x] 02.1-07-analyze-wiring-PLAN.md — AnalyzeController 11-step pipeline + heuristic 1.5 + LlmClassifier KB integration (SRC-08, SRC-09) — completed 2026-04-26
-- [ ] 02.1-08-audit-extension-PLAN.md — BlockAvailabilityValidator + Drift section + CoverageAuditor page-part coverage (SRC-15)
+- [x] 02.1-08-audit-extension-PLAN.md — BlockAvailabilityValidator + Drift section + CoverageAuditor page-part coverage (SRC-15) — completed 2026-04-26
 - [ ] 02.1-09-reconciliation-PLAN.md — RECONCILIATION.md + REQUIREMENTS SRC codification + ROADMAP D-31 patches (SRC-16, SRC-17)
 
 ### Phase 3: ETL Pipeline & Field Handlers
