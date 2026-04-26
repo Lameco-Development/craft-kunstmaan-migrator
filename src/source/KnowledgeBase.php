@@ -7,8 +7,6 @@ namespace lameco\kunstmaanmigrator\source;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
 use lameco\kunstmaanmigrator\source\KunstmaanCoreTables;
-use Craft;
-use DateTimeImmutable;
 use DateTimeInterface;
 use yii\base\Component;
 
@@ -242,7 +240,7 @@ final class KnowledgeBase extends Component
             // Used below to annotate ManyToMany entity relations.
             /** @var array<string, string> $propNameToJoinTable */
             $propNameToJoinTable = [];
-            foreach ((array) ($ppSpec['fields'] ?? []) as $craftHandle => $fieldSpec) {
+            foreach ((array) ($ppSpec['fields'] ?? []) as $fieldSpec) {
                 if (!is_array($fieldSpec) || ($fieldSpec['handler'] ?? '') !== 'relation') {
                     continue;
                 }
