@@ -64,6 +64,13 @@ class MigrateController extends Controller
     public ?string $locales  = null;
     public ?string $since    = null;
 
+    // Phase 4.1 / D-26 — CLI override flags for adapter bypass per-run. Distinct
+    // from Settings::seoEnabled / retourEnabled (which persist across runs);
+    // these flip the adapter for THIS invocation only and emit a distinct
+    // warn-line copy so REPORT.md skipped-stages aggregation can tell them apart.
+    public bool $noSeo = false;
+    public bool $noRetour = false;
+
     /**
      * D-65 verbosity counter — `-v` / `-vv` / `-vvv`. Yii parses repeated
      * short flags as a string value (`-vv` → `verbose='v'`); verbosityLevel()
@@ -80,6 +87,8 @@ class MigrateController extends Controller
     {
         return array_merge(parent::options($actionID), [
             'live', 'confirm', 'preloadAssets', 'force', 'entities', 'locales', 'since',
+            // Phase 4.1 / D-26 — adapter bypass per-run.
+            'noSeo', 'noRetour',
             // D-65: -v..-vvv verbosity (string|int — see verbosityLevel()).
             'verbose',
         ]);
@@ -152,7 +161,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate: extract → transform → load → finalize\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $report = new MigrationReport();
 
@@ -296,22 +305,32 @@ class MigrateController extends Controller
         // Step 6.5 (D-55): SEO stage — runs AFTER finalize so all entries+assets exist
         // and kuma_seo image refs resolve via the state map. The service short-circuits
         // internally with a WARN when SEOmatic is absent (D-56).
+        // Phase 4.1 / D-26: --no-seo bypasses adapter execution per-run with distinct
+        // warn-line copy (different from Settings-disabled and plugin-not-installed).
         if ($this->live) {
-            $plugin->seoMigrationService->filters = $filters;
-            try {
-                $seoReport = $plugin->seoMigrationService->migrateAll($opts);
-            } catch (Throwable $e) {
-                $this->stderr("  FAIL seo: {$e->getMessage()}\n", Console::FG_RED);
-                return ExitCode::UNSPECIFIED_ERROR;
+            if ($filters->noSeo) {
+                $report->warn(self::cliBypassSeoWarnLine());
+                $this->stdout(
+                    "  WARN seo skipped via --no-seo (CLI override)\n",
+                    Console::FG_YELLOW,
+                );
+            } else {
+                $plugin->seoMigrationService->filters = $filters;
+                try {
+                    $seoReport = $plugin->seoMigrationService->migrateAll($opts);
+                } catch (Throwable $e) {
+                    $this->stderr("  FAIL seo: {$e->getMessage()}\n", Console::FG_RED);
+                    return ExitCode::UNSPECIFIED_ERROR;
+                }
+                $this->mergeReport($report, $seoReport, 'seo');
+                $this->stdout(sprintf(
+                    "  Stage seo: created=%d updated=%d skipped=%d failed=%d\n",
+                    (int) ($seoReport->counts['created'] ?? 0),
+                    (int) ($seoReport->counts['updated'] ?? 0),
+                    (int) ($seoReport->counts['skipped'] ?? 0),
+                    (int) ($seoReport->counts['failed'] ?? 0),
+                ), Console::FG_GREEN);
             }
-            $this->mergeReport($report, $seoReport, 'seo');
-            $this->stdout(sprintf(
-                "  Stage seo: created=%d updated=%d skipped=%d failed=%d\n",
-                (int) ($seoReport->counts['created'] ?? 0),
-                (int) ($seoReport->counts['updated'] ?? 0),
-                (int) ($seoReport->counts['skipped'] ?? 0),
-                (int) ($seoReport->counts['failed'] ?? 0),
-            ), Console::FG_GREEN);
         } else {
             $this->stdout(
                 "  WARN seo skipped (dry-run)\n",
@@ -320,22 +339,31 @@ class MigrateController extends Controller
         }
 
         // Step 6.6 (D-55): Retour stage — same shape; service short-circuits when Retour absent.
+        // Phase 4.1 / D-26: --no-retour bypasses adapter execution per-run with distinct copy.
         if ($this->live) {
-            $plugin->redirectMigrationService->filters = $filters;
-            try {
-                $retourReport = $plugin->redirectMigrationService->migrateAll($opts);
-            } catch (Throwable $e) {
-                $this->stderr("  FAIL retour: {$e->getMessage()}\n", Console::FG_RED);
-                return ExitCode::UNSPECIFIED_ERROR;
+            if ($filters->noRetour) {
+                $report->warn(self::cliBypassRetourWarnLine());
+                $this->stdout(
+                    "  WARN retour skipped via --no-retour (CLI override)\n",
+                    Console::FG_YELLOW,
+                );
+            } else {
+                $plugin->redirectMigrationService->filters = $filters;
+                try {
+                    $retourReport = $plugin->redirectMigrationService->migrateAll($opts);
+                } catch (Throwable $e) {
+                    $this->stderr("  FAIL retour: {$e->getMessage()}\n", Console::FG_RED);
+                    return ExitCode::UNSPECIFIED_ERROR;
+                }
+                $this->mergeReport($report, $retourReport, 'retour');
+                $this->stdout(sprintf(
+                    "  Stage retour: created=%d updated=%d skipped=%d failed=%d\n",
+                    (int) ($retourReport->counts['created'] ?? 0),
+                    (int) ($retourReport->counts['updated'] ?? 0),
+                    (int) ($retourReport->counts['skipped'] ?? 0),
+                    (int) ($retourReport->counts['failed'] ?? 0),
+                ), Console::FG_GREEN);
             }
-            $this->mergeReport($report, $retourReport, 'retour');
-            $this->stdout(sprintf(
-                "  Stage retour: created=%d updated=%d skipped=%d failed=%d\n",
-                (int) ($retourReport->counts['created'] ?? 0),
-                (int) ($retourReport->counts['updated'] ?? 0),
-                (int) ($retourReport->counts['skipped'] ?? 0),
-                (int) ($retourReport->counts['failed'] ?? 0),
-            ), Console::FG_GREEN);
         } else {
             $this->stdout(
                 "  WARN retour skipped (dry-run)\n",
@@ -371,7 +399,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (seo): SEOmatic MetaBundles per migrated entry\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -419,7 +447,7 @@ class MigrateController extends Controller
         );
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -461,7 +489,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (extract): legacy DB → storage/migration/extracted/\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
 
         if (($exit = $this->preflightLocale($filters)) !== ExitCode::OK) {
             return $exit;
@@ -502,7 +530,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (transform): extracted → transformed/entries\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
 
         if (($exit = $this->preflightLocale($filters)) !== ExitCode::OK) {
@@ -566,7 +594,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (load): transformed/entries → Craft\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $transformedDir = $storageDir . '/transformed/entries';
         $report = new MigrationReport();
@@ -630,7 +658,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (finalize): CKEditor token resolution pass\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -674,7 +702,7 @@ class MigrateController extends Controller
         }
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
 
         $entitiesScope = $filters->entities === [] ? '(all migrated)' : implode(', ', $filters->entities);
         $localesScope = $filters->locales === [] ? '(all sites)' : implode(', ', $filters->locales);
@@ -1093,24 +1121,28 @@ class MigrateController extends Controller
         $lines[] = '- Log file: ' . ($this->logFilePath ?? '(none)');
         $lines[] = "";
 
-        // 3. Skipped stages (D-68 NEW) — sourced from $report->warnings filtered
-        //    for adapter-absence messages. Omit section entirely when empty.
+        // 3. Skipped stages (D-68 + Phase 4.1 / D-41+D-42+D-43) — sourced from
+        //    $report->warnings filtered for adapter-absence/disable/bypass messages.
+        //    D-27: four DISTINCT warn-line patterns let operators distinguish:
+        //       - 'plugin not installed' / 'plugin not loaded' (adapter unavailable)
+        //       - 'SEO adapter disabled' / 'Retour adapter disabled' (Settings-disabled)
+        //       - 'skipped via --no-seo' / 'skipped via --no-retour' (CLI override)
+        //    CFG-07: section ALWAYS emits, with placeholder copy when empty.
         $skippedStageLines = [];
         foreach ($report->warnings as $w) {
             if (str_contains($w, 'SEOmatic plugin not installed')
                 || str_contains($w, 'Retour plugin not installed')
                 || str_contains($w, 'Retour plugin not loaded')
+                || str_contains($w, 'SEO adapter disabled')
+                || str_contains($w, 'Retour adapter disabled')
+                || str_contains($w, 'skipped via --no-seo')
+                || str_contains($w, 'skipped via --no-retour')
             ) {
                 $skippedStageLines[] = '- ' . $w;
             }
         }
-        if ($skippedStageLines !== []) {
-            $lines[] = "## Skipped stages";
-            $lines[] = "";
-            foreach ($skippedStageLines as $sl) {
-                $lines[] = $sl;
-            }
-            $lines[] = "";
+        foreach (self::renderSkippedStagesSection($skippedStageLines) as $sl) {
+            $lines[] = $sl;
         }
 
         // 4. Warnings (existing).
@@ -1149,22 +1181,10 @@ class MigrateController extends Controller
             }
         }
 
-        // 6. Asset RCA (D-68 NEW) — markdown table from $report->assetRcaRows.
-        //    Omit section entirely when empty.
-        if ($report->assetRcaRows !== []) {
-            $lines[] = "## Asset RCA";
-            $lines[] = "";
-            $lines[] = "| legacy_id | reason | path |";
-            $lines[] = "|-----------|--------|------|";
-            foreach ($report->assetRcaRows as $rca) {
-                $lines[] = sprintf(
-                    '| %d | %s | %s |',
-                    (int) ($rca['legacyId'] ?? 0),
-                    (string) ($rca['reason'] ?? 'deferred_unresolved'),
-                    (string) ($rca['path'] ?? ''),
-                );
-            }
-            $lines[] = "";
+        // 6. Asset RCA (D-68 + Phase 4.1 / D-41+D-42+D-43 / CFG-07) — markdown table
+        //    from $report->assetRcaRows. ALWAYS emits, with placeholder copy when empty.
+        foreach (self::renderAssetRcaSection($report->assetRcaRows) as $rl) {
+            $lines[] = $rl;
         }
 
         $rendered = implode("\n", $lines) . "\n";
@@ -1185,5 +1205,86 @@ class MigrateController extends Controller
         $m = intdiv($secs % 3600, 60);
         $s = $secs % 60;
         return sprintf('%02d:%02d:%02d', $h, $m, $s);
+    }
+
+    /**
+     * Phase 4.1 / D-41+D-42+D-43 / CFG-07 — pure helper: render the
+     * `## Skipped stages` REPORT.md section. ALWAYS emits the heading;
+     * placeholder copy when no skipped stages were recorded.
+     *
+     * Public-static so the characterization test can call it directly without
+     * a Craft bootstrap.
+     *
+     * @param list<string> $skippedStageLines pre-formatted list of `'- <warn>'` lines
+     * @return list<string>
+     */
+    public static function renderSkippedStagesSection(array $skippedStageLines): array
+    {
+        $out = [];
+        $out[] = '## Skipped stages';
+        $out[] = '';
+        if ($skippedStageLines === []) {
+            $out[] = '_No skipped stages — all configured adapters were exercised._';
+        } else {
+            foreach ($skippedStageLines as $sl) {
+                $out[] = $sl;
+            }
+        }
+        $out[] = '';
+        return $out;
+    }
+
+    /**
+     * Phase 4.1 / D-41+D-42+D-43 / CFG-07 — pure helper: render the
+     * `## Asset RCA` REPORT.md section. ALWAYS emits the heading;
+     * placeholder copy when no RCA rows were recorded.
+     *
+     * @param list<array{legacyId?: int, reason?: string, path?: string}> $rcaRows
+     * @return list<string>
+     */
+    public static function renderAssetRcaSection(array $rcaRows): array
+    {
+        $out = [];
+        $out[] = '## Asset RCA';
+        $out[] = '';
+        if ($rcaRows === []) {
+            $out[] = '_No asset RCA rows — no assets were migrated, or all migrated cleanly._';
+        } else {
+            $out[] = '| legacy_id | reason | path |';
+            $out[] = '|-----------|--------|------|';
+            foreach ($rcaRows as $rca) {
+                $out[] = sprintf(
+                    '| %d | %s | %s |',
+                    (int) ($rca['legacyId'] ?? 0),
+                    (string) ($rca['reason'] ?? 'deferred_unresolved'),
+                    (string) ($rca['path'] ?? ''),
+                );
+            }
+        }
+        $out[] = '';
+        return $out;
+    }
+
+    /**
+     * Phase 4.1 / D-26 + D-27 — testable distinct warn-line copy for the CLI
+     * --no-seo bypass path (different from Settings-disabled and from
+     * plugin-not-installed). Used by REPORT.md skipped-stages aggregation.
+     *
+     * @internal
+     */
+    private static function cliBypassSeoWarnLine(): string
+    {
+        return 'SEO migration skipped via --no-seo (CLI override).';
+    }
+
+    /**
+     * Phase 4.1 / D-26 + D-27 — testable distinct warn-line copy for the CLI
+     * --no-retour bypass path.
+     *
+     * @internal
+     */
+    private static function cliBypassRetourWarnLine(): string
+    {
+        return 'Redirect migration skipped via --no-retour (CLI override).';
     }
 }
