@@ -7,6 +7,8 @@ namespace lameco\kunstmaanmigrator\models;
 use craft\base\Model;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
+use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\source\KunstmaanEnvReader;
 
 /**
  * Plugin Settings — shared seam between env vars, config/kunstmaan-migrator.php,
@@ -113,6 +115,80 @@ class Settings extends Model
         // fallback; Settings property override wins. Resolver validates the path
         // (realpath + is_dir + src/Entity/) — see KunstmaanSourcePathResolver.
         $this->kunstmaanSourcePath ??= App::env('KUNSTMAAN_SOURCE_PATH') ?: null;
+    }
+
+    /**
+     * Phase 4.1 / D-07 — auto-fill blank legacyDb* fields from the Kunstmaan
+     * project's `.env` `DATABASE_URL` at validation time. Operator-supplied
+     * Settings values always win; only `null` slots fill.
+     *
+     * D-08: `KunstmaanEnvReader` returns components already `urldecode()`'d,
+     *       so we just hand them straight through.
+     * D-09: `KunstmaanEnvReader` only honours mysql / mysql+pdo / pdo:mysql
+     *       schemes — every getDsn* accessor returns null for postgres /
+     *       sqlite / unknown DSNs, so the `??=` fills become no-ops.
+     *
+     * `legacyDbPort` carries a property default of 3306 (not null), so we
+     * treat that exact value as the "operator hasn't customized" sentinel
+     * and only fill from the DSN when the operator's value is still 3306.
+     */
+    public function beforeValidate(): bool
+    {
+        // Fast path: every string field is operator-filled — skip the env reader entirely.
+        if (
+            $this->legacyDbServer !== null && $this->legacyDbServer !== ''
+            && $this->legacyDbDatabase !== null && $this->legacyDbDatabase !== ''
+            && $this->legacyDbUser !== null && $this->legacyDbUser !== ''
+            && $this->legacyDbPassword !== null && $this->legacyDbPassword !== ''
+        ) {
+            return parent::beforeValidate();
+        }
+
+        $reader = $this->getEnvReader();
+        $dsn = $reader->getDatabaseUrl();
+        if ($dsn === null || $dsn === '') {
+            return parent::beforeValidate();
+        }
+
+        // D-09: non-mysql DSN → reader's parsed components are all null.
+        // Probe the three structurally-required components; if all three are null
+        // the reader rejected the scheme and we have nothing to fill from.
+        if (
+            $reader->getDsnHost() === null
+            && $reader->getDsnUser() === null
+            && $reader->getDsnDatabase() === null
+        ) {
+            return parent::beforeValidate();
+        }
+
+        // D-07: operator values win — `??=` only writes when the field is null.
+        // Empty-string is treated as operator-provided (operator may have intentionally
+        // blanked a field; respect that choice).
+        $this->legacyDbServer   ??= $reader->getDsnHost();
+        $this->legacyDbUser     ??= $reader->getDsnUser();
+        $this->legacyDbPassword ??= $reader->getDsnPassword();
+        $this->legacyDbDatabase ??= $reader->getDsnDatabase();
+
+        // Port special case: the property default is 3306 (the MySQL canonical).
+        // Treat that exact value as the "operator hasn't customized" sentinel.
+        // Any other operator-set port (5555, 33060, etc.) wins.
+        $dsnPort = $reader->getDsnPort();
+        if ($dsnPort !== null && $this->legacyDbPort === 3306) {
+            $this->legacyDbPort = $dsnPort;
+        }
+
+        return parent::beforeValidate();
+    }
+
+    /**
+     * Test seam (Plan 04.1-02 / D-07 follow-on). Production callers route
+     * through `Plugin::getInstance()->kunstmaanEnvReader`; tests subclass
+     * Settings and override this method to inject a scripted reader without
+     * touching the Plugin singleton or the filesystem.
+     */
+    protected function getEnvReader(): KunstmaanEnvReader
+    {
+        return Plugin::getInstance()->kunstmaanEnvReader;
     }
 
     public function rules(): array
