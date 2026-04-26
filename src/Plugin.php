@@ -18,7 +18,14 @@ use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingFile;
 use lameco\kunstmaanmigrator\models\Settings;
+use lameco\kunstmaanmigrator\source\BodyScanColumnFinder;
+use lameco\kunstmaanmigrator\source\DetailTableResolver;
+use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
+use lameco\kunstmaanmigrator\source\KnowledgeBase;
+use lameco\kunstmaanmigrator\source\KunstmaanPageStructureScanner;
 use lameco\kunstmaanmigrator\source\KunstmaanSourcePathResolver;
+use lameco\kunstmaanmigrator\source\KunstmaanSourceScanner;
+use lameco\kunstmaanmigrator\source\MediaFkScanner;
 use PDO;
 use yii\db\Connection;
 
@@ -36,6 +43,13 @@ use yii\db\Connection;
  * @property-read CoverageAuditor $coverageAuditor
  * @property-read MappingAuditor $mappingAuditor
  * @property-read KunstmaanSourcePathResolver $kunstmaanSourcePathResolver
+ * @property-read DoctrineEntityParser $doctrineEntityParser
+ * @property-read DetailTableResolver $detailTableResolver
+ * @property-read BodyScanColumnFinder $bodyScanColumnFinder
+ * @property-read MediaFkScanner $mediaFkScanner
+ * @property-read KnowledgeBase $knowledgeBase
+ * @property-read KunstmaanPageStructureScanner $kunstmaanPageStructureScanner
+ * @property-read KunstmaanSourceScanner $kunstmaanSourceScanner
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -62,6 +76,13 @@ class Plugin extends BasePlugin
                 'coverageAuditor'   => CoverageAuditor::class,    // Phase 2 (Plan 05) — D-14 MAP-06
                 'mappingAuditor'    => MappingAuditor::class,     // Phase 2 (Plan 05) — D-16 MAP-07
                 'kunstmaanSourcePathResolver' => KunstmaanSourcePathResolver::class, // Phase 02.1 (Plan 01) — D-33 source-path resolver
+                'doctrineEntityParser'          => DoctrineEntityParser::class,         // Phase 02.1 (Plan 02) — D-41 verbatim port
+                'detailTableResolver'           => DetailTableResolver::class,          // Phase 02.1 (Plan 02) — 4-tier FQCN→table
+                'bodyScanColumnFinder'          => BodyScanColumnFinder::class,         // Phase 02.1 (Plan 03) — body-col discovery
+                'mediaFkScanner'                => MediaFkScanner::class,               // Phase 02.1 (Plan 03) — kuma_media FK discovery
+                'knowledgeBase'                 => KnowledgeBase::class,                // Phase 02.1 (Plan 03) — D-42 step 8 KB markdown
+                'kunstmaanPageStructureScanner' => KunstmaanPageStructureScanner::class, // Phase 02.1 (Plan 04) — D-40 right side
+                'kunstmaanSourceScanner'        => KunstmaanSourceScanner::class,        // Phase 02.1 (Plan 05) — D-40 left side orchestrator
             ],
         ];
     }
