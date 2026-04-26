@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 3 — paused at 03-13 human smoke checkpoint
-stopped_at: "13/14 plans complete. Plan 03-13 paused at checkpoint:human-verify (Task 4) — operator must run the 5-step CQM rehearsal smoke against ~/Sites/cqm-craft-website before Plan 03-14 (reconciliation) and the gsd-verifier can run."
-last_updated: "2026-04-26T13:30:00Z"
+status: Phase 3 closed — ready for Phase 4
+stopped_at: "Phase 3 complete. 14/14 plans landed. Smoke against CQM rehearsal pair PASS (doctor 6/6 OK; migrate dry-run all stages OK; REPORT.md renders D-52+D-50). gsd-verifier: 4/4 success criteria verified, 13/13 REQ-IDs satisfied."
+last_updated: "2026-04-26T18:00:00Z"
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 34
-  completed_plans: 33
-  percent: 97
+  completed_plans: 34
+  percent: 100
 ---
 
 # State
@@ -21,7 +21,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped.
 
-**Current focus:** Phase 3 — ETL Pipeline & Field Handlers (planned, ready to execute)
+**Current focus:** Phase 4 — Adapters, Verify & Settings (next: `/gsd-discuss-phase 4`)
 
 ## Milestone
 
