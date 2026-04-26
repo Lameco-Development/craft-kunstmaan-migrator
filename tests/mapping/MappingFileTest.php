@@ -160,4 +160,102 @@ final class MappingFileTest extends TestCase
         self::assertCount(1, $data['proposals']);
         self::assertSame('kuma_news_page', $data['proposals'][0]['table']);
     }
+
+    public function testBuildRowEmitsExplicitColumnKindDiscriminator(): void
+    {
+        // D-34: buildRow now emits an explicit `kind: column` discriminator so the
+        // rubber-stamp loop and merge() identity tuple can branch on row kind.
+        $mf = new MappingFile();
+        $row = $mf->buildRow(['table' => 'kuma_x', 'column' => 'y', 'targetEntryType' => 'z'], 'proposed');
+        self::assertSame('column', $row['kind']);
+    }
+
+    public function testBuildPagePartRowEmitsD34ReferenceShape(): void
+    {
+        // D-34: kind=pagePart row carries the structural identity fields plus operator-fillable
+        // targets. D-35: status always starts `needs-review` regardless of confidence — no
+        // auto-promotion in v1.0.
+        $mf = new MappingFile();
+        $row = $mf->buildPagePartRow(
+            'HeaderPagePart',
+            'kuma_main_pageparts',
+            'NewsPage',
+            'main',
+            'newsArticle',
+            'body',
+            'header',
+            [['sourceProperty' => 'title', 'targetHandle' => 'heading', 'handler' => 'plain']],
+            'medium',
+            'page-part class HeaderPagePart in NewsPage context "main"',
+        );
+        self::assertSame('pagePart', $row['kind']);
+        self::assertSame('HeaderPagePart', $row['pagePartClass']);
+        self::assertSame('kuma_main_pageparts', $row['sourceTable']);
+        self::assertSame('NewsPage', $row['parentPageClass']);
+        self::assertSame('main', $row['context']);
+        self::assertSame('newsArticle', $row['targetEntryType']);
+        self::assertSame('body', $row['targetMatrixField']);
+        self::assertSame('header', $row['targetBlockType']);
+        self::assertSame('needs-review', $row['status'], 'D-35: page-part rows always start needs-review.');
+        self::assertCount(1, $row['fields']);
+    }
+
+    public function testPagePartRowDedupesOnStructuralTupleWhenTargetEntryTypeChanges(): void
+    {
+        // W1 fix verification: page-part identity is STRUCTURAL ONLY
+        // (pagePartClass, parentPageClass, context). targetEntryType is NOT part of identity.
+        //
+        // Idempotent re-run scenario:
+        //   1. analyze first emit → row with empty targetEntryType (operator hasn't filled it).
+        //   2. operator runs `map`, picks targetEntryType=newsArticle → row now has it.
+        //   3. analyze re-runs → emits the same structural row again with empty targetEntryType.
+        //
+        // Without the W1 fix, step 3 would APPEND a duplicate row (different keys because
+        // empty != newsArticle). With the fix, the structural tuple matches and the existing
+        // operator-filled row is preserved verbatim.
+        $mf = new MappingFile();
+
+        $analyzeFirstEmit = $mf->buildPagePartRow(
+            'HeaderPagePart', 'kuma_main_pageparts', 'NewsPage', 'main', '', // empty targetEntryType
+        );
+        $operatorFilled = $mf->buildPagePartRow(
+            'HeaderPagePart', 'kuma_main_pageparts', 'NewsPage', 'main', 'newsArticle', // operator filled
+        );
+        // Operator's accepted version (status mutated by setStatus in real flow).
+        $operatorFilled['status'] = 'accepted';
+
+        // Seed mapping.yaml with the operator-filled row (post step 2 state).
+        $seeded = $mf->merge(['proposals' => []], [$operatorFilled]);
+        self::assertCount(1, $seeded['proposals']);
+
+        // analyze re-run emits the empty-targetEntryType row again (step 3).
+        // The structural tuple matches → operator's row is preserved, no duplicate appended.
+        $afterReRun = $mf->merge($seeded, [$analyzeFirstEmit]);
+        self::assertCount(1, $afterReRun['proposals'], 'W1: structural-only tuple must dedupe across targetEntryType changes.');
+        self::assertSame('accepted', $afterReRun['proposals'][0]['status'], 'Operator decision preserved verbatim.');
+        self::assertSame('newsArticle', $afterReRun['proposals'][0]['targetEntryType'], 'Operator-filled targetEntryType preserved.');
+    }
+
+    public function testPagePartRowAppendsWhenStructuralTupleDiffers(): void
+    {
+        // Counterpart to W1 dedupe: a DIFFERENT pagePartClass under the same parent+context
+        // is a distinct structural row and must be appended.
+        $mf = new MappingFile();
+        $existing = $mf->buildPagePartRow('HeaderPagePart', 'kuma_main_pageparts', 'NewsPage', 'main', 'newsArticle');
+        $incoming = $mf->buildPagePartRow('TextPagePart',   'kuma_main_pageparts', 'NewsPage', 'main', 'newsArticle');
+        $merged = $mf->merge(['proposals' => [$existing]], [$incoming]);
+        self::assertCount(2, $merged['proposals'], 'Different pagePartClass under same parent+context is a distinct row.');
+    }
+
+    public function testColumnKindAndPagePartKindHaveDistinctKeyspaces(): void
+    {
+        // Defensive: even if a column row and a pagePart row happened to share field names
+        // (they don't, structurally), the kind prefix must keep their identity tuples in
+        // disjoint keyspaces.
+        $mf = new MappingFile();
+        $col = $mf->buildRow(['table' => 'kuma_x', 'column' => 'y', 'targetEntryType' => 'z'], 'accepted');
+        $pp  = $mf->buildPagePartRow('PPClass', 'kuma_x', 'PageClass', 'y', 'z');
+        $merged = $mf->merge(['proposals' => [$col]], [$pp]);
+        self::assertCount(2, $merged['proposals'], 'kind prefix keeps column and pagePart keyspaces disjoint.');
+    }
 }

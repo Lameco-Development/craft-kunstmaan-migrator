@@ -62,6 +62,10 @@ final class MappingFile extends Component
     /**
      * Subset of rows that the `map` rubber-stamp loop walks (D-08 stateless resume).
      *
+     * Kind-agnostic: walks both `kind: column` and `kind: pagePart` rows uniformly.
+     * Page-part rows always start `status: needs-review` per D-35, so this method picks
+     * them up automatically without any kind-specific branching.
+     *
      * @return list<array<string, mixed>>
      */
     public function loadProposed(?string $path = null): array
@@ -78,7 +82,9 @@ final class MappingFile extends Component
     }
 
     /**
-     * Build a single proposal row in v1 wire shape, with the D-02 status assigned.
+     * Build a single column-level proposal row in v1 wire shape, with the D-02 status
+     * assigned. The returned row carries an explicit `kind: column` discriminator per D-34
+     * so the rubber-stamp loop and merge() identity tuple can branch on row kind.
      *
      * @param array<string, mixed> $proposal
      * @return array<string, mixed>
@@ -86,6 +92,7 @@ final class MappingFile extends Component
     public function buildRow(array $proposal, string $initialStatus): array
     {
         return [
+            'kind'            => 'column',
             'table'           => (string) ($proposal['table'] ?? ''),
             'column'          => (string) ($proposal['column'] ?? ''),
             'targetEntryType' => (string) ($proposal['targetEntryType'] ?? ''),
@@ -101,10 +108,66 @@ final class MappingFile extends Component
     }
 
     /**
+     * Build a kind=pagePart row per D-34. Always emits `status: needs-review` per D-35
+     * (no auto-promotion on name match in v1.0; page-part → block-type mapping is a
+     * domain decision, no deterministic heuristic is strong enough).
+     *
+     * Note: `targetEntryType` IS in the row payload (operator fills it via the rubber-stamp
+     * loop, or analyze step 4.5 emitter may leave it blank), but is NOT part of the merge
+     * identity tuple (W1 fix — see merge() below). Page-part identity is structural-only:
+     * (pagePartClass, parentPageClass, context). This prevents idempotent re-run row
+     * duplication where analyze emits an empty targetEntryType, the operator fills it,
+     * and the next analyze re-emits empty — without the structural-only key, that flow
+     * would append a duplicate row.
+     *
+     * @param list<array{sourceProperty: string, targetHandle: string, handler: string}> $fields
+     * @return array<string, mixed>
+     */
+    public function buildPagePartRow(
+        string $pagePartClass,
+        string $sourceTable,
+        string $parentPageClass,
+        string $context,
+        string $targetEntryType,
+        string $targetMatrixField = '',
+        string $targetBlockType = '',
+        array  $fields = [],
+        string $confidence = '',
+        string $rationale = '',
+    ): array {
+        return [
+            'kind'              => 'pagePart',
+            'pagePartClass'     => $pagePartClass,
+            'sourceTable'       => $sourceTable,
+            'parentPageClass'   => $parentPageClass,
+            'context'           => $context,
+            'targetEntryType'   => $targetEntryType,
+            'targetMatrixField' => $targetMatrixField,
+            'targetBlockType'   => $targetBlockType,
+            'fields'            => $fields,
+            'status'            => 'needs-review',
+            'confidence'        => $confidence,
+            'rationale'         => $rationale,
+        ];
+    }
+
+    /**
      * Skip-existing merge per D-04 — operator decisions are sacred (MAP-04).
      *
-     * Identity tuple: (table, column, targetEntryType). Existing rows preserved verbatim;
-     * incoming rows appended only if their tuple is unseen.
+     * Identity tuple is kind-prefixed (Phase 02.1 / D-34 patches Phase 2 / D-04):
+     *   - column rows: `column|table|column|targetEntryType` — preserved verbatim from
+     *     Phase 2 / D-04. Existing Phase 2 mapping.yaml files load unchanged because rows
+     *     without an explicit `kind:` default to `column`.
+     *   - pagePart rows: `pagePart|pagePartClass|parentPageClass|context` — STRUCTURAL
+     *     ONLY (W1 fix from plan-checker). Page-part identity is the structural triple
+     *     "which class lives in which context under which parent page"; the
+     *     `targetEntryType` is an operator decision (filled in via the rubber-stamp loop)
+     *     and is NOT part of identity. This prevents idempotent re-run row duplication:
+     *     analyze emits a row with empty targetEntryType → operator fills it via map →
+     *     next analyze re-emits with empty again → tuples match (because no
+     *     targetEntryType in key) → row dedupes instead of appending.
+     *
+     * Existing rows preserved verbatim; incoming rows appended only if their tuple is unseen.
      *
      * @param array{proposals: list<array<string, mixed>>} $existing
      * @param list<array<string, mixed>>                    $incoming
@@ -116,19 +179,41 @@ final class MappingFile extends Component
         $seen = [];
         foreach (($existing['proposals'] ?? []) as $row) {
             if (!is_array($row)) { continue; }
-            $key = ($row['table'] ?? '') . '|' . ($row['column'] ?? '') . '|' . ($row['targetEntryType'] ?? '');
+            $key = $this->identityKey($row);
             $merged[] = $row;
             $seen[$key] = true;
         }
         foreach ($incoming as $row) {
             if (!is_array($row)) { continue; }
-            $key = ($row['table'] ?? '') . '|' . ($row['column'] ?? '') . '|' . ($row['targetEntryType'] ?? '');
+            $key = $this->identityKey($row);
             if (!isset($seen[$key])) {
                 $merged[] = $row;
                 $seen[$key] = true;
             }
         }
         return ['proposals' => $merged];
+    }
+
+    /**
+     * Build the merge identity key for a single row (D-34 kind-prefixed tuple).
+     *
+     * Page-part identity is structural — STRUCTURAL ONLY, no targetEntryType in the key
+     * (W1 fix). See merge() docblock for the dedupe-on-empty-targetEntryType rationale.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function identityKey(array $row): string
+    {
+        $kind = (string) ($row['kind'] ?? 'column');
+        if ($kind === 'pagePart') {
+            // page-part identity is structural-only — no targetEntryType (W1 fix)
+            return 'pagePart|' . ($row['pagePartClass'] ?? '')
+                . '|' . ($row['parentPageClass'] ?? '')
+                . '|' . ($row['context'] ?? '');
+        }
+        return 'column|' . ($row['table'] ?? '')
+            . '|' . ($row['column'] ?? '')
+            . '|' . ($row['targetEntryType'] ?? '');
     }
 
     /**
