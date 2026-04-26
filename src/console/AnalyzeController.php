@@ -335,14 +335,21 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
-        // Step 10: mapping-audit (D-16). Warn-only by default; --audit-strict elevates.
+        // Step 10: mapping-audit (D-16) + D-32 drift section + D-36 block-availability.
+        // Warn-only by default; --audit-strict elevates FieldLayout findings; --source-strict
+        // elevates non-empty drift findings. Either flag alone elevates only its own kind.
+        // T-2-21 mitigation: MAPPING-AUDIT.md is written via writeAtomic BEFORE any
+        // strict-mode short-circuit return so operators always have the on-disk trail
+        // regardless of exit code.
         $findings = $plugin->mappingAuditor->audit($merged['proposals']);
+        $driftFindings = (array) ($sourceScan['drift'] ?? []);
         $auditPath = $storageDir . '/MAPPING-AUDIT.md';
-        $auditMd = $plugin->mappingAuditor->renderMarkdown($findings);
+        $auditMd = $plugin->mappingAuditor->renderMarkdown($findings, $driftFindings);
         if (!$plugin->mappingFile->writeAtomic($auditPath, $auditMd)) {
             $this->stderr("  FAIL could not write {$auditPath}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
+        // FieldLayout findings outcome.
         if ($findings === []) {
             $this->stdout("  OK   mapping audit clean → {$auditPath}\n", Console::FG_GREEN);
         } else {
@@ -356,6 +363,22 @@ class AnalyzeController extends Controller
             }
             $this->stdout(
                 "  WARN mapping audit: {$n} drift finding(s) → {$auditPath}\n",
+                Console::FG_YELLOW,
+            );
+        }
+        // D-32 drift outcome (DB↔scan mismatch from KunstmaanSourceScanner).
+        $dbExtra = count((array) ($driftFindings['dbHasButScanMissing'] ?? []));
+        $scanExtra = count((array) ($driftFindings['scanHasButDbMissing'] ?? []));
+        if ($dbExtra > 0 || $scanExtra > 0) {
+            if ($this->sourceStrict) {
+                $this->stderr(
+                    "  FAIL source drift: {$dbExtra} DB-extra / {$scanExtra} scan-extra table(s) (--source-strict) → {$auditPath}\n",
+                    Console::FG_RED,
+                );
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->stdout(
+                "  WARN source drift: {$dbExtra} DB-extra / {$scanExtra} scan-extra table(s) → {$auditPath}\n",
                 Console::FG_YELLOW,
             );
         }

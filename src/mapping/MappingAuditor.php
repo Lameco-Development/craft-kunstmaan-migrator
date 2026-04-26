@@ -25,6 +25,14 @@ use yii\base\Component;
  */
 final class MappingAuditor extends Component
 {
+    /**
+     * BlockAvailabilityValidator (D-36 fourth finding kind: 'block-availability').
+     * Optional — when null, block-availability checks are skipped (PluginBootstrapTest
+     * legacy unit-test bootstrap path). In production wiring (Plugin::config) this is
+     * set via Yii component injection.
+     */
+    public ?BlockAvailabilityValidator $blockAvailabilityValidator = null;
+
     /** Handles that bypass the FieldLayout check (port verbatim from v1 lines 1794-1802). */
     private const EXCLUDED_HANDLES = [
         'kunstmaanSourceId', // set programmatically at load time
@@ -62,6 +70,17 @@ final class MappingAuditor extends Component
 
     /**
      * Audit drift. Returns structured findings.
+     *
+     * Phase 02.1 / D-36 adds a fourth finding kind 'block-availability' (delegated
+     * to BlockAvailabilityValidator). The validator runs against a v1-shaped
+     * mapping adapter built from v2's flat proposals[] (see buildV1ShapedMapping).
+     * In v1.0 the matrix-availability index is empty (KnowledgeBase port deferred
+     * to Plan 09 reconciliation), so the validator is effectively a no-op until
+     * the index lights up; the wiring is correct regardless.
+     *
+     * Drift findings (D-32) are NOT consumed here — they flow through the call
+     * site directly to renderMarkdown() as its second argument. Drift is a
+     * separate concern (escalated by --source-strict, not --audit-strict).
      *
      * @param list<array<string, mixed>> $mappingProposals
      * @return list<array{table: string, column: string, targetEntryType: string, targetHandle: string, kind: string, detail: string}>
@@ -144,29 +163,113 @@ final class MappingAuditor extends Component
             }
         }
 
+        // Phase 02.1 / D-36: block-availability finding kind via BlockAvailabilityValidator.
+        // Build v1-shaped mapping from v2's flat proposals[] (kind=pagePart rows only).
+        // matrixIndex is empty in v1.0 — Plan 09 reconciliation may port
+        // KnowledgeBase::buildMatrixAvailabilityIndex if the rule-by-rule audit surfaces
+        // it as accidentally-dropped. Until then, the validator is wired but inert.
+        if ($this->blockAvailabilityValidator !== null) {
+            $v1ShapedMapping = $this->buildV1ShapedMapping($mappingProposals);
+            $matrixIndex = []; // deferred to Plan 09 per PATTERNS section 12
+            $blockErrors = $this->blockAvailabilityValidator->validate($v1ShapedMapping, $matrixIndex);
+            foreach ($blockErrors as $errorMessage) {
+                $findings[] = [
+                    'table'           => '',
+                    'column'          => '',
+                    'targetEntryType' => '',
+                    'targetHandle'    => '',
+                    'kind'            => 'block-availability',
+                    'detail'          => (string) $errorMessage,
+                ];
+            }
+        }
+
         return $findings;
+    }
+
+    /**
+     * Adapter — walk v2's flat proposals[] and emit a v1-shaped mapping
+     * (`pageParts` keyed by FQCN with `target` block handle). Used by audit() to
+     * feed BlockAvailabilityValidator (whose v1 signature reads pageParts/nodeClasses/sections).
+     *
+     * v2 doesn't ship nodeClasses / sections in mapping.yaml — those buckets stay
+     * empty here. Plan 09 reconciliation may extend the adapter once heuristic 1.5's
+     * accepted-rows index surfaces the column → entry-type relation that v1 sourced
+     * from a dedicated nodeClasses block.
+     *
+     * @param list<array<string, mixed>> $mappingProposals
+     * @return array{pageParts: array<string, array<string, mixed>>, nodeClasses: array<string, mixed>, sections: array<string, mixed>}
+     */
+    private function buildV1ShapedMapping(array $mappingProposals): array
+    {
+        $shaped = ['pageParts' => [], 'nodeClasses' => [], 'sections' => []];
+        foreach ($mappingProposals as $row) {
+            if (!is_array($row)) { continue; }
+            if (((string) ($row['kind'] ?? 'column')) !== 'pagePart') { continue; }
+            // Only feed accepted/proposed rows to the validator. Dropped rows are no-ops
+            // (operator already decided to drop the page-part); needs-review is incomplete.
+            $status = (string) ($row['status'] ?? '');
+            if (!in_array($status, ['accepted', 'proposed'], true)) { continue; }
+            $key = (string) ($row['pagePartClass'] ?? '');
+            if ($key === '') { continue; }
+            $shaped['pageParts'][$key] = [
+                'action' => null, // v2 has no SKIP action; status:dropped is the v2 idiom (filtered out above)
+                'target' => (string) ($row['targetBlockType'] ?? ''),
+            ];
+        }
+        return $shaped;
     }
 
     /**
      * Render findings as MAPPING-AUDIT.md content + a parallel console-friendly block.
      *
+     * Phase 02.1 / D-32: drift findings (DB↔scan mismatch from KunstmaanSourceScanner)
+     * are emitted as a sibling section. Locked Discretion: single-file rule preserved
+     * (no separate DRIFT-REPORT.md). Empty drift sub-buckets are omitted; both empty
+     * → entire Drift section omitted.
+     *
      * @param list<array{table: string, column: string, targetEntryType: string, targetHandle: string, kind: string, detail: string}> $findings
+     * @param array{dbHasButScanMissing?: list<string>, scanHasButDbMissing?: list<string>} $driftFindings
      */
-    public function renderMarkdown(array $findings): string
+    public function renderMarkdown(array $findings, array $driftFindings = []): string
     {
+        // FieldLayout-side findings block.
         if ($findings === []) {
-            return "# Mapping Audit\n\nNo drift detected. Mapping references resolve cleanly against the live Craft FieldLayout.\n";
+            $out = "# Mapping Audit\n\nNo drift detected. Mapping references resolve cleanly against the live Craft FieldLayout.\n";
+        } else {
+            $out = "# Mapping Audit\n\n" . count($findings) . " drift finding(s):\n\n";
+            $out .= "| Table | Column | Entry Type | Handle | Kind | Detail |\n";
+            $out .= "|-------|--------|------------|--------|------|--------|\n";
+            foreach ($findings as $f) {
+                $out .= sprintf(
+                    "| `%s` | `%s` | `%s` | `%s` | %s | %s |\n",
+                    $f['table'], $f['column'], $f['targetEntryType'], $f['targetHandle'],
+                    $f['kind'], str_replace('|', '\\|', $f['detail']),
+                );
+            }
         }
-        $out = "# Mapping Audit\n\n" . count($findings) . " drift finding(s):\n\n";
-        $out .= "| Table | Column | Entry Type | Handle | Kind | Detail |\n";
-        $out .= "|-------|--------|------------|--------|------|--------|\n";
-        foreach ($findings as $f) {
-            $out .= sprintf(
-                "| `%s` | `%s` | `%s` | `%s` | %s | %s |\n",
-                $f['table'], $f['column'], $f['targetEntryType'], $f['targetHandle'],
-                $f['kind'], str_replace('|', '\\|', $f['detail']),
-            );
+
+        // D-32: Drift section (DB↔scan mismatch). Sibling of FieldLayout findings.
+        $dbHasButScanMissing = (array) ($driftFindings['dbHasButScanMissing'] ?? []);
+        $scanHasButDbMissing = (array) ($driftFindings['scanHasButDbMissing'] ?? []);
+        if ($dbHasButScanMissing !== [] || $scanHasButDbMissing !== []) {
+            $out .= "\n## Drift findings\n\n";
+            if ($dbHasButScanMissing !== []) {
+                $out .= "### DB has tables not in source scan\n\n";
+                foreach ($dbHasButScanMissing as $t) {
+                    $out .= "- `" . (string) $t . "`\n";
+                }
+                $out .= "\n";
+            }
+            if ($scanHasButDbMissing !== []) {
+                $out .= "### Source scan declares tables missing from DB\n\n";
+                foreach ($scanHasButDbMissing as $t) {
+                    $out .= "- `" . (string) $t . "`\n";
+                }
+                $out .= "\n";
+            }
         }
+
         return $out;
     }
 }
