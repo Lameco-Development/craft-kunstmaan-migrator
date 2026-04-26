@@ -187,6 +187,92 @@ class MigrationStateService extends Component implements MigrationStateReader
     }
 
     /**
+     * Phase 4.1 / D-37 — write the terminal-state marker into the existing
+     * meta JSON column. No schema migration (PATTERNS recommendation b).
+     *
+     * Sync recovery commands (REC-01 `migrate/sync-assets` and any future
+     * REC-02 `migrate/sync-relations` surface) call this after they classify
+     * a row's failure as permanent (filesystem_404 / too_large) so subsequent
+     * re-runs never retry the row. Reuses updateMeta() (lines 149-179) so the
+     * existing meta payload is preserved (array_merge semantic) — only the
+     * three terminal-state keys are added/overwritten.
+     *
+     * No-ops on missing rows (mirrors updateMeta's existence check).
+     */
+    public function markTerminal(
+        string $source,
+        string $key,
+        ?int $siteId,
+        string $reason,
+    ): void {
+        $this->updateMeta($source, $key, $siteId, $this->buildTerminalMeta($reason));
+    }
+
+    /**
+     * Phase 4.1 / D-37 — check whether a row carries the terminal-state
+     * marker. Reads via get(); returns false when the row doesn't exist OR
+     * when the marker is absent.
+     *
+     * Sync recovery commands call this from their candidate-collection loop
+     * to skip permanently-failed rows (T-04.1-07-01 mitigation — prevents
+     * the retry-loop DoS).
+     */
+    public function isTerminal(string $source, string $key, ?int $siteId): bool
+    {
+        $row = $this->get($source, $key, $siteId);
+        if (!$row) {
+            return false;
+        }
+        return $this->isTerminalMarker($row['meta'] ?? null);
+    }
+
+    /**
+     * Phase 4.1 / D-37 — pure shape builder for the terminal-state marker
+     * meta payload. Extracted as a private helper so the shape contract can
+     * be characterized via Reflection without a Craft DB bootstrap (mirrors
+     * the AssetMigrationService::classifyAssetFailureReason testability
+     * pattern from Phase 4 / Plan 12).
+     *
+     * @return array<string, string>
+     */
+    private function buildTerminalMeta(string $reason): array
+    {
+        return [
+            'terminalState'  => 'permanently_failed',
+            'terminalReason' => $reason,
+            'terminalAt'     => gmdate('Y-m-d\TH:i:s\Z'),
+        ];
+    }
+
+    /**
+     * Phase 4.1 / D-37 — pure predicate for the terminal-state marker.
+     * Accepts the raw meta value as Yii's MySQL JSON-column reader hands it
+     * back (decoded array on the happy path) AND defensively as a JSON string
+     * (rows written through a different path may bypass the auto-decode).
+     *
+     * Returns false for null / empty / non-array-non-decodable / arrays
+     * without the sentinel — only an exact `terminalState='permanently_failed'`
+     * match counts.
+     */
+    private function isTerminalMarker(mixed $meta): bool
+    {
+        if ($meta === null || $meta === '') {
+            return false;
+        }
+        if (is_array($meta)) {
+            return ($meta['terminalState'] ?? null) === 'permanently_failed';
+        }
+        if (!is_string($meta)) {
+            return false;
+        }
+        $decoded = json_decode($meta, true);
+        if (!is_array($decoded)) {
+            return false;
+        }
+        return ($decoded['terminalState'] ?? null) === 'permanently_failed';
+    }
+
+    /**
      * Return the most recent state-row meta as an associative array, or null
      * if the state table is empty / the newest row has no meta payload.
      *
