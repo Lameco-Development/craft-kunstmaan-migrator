@@ -12,7 +12,22 @@ use lameco\kunstmaanmigrator\analyze\LlmClassifier;
 use lameco\kunstmaanmigrator\analyze\ReportBuilder;
 use lameco\kunstmaanmigrator\analyze\SchemaDumper;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
+use lameco\kunstmaanmigrator\extract\ExtractService;
+use lameco\kunstmaanmigrator\fields\FieldHandlerRegistry;
+use lameco\kunstmaanmigrator\fields\handlers\AssetHandler;
+use lameco\kunstmaanmigrator\fields\handlers\MatrixHandler;
+use lameco\kunstmaanmigrator\fields\handlers\PlainTextHandler;
+use lameco\kunstmaanmigrator\fields\handlers\RelationHandler;
+use lameco\kunstmaanmigrator\fields\handlers\SplitNameHandler;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
+use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
+use lameco\kunstmaanmigrator\finalize\FinalizeWalker;
+use lameco\kunstmaanmigrator\load\AssetMigrationService;
+use lameco\kunstmaanmigrator\load\AssetPathResolver;
+use lameco\kunstmaanmigrator\load\AtomicMigrationService;
+use lameco\kunstmaanmigrator\load\AttachService;
+use lameco\kunstmaanmigrator\load\EntryMigrationService;
+use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
 use lameco\kunstmaanmigrator\mapping\BlockAvailabilityValidator;
 use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
@@ -27,6 +42,8 @@ use lameco\kunstmaanmigrator\source\KunstmaanPageStructureScanner;
 use lameco\kunstmaanmigrator\source\KunstmaanSourcePathResolver;
 use lameco\kunstmaanmigrator\source\KunstmaanSourceScanner;
 use lameco\kunstmaanmigrator\source\MediaFkScanner;
+use lameco\kunstmaanmigrator\source\TopologicalOrderer;
+use lameco\kunstmaanmigrator\transform\TransformService;
 use PDO;
 use yii\db\Connection;
 
@@ -52,6 +69,21 @@ use yii\db\Connection;
  * @property-read KunstmaanPageStructureScanner $kunstmaanPageStructureScanner
  * @property-read KunstmaanSourceScanner $kunstmaanSourceScanner
  * @property-read BlockAvailabilityValidator $blockAvailabilityValidator
+ * @property-read FieldHandlerRegistry $fieldHandlerRegistry
+ * @property-read PlainTextHandler $plainTextHandler
+ * @property-read AssetHandler $assetHandler
+ * @property-read RelationHandler $relationHandler
+ * @property-read MatrixHandler $matrixHandler
+ * @property-read SplitNameHandler $splitNameHandler
+ * @property-read MigrationStateService $migrationStateService
+ * @property-read CkeditorRewriterService $ckeditorRewriterService
+ * @property-read FinalizeWalker $finalizeWalker
+ * @property-read ExtractService $extractService
+ * @property-read TransformService $transformService
+ * @property-read AtomicMigrationService $atomicMigrationService
+ * @property-read AssetMigrationService $assetMigrationService
+ * @property-read EntryMigrationService $entryMigrationService
+ * @property-read AttachService $attachService
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -86,6 +118,22 @@ class Plugin extends BasePlugin
                 'kunstmaanPageStructureScanner' => KunstmaanPageStructureScanner::class, // Phase 02.1 (Plan 04) — D-40 right side
                 'kunstmaanSourceScanner'        => KunstmaanSourceScanner::class,        // Phase 02.1 (Plan 05) — D-40 left side orchestrator
                 'blockAvailabilityValidator'    => BlockAvailabilityValidator::class,    // Phase 02.1 (Plan 08) — D-36 fourth finding kind
+                // Phase 3 additions — ETL pipeline + handlers + finalize.
+                'fieldHandlerRegistry'    => FieldHandlerRegistry::class,
+                'plainTextHandler'        => PlainTextHandler::class,    // mode='plain' default; init() registers 4 modes
+                'assetHandler'            => AssetHandler::class,
+                'relationHandler'         => RelationHandler::class,
+                'matrixHandler'           => MatrixHandler::class,
+                'splitNameHandler'        => SplitNameHandler::class,
+                'migrationStateService'   => MigrationStateService::class,
+                'ckeditorRewriterService' => CkeditorRewriterService::class,
+                'finalizeWalker'          => FinalizeWalker::class,
+                'extractService'          => ExtractService::class,
+                'transformService'        => TransformService::class,
+                'atomicMigrationService'  => AtomicMigrationService::class,
+                'assetMigrationService'   => AssetMigrationService::class,
+                'entryMigrationService'   => EntryMigrationService::class,
+                'attachService'           => AttachService::class,
             ],
         ];
     }
@@ -147,6 +195,112 @@ class Plugin extends BasePlugin
         // MappingAuditor's block-availability check (D-36) is inert when the
         // validator stays null. Wire it so the audit step actually fires.
         $this->mappingAuditor->blockAvailabilityValidator = $this->blockAvailabilityValidator;
+
+        // Phase 3 / 75a95bc sibling-DI — handlers + ETL services + finalize. See Plan 03-13.
+        // Every Phase 3 service that depends on another sibling component is wired here;
+        // bare class registrations in config() leave the public ?Foo $dep = null slots
+        // null and produce silent NPEs at first call.
+
+        // Field handler registry — register all 4 PlainTextHandler modes and the 4 other
+        // typed handlers. PlainTextHandler is parametric on its mode constructor arg
+        // ('plain' / 'ckeditor' / 'link' / 'dropdown'); each mode registers under its
+        // own id() so the registry can dispatch by handler-name from mapping.yaml.
+        $registry = $this->fieldHandlerRegistry;
+        $registry->register(new PlainTextHandler('plain'));
+        $registry->register(new PlainTextHandler('ckeditor'));
+        $registry->register(new PlainTextHandler('link'));
+        $registry->register(new PlainTextHandler('dropdown'));
+        $registry->register($this->assetHandler);
+        $registry->register($this->relationHandler);
+        $registry->register($this->matrixHandler);
+        $registry->register($this->splitNameHandler);
+
+        // AssetHandler resolves deferred asset tokens via AssetMigrationService.
+        $this->assetHandler->assetResolver = $this->assetMigrationService;
+
+        // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
+        // ?object — AssetMigrationService satisfies the duck-typed surface.
+        $this->ckeditorRewriterService->migrationState = $this->migrationStateService;
+        $this->ckeditorRewriterService->legacyDb       = $this->legacyDbService;
+        $this->ckeditorRewriterService->assetResolver  = $this->assetMigrationService;
+
+        // FinalizeWalker drives CkeditorRewriterService over saved entries (FIN-01).
+        $this->finalizeWalker->rewriter = $this->ckeditorRewriterService;
+
+        // ExtractService deps. TopologicalOrderer is a plain class (no Component base)
+        // — instantiate inline rather than promote it to a Yii component, mirroring
+        // the AssetPathResolver pattern below.
+        $this->extractService->legacyDb            = $this->legacyDbService;
+        $this->extractService->detailTableResolver = $this->detailTableResolver;
+        $this->extractService->topologicalOrderer  = new TopologicalOrderer();
+
+        // TransformService deps (5 slots). migrationState is typed ?MigrationStateReader
+        // — MigrationStateService implements that interface (verified). assetPathResolver
+        // is a static-helper carrier; a fresh instance is sufficient.
+        $this->transformService->handlerRegistry   = $this->fieldHandlerRegistry;
+        $this->transformService->ckeditorRewriter  = $this->ckeditorRewriterService;
+        $this->transformService->legacyDb          = $this->legacyDbService;
+        $this->transformService->migrationState    = $this->migrationStateService;
+        $this->transformService->assetPathResolver = new AssetPathResolver();
+
+        // AssetMigrationService deps.
+        $this->assetMigrationService->legacyDb       = $this->legacyDbService;
+        $this->assetMigrationService->migrationState = $this->migrationStateService;
+
+        // AtomicMigrationService deps — orchestrates per-entry transactional load.
+        $this->atomicMigrationService->migrationStateService = $this->migrationStateService;
+        $this->atomicMigrationService->entryMigrationService = $this->entryMigrationService;
+        $this->atomicMigrationService->assetMigrationService = $this->assetMigrationService;
+
+        // EntryMigrationService deps. $sites is the kuma_locale → Craft site handle map
+        // composed from Phase 2's LocalePreflight + Settings::$localeMap (D-28 ladder).
+        // Empty map is tolerated at init() — saveEntryForSites() throws on first access
+        // if the operator hasn't configured locales yet, surfacing a clear error.
+        $this->entryMigrationService->stateService = $this->migrationStateService;
+        $this->entryMigrationService->sites        = $this->resolveSitesMap();
+    }
+
+    /**
+     * Build the kuma_locale → Craft site handle map used by EntryMigrationService::$sites.
+     *
+     * Composes Phase 2's LocalePreflight matching ladder (D-28):
+     *   1. Settings::$localeMap[$legacy] → explicit operator override (strongest)
+     *   2. Exact match against Craft site handles + Settings::$defaultLocales
+     *   3. Language-prefix loose match
+     *
+     * Detection requires a legacy DB connection (LocalePreflight::detect issues
+     * `SELECT DISTINCT lang FROM kuma_node_translations`). We swallow connection
+     * failures here and return an empty map — Plugin::init() must remain
+     * crash-resistant on hosts where the legacy DB is unreachable at boot
+     * (operator runs `doctor` first to surface the issue). EntryMigrationService
+     * throws a clear error on first access if the map is empty.
+     *
+     * @return array<string, string> kuma_locale code → Craft site handle
+     */
+    private function resolveSitesMap(): array
+    {
+        // Static cache: Plugin::init() is single-shot but defensive against re-entry.
+        try {
+            $detected = $this->localePreflight->detect();
+        } catch (\Throwable) {
+            return [];
+        }
+
+        if ($detected === []) {
+            return [];
+        }
+
+        $resolved = $this->localePreflight->resolve($detected);
+        $out = [];
+        foreach ($resolved as $legacy => $detail) {
+            if (($detail['matched'] ?? false) === true) {
+                $target = (string) ($detail['target'] ?? '');
+                if ($target !== '') {
+                    $out[(string) $legacy] = $target;
+                }
+            }
+        }
+        return $out;
     }
 
     protected function createSettingsModel(): ?Model
