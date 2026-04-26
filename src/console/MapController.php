@@ -148,62 +148,175 @@ class MapController extends Controller
             $status = (string) ($row['status'] ?? '');
             if ($status !== 'proposed' && $status !== 'needs-review') { continue; }
 
-            $this->stdout($this->renderRowBlock($row, $position, count($walkOrder)));
-
-            $action = strtolower((string) $this->select(
-                '  action',
-                ['a' => 'accept', 'd' => 'drop', 'r' => 'remap', 's' => 'skip', 'q' => 'quit'],
-            ));
-
-            switch ($action) {
-                case 'a':
-                    if ($plugin->mappingFile->setStatus($path, $rowIndex, 'accepted')) {
-                        $this->stdout("    → accepted\n\n", Console::FG_GREEN);
-                    } else {
-                        $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
-                    }
-                    break;
-                case 'd':
-                    $rationale = (string) $this->prompt('  rationale (enter for default):', [
-                        'required' => false,
-                        'default'  => 'no Craft target — operator-decided drop in map loop',
-                    ]);
-                    if ($plugin->mappingFile->setStatus($path, $rowIndex, 'dropped', $rationale)) {
-                        $this->stdout("    → dropped\n\n", Console::FG_YELLOW);
-                    } else {
-                        $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
-                    }
-                    break;
-                case 'r':
-                    [$newHandler, $newHandle] = $this->runRemapPicker($row);
-                    if ($newHandler !== null && $newHandle !== null) {
-                        $written = $plugin->mappingFile->setStatus(
-                            $path, $rowIndex, 'accepted',
-                            null,
-                            $newHandle,
-                            $newHandler,
-                        );
-                        if ($written) {
-                            $this->stdout("    → remapped to {$newHandler}.{$newHandle} (accepted)\n\n", Console::FG_GREEN);
-                        } else {
-                            $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
-                        }
-                    } else {
-                        $this->stdout("    → remap cancelled (skipped, status unchanged)\n\n", Console::FG_YELLOW);
-                    }
-                    break;
-                case 's':
-                    // D-07: skip does NOT mutate the row.
-                    $this->stdout("    → skipped\n\n", Console::FG_CYAN);
-                    break;
-                case 'q':
-                    $this->stdout("Map: exit (any decisions made are persisted).\n", Console::FG_CYAN);
-                    return ExitCode::OK;
+            // Phase 02.1 / D-34: branch on row kind FIRST, then keypress. Page-part rows
+            // render via their own compact block + block-type picker; column rows preserve
+            // the existing Phase 2 / D-05 + D-06 flow verbatim.
+            $kind = (string) ($row['kind'] ?? 'column');
+            if ($kind === 'pagePart') {
+                $exit = $this->dispatchPagePartRow($path, $rowIndex, $row, $position, count($walkOrder));
+            } else {
+                $exit = $this->dispatchColumnRow($path, $rowIndex, $row, $position, count($walkOrder));
+            }
+            if ($exit !== null) {
+                return $exit;
             }
         }
 
         $this->stdout("\nMap: PASS — walked {$total} rows.\n", Console::FG_GREEN);
         return ExitCode::OK;
+    }
+
+    /**
+     * Dispatch one column-kind row. Existing Phase 2 / D-05 + D-06 flow preserved verbatim.
+     * Returns ExitCode::OK if operator quit; null to continue the walk.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function dispatchColumnRow(string $path, int $rowIndex, array $row, int $position, int $total): ?int
+    {
+        $plugin = Plugin::getInstance();
+
+        $this->stdout($this->renderRowBlock($row, $position, $total));
+
+        $action = strtolower((string) $this->select(
+            '  action',
+            ['a' => 'accept', 'd' => 'drop', 'r' => 'remap', 's' => 'skip', 'q' => 'quit'],
+        ));
+
+        switch ($action) {
+            case 'a':
+                if ($plugin->mappingFile->setStatus($path, $rowIndex, 'accepted')) {
+                    $this->stdout("    → accepted\n\n", Console::FG_GREEN);
+                } else {
+                    $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                }
+                break;
+            case 'd':
+                $rationale = (string) $this->prompt('  rationale (enter for default):', [
+                    'required' => false,
+                    'default'  => 'no Craft target — operator-decided drop in map loop',
+                ]);
+                if ($plugin->mappingFile->setStatus($path, $rowIndex, 'dropped', $rationale)) {
+                    $this->stdout("    → dropped\n\n", Console::FG_YELLOW);
+                } else {
+                    $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                }
+                break;
+            case 'r':
+                [$newHandler, $newHandle] = $this->runRemapPicker($row);
+                if ($newHandler !== null && $newHandle !== null) {
+                    $written = $plugin->mappingFile->setStatus(
+                        $path, $rowIndex, 'accepted',
+                        null,
+                        $newHandle,
+                        $newHandler,
+                    );
+                    if ($written) {
+                        $this->stdout("    → remapped to {$newHandler}.{$newHandle} (accepted)\n\n", Console::FG_GREEN);
+                    } else {
+                        $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                    }
+                } else {
+                    $this->stdout("    → remap cancelled (skipped, status unchanged)\n\n", Console::FG_YELLOW);
+                }
+                break;
+            case 's':
+                // D-07: skip does NOT mutate the row.
+                $this->stdout("    → skipped\n\n", Console::FG_CYAN);
+                break;
+            case 'q':
+                $this->stdout("Map: exit (any decisions made are persisted).\n", Console::FG_CYAN);
+                return ExitCode::OK;
+        }
+        return null;
+    }
+
+    /**
+     * Dispatch one pagePart-kind row (Phase 02.1 / D-34). Mirrors the column-row dispatch
+     * in shape but uses the page-part renderer + block-type picker. Same a/d/s/q semantics
+     * (accept, drop, skip, quit); [r]emap leads into runRemapPickerForPagePart instead of
+     * the handler+handle picker. D-07 atomic per-keypress writes preserved.
+     *
+     * Returns ExitCode::OK if operator quit; null to continue the walk.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function dispatchPagePartRow(string $path, int $rowIndex, array $row, int $position, int $total): ?int
+    {
+        $plugin = Plugin::getInstance();
+
+        $this->stdout($this->renderPagePartRowBlock($row, $position, $total));
+
+        $action = strtolower((string) $this->select(
+            '  action',
+            ['a' => 'accept', 'd' => 'drop', 'r' => 'remap (block-type)', 's' => 'skip', 'q' => 'quit'],
+        ));
+
+        switch ($action) {
+            case 'a':
+                if ($plugin->mappingFile->setStatus($path, $rowIndex, 'accepted')) {
+                    $this->stdout("    → accepted\n\n", Console::FG_GREEN);
+                } else {
+                    $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                }
+                break;
+            case 'd':
+                $rationale = (string) $this->prompt('  rationale (enter for default):', [
+                    'required' => false,
+                    'default'  => 'no Craft block-type target — operator-decided drop in map loop',
+                ]);
+                if ($plugin->mappingFile->setStatus($path, $rowIndex, 'dropped', $rationale)) {
+                    $this->stdout("    → dropped\n\n", Console::FG_YELLOW);
+                } else {
+                    $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                }
+                break;
+            case 'r':
+                $updated = $this->runRemapPickerForPagePart($row);
+                $newBlockType = (string) ($updated['targetBlockType'] ?? '');
+                $rowBlockType = (string) ($row['targetBlockType'] ?? '');
+                if ($newBlockType !== '' && $newBlockType !== $rowBlockType) {
+                    // setStatus only mutates a fixed key set; persist the new targetBlockType
+                    // by re-reading + writing the full file via writeAtomic (same atomic
+                    // primitive setStatus uses, per Phase 2 / D-07).
+                    $written = $this->writePagePartBlockType($path, $rowIndex, $newBlockType);
+                    if ($written) {
+                        $this->stdout("    → block-type set to {$newBlockType} (accepted)\n\n", Console::FG_GREEN);
+                    } else {
+                        $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                    }
+                } else {
+                    $this->stdout("    → remap cancelled (skipped, status unchanged)\n\n", Console::FG_YELLOW);
+                }
+                break;
+            case 's':
+                // D-07: skip does NOT mutate the row.
+                $this->stdout("    → skipped\n\n", Console::FG_CYAN);
+                break;
+            case 'q':
+                $this->stdout("Map: exit (any decisions made are persisted).\n", Console::FG_CYAN);
+                return ExitCode::OK;
+        }
+        return null;
+    }
+
+    /**
+     * Persist a new targetBlockType + flip status to accepted on a pagePart row.
+     * MappingFile::setStatus only mutates a fixed key set (status/rationale/targetHandle/handler),
+     * so page-part-specific fields need a direct YAML rewrite via the same atomic primitive
+     * (writeAtomic — Phase 2 / D-07 tmp+rename).
+     */
+    private function writePagePartBlockType(string $path, int $rowIndex, string $targetBlockType): bool
+    {
+        $plugin = Plugin::getInstance();
+        $parsed = \Symfony\Component\Yaml\Yaml::parseFile($path) ?? [];
+        if (!is_array($parsed) || !isset($parsed['proposals'][$rowIndex]) || !is_array($parsed['proposals'][$rowIndex])) {
+            return false;
+        }
+        $parsed['proposals'][$rowIndex]['targetBlockType'] = $targetBlockType;
+        $parsed['proposals'][$rowIndex]['status']          = 'accepted';
+        $yaml = \Symfony\Component\Yaml\Yaml::dump($parsed, 4, 2, \Symfony\Component\Yaml\Yaml::DUMP_MULTI_LINE_LITERAL_BLOCK);
+        return $plugin->mappingFile->writeAtomic($path, $yaml);
     }
 
     /**
@@ -244,6 +357,177 @@ class MapController extends Controller
         }
         $out .= $sep;
         return $out;
+    }
+
+    /**
+     * Phase 02.1 / D-34 compact one-screen renderer for kind=pagePart rows.
+     * Mirrors renderRowBlock's D-05 60-char-separator style but tailored to page-part fields:
+     * shows pagePartClass + parent context, the proposed Matrix block target, the rationale,
+     * and each fields[] mapping inline.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function renderPagePartRowBlock(array $row, int $position, int $total): string
+    {
+        $sep = str_repeat('─', 60) . "\n";
+        $pagePartClass    = (string) ($row['pagePartClass'] ?? '');
+        $parentPageClass  = (string) ($row['parentPageClass'] ?? '');
+        $context          = (string) ($row['context'] ?? '');
+        $sourceTable      = (string) ($row['sourceTable'] ?? '');
+        $entryType        = (string) ($row['targetEntryType'] ?? '');
+        $matrixField      = (string) ($row['targetMatrixField'] ?? '');
+        $blockType        = (string) ($row['targetBlockType'] ?? '');
+        $confidence       = (string) ($row['confidence'] ?? '');
+        $rationale        = (string) ($row['rationale'] ?? '');
+        $fields           = (array)  ($row['fields'] ?? []);
+
+        $out  = "[{$position}/{$total}] {$pagePartClass} in {$parentPageClass} context '{$context}'\n";
+        $out .= $sep;
+        $entryDisplay = $entryType !== '' ? $entryType : '(unset)';
+        $matrixDisplay = $matrixField !== '' ? $matrixField : '(unset)';
+        $blockDisplay = $blockType !== '' ? $blockType : '(unset)';
+        $out .= "Proposed: → {$entryDisplay}.{$matrixDisplay} (block: {$blockDisplay})  (confidence: {$confidence})\n";
+        $out .= "Source table: {$sourceTable}\n";
+        $out .= "Rationale: {$rationale}\n";
+        if ($fields !== []) {
+            $out .= "Fields:\n";
+            foreach ($fields as $f) {
+                if (!is_array($f)) { continue; }
+                $sourceProperty = (string) ($f['sourceProperty'] ?? '');
+                $targetHandle   = (string) ($f['targetHandle'] ?? '');
+                $handler        = (string) ($f['handler'] ?? '');
+                $out .= "  {$targetHandle} ← {$sourceProperty} ({$handler})\n";
+            }
+        }
+        $out .= $sep;
+        return $out;
+    }
+
+    /**
+     * Phase 02.1 / D-34 block-type picker for pagePart rows.
+     *
+     * Numbered list of available Matrix block-types on the parent entry type's
+     * targetMatrixField, plus [t]ype manually + [b]ack. Returns the row with
+     * targetBlockType updated, or the row unchanged on cancel.
+     *
+     * Per-field handle pickers (the nested `fields[]` array) are out of scope for v1.0 —
+     * operator can edit those manually in mapping.yaml. Phase 3 may revisit.
+     * TODO(phase-3): per-field handle pickers for page-part fields[].
+     *
+     * Re-prompts in `while(true)` on invalid input until valid or back (T-2-18 mitigation).
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function runRemapPickerForPagePart(array $row): array
+    {
+        $entryType   = (string) ($row['targetEntryType'] ?? '');
+        $matrixField = (string) ($row['targetMatrixField'] ?? '');
+
+        if ($entryType === '' || $matrixField === '') {
+            $this->stdout(
+                "  pagePart row missing targetEntryType or targetMatrixField — fill them in mapping.yaml first.\n",
+                Console::FG_YELLOW,
+            );
+            return $row;
+        }
+
+        $blockTypes = $this->blockTypeHandlesForMatrixField($entryType, $matrixField);
+
+        // Build picker — numbered block-type entries + [t]ype manually + [b]ack.
+        $choices = [];
+        foreach ($blockTypes as $bt) {
+            $choices[$bt] = $bt;
+        }
+        $choices['t'] = '[type manually]';
+        $choices['b'] = '[back]';
+
+        if ($blockTypes === []) {
+            // No block-types discoverable — fall straight through to type-manually.
+            return $this->typeManuallyBlockType($row, $entryType, $matrixField, $blockTypes);
+        }
+
+        $picked = (string) $this->select(
+            "  target block-type for {$entryType}.{$matrixField}?",
+            $choices,
+        );
+        if ($picked === 'b') {
+            return $row;
+        }
+        if ($picked === 't') {
+            return $this->typeManuallyBlockType($row, $entryType, $matrixField, $blockTypes);
+        }
+        $row['targetBlockType'] = $picked;
+        return $row;
+    }
+
+    /**
+     * [t]ype manually fallback for the page-part block-type picker. Validates the operator's
+     * input against the live FieldLayout-discovered block-type list (T-2-18 mitigation:
+     * invalid handles never land in mapping.yaml). Empty input or "back" cancels.
+     *
+     * @param array<string, mixed> $row
+     * @param list<string>         $valid
+     * @return array<string, mixed>
+     */
+    private function typeManuallyBlockType(array $row, string $entryType, string $matrixField, array $valid): array
+    {
+        while (true) {
+            $h = (string) $this->prompt('  type a block-type handle (or "back"):', ['required' => false]);
+            if ($h === '' || strtolower($h) === 'back') {
+                return $row;
+            }
+            // If we couldn't discover any block-types (empty $valid), accept any non-empty
+            // operator input — they're authoring against a Matrix field that may not yet
+            // have its block-types provisioned in Craft.
+            if ($valid === [] || in_array($h, $valid, true)) {
+                $row['targetBlockType'] = $h;
+                return $row;
+            }
+            $this->stdout("  invalid block-type. Available: " . implode(', ', $valid) . "\n", Console::FG_YELLOW);
+            // loop and re-prompt
+        }
+    }
+
+    /**
+     * Live FieldLayout walk: enumerate the block-type handles on a Matrix field belonging
+     * to a given entry type. Returns [] if the entry type, layout, or field is missing —
+     * the picker degrades to the type-manually fallback in that case.
+     *
+     * @return list<string>
+     */
+    private function blockTypeHandlesForMatrixField(string $entryType, string $matrixField): array
+    {
+        if ($entryType === '' || $matrixField === '') {
+            return [];
+        }
+        $type = Craft::$app->entries->getEntryTypeByHandle($entryType);
+        if ($type === null) {
+            return [];
+        }
+        $layout = $type->getFieldLayout();
+        if ($layout === null) {
+            return [];
+        }
+        foreach ($layout->getCustomFields() as $f) {
+            if ((string) $f->handle !== $matrixField) {
+                continue;
+            }
+            // Matrix field — enumerate its entry types (Craft 5 Matrix block-types are
+            // entry types under the hood). Defensive: not every field has getEntryTypes().
+            if (!method_exists($f, 'getEntryTypes')) {
+                return [];
+            }
+            $out = [];
+            foreach ($f->getEntryTypes() as $et) {
+                $h = (string) ($et->handle ?? '');
+                if ($h !== '') {
+                    $out[] = $h;
+                }
+            }
+            return $out;
+        }
+        return [];
     }
 
     /**
