@@ -29,7 +29,7 @@ use yii\base\Component;
  *
  * Output shape:
  *   [
- *     'format' => 'counts-v1',
+ *     'format'      => 'counts-v1',
  *     'generatedAt' => '<UTC ISO-8601>',
  *     'sections' => [
  *       '<sectionHandle>' => [
