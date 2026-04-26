@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\source;
 
-use Craft;
 use lameco\kunstmaanmigrator\Plugin;
 use yii\base\Component;
 
