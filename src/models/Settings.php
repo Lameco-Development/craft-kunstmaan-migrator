@@ -51,6 +51,17 @@ class Settings extends Model
     public ?int    $defaultMaxPerEntity  = null;
     public bool    $dryRunDefault        = true;
 
+    // Phase 4 / D-60 — verify-stage tolerances. Defaults: ±1% count tolerance,
+    // 5% URL-diff threshold. CLI `--count-tolerance` overrides at controller seam.
+    public float $verifyCountTolerance = 0.01;
+    public float $verifyUrlDiffThreshold = 0.05;
+
+    // Phase 4 / D-57 — adapter source-table overrides for non-CQM Kunstmaan
+    // flavours. Defaults match the canonical kuma_* schema; operators flip via
+    // env vars or config/kunstmaan-migrator.php when the legacy DB diverges.
+    public string $seoTableName = 'kuma_seo';
+    public string $redirectsTableName = 'kuma_redirects';
+
     public function behaviors(): array
     {
         return [
