@@ -23,6 +23,9 @@ use yii\console\ExitCode;
  *   6. State table reachability (Phase 3 / CONTEXT Discretion — catches Phase 1 install drift before migrate runs)
  *   7. Adapter plugin health (D-69 — SEOmatic + Retour optional, INFO on absence per ADP-01..03)
  *   8. Verify baseline presence (D-69 — INFO when storage/migration/baseline.json missing)
+ *   9. Kunstmaan .env source presence (Phase 4.1 / D-10 — INFO/OK; never FAILs.
+ *      Reports .env / .env.example presence + which whitelisted keys (DATABASE_URL,
+ *      DEFAULT_LOCALE) were found + DSN-host vs Settings::legacyDbServer mismatch.)
  *
  * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline).
  *
@@ -65,6 +68,8 @@ class DoctorController extends Controller
         // Phase 4 extensions — D-69. Both always return true (INFO not FAIL):
         $ok = $this->checkAdapterPlugins()       && $ok;
         $ok = $this->checkVerifyBaseline()       && $ok;
+        // Phase 4.1 / D-10 (9th — info only, never blocks):
+        $ok = $this->checkKunstmaanEnvSource()   && $ok;
 
         $this->stdout(
             "\n" . ($ok ? "Doctor: PASS\n" : "Doctor: FAIL — fix the above before running migrate\n"),
@@ -289,5 +294,70 @@ class DoctorController extends Controller
             );
         }
         return true; // D-69: always OK.
+    }
+
+    /**
+     * Check #9 (Phase 4.1 / D-10): Kunstmaan .env source presence + whitelisted keys.
+     *
+     * INFO-only, never FAILs. Reports:
+     *   - whether .env / .env.example exist at the resolved source path
+     *   - which whitelisted keys (DATABASE_URL, DEFAULT_LOCALE) were found
+     *   - if DATABASE_URL parsed: whether the parsed host differs from
+     *     Settings::legacyDbServer (operator-supplied value wins per D-07)
+     *
+     * T-04.1-01-04 mitigation: lists FILE NAMES and HOST only — never
+     * passwords or full DSN. Operator can verify by reading the
+     * implementation — only the host accessor is consulted.
+     */
+    private function checkKunstmaanEnvSource(): bool
+    {
+        $plugin = Plugin::getInstance();
+        $reader = $plugin->kunstmaanEnvReader;
+        $sourcePath = $plugin->kunstmaanSourcePathResolver->resolve();
+        if ($sourcePath === null) {
+            $this->stdout("  INFO Kunstmaan source path unset — env reader inert\n", Console::FG_YELLOW);
+            return true;
+        }
+
+        $envExample = is_file($sourcePath . '/.env.example') ? '.env.example' : null;
+        $env        = is_file($sourcePath . '/.env')         ? '.env'         : null;
+        $found = array_values(array_filter([$envExample, $env]));
+        if ($found === []) {
+            $this->stdout("  INFO no .env / .env.example at {$sourcePath}\n", Console::FG_YELLOW);
+            return true;
+        }
+        $this->stdout(sprintf("  OK   Kunstmaan env source: %s\n", implode(' + ', $found)), Console::FG_GREEN);
+
+        $dsn = $reader->getDatabaseUrl();
+        if ($dsn !== null && $dsn !== '') {
+            $parsedHost = $reader->getDsnHost();
+            $settingsHost = (string) ($plugin->getSettings()->legacyDbServer ?? '');
+            if ($parsedHost !== null && $settingsHost !== '' && $parsedHost !== $settingsHost) {
+                $this->stdout(
+                    sprintf(
+                        "  INFO DATABASE_URL host=%s differs from Settings::legacyDbServer=%s (operator value wins)\n",
+                        $parsedHost,
+                        $settingsHost,
+                    ),
+                    Console::FG_YELLOW,
+                );
+            } else {
+                $this->stdout("  OK   DATABASE_URL parsed\n", Console::FG_GREEN);
+            }
+        } else {
+            $this->stdout("  INFO DATABASE_URL not set in .env/.env.example\n", Console::FG_YELLOW);
+        }
+
+        $defaultLocale = $reader->getDefaultLocale();
+        if ($defaultLocale !== null && $defaultLocale !== '') {
+            $this->stdout(
+                sprintf("  OK   DEFAULT_LOCALE found: %s\n", $defaultLocale),
+                Console::FG_GREEN,
+            );
+        } else {
+            $this->stdout("  INFO DEFAULT_LOCALE not set in .env/.env.example\n", Console::FG_YELLOW);
+        }
+
+        return true; // D-10: info only — never blocks.
     }
 }
