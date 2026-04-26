@@ -64,10 +64,37 @@ class MigrateController extends Controller
     public ?string $locales  = null;
     public ?string $since    = null;
 
+    /**
+     * D-65 verbosity counter — `-v` / `-vv` / `-vvv`. Yii parses repeated
+     * short flags as a string value (`-vv` → `verbose='v'`); verbosityLevel()
+     * does the str-length count. Accept int form too so `--verbose=2` works.
+     */
+    public string|int $verbose = 0;
+
+    /** D-67: per-run timestamped log file under storage/migration/. */
+    private ?string $logFilePath = null;
+    /** @var resource|null */
+    private $logFileHandle = null;
+
     public function options($actionID): array
     {
         return array_merge(parent::options($actionID), [
             'live', 'confirm', 'preloadAssets', 'force', 'entities', 'locales', 'since',
+            // D-65: -v..-vvv verbosity (string|int — see verbosityLevel()).
+            'verbose',
+        ]);
+    }
+
+    /**
+     * D-65: Yii's option parser doesn't support repeated short flags natively
+     * (-vv is parsed as --verbose=v). The verbosityLevel() helper reads the
+     * string|int $verbose value and counts characters / digits to derive the
+     * level. The 'v' → 'verbose' alias keeps the short-flag UX intact.
+     */
+    public function optionAliases(): array
+    {
+        return array_merge(parent::optionAliases(), [
+            'v' => 'verbose',
         ]);
     }
 
@@ -204,6 +231,16 @@ class MigrateController extends Controller
             Console::FG_GREEN,
         );
 
+        // FH-03: --preload-assets ingests the full referenced asset set in one batch
+        // before the per-entry loop. Default JIT materialises inside migrateOneEntry().
+        // Hoisted above the load step so the SEO + Retour bolt-ons (D-55) downstream
+        // can re-use the same MigrationOptions instance without redeclaring.
+        $opts = new MigrationOptions(
+            dryRun: !$this->live,
+            force: $this->force,
+            skipAssets: false,
+        );
+
         // Step 5: load — per-entry atomic write (or dry-run print).
         if (!$this->live) {
             $this->stdout(
@@ -211,13 +248,6 @@ class MigrateController extends Controller
                 Console::FG_YELLOW,
             );
         } else {
-            // FH-03: --preload-assets ingests the full referenced asset set in one batch
-            // before the per-entry loop. Default JIT materialises inside migrateOneEntry().
-            $opts = new MigrationOptions(
-                dryRun: false,
-                force: $this->force,
-                skipAssets: false,
-            );
             if ($this->preloadAssets) {
                 try {
                     $plugin->assetMigrationService->ingestReferenced($opts, $filters);
@@ -257,10 +287,149 @@ class MigrateController extends Controller
             );
         }
 
+        // Step 6.5 (D-55): SEO stage — runs AFTER finalize so all entries+assets exist
+        // and kuma_seo image refs resolve via the state map. The service short-circuits
+        // internally with a WARN when SEOmatic is absent (D-56).
+        if ($this->live) {
+            $plugin->seoMigrationService->filters = $filters;
+            try {
+                $seoReport = $plugin->seoMigrationService->migrateAll($opts);
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL seo: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->mergeReport($report, $seoReport, 'seo');
+            $this->stdout(sprintf(
+                "  Stage seo: created=%d updated=%d skipped=%d failed=%d\n",
+                (int) ($seoReport->counts['created'] ?? 0),
+                (int) ($seoReport->counts['updated'] ?? 0),
+                (int) ($seoReport->counts['skipped'] ?? 0),
+                (int) ($seoReport->counts['failed'] ?? 0),
+            ), Console::FG_GREEN);
+        } else {
+            $this->stdout(
+                "  WARN seo skipped (dry-run)\n",
+                Console::FG_YELLOW,
+            );
+        }
+
+        // Step 6.6 (D-55): Retour stage — same shape; service short-circuits when Retour absent.
+        if ($this->live) {
+            $plugin->redirectMigrationService->filters = $filters;
+            try {
+                $retourReport = $plugin->redirectMigrationService->migrateAll($opts);
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL retour: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->mergeReport($report, $retourReport, 'retour');
+            $this->stdout(sprintf(
+                "  Stage retour: created=%d updated=%d skipped=%d failed=%d\n",
+                (int) ($retourReport->counts['created'] ?? 0),
+                (int) ($retourReport->counts['updated'] ?? 0),
+                (int) ($retourReport->counts['skipped'] ?? 0),
+                (int) ($retourReport->counts['failed'] ?? 0),
+            ), Console::FG_GREEN);
+        } else {
+            $this->stdout(
+                "  WARN retour skipped (dry-run)\n",
+                Console::FG_YELLOW,
+            );
+        }
+
         // Step 7: REPORT.md (D-50 failures + D-52 counts).
         $this->writeReport($storageDir, $report);
 
         $this->stdout("\nMigrate: PASS\n", Console::FG_GREEN);
+        return ExitCode::OK;
+    }
+
+    /**
+     * Sub-action: write SEOmatic SEO MetaBundles per migrated entry per site.
+     * D-55: runs LAST in the in-process pipeline so kuma_seo image refs resolve
+     * via state lookup. Standalone for resume / debug after a partial migrate.
+     *
+     * D-56: short-circuits with WARN inside SeoMigrationService when SEOmatic absent.
+     */
+    public function actionSeo(): int
+    {
+        if (($gate = $this->enforceNeverProduction()) !== null) {
+            return $gate;
+        }
+        $this->stdout("Migrate (seo): SEOmatic MetaBundles per migrated entry\n", Console::FG_CYAN);
+
+        $plugin = Plugin::getInstance();
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+
+        if (!$this->live) {
+            $this->stdout(
+                "  WARN seo skipped (dry-run; pass --live to write SEOmatic bundles)\n",
+                Console::FG_YELLOW,
+            );
+            return ExitCode::OK;
+        }
+
+        $plugin->seoMigrationService->filters = $filters;
+        $opts = new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false);
+
+        try {
+            $report = $plugin->seoMigrationService->migrateAll($opts);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL seo: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout(sprintf(
+            "  OK   seo complete (created=%d updated=%d skipped=%d failed=%d)\n",
+            (int) ($report->counts['created'] ?? 0),
+            (int) ($report->counts['updated'] ?? 0),
+            (int) ($report->counts['skipped'] ?? 0),
+            (int) ($report->counts['failed'] ?? 0),
+        ), Console::FG_GREEN);
+        return ExitCode::OK;
+    }
+
+    /**
+     * Sub-action: write Retour redirects from kuma_redirects + section-move 301s.
+     * D-55: standalone for resume / debug.
+     * D-56: short-circuits with WARN inside RedirectMigrationService when Retour absent.
+     */
+    public function actionRetour(): int
+    {
+        if (($gate = $this->enforceNeverProduction()) !== null) {
+            return $gate;
+        }
+        $this->stdout(
+            "Migrate (retour): redirects from kuma_redirects + section-move 301s\n",
+            Console::FG_CYAN,
+        );
+
+        $plugin = Plugin::getInstance();
+        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+
+        if (!$this->live) {
+            $this->stdout(
+                "  WARN retour skipped (dry-run; pass --live to write redirects)\n",
+                Console::FG_YELLOW,
+            );
+            return ExitCode::OK;
+        }
+
+        $plugin->redirectMigrationService->filters = $filters;
+        $opts = new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false);
+
+        try {
+            $report = $plugin->redirectMigrationService->migrateAll($opts);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL retour: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout(sprintf(
+            "  OK   retour complete (created=%d updated=%d skipped=%d failed=%d)\n",
+            (int) ($report->counts['created'] ?? 0),
+            (int) ($report->counts['updated'] ?? 0),
+            (int) ($report->counts['skipped'] ?? 0),
+            (int) ($report->counts['failed'] ?? 0),
+        ), Console::FG_GREEN);
         return ExitCode::OK;
     }
 
@@ -703,6 +872,34 @@ class MigrateController extends Controller
     private function slugify(string $fqcn): string
     {
         return preg_replace('/[^A-Za-z0-9_\-]+/', '_', $fqcn) ?? 'unknown';
+    }
+
+    /**
+     * D-55: merge a per-stage MigrationReport into the run-wide report.
+     * Counts are summed; warnings/failures are pushed with a `stage:` tag prefix
+     * so REPORT.md downstream (D-68 `## Skipped stages` + the warnings/failures
+     * sections) can attribute each line to its emitting stage.
+     */
+    private function mergeReport(MigrationReport $into, MigrationReport $from, string $stage): void
+    {
+        foreach ($from->counts as $bucket => $count) {
+            $into->incr($bucket, (int) $count);
+        }
+        foreach ($from->warnings as $w) {
+            $into->warn(sprintf('[%s] %s', $stage, $w));
+        }
+        foreach ($from->failures as $f) {
+            // recordFailure() also increments 'failed', which we already merged
+            // above via $from->counts. Push directly into $into->failures to
+            // avoid double-counting.
+            $into->failures[] = [
+                'legacyId' => $f['legacyId'] ?? '?',
+                'slug'     => isset($f['slug']) ? sprintf('[%s] %s', $stage, $f['slug']) : sprintf('[%s] -', $stage),
+                'handler'  => $f['handler'] ?? null,
+                'message'  => $f['message'] ?? '',
+                'trace'    => $f['trace'] ?? null,
+            ];
+        }
     }
 
     /**
