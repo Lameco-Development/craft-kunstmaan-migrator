@@ -41,6 +41,7 @@ use lameco\kunstmaanmigrator\source\BodyScanColumnFinder;
 use lameco\kunstmaanmigrator\source\DetailTableResolver;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
 use lameco\kunstmaanmigrator\source\KnowledgeBase;
+use lameco\kunstmaanmigrator\source\KunstmaanEnvReader;
 use lameco\kunstmaanmigrator\source\KunstmaanPageStructureScanner;
 use lameco\kunstmaanmigrator\source\KunstmaanSourcePathResolver;
 use lameco\kunstmaanmigrator\source\KunstmaanSourceScanner;
@@ -69,6 +70,7 @@ use yii\db\Connection;
  * @property-read CoverageAuditor $coverageAuditor
  * @property-read MappingAuditor $mappingAuditor
  * @property-read KunstmaanSourcePathResolver $kunstmaanSourcePathResolver
+ * @property-read KunstmaanEnvReader $kunstmaanEnvReader
  * @property-read DoctrineEntityParser $doctrineEntityParser
  * @property-read DetailTableResolver $detailTableResolver
  * @property-read BodyScanColumnFinder $bodyScanColumnFinder
@@ -126,6 +128,7 @@ class Plugin extends BasePlugin
                 'coverageAuditor'   => CoverageAuditor::class,    // Phase 2 (Plan 05) — D-14 MAP-06
                 'mappingAuditor'    => MappingAuditor::class,     // Phase 2 (Plan 05) — D-16 MAP-07
                 'kunstmaanSourcePathResolver' => KunstmaanSourcePathResolver::class, // Phase 02.1 (Plan 01) — D-33 source-path resolver
+                'kunstmaanEnvReader'            => KunstmaanEnvReader::class,           // Phase 4.1 / D-05 — .env reader, 2-key whitelist
                 'doctrineEntityParser'          => DoctrineEntityParser::class,         // Phase 02.1 (Plan 02) — D-41 verbatim port
                 'detailTableResolver'           => DetailTableResolver::class,          // Phase 02.1 (Plan 02) — 4-tier FQCN→table
                 'bodyScanColumnFinder'          => BodyScanColumnFinder::class,         // Phase 02.1 (Plan 03) — body-col discovery
