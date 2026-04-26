@@ -375,7 +375,52 @@ class Plugin extends BasePlugin
     {
         return Craft::$app->view->renderTemplate(
             'kunstmaan-migrator/_settings.twig',
-            ['plugin' => $this, 'settings' => $this->getSettings()],
+            [
+                'plugin' => $this,
+                'settings' => $this->getSettings(),
+                'localeOptions' => $this->resolveLocaleOptions(), // [] on DB failure (D-21)
+                'siteHandleOptions' => $this->resolveSiteHandleOptions(), // always available (D-22)
+            ],
+        );
+    }
+
+    /**
+     * Phase 4.1 / D-21 — pre-compute legacy locale dropdown options.
+     * Returns [] on DB failure so the template falls back to free-text
+     * (`type: localeOptions ? 'select' : 'singleline'`).
+     *
+     * @return array<int,array{label:string,value:string}>
+     */
+    private function resolveLocaleOptions(): array
+    {
+        try {
+            $detected = $this->localePreflight->detect();
+        } catch (\Throwable $e) {
+            Craft::warning(
+                'locale dropdown options unavailable: ' . $e->getMessage(),
+                __METHOD__,
+            );
+            return [];
+        }
+        return array_map(
+            static fn(string $code): array => ['label' => $code, 'value' => $code],
+            $detected,
+        );
+    }
+
+    /**
+     * Phase 4.1 / D-22 — Craft site handle dropdown options. No DB dependency.
+     *
+     * @return array<int,array{label:string,value:string}>
+     */
+    private function resolveSiteHandleOptions(): array
+    {
+        return array_map(
+            static fn($s): array => [
+                'label' => (string) $s->handle,
+                'value' => (string) $s->handle,
+            ],
+            Craft::$app->getSites()->getAllSites(),
         );
     }
 }

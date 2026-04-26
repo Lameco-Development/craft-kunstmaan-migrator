@@ -1,13 +1,17 @@
-{# Phase 4 / CFG-01 — CP Settings form. Replaces the Phase 1 placeholder.
-   Decisions: D-62 (single page, H2-grouped sections — Connectivity / AI /
-   Defaults / Verify / Adapters), D-63 (editableTable for array fields),
-   D-64 (masked anthropicApiKey + env hint).
+{# Phase 4.1 / CFG-05 — slimmed CP Settings form (9 fields, two H2 groups).
+   Decisions: D-14 (Connectivity / Mapping H2 split), D-15 (14 advanced fields
+   moved to config/kunstmaan-migrator.example.php), D-18 (no tabs), D-19
+   (preserve Phase 4 G-01 fragment-shape + G-03 passwordField masking),
+   D-21 (legacy locale column: select when DB reachable, free-text fallback),
+   D-22 (Craft site handle column: always select), D-23 (option arrays
+   pre-computed in Plugin::settingsHtml()).
+
    Rendering contract: hasCpSettings = true + Plugin::settingsHtml() point
    at this template. Craft's settings/plugins/_settings.twig (cms vendor)
-   already extends _layouts/cp, opens fullPageForm, injects
+   already inherits the CP layout, opens fullPageForm, injects
    actionInput/pluginHandle/redirectInput, then dumps `settingsHtml|raw`
-   inside its own `{% block content %}`. This template is therefore an
-   HTML FRAGMENT — no `{% extends %}`, no `{% block content %}` wrapper,
+   inside its own content block. This template is therefore an HTML
+   FRAGMENT — no layout-inheritance directive, no content-block wrapper,
    no <form> or csrf/action inputs (would nest layouts and double-form).
 #}
 {% import "_includes/forms" as forms %}
@@ -20,7 +24,7 @@
     name: 'legacyDbServer',
     value: settings.legacyDbServer,
     suggestEnvVars: true,
-    instructions: 'Defaults to `CRAFT_LEGACY_DB_SERVER` env var.'|t('kunstmaan-migrator'),
+    instructions: 'Defaults to `CRAFT_LEGACY_DB_SERVER` env var, or autofills from `KUNSTMAAN_SOURCE_PATH/.env` `DATABASE_URL` when blank (Phase 4.1 / CFG-04).'|t('kunstmaan-migrator'),
 }) }}
 
 {{ forms.textField({
@@ -29,7 +33,7 @@
     name: 'legacyDbPort',
     type: 'number',
     value: settings.legacyDbPort,
-    instructions: 'Defaults to `CRAFT_LEGACY_DB_PORT` env var (or 3306).'|t('kunstmaan-migrator'),
+    instructions: 'Defaults to `CRAFT_LEGACY_DB_PORT` env var (or 3306). Autofills from `DATABASE_URL` when at default.'|t('kunstmaan-migrator'),
 }) }}
 
 {{ forms.autosuggestField({
@@ -38,7 +42,7 @@
     name: 'legacyDbDatabase',
     value: settings.legacyDbDatabase,
     suggestEnvVars: true,
-    instructions: 'Defaults to `CRAFT_LEGACY_DB_DATABASE` env var.'|t('kunstmaan-migrator'),
+    instructions: 'Defaults to `CRAFT_LEGACY_DB_DATABASE` env var. Autofills from `DATABASE_URL` when blank.'|t('kunstmaan-migrator'),
 }) }}
 
 {{ forms.autosuggestField({
@@ -47,34 +51,28 @@
     name: 'legacyDbUser',
     value: settings.legacyDbUser,
     suggestEnvVars: true,
-    instructions: 'Defaults to `CRAFT_LEGACY_DB_USER` env var.'|t('kunstmaan-migrator'),
+    instructions: 'Defaults to `CRAFT_LEGACY_DB_USER` env var. Autofills from `DATABASE_URL` when blank.'|t('kunstmaan-migrator'),
 }) }}
 
+{# G-03 fix preserved (D-19) — passwordField macro masks display. #}
 {{ forms.passwordField({
     label: 'Legacy DB password'|t('kunstmaan-migrator'),
     id: 'legacyDbPassword',
     name: 'legacyDbPassword',
     value: settings.legacyDbPassword,
-    instructions: 'Type `$CRAFT_LEGACY_DB_PASSWORD` (env reference) or paste a raw value. Resolved via `App::parseEnv()` at read time. Never logged.'|t('kunstmaan-migrator'),
+    instructions: 'Type `$CRAFT_LEGACY_DB_PASSWORD` (env reference) or paste a raw value. Resolved via `App::parseEnv()` at read time. Autofills from `DATABASE_URL` when blank. Never logged.'|t('kunstmaan-migrator'),
 }) }}
 
-{{ forms.autosuggestField({
-    label: 'Legacy DB charset'|t('kunstmaan-migrator'),
-    id: 'legacyDbCharset',
-    name: 'legacyDbCharset',
-    value: settings.legacyDbCharset,
-    suggestEnvVars: true,
-    instructions: 'Defaults to `CRAFT_LEGACY_DB_CHARSET` env var (or `utf8mb4`).'|t('kunstmaan-migrator'),
+{# G-03 fix preserved (D-19) — passwordField macro masks display. #}
+{{ forms.passwordField({
+    label: 'Anthropic API key'|t('kunstmaan-migrator'),
+    id: 'anthropicApiKey',
+    name: 'anthropicApiKey',
+    value: settings.anthropicApiKey,
+    instructions: 'Type `$ANTHROPIC_API_KEY` (env reference, recommended) or paste a raw key. Required for `analyze`. Never logged — `doctor` reports presence only.'|t('kunstmaan-migrator'),
 }) }}
 
-{{ forms.autosuggestField({
-    label: 'Legacy DB table prefix'|t('kunstmaan-migrator'),
-    id: 'legacyDbTablePrefix',
-    name: 'legacyDbTablePrefix',
-    value: settings.legacyDbTablePrefix,
-    suggestEnvVars: true,
-    instructions: 'Defaults to `CRAFT_LEGACY_DB_TABLE_PREFIX` env var.'|t('kunstmaan-migrator'),
-}) }}
+<h2>{{ 'Mapping'|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.autosuggestField({
     label: 'Kunstmaan source path'|t('kunstmaan-migrator'),
@@ -82,47 +80,8 @@
     name: 'kunstmaanSourcePath',
     value: settings.kunstmaanSourcePath,
     suggestEnvVars: true,
-    instructions: 'Filesystem path to the Kunstmaan source checkout (used by `analyze` for Doctrine entity introspection). Defaults to `KUNSTMAAN_SOURCE_PATH` env var.'|t('kunstmaan-migrator'),
+    instructions: 'Filesystem path to the Kunstmaan source checkout (must contain `src/Entity/`). Required for `analyze` and CFG-04 .env auto-fill. Defaults to `KUNSTMAAN_SOURCE_PATH` env var.'|t('kunstmaan-migrator'),
 }) }}
-
-<h2>{{ 'AI'|t('kunstmaan-migrator') }}</h2>
-
-{{ forms.passwordField({
-    label: 'Anthropic API key'|t('kunstmaan-migrator'),
-    id: 'anthropicApiKey',
-    name: 'anthropicApiKey',
-    value: settings.anthropicApiKey,
-    instructions: 'Type `$ANTHROPIC_API_KEY` (env reference, recommended) or paste a raw key. Resolved via `App::parseEnv()` at read time. Setting here overrides env per Phase 1 / D-14. Never logged — `doctor` reports presence only.'|t('kunstmaan-migrator'),
-}) }}
-
-{{ forms.autosuggestField({
-    label: 'LLM model'|t('kunstmaan-migrator'),
-    id: 'llmModel',
-    name: 'llmModel',
-    value: settings.llmModel,
-    suggestEnvVars: true,
-    instructions: 'Anthropic model id used during `analyze`. Leave empty for the plugin default.'|t('kunstmaan-migrator'),
-}) }}
-
-{{ forms.textField({
-    label: 'LLM request timeout (seconds)'|t('kunstmaan-migrator'),
-    id: 'llmTimeout',
-    name: 'llmTimeout',
-    type: 'number',
-    value: settings.llmTimeout,
-    instructions: 'Per-request HTTP timeout for Anthropic calls.'|t('kunstmaan-migrator'),
-}) }}
-
-{{ forms.textField({
-    label: 'LLM inter-chunk delay (ms)'|t('kunstmaan-migrator'),
-    id: 'llmInterChunkDelay',
-    name: 'llmInterChunkDelay',
-    type: 'number',
-    value: settings.llmInterChunkDelay,
-    instructions: 'Sleep between chunked LLM requests during `analyze` (rate-limit cushion).'|t('kunstmaan-migrator'),
-}) }}
-
-<h2>{{ 'Defaults'|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.autosuggestField({
     label: 'Mapping file path'|t('kunstmaan-migrator'),
@@ -133,119 +92,27 @@
     instructions: 'Path to the canonical `mapping.yaml`. Leave empty for the plugin default (`storage/migration/mapping.yaml`).'|t('kunstmaan-migrator'),
 }) }}
 
-{{ forms.editableTableField({
-    label: 'Default entity allow-list'|t('kunstmaan-migrator'),
-    instructions: 'Default entity handles passed to every CLI invocation. CLI `--entities=` overrides.'|t('kunstmaan-migrator'),
-    id: 'defaultEntities',
-    name: 'defaultEntities',
-    cols: {
-        entity: { heading: 'Entity handle'|t('kunstmaan-migrator'), type: 'singleline' },
-    },
-    rows: settings.defaultEntities|default([])|map(e => { entity: e }),
-    addRowLabel: 'Add entity'|t('kunstmaan-migrator'),
-    allowAdd: true,
-    allowDelete: true,
-    allowReorder: true,
-}) }}
-
-{{ forms.editableTableField({
-    label: 'Default locale subset'|t('kunstmaan-migrator'),
-    instructions: 'Default Kunstmaan locales passed to every CLI invocation. CLI `--locales=` overrides.'|t('kunstmaan-migrator'),
-    id: 'defaultLocales',
-    name: 'defaultLocales',
-    cols: {
-        locale: { heading: 'Locale'|t('kunstmaan-migrator'), type: 'singleline' },
-    },
-    rows: settings.defaultLocales|default([])|map(l => { locale: l }),
-    addRowLabel: 'Add locale'|t('kunstmaan-migrator'),
-    allowAdd: true,
-    allowDelete: true,
-    allowReorder: true,
-}) }}
-
+{# CFG-06 — D-21 + D-22: dropdowns where source data is knowable. Legacy
+   column falls back to free-text when localeOptions is empty (DB unreachable). #}
 {{ forms.editableTableField({
     label: 'Locale map'|t('kunstmaan-migrator'),
     instructions: 'Explicit override map: legacy Kunstmaan locale → Craft site handle. Wins over exact-match and language-prefix loose-match.'|t('kunstmaan-migrator'),
     id: 'localeMap',
     name: 'localeMap',
     cols: {
-        legacy: { heading: 'Legacy locale'|t('kunstmaan-migrator'), type: 'singleline' },
-        craft: { heading: 'Craft site handle'|t('kunstmaan-migrator'), type: 'singleline' },
+        legacy: {
+            heading: 'Legacy locale'|t('kunstmaan-migrator'),
+            type: localeOptions ? 'select' : 'singleline',
+            options: localeOptions ?? [],
+        },
+        craft: {
+            heading: 'Craft site handle'|t('kunstmaan-migrator'),
+            type: 'select',
+            options: siteHandleOptions,
+        },
     },
     rows: settings.localeMap|default([]),
     addRowLabel: 'Add locale mapping'|t('kunstmaan-migrator'),
     allowAdd: true,
     allowDelete: true,
-}) }}
-
-{{ forms.autosuggestField({
-    label: 'Default `--since` floor'|t('kunstmaan-migrator'),
-    id: 'defaultSince',
-    name: 'defaultSince',
-    value: settings.defaultSince,
-    suggestEnvVars: true,
-    instructions: 'Default ISO date floor (`YYYY-MM-DD`) passed to every CLI invocation. CLI `--since=` overrides.'|t('kunstmaan-migrator'),
-}) }}
-
-{{ forms.textField({
-    label: 'Default `--max-per-entity`'|t('kunstmaan-migrator'),
-    id: 'defaultMaxPerEntity',
-    name: 'defaultMaxPerEntity',
-    type: 'number',
-    value: settings.defaultMaxPerEntity,
-    instructions: 'Default per-entity row cap passed to every CLI invocation. CLI `--max-per-entity=` overrides.'|t('kunstmaan-migrator'),
-}) }}
-
-{{ forms.lightswitchField({
-    label: 'Dry-run by default'|t('kunstmaan-migrator'),
-    id: 'dryRunDefault',
-    name: 'dryRunDefault',
-    on: settings.dryRunDefault,
-    instructions: 'When on, `migrate` runs in dry-run unless `--live` is passed.'|t('kunstmaan-migrator'),
-}) }}
-
-<h2>{{ 'Verify'|t('kunstmaan-migrator') }}</h2>
-
-{{ forms.textField({
-    label: 'Count tolerance'|t('kunstmaan-migrator'),
-    id: 'verifyCountTolerance',
-    name: 'verifyCountTolerance',
-    type: 'number',
-    step: '0.001',
-    min: '0',
-    max: '1',
-    value: settings.verifyCountTolerance,
-    instructions: 'Per-section count tolerance for the verify Gate 1 count-match (D-60). Default 0.01 = ±1%. CLI `--count-tolerance=` overrides.'|t('kunstmaan-migrator'),
-}) }}
-
-{{ forms.textField({
-    label: 'URL diff threshold'|t('kunstmaan-migrator'),
-    id: 'verifyUrlDiffThreshold',
-    name: 'verifyUrlDiffThreshold',
-    type: 'number',
-    step: '0.001',
-    min: '0',
-    max: '1',
-    value: settings.verifyUrlDiffThreshold,
-    instructions: 'Per-URL diff ratio threshold for the verify Gate 2 spot-check (D-60). Default 0.05 = 5%.'|t('kunstmaan-migrator'),
-}) }}
-
-<h2>{{ 'Adapters'|t('kunstmaan-migrator') }}</h2>
-
-{{ forms.autosuggestField({
-    label: 'SEO source table'|t('kunstmaan-migrator'),
-    id: 'seoTableName',
-    name: 'seoTableName',
-    value: settings.seoTableName,
-    suggestEnvVars: true,
-    instructions: 'Legacy table name read by the SEOmatic adapter (D-57). Defaults to `kuma_seo`; override for non-CQM Kunstmaan flavours.'|t('kunstmaan-migrator'),
-}) }}
-
-{{ forms.autosuggestField({
-    label: 'Redirects source table'|t('kunstmaan-migrator'),
-    id: 'redirectsTableName',
-    name: 'redirectsTableName',
-    value: settings.redirectsTableName,
-    suggestEnvVars: true,
-    instructions: 'Legacy table name read by the Retour adapter (D-57). Defaults to `kuma_redirects`; override for non-CQM Kunstmaan flavours.'|t('kunstmaan-migrator'),
 }) }}
