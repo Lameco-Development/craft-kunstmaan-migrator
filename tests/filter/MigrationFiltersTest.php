@@ -12,10 +12,13 @@ use ReflectionProperty;
 /**
  * Characterization tests for the MigrationFilters value object (Plan 01).
  *
- * D-12: VO has THREE properties — entities, locales, since. NOT four.
- *       maxPerEntity must NOT exist on this class.
- *
+ * D-12: maxPerEntity must NOT exist on this class.
  * D-13: VO is immutable; readonly enforces this at the language level.
+ *
+ * Phase 4.1 / D-26 extends the VO with `noSeo` + `noRetour` readonly bool
+ * properties (CLI override flags). The "exactly three properties" assertion
+ * is therefore retired; the test now locks the (entities, locales, since,
+ * noSeo, noRetour) shape — five properties, all readonly.
  */
 final class MigrationFiltersTest extends TestCase
 {
@@ -39,9 +42,10 @@ final class MigrationFiltersTest extends TestCase
         self::assertSame('2025-01-01', $f->since);
     }
 
-    public function testClassHasExactlyThreePublicProperties(): void
+    public function testClassHasExpectedPublicProperties(): void
     {
-        // D-12: --max-per-entity is DROPPED. The VO must have exactly 3 properties.
+        // D-12: --max-per-entity is DROPPED.
+        // Phase 4.1 / D-26: VO extended with noSeo + noRetour CLI override flags.
         $rc = new ReflectionClass(MigrationFilters::class);
         $publicProps = array_filter(
             $rc->getProperties(),
@@ -49,7 +53,23 @@ final class MigrationFiltersTest extends TestCase
         );
         $names = array_map(static fn(ReflectionProperty $p): string => $p->getName(), $publicProps);
         sort($names);
-        self::assertSame(['entities', 'locales', 'since'], array_values($names));
+        self::assertSame(['entities', 'locales', 'noRetour', 'noSeo', 'since'], array_values($names));
+    }
+
+    public function testNoSeoAndNoRetourDefaultFalse(): void
+    {
+        // Phase 4.1 / D-26: defaults preserve Phase 2/3/4 callers (no behavior change
+        // unless the operator explicitly sets the flag).
+        $f = new MigrationFilters();
+        self::assertFalse($f->noSeo);
+        self::assertFalse($f->noRetour);
+    }
+
+    public function testNoSeoAndNoRetourPropertiesAreReadonly(): void
+    {
+        $rc = new ReflectionClass(MigrationFilters::class);
+        self::assertTrue($rc->getProperty('noSeo')->isReadOnly());
+        self::assertTrue($rc->getProperty('noRetour')->isReadOnly());
     }
 
     public function testNoMaxPerEntityProperty(): void

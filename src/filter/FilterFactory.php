@@ -19,8 +19,14 @@ use yii\base\Component;
  */
 final class FilterFactory extends Component
 {
-    public function fromCli(?string $entitiesArg, ?string $localesArg, ?string $sinceArg): MigrationFilters
-    {
+    public function fromCli(
+        ?string $entitiesArg,
+        ?string $localesArg,
+        ?string $sinceArg,
+        // Phase 4.1 / D-26 — CLI override flags. Default false preserves Phase 2/3/4 callers.
+        bool $noSeo = false,
+        bool $noRetour = false,
+    ): MigrationFilters {
         $settings = Plugin::getInstance()->getSettings();
 
         $entities = $entitiesArg !== null
@@ -39,6 +45,8 @@ final class FilterFactory extends Component
             entities: $entities,
             locales:  $locales,
             since:    $since,
+            noSeo:    $noSeo,
+            noRetour: $noRetour,
         );
     }
 }

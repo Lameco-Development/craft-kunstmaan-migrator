@@ -2,6 +2,7 @@
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
@@ -122,6 +123,19 @@ class SeoMigrationService extends Component
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
         $report = new MigrationReport();
+
+        // Phase 4.1 / D-25 — settings-disabled gate runs FIRST, BEFORE the
+        // plugin-presence check. D-27: warn-line copy is distinct from
+        // plugin-not-installed so REPORT.md skipped-stages aggregation can
+        // distinguish "operator opted out" from "plugin unavailable".
+        if (!Plugin::getInstance()->getSettings()->seoEnabled) {
+            Craft::info(
+                'SEOmatic adapter explicitly disabled via Settings::seoEnabled; skipping SEO migration pass.',
+                'kunstmaanmigrator',
+            );
+            $report->warn(self::disabledWarnLine());
+            return $report;
+        }
 
         // CONFIG-08: SEOmatic is optional. If the plugin is not installed,
         // skip the entire SEO migration pass with a warning.
@@ -594,5 +608,18 @@ class SeoMigrationService extends Component
             return [null, 0];
         }
         return [(string) $row['class'], (int) $row['ref_id']];
+    }
+
+    /**
+     * Phase 4.1 / D-25 + D-27 — testable warn-line for the Settings-disabled
+     * gate. Distinct copy from the existing plugin-not-installed line ('SEOmatic
+     * plugin not installed; SEO migration skipped.') so REPORT.md skipped-stages
+     * aggregation can pattern-match operator-opted-out vs adapter-unavailable.
+     *
+     * @internal
+     */
+    private static function disabledWarnLine(): string
+    {
+        return 'SEO adapter disabled (explicitly via Settings::seoEnabled); SEO migration skipped.';
     }
 }

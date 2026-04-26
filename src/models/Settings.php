@@ -64,6 +64,12 @@ class Settings extends Model
     public string $seoTableName = 'kuma_seo';
     public string $redirectsTableName = 'kuma_redirects';
 
+    // Phase 4.1 / D-24 — adapter explicit-disable. Defaults to true so existing
+    // operators see no behavior change; flip to false to skip the adapter even
+    // when the plugin IS installed. CLI --no-seo / --no-retour bypass per-run.
+    public bool $seoEnabled = true;
+    public bool $retourEnabled = true;
+
     public function behaviors(): array
     {
         return [
@@ -201,6 +207,8 @@ class Settings extends Model
             [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
             [['defaultEntities', 'defaultLocales', 'localeMap'], 'safe'],
             [['dryRunDefault'], 'boolean'],
+            // Phase 4.1 / D-24 — adapter explicit-disable booleans.
+            [['seoEnabled', 'retourEnabled'], 'boolean'],
             // Phase 4 / D-60 — verify-stage tolerances pinned to [0, 1].
             [['verifyCountTolerance', 'verifyUrlDiffThreshold'], 'number', 'min' => 0, 'max' => 1],
             // Phase 4 / D-57 — adapter source-table overrides.

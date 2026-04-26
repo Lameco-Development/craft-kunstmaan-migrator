@@ -32,12 +32,13 @@ final class FilterFactoryTest extends TestCase
 
     public function testFromCliMethodSignature(): void
     {
+        // Phase 4.1 / D-26 extended fromCli with noSeo + noRetour args (default false).
         $rc = new ReflectionClass(FilterFactory::class);
         self::assertTrue($rc->hasMethod('fromCli'));
         $m = new ReflectionMethod(FilterFactory::class, 'fromCli');
-        self::assertCount(3, $m->getParameters(), 'fromCli takes 3 args: entitiesArg, localesArg, sinceArg.');
+        self::assertCount(5, $m->getParameters(), 'fromCli takes 5 args: entitiesArg, localesArg, sinceArg, noSeo, noRetour.');
         $names = array_map(static fn(ReflectionParameter $p): string => $p->getName(), $m->getParameters());
-        self::assertSame(['entitiesArg', 'localesArg', 'sinceArg'], $names);
+        self::assertSame(['entitiesArg', 'localesArg', 'sinceArg', 'noSeo', 'noRetour'], $names);
         self::assertSame(
             MigrationFilters::class,
             (string) $m->getReturnType(),

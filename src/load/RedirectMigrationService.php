@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
@@ -108,6 +109,19 @@ class RedirectMigrationService extends Component
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
         $report = new MigrationReport();
+
+        // Phase 4.1 / D-25 — settings-disabled gate runs FIRST, BEFORE the
+        // plugin-presence check. D-27: warn-line copy is distinct from
+        // plugin-not-installed so REPORT.md skipped-stages aggregation can
+        // distinguish "operator opted out" from "plugin unavailable".
+        if (!Plugin::getInstance()->getSettings()->retourEnabled) {
+            Craft::info(
+                'Retour adapter explicitly disabled via Settings::retourEnabled; skipping redirect migration pass.',
+                'kunstmaanmigrator',
+            );
+            $report->warn(self::disabledWarnLine());
+            return $report;
+        }
 
         // D-56: Retour is optional. If the plugin is not installed,
         // skip the entire redirect migration pass with a warning.
@@ -679,5 +693,19 @@ class RedirectMigrationService extends Component
             return '/';
         }
         return '/' . ltrim($trimmed, '/');
+    }
+
+    /**
+     * Phase 4.1 / D-25 + D-27 — testable warn-line for the Settings-disabled
+     * gate. Distinct copy from the existing plugin-not-installed line ('Retour
+     * plugin not installed; redirect migration skipped.') so REPORT.md
+     * skipped-stages aggregation can pattern-match operator-opted-out vs
+     * adapter-unavailable.
+     *
+     * @internal
+     */
+    private static function disabledWarnLine(): string
+    {
+        return 'Retour adapter disabled (explicitly via Settings::retourEnabled); redirect migration skipped.';
     }
 }
