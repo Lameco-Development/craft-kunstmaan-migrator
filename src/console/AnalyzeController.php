@@ -45,6 +45,10 @@ class AnalyzeController extends Controller
     public bool $noAi = false;
     public bool $autoAcceptHigh = false;
     public bool $auditStrict = false;
+    // Phase 02.1 / D-32: declared-only here. Plan 5 wires KunstmaanSourceScanner to
+    // consume this flag for drift-strict elevation (DB↔scan mismatch findings go
+    // from WARN → fail when --source-strict is set; default is WARN).
+    public bool $sourceStrict = false;
     public ?string $entities = null;
     public ?string $locales = null;
     public ?string $since = null;
@@ -52,7 +56,7 @@ class AnalyzeController extends Controller
     public function options($actionID): array
     {
         return array_merge(parent::options($actionID), [
-            'noAi', 'autoAcceptHigh', 'auditStrict',
+            'noAi', 'autoAcceptHigh', 'auditStrict', 'sourceStrict',
             'entities', 'locales', 'since',
         ]);
     }

@@ -36,6 +36,9 @@ class MapController extends Controller
     use NeverProductionTrait;
 
     public bool    $autoAcceptHigh = false;
+    // Phase 02.1 / D-32: declared-only here. Plan 7's two-mode walker may consult
+    // this flag for page-part drift signals (out of scope for Plan 01).
+    public bool    $sourceStrict   = false;
     public ?string $entities       = null;
     public ?string $locales        = null;
     public ?string $since          = null;
@@ -43,7 +46,7 @@ class MapController extends Controller
     public function options($actionID): array
     {
         return array_merge(parent::options($actionID), [
-            'autoAcceptHigh',
+            'autoAcceptHigh', 'sourceStrict',
             'entities', 'locales', 'since',
         ]);
     }

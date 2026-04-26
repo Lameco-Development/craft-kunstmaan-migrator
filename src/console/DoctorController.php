@@ -14,11 +14,12 @@ use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Doctor — preflight diagnostics for the migrator. Four checks (D-17 + Phase 2 / Plan 05):
+ * Doctor — preflight diagnostics for the migrator. Five checks (D-17 + Phase 2 / Plan 05 + Phase 02.1 / D-31):
  *   1. Legacy DB reachability (SELECT 1)
  *   2. Anthropic key presence (Settings override OR env; never echoes the value — T-1-03)
  *   3. storage/migration/ writable (auto-creates if missing — D-18 greenfield behavior)
  *   4. mapping.yaml health (deferred from Phase 1 / D-17 — landed alongside MappingFile in Phase 2)
+ *   5. Kunstmaan source path (D-31 — KUNSTMAAN_SOURCE_PATH env or kunstmaanSourcePath Settings)
  *
  * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline).
  *
@@ -52,10 +53,11 @@ class DoctorController extends Controller
         // `&&` against $ok so every check still executes even after a failure;
         // operators want the full report, not a short-circuited tail.
         $ok = true;
-        $ok = $this->checkLegacyDb()    && $ok;
-        $ok = $this->checkApiKey()      && $ok;
-        $ok = $this->checkStorageDir()  && $ok;
-        $ok = $this->checkMappingFile() && $ok;
+        $ok = $this->checkLegacyDb()             && $ok;
+        $ok = $this->checkApiKey()               && $ok;
+        $ok = $this->checkStorageDir()           && $ok;
+        $ok = $this->checkMappingFile()          && $ok;
+        $ok = $this->checkKunstmaanSourcePath()  && $ok;
 
         $this->stdout(
             "\n" . ($ok ? "Doctor: PASS\n" : "Doctor: FAIL — fix the above before running migrate\n"),
@@ -175,5 +177,39 @@ class DoctorController extends Controller
             $this->stderr("  FAIL mapping.yaml parse error: {$e->getMessage()}\n", Console::FG_RED);
             return false;
         }
+    }
+
+    /**
+     * Check #5 (Phase 02.1 / D-31): Kunstmaan source path resolves and contains src/Entity/.
+     *
+     * FAIL when KUNSTMAAN_SOURCE_PATH is unset or invalid — analyze cannot proceed
+     * (greenfield-fallback dropped per D-31). WARN when config/kunstmaancms/pageparts/
+     * is absent (PHP-only fallback for KunstmaanPageStructureScanner is still viable —
+     * D-31 Discretion).
+     */
+    private function checkKunstmaanSourcePath(): bool
+    {
+        $resolver = Plugin::getInstance()->kunstmaanSourcePathResolver;
+        $path = $resolver->resolve();
+        if ($path === null) {
+            $this->stderr(
+                "  FAIL KUNSTMAAN_SOURCE_PATH unset or invalid — analyze cannot proceed.\n"
+                . "       Set KUNSTMAAN_SOURCE_PATH in .env (or kunstmaanSourcePath in plugin settings).\n"
+                . "       Path must exist, be readable, and contain src/Entity/.\n",
+                Console::FG_RED,
+            );
+            return false;
+        }
+        // YAML config absence is WARN-only (D-31 Discretion locked in Plan 01):
+        // KunstmaanPageStructureScanner falls back to PHP-only scan via
+        // getPagePartAdminConfigurations() when the YAML dir is missing.
+        if (!is_dir($path . '/config/kunstmaancms/pageparts')) {
+            $this->stdout(
+                "  WARN config/kunstmaancms/pageparts/ not found at {$path} — falling back to PHP-only page-part scan\n",
+                Console::FG_YELLOW,
+            );
+        }
+        $this->stdout("  OK   Kunstmaan source path → {$path}\n", Console::FG_GREEN);
+        return true;
     }
 }
