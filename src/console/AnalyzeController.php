@@ -118,9 +118,9 @@ class AnalyzeController extends Controller
             return ExitCode::UNSPECIFIED_ERROR;
         }
         $entityCount = count($sourceScan['entities'] ?? []);
-        $sourceTables = (array) ($sourceScan['tables'] ?? []);
+        $tableScanCount = count((array) ($sourceScan['tables'] ?? []));
         $this->stdout(
-            "  OK   source scanned ({$entityCount} entities, " . count($sourceTables) . " tables)\n",
+            "  OK   source scanned ({$entityCount} entities, {$tableScanCount} tables)\n",
             Console::FG_GREEN,
         );
 
@@ -178,7 +178,7 @@ class AnalyzeController extends Controller
 
         // Step 6: schema dump (consumes Phase 02.1 source-scanner table list).
         try {
-            $schemaDump = $plugin->schemaDumper->dump($filters, $sourceTables);
+            $schemaDump = $plugin->schemaDumper->dump($filters, (array) ($sourceScan['tables'] ?? []));
         } catch (Throwable $e) {
             $this->stderr("  FAIL schema dump: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
