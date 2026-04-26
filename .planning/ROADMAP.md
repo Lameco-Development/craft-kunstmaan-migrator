@@ -190,7 +190,7 @@ Plans:
 **Plans:** 12 plans
 
 Plans:
-- [ ] 04-01-settings-expansion-PLAN.md — Settings.php verify thresholds + adapter table-name overrides (CFG-01)
+- [x] 04-01-settings-expansion-PLAN.md — Settings.php verify thresholds + adapter table-name overrides (CFG-01 partial — Settings field exposure; CP template wiring in Plan 04-05) — completed 2026-04-26
 - [ ] 04-02-seomatic-payload-builder-PLAN.md — SeomaticPayloadBuilder verbatim port (ADP-01)
 - [ ] 04-03-verify-primitives-PLAN.md — SnapshotDiffer + SpotCheckUrlFetcher verbatim port (B1 fix preserved) (VER-02)
 - [ ] 04-04-count-gate-and-baseline-counter-PLAN.md — CountGateService verbatim + BaselineCounterService shape-derived (D-59) (VER-01, VER-03)
