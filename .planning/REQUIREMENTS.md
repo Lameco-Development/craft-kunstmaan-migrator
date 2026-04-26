@@ -99,7 +99,7 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 
 ### Settings + observability (CFG)
 
-- [ ] **CFG-01**: CP Settings page (Settings → Plugins → Kunstmaan Migrator): Anthropic key (secret), LLM model, LLM timeout, default filters, `dryRunDefault` toggle.
+- [x] **CFG-01**: CP Settings page (Settings → Plugins → Kunstmaan Migrator): Anthropic key (secret), LLM model, LLM timeout, default filters, `dryRunDefault` toggle. — Phase 4 / Plan 05 (2026-04-26): grouped-section form (Connectivity / AI / Defaults / Verify / Adapters), all 23 Settings properties rendered, masked password + env hints (D-64), editable tables for arrays (D-63).
 - [ ] **CFG-02**: Console verbosity flag (`-v` through `-vvv`) toggles per-stage timing + asset RCA logging into `storage/migration/*.log`.
 - [ ] **CFG-03**: A "rehearsal report" produced at the end of every `migrate --live` run summarising what was migrated, what was dropped, and why — distinct from `verify`'s parity gate.
 
