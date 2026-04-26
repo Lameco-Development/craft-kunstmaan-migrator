@@ -37,6 +37,18 @@ final class MigrationReport
     public array $failures = [];
 
     /**
+     * D-66 / D-68: per-asset RCA rows aggregated for the run.
+     *
+     * Populated via pushAssetRca() — typically called by MigrateController at
+     * the end of a migrate run by snapshotting AssetMigrationService::$rcaRows
+     * into the MigrationReport so writeReport's `## Asset RCA` table render
+     * has a single uniform read site.
+     *
+     * @var list<array{legacyId: int, reason: string, path: string}>
+     */
+    public array $assetRcaRows = [];
+
+    /**
      * Increment a named bucket by `$by` (default 1). Idempotent: a missing
      * bucket initialises to 0 then accumulates.
      */
@@ -51,6 +63,21 @@ final class MigrationReport
     public function warn(string $message): void
     {
         $this->warnings[] = $message;
+    }
+
+    /**
+     * D-66 / D-68: push a per-asset RCA row into $this->assetRcaRows. Used by
+     * MigrateController at the end of a run to fold AssetMigrationService's
+     * service-level rcaRows into the MigrationReport so writeReport has one
+     * uniform read site for the `## Asset RCA` REPORT.md section.
+     */
+    public function pushAssetRca(int $legacyId, string $reason, string $path): void
+    {
+        $this->assetRcaRows[] = [
+            'legacyId' => $legacyId,
+            'reason'   => $reason,
+            'path'     => $path,
+        ];
     }
 
     /**

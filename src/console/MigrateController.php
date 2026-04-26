@@ -343,8 +343,8 @@ class MigrateController extends Controller
             );
         }
 
-        // Step 7: REPORT.md (D-50 failures + D-52 counts).
-        $this->writeReport($storageDir, $report);
+        // Step 7: REPORT.md (D-50 failures + D-52 counts + D-68 three new sections).
+        $this->writeReport($storageDir, $report, $filters, $tRunStart);
 
         $tRunMs = (int) round((microtime(true) - $tRunStart) * 1000);
         $this->logLine(sprintf('actionIndex complete in %dms', $tRunMs), 1);
@@ -613,7 +613,7 @@ class MigrateController extends Controller
         }
 
         $exit = $this->runLoadFromDisk($transformedDir, $opts, $report);
-        $this->writeReport($storageDir, $report);
+        $this->writeReport($storageDir, $report, $filters);
         return $exit;
     }
 
@@ -1003,22 +1003,52 @@ class MigrateController extends Controller
     }
 
     /**
-     * Append D-52 counts table + D-50 failures section to REPORT.md. The Phase 2
-     * ReportBuilder already wrote the analyze REPORT.md content to this same path;
-     * Phase 3 overwrites with a Migration-section render so the operator has a
-     * single canonical artifact per pipeline run. T-2-21 mitigation: writeAtomic
-     * produces the on-disk trail regardless of exit code.
+     * Append D-52 counts + D-68 (Rehearsal summary, Skipped stages, Asset RCA)
+     * + D-50 failures sections to REPORT.md. The Phase 2 ReportBuilder already
+     * wrote the analyze REPORT.md content to this same path; Phase 3 overwrites
+     * with a Migration-section render so the operator has a single canonical
+     * artifact per pipeline run. T-2-21 mitigation: writeAtomic produces the
+     * on-disk trail regardless of exit code.
+     *
+     * Section order (D-68 PATTERNS.md "Shared Patterns"):
+     *   1. Migration counts (D-52)         — existing
+     *   2. Rehearsal summary (D-68)        — totals + wall-clock + filter scope + flag + log path
+     *   3. Skipped stages (D-68)           — adapter-absence WARNs (omitted when empty)
+     *   4. Warnings                        — existing
+     *   5. Failures (D-50)                 — existing
+     *   6. Asset RCA (D-68)                — per-asset failure rows (omitted when empty)
      */
-    private function writeReport(string $storageDir, MigrationReport $report): void
-    {
+    private function writeReport(
+        string $storageDir,
+        MigrationReport $report,
+        ?MigrationFilters $filters = null,
+        ?float $tRunStart = null,
+    ): void {
         $plugin = Plugin::getInstance();
         $reportPath = $storageDir . '/REPORT.md';
+
+        // D-68 Asset RCA: snapshot AssetMigrationService::$rcaRows into the
+        // report so the section render below has one uniform read site.
+        // Idempotent — if writeReport is called twice in the same run (e.g.
+        // actionLoad + later actionIndex bolt-on) the rows are already pushed
+        // into $report->assetRcaRows; skip re-snapshotting.
+        if ($report->assetRcaRows === [] && $plugin->assetMigrationService->assetRcaRows !== []) {
+            foreach ($plugin->assetMigrationService->assetRcaRows as $rcaRow) {
+                $report->pushAssetRca(
+                    (int) ($rcaRow['legacyId'] ?? 0),
+                    (string) ($rcaRow['reason'] ?? 'deferred_unresolved'),
+                    (string) ($rcaRow['path'] ?? ''),
+                );
+            }
+        }
 
         $lines = [];
         $lines[] = "# Migrate report";
         $lines[] = "";
         $lines[] = "Generated: " . (new \DateTimeImmutable())->format('Y-m-d H:i:s T');
         $lines[] = "";
+
+        // 1. Migration counts (existing — D-52).
         $lines[] = "## Migration counts (D-52)";
         $lines[] = "";
         $lines[] = "| Bucket | Count |";
@@ -1029,6 +1059,61 @@ class MigrateController extends Controller
         }
         $lines[] = "";
 
+        // 2. Rehearsal summary (D-68 NEW). Totals + wall-clock + filter scope +
+        //    --live/--dry-run flag + log file path so operators have a
+        //    one-glance status at the head of REPORT.md.
+        $lines[] = "## Rehearsal summary";
+        $lines[] = "";
+        $lines[] = "- Total created: " . (int) ($report->counts['created'] ?? 0);
+        $lines[] = "- Total updated: " . (int) ($report->counts['updated'] ?? 0);
+        $lines[] = "- Total skipped: " . (int) ($report->counts['skipped'] ?? 0);
+        $lines[] = "- Total failed: " . (int) ($report->counts['failed'] ?? 0);
+
+        $duration = $tRunStart !== null
+            ? $this->formatWallClock(microtime(true) - $tRunStart)
+            : '(not recorded)';
+        $lines[] = "- Wall-clock duration: " . $duration;
+
+        $entitiesScope = $filters !== null && $filters->entities !== []
+            ? implode(',', $filters->entities)
+            : '(all)';
+        $localesScope = $filters !== null && $filters->locales !== []
+            ? implode(',', $filters->locales)
+            : '(all)';
+        $sinceScope = $filters !== null && $filters->since !== null && $filters->since !== ''
+            ? $filters->since
+            : 'null';
+        $lines[] = sprintf(
+            '- Filter scope: entities=%s, locales=%s, since=%s',
+            $entitiesScope,
+            $localesScope,
+            $sinceScope,
+        );
+        $lines[] = '- Flag: ' . ($this->live ? '--live' : '--dry-run');
+        $lines[] = '- Log file: ' . ($this->logFilePath ?? '(none)');
+        $lines[] = "";
+
+        // 3. Skipped stages (D-68 NEW) — sourced from $report->warnings filtered
+        //    for adapter-absence messages. Omit section entirely when empty.
+        $skippedStageLines = [];
+        foreach ($report->warnings as $w) {
+            if (str_contains($w, 'SEOmatic plugin not installed')
+                || str_contains($w, 'Retour plugin not installed')
+                || str_contains($w, 'Retour plugin not loaded')
+            ) {
+                $skippedStageLines[] = '- ' . $w;
+            }
+        }
+        if ($skippedStageLines !== []) {
+            $lines[] = "## Skipped stages";
+            $lines[] = "";
+            foreach ($skippedStageLines as $sl) {
+                $lines[] = $sl;
+            }
+            $lines[] = "";
+        }
+
+        // 4. Warnings (existing).
         if ($report->warnings !== []) {
             $lines[] = "## Warnings";
             $lines[] = "";
@@ -1038,10 +1123,12 @@ class MigrateController extends Controller
             $lines[] = "";
         }
 
+        // 5. Failures (existing — D-50).
         $lines[] = "## Failures (D-50)";
         $lines[] = "";
         if ($report->failures === []) {
             $lines[] = "_No per-entry failures._";
+            $lines[] = "";
         } else {
             foreach ($report->failures as $f) {
                 $lines[] = sprintf(
@@ -1062,11 +1149,41 @@ class MigrateController extends Controller
             }
         }
 
+        // 6. Asset RCA (D-68 NEW) — markdown table from $report->assetRcaRows.
+        //    Omit section entirely when empty.
+        if ($report->assetRcaRows !== []) {
+            $lines[] = "## Asset RCA";
+            $lines[] = "";
+            $lines[] = "| legacy_id | reason | path |";
+            $lines[] = "|-----------|--------|------|";
+            foreach ($report->assetRcaRows as $rca) {
+                $lines[] = sprintf(
+                    '| %d | %s | %s |',
+                    (int) ($rca['legacyId'] ?? 0),
+                    (string) ($rca['reason'] ?? 'deferred_unresolved'),
+                    (string) ($rca['path'] ?? ''),
+                );
+            }
+            $lines[] = "";
+        }
+
         $rendered = implode("\n", $lines) . "\n";
         if (!$plugin->mappingFile->writeAtomic($reportPath, $rendered)) {
             $this->stderr("  FAIL could not write {$reportPath}\n", Console::FG_RED);
             return;
         }
         $this->stdout("  OK   REPORT.md written → {$reportPath}\n", Console::FG_GREEN);
+    }
+
+    /**
+     * D-68 Rehearsal summary helper: format a duration in seconds as hh:mm:ss.
+     */
+    private function formatWallClock(float $seconds): string
+    {
+        $secs = (int) max(0, round($seconds));
+        $h = intdiv($secs, 3600);
+        $m = intdiv($secs % 3600, 60);
+        $s = $secs % 60;
+        return sprintf('%02d:%02d:%02d', $h, $m, $s);
     }
 }

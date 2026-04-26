@@ -109,7 +109,7 @@ class AssetMigrationService extends Component
      *
      * @var list<array{legacyId: int, reason: string, path: string}>
      */
-    public array $rcaRows = [];
+    public array $assetRcaRows = [];
 
     /**
      * JIT entry point (FH-03 default): materialise one asset by legacy
@@ -279,7 +279,7 @@ class AssetMigrationService extends Component
                     );
                     // Push into the per-run RCA collection so writeReport (D-68)
                     // can render the `## Asset RCA` table without re-grepping logs.
-                    $this->rcaRows[] = [
+                    $this->assetRcaRows[] = [
                         'legacyId' => (int) ($row['id'] ?? 0),
                         'reason'   => $reason,
                         'path'     => $relativePath,
@@ -666,7 +666,7 @@ class AssetMigrationService extends Component
                     ),
                     'kunstmaanmigrator.rca',
                 );
-                $this->rcaRows[] = [
+                $this->assetRcaRows[] = [
                     'legacyId' => (int) ($row['id'] ?? 0),
                     'reason'   => $reason,
                     'path'     => $relativePath,
