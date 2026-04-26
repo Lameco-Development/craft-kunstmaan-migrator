@@ -8,7 +8,6 @@ use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\verify\BaselineCounterService;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
-use ReflectionParameter;
 
 /**
  * Phase 4.1 / Plan 04.1-05 / Task 2 — characterization for the
