@@ -131,6 +131,44 @@ final class LocalePreflight extends Component
     }
 
     /**
+     * Phase 4.1 / D-11..D-13 — Rung 0 advisory comparison.
+     *
+     * Pure helper; no I/O. Used by DoctorController::checkLocalePreflightRung0().
+     * Rung 0 is purely advisory at the doctor seam — the existing 3-rung
+     * matching ladder in resolve() is unchanged. Compares the Kunstmaan
+     * project's env DEFAULT_LOCALE against the first key of Settings::localeMap
+     * (legacy locale code) and reports drift between the operator's primary
+     * locale intent and the Kunstmaan source-of-truth.
+     *
+     * Returns one of:
+     *   ['status' => 'silent', 'envLocale' => null, 'firstHandle' => null]
+     *     — env signal absent (D-13: no doctor row)
+     *   ['status' => 'no-map', 'envLocale' => string, 'firstHandle' => null]
+     *     — env present but localeMap empty (caller emits INFO row)
+     *   ['status' => 'ok',     'envLocale' => string, 'firstHandle' => string]
+     *     — env matches first localeMap key
+     *   ['status' => 'warn',   'envLocale' => string, 'firstHandle' => string]
+     *     — env mismatches first localeMap key (D-12: WARN, NEVER FAIL)
+     *
+     * @param array<string, mixed> $localeMap
+     * @return array{status: string, envLocale: ?string, firstHandle: ?string}
+     */
+    public static function compareEnvDefaultLocaleToLocaleMap(
+        ?string $envLocale,
+        array $localeMap,
+    ): array {
+        if ($envLocale === null || $envLocale === '') {
+            return ['status' => 'silent', 'envLocale' => null, 'firstHandle' => null];
+        }
+        if ($localeMap === []) {
+            return ['status' => 'no-map', 'envLocale' => $envLocale, 'firstHandle' => null];
+        }
+        $firstHandle = (string) array_key_first($localeMap);
+        $status = ($firstHandle === $envLocale) ? 'ok' : 'warn';
+        return ['status' => $status, 'envLocale' => $envLocale, 'firstHandle' => $firstHandle];
+    }
+
+    /**
      * Locale-relevant strings exposed by every Craft site: both the handle
      * (slug-style identifier) AND the language (BCP 47 code, e.g. `nl-NL`).
      * Either may match a legacy Kunstmaan locale; collecting both lets the

@@ -10,6 +10,7 @@ use craft\helpers\App;
 use craft\helpers\Console;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\locale\LocalePreflight;
 use Throwable;
 use yii\console\ExitCode;
 
@@ -26,6 +27,9 @@ use yii\console\ExitCode;
  *   9. Kunstmaan .env source presence (Phase 4.1 / D-10 — INFO/OK; never FAILs.
  *      Reports .env / .env.example presence + which whitelisted keys (DATABASE_URL,
  *      DEFAULT_LOCALE) were found + DSN-host vs Settings::legacyDbServer mismatch.)
+ *  10. LocalePreflight Rung 0 advisory consult (Phase 4.1 / D-11..D-13 — INFO/WARN/silent;
+ *      never FAILs. Compares env DEFAULT_LOCALE against Settings::localeMap first key.
+ *      Silent when env unset (D-13); WARN on mismatch (D-12 verbatim copy).)
  *
  * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline).
  *
@@ -70,6 +74,8 @@ class DoctorController extends Controller
         $ok = $this->checkVerifyBaseline()       && $ok;
         // Phase 4.1 / D-10 (9th — info only, never blocks):
         $ok = $this->checkKunstmaanEnvSource()   && $ok;
+        // Phase 4.1 / D-11..D-13 (10th — info/warn/silent; never blocks):
+        $ok = $this->checkLocalePreflightRung0() && $ok;
 
         $this->stdout(
             "\n" . ($ok ? "Doctor: PASS\n" : "Doctor: FAIL — fix the above before running migrate\n"),
@@ -359,5 +365,60 @@ class DoctorController extends Controller
         }
 
         return true; // D-10: info only — never blocks.
+    }
+
+    /**
+     * Check #10 (Phase 4.1 / D-11..D-13): LocalePreflight Rung 0 advisory consult.
+     *
+     * Compares the Kunstmaan project's env DEFAULT_LOCALE against the first key
+     * of Settings::localeMap. Three outcomes:
+     *   - env null/blank        → silent (D-13: no row)
+     *   - env present, no map   → INFO (operator hasn't curated localeMap yet)
+     *   - env matches firstKey  → OK
+     *   - env differs           → WARN with verbatim D-12 copy. NEVER FAIL.
+     *
+     * Per D-11 the existing 3-rung matching ladder in LocalePreflight::resolve()
+     * is unchanged — Rung 0 is purely advisory at this doctor seam. Per D-12
+     * NL-default Kunstmaan migrating into an EN-primary Craft instance is a
+     * real and intentional pattern; we do not second-guess the operator.
+     *
+     * T-04.1-03-01 mitigation: row content is locale codes only (e.g. "nl") —
+     * no file paths, no DSNs, no secrets.
+     */
+    private function checkLocalePreflightRung0(): bool
+    {
+        $plugin = Plugin::getInstance();
+        $envLocale = $plugin->kunstmaanEnvReader->getDefaultLocale();
+        $localeMap = (array) $plugin->getSettings()->localeMap;
+        $result = LocalePreflight::compareEnvDefaultLocaleToLocaleMap($envLocale, $localeMap);
+
+        switch ($result['status']) {
+            case 'silent':
+                return true; // D-13: no row when env signal absent.
+            case 'no-map':
+                $this->stdout(
+                    sprintf("  INFO DEFAULT_LOCALE=%s but no localeMap configured\n", $result['envLocale']),
+                    Console::FG_YELLOW,
+                );
+                return true;
+            case 'ok':
+                $this->stdout(
+                    sprintf("  OK   DEFAULT_LOCALE=%s aligns with localeMap[0]\n", $result['envLocale']),
+                    Console::FG_GREEN,
+                );
+                return true;
+            case 'warn':
+                // D-12: verbatim WARN copy — DO NOT paraphrase.
+                $this->stdout(
+                    sprintf(
+                        "  WARN Kunstmaan default locale `%s` but operator's `localeMap` lists `%s` first (Craft-primary). Reorder localeMap or confirm intent.\n",
+                        $result['envLocale'],
+                        $result['firstHandle'],
+                    ),
+                    Console::FG_YELLOW,
+                );
+                return true; // D-12: WARN, never FAIL.
+        }
+        return true;
     }
 }
