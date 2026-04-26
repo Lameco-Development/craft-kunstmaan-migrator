@@ -65,25 +65,25 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 
 ### ETL pipeline (ETL)
 
-- [ ] **ETL-01**: `kunstmaan-migrator/migrate` runs extract → transform → load → finalize in sequence. Top-level command is dry-run by default; `--live` writes to Craft.
-- [ ] **ETL-02**: Per-stage commands exist for resume (`migrate/extract`, `migrate/transform`, `migrate/load`, `migrate/finalize`).
-- [ ] **ETL-03**: Topological ordering of entity migrations so foreign-key references resolve before they're written.
-- [ ] **ETL-04**: Per-entry atomic load (always-on, no flag). On failure, the entry is rolled back; the next entry continues.
-- [ ] **ETL-05**: Idempotent re-runs: a row already migrated (tracked via `kunstmaanmigrator_state.legacy_id`) is skipped or refreshed, never duplicated.
-- [ ] **ETL-06**: Per-entry console progress (`[N/total] slug → created|updated|skipped`).
-- [ ] **ETL-07**: `migrate/truncate` resets state for a fresh rehearsal without rolling the whole DB.
+- [x] **ETL-01**: `kunstmaan-migrator/migrate` runs extract → transform → load → finalize in sequence. Top-level command is dry-run by default; `--live` writes to Craft. _(Phase 3 / Plan 13 — MigrateController::actionIndex orchestrates extract → transform → load → finalize sequence; --live writes, default dry-run.)_
+- [x] **ETL-02**: Per-stage commands exist for resume (`migrate/extract`, `migrate/transform`, `migrate/load`, `migrate/finalize`). _(Phase 3 / Plan 13 — actionExtract / actionTransform / actionLoad / actionFinalize / actionTruncate sub-actions per CONTEXT D-48 in-process pipeline; standalone actionLoad re-runs extract+transform internally.)_
+- [x] **ETL-03**: Topological ordering of entity migrations so foreign-key references resolve before they're written. _(Phase 3 / Plan 04 — ExtractService consumes Phase 02.1 / TopologicalOrderer for kuma_nodes parent-first hierarchical insertion; cycle-detection inherited.)_
+- [x] **ETL-04**: Per-entry atomic load (always-on, no flag). On failure, the entry is rolled back; the next entry continues. _(Phase 3 / Plan 12 — AtomicMigrationService Phase B Craft::$app->db->transaction wrapping saveEntryForSites + state-row record; atomic-always-on, no flag, per CONTEXT decision.)_
+- [x] **ETL-05**: Idempotent re-runs: a row already migrated (tracked via `kunstmaanmigrator_state.legacy_id`) is skipped or refreshed, never duplicated. _(Phase 3 / Plans 03 + 12 — MigrationStateService CRUD over kunstmaanmigrator_state + AtomicMigrationService idempotency gate (existingId !== null && !$overwrite → skip).)_
+- [x] **ETL-06**: Per-entry console progress (`[N/total] slug → created|updated|skipped`). _(Phase 3 / Plan 13 — MigrateController per-entry progress emission [N/total] slug → created|updated|skipped|FAILED:reason; FAILED to stderr, others to stdout per Shared Pattern 4.)_
+- [x] **ETL-07**: `migrate/truncate` resets state for a fresh rehearsal without rolling the whole DB. _(Phase 3 / Plan 13 — actionTruncate per CONTEXT D-51 wide+safety-rails: defaults to --dry-run, requires --live --confirm, honors --entities + --locales filters.)_
 
 ### Field handlers (FH)
 
-- [ ] **FH-01**: Pluggable `FieldHandler` interface with built-in handlers: PlainText, Asset, Matrix, Relation, SplitName (Dutch composite-name splitter), CKEditor.
-- [ ] **FH-02**: Handlers are registered in a `FieldHandlerRegistry` wired from the plugin bootstrap, allowing project-level overrides.
-- [ ] **FH-03**: Asset handler supports JIT (default — page-driven; only assets referenced from migrated entries are pulled in) and `--preload-assets` (opt-in batch ingest of every referenced asset before the entries loop, useful for parallelisation). Neither mode migrates orphan assets — that's `NEXT-05`.
-- [ ] **FH-04**: CKEditor handler emits `[NT<id>]` / `[M<id>]` deferred tokens for cross-entry / media references that don't yet exist at load time.
+- [x] **FH-01**: Pluggable `FieldHandler` interface with built-in handlers: PlainText, Asset, Matrix, Relation, SplitName (Dutch composite-name splitter), CKEditor. _(Phase 3 / Plans 01 + 08 + 09 + 10 — FieldHandler interface (verbatim port) + 5 handlers PlainText/Asset/Matrix/Relation/SplitName. CKEditor body-token rewrite is FH-04 inline path on PlainTextHandler 'ckeditor' mode.)_
+- [x] **FH-02**: Handlers are registered in a `FieldHandlerRegistry` wired from the plugin bootstrap, allowing project-level overrides. _(Phase 3 / Plans 01 + 13 — FieldHandlerRegistry hash-keyed + Plugin::init() registers 4 PlainText modes via $registry->register(new PlainTextHandler('plain'/'ckeditor'/'link'/'dropdown')) + 4 other handlers.)_
+- [x] **FH-03**: Asset handler supports JIT (default — page-driven; only assets referenced from migrated entries are pulled in) and `--preload-assets` (opt-in batch ingest of every referenced asset before the entries loop, useful for parallelisation). Neither mode migrates orphan assets — that's `NEXT-05`. _(Phase 3 / Plans 05 + 13 — AssetMigrationService::resolveFromLegacyId JIT default + ingestReferenced opt-in; MigrateController --preload-assets flag exposes the batch path. Orphan media deliberately not migrated (NEXT-05 deferred).)_
+- [x] **FH-04**: CKEditor handler emits `[NT<id>]` / `[M<id>]` deferred tokens for cross-entry / media references that don't yet exist at load time. _(Phase 3 / Plans 01 + 06 + 08 + 12 — DeferredAssetToken::emit('asset:N') + CkeditorRewriterService [M<id>]/[NT<id>] regex constants + AssetHandler dual-token emission ([M<id>] for imgTag, asset:N for relation) + AtomicMigrationService /^asset:\d+$/ resolver pair.)_
 
 ### Finalize + CKEditor rewriting (FIN)
 
-- [ ] **FIN-01**: `migrate/finalize` walks every CKEditor field across every migrated entry and resolves `[NT<id>]` / `[M<id>]` tokens (plus URL-encoded `%5BNT<id>%5D` / `%5BM<id>%5D` forms).
-- [ ] **FIN-02**: Strict policy on unresolvable tokens — left verbatim, annotated with `<!-- MIGRATION:UNRESOLVED ... -->`. No silent drops.
+- [x] **FIN-01**: `migrate/finalize` walks every CKEditor field across every migrated entry and resolves `[NT<id>]` / `[M<id>]` tokens (plus URL-encoded `%5BNT<id>%5D` / `%5BM<id>%5D` forms). _(Phase 3 / Plan 06 — CkeditorRewriterService 6-step rewrite() pipeline preserved verbatim including KUMA_MEDIA_PLACEHOLDER_REGEX + KUMA_NT_PLACEHOLDER_REGEX (URL-encoded %5B/%5D variants with case-insensitive flag). FinalizeWalker greenfield walks Entry::find()->siteId('*'); MigrateController::actionFinalize entry point.)_
+- [x] **FIN-02**: Strict policy on unresolvable tokens — left verbatim, annotated with `<!-- MIGRATION:UNRESOLVED ... -->`. No silent drops. _(Phase 3 / Plan 06 — `<!-- MIGRATION:UNRESOLVED source=... -->` HTML comment annotation policy preserved byte-for-byte from v1; no silent drops; FinalizeWalker counts unresolvable fields for REPORT.md.)_
 
 ### Optional adapters (ADP)
 
