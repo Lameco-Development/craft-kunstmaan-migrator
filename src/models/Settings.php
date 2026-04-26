@@ -73,6 +73,11 @@ class Settings extends Model
                     'anthropicApiKey',
                     'llmModel', 'mappingPath', 'defaultSince',
                     'kunstmaanSourcePath',
+                    // Phase 4 / D-57 — adapter table-name env overrides. The
+                    // Phase 4 / D-60 verify-tolerance floats deliberately stay
+                    // out of this list; env-parse of float values is fragile
+                    // (PATTERNS.md flag #2) — CLI override is their runtime knob.
+                    'seoTableName', 'redirectsTableName',
                 ],
             ],
         ];
@@ -120,6 +125,10 @@ class Settings extends Model
             [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
             [['defaultEntities', 'defaultLocales', 'localeMap'], 'safe'],
             [['dryRunDefault'], 'boolean'],
+            // Phase 4 / D-60 — verify-stage tolerances pinned to [0, 1].
+            [['verifyCountTolerance', 'verifyUrlDiffThreshold'], 'number', 'min' => 0, 'max' => 1],
+            // Phase 4 / D-57 — adapter source-table overrides.
+            [['seoTableName', 'redirectsTableName'], 'string'],
         ];
     }
 }
