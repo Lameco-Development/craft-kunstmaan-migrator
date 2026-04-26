@@ -12,21 +12,12 @@ use Throwable;
 use yii\base\Component;
 
 /**
- * Parses Doctrine PHP entity files from the Kunstmaan source checkout to
- * extract authoritative structure: table names, column definitions, and ORM
- * relations.
+ * Parses Doctrine entity files. PHP 8 attributes only.
  *
- * Principle: source code = structure, database = data.
- *   - Table names come from #[ORM\Table(name: '...')] (not information_schema guessing).
- *   - Column types and nullability come from #[ORM\Column(...)] (not DB DATA_TYPE).
- *   - Relations come from #[ORM\ManyToOne/ManyToMany/...] (not FK constraints).
- *
- * Supports PHP 8 attributes (#[ORM\...]) and legacy docblock annotations
- * (@ORM\...). Short targetEntity names are resolved to FQCNs via `use`
- * statement parsing.
- *
- * The parser is lazy — the entity directory is scanned once on first access and
- * the result cached for the lifetime of the request.
+ * Source code = structure: table names from #[ORM\Table], columns from
+ * #[ORM\Column], relations from #[ORM\ManyToOne]/etc. Short targetEntity
+ * names resolve to FQCNs via `use` statement parsing. Lazy — scans the
+ * entity directory once on first access and caches the result.
  */
 final class DoctrineEntityParser extends Component
 {
@@ -145,11 +136,9 @@ final class DoctrineEntityParser extends Component
         $className = $m[1];
         $fqcn = $namespace . '\\' . $className;
 
-        // --- Table name (PHP 8 attribute or docblock)
+        // --- Table name
         $tableName = '';
         if (preg_match('/#\[ORM\\\\Table\s*\(\s*name\s*:\s*[\'"]([^\'"]+)[\'"]/i', $src, $m)) {
-            $tableName = $m[1];
-        } elseif (preg_match('/@ORM\\\\Table\s*\(\s*name\s*=\s*[\'"]([^\'"]+)[\'"]/i', $src, $m)) {
             $tableName = $m[1];
         }
 
@@ -207,7 +196,6 @@ final class DoctrineEntityParser extends Component
         $columns = [];
 
         // Match #[ORM\Column(...)] followed (within ≤600 chars) by $propertyName.
-        // The lookahead stops at the next attribute/property to avoid bleeding across fields.
         preg_match_all(
             '/#\[ORM\\\\Column\s*\(([^)]*)\)\](.{0,600}?)\$(\w+)\s*;/s',
             $src,
@@ -236,31 +224,6 @@ final class DoctrineEntityParser extends Component
             $nullable = (bool) preg_match('/\bnullable\s*[=:]\s*true\b/', $attrs);
 
             $columns[] = new DoctrineColumnInfo($colName, $type, $nullable, $property);
-        }
-
-        // Docblock fallback (@ORM\Column) — only when no PHP 8 columns found.
-        if ($columns === []) {
-            preg_match_all(
-                '/@ORM\\\\Column\s*\(([^)]*)\)\s*(?:\*\s+@var[^\n]*)?\s*\*\/\s*(?:private|protected|public)\s+[^\$]*\$(\w+)/s',
-                $src,
-                $matches,
-                PREG_SET_ORDER,
-            );
-            foreach ($matches as $row) {
-                $attrs    = $row[1];
-                $property = $row[2];
-
-                $colName = $property;
-                if (preg_match('/\bname\s*=\s*[\'"]([^\'"]+)[\'"]/', $attrs, $m)) {
-                    $colName = $m[1];
-                }
-                $type = 'string';
-                if (preg_match('/\btype\s*=\s*[\'"]([^\'"]+)[\'"]/', $attrs, $m)) {
-                    $type = $m[1];
-                }
-                $nullable = (bool) preg_match('/\bnullable\s*=\s*true\b/', $attrs);
-                $columns[] = new DoctrineColumnInfo($colName, $type, $nullable, $property);
-            }
         }
 
         return $columns;
@@ -325,12 +288,8 @@ final class DoctrineEntityParser extends Component
     }
 
     /**
-     * Extract and resolve the targetEntity value from an ORM relation attribute string.
-     *
-     * Handles:
-     *   targetEntity: Employee::class          → resolved via use map
-     *   targetEntity: \Full\Ns\Employee::class → already FQCN
-     *   targetEntity: 'App\Entity\Employee'    → already FQCN string
+     * Resolve a targetEntity value to an FQCN. Handles `Employee::class` (use-map),
+     * `\Full\Ns\Employee::class` (already FQCN), and `'App\Entity\Employee'` (string).
      *
      * @param array<string, string> $useMap
      */
@@ -350,15 +309,6 @@ final class DoctrineEntityParser extends Component
         // String form — e.g. targetEntity: 'App\Entity\Employee'
         if (preg_match('/\btargetEntity\s*:\s*[\'"]([^\'"]+)[\'"]/', $attrs, $m)) {
             return ltrim($m[1], '\\');
-        }
-
-        // Docblock annotation form — targetEntity="Employee" or targetEntity=Employee::class
-        if (preg_match('/\btargetEntity\s*=\s*[\'"]?([\\\\?\w]+)(?::class)?[\'"]?/', $attrs, $m)) {
-            $ref = ltrim(trim($m[1], '\'"'), '\\');
-            if (str_contains($ref, '\\')) {
-                return $ref;
-            }
-            return $useMap[$ref] ?? ($namespace . '\\' . $ref);
         }
 
         return '';
