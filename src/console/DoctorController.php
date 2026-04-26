@@ -14,13 +14,15 @@ use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Doctor — preflight diagnostics for the migrator. Six checks (D-17 + Phase 2 / Plan 05 + Phase 02.1 / D-31 + Phase 3 / Plan 03-13):
+ * Doctor — preflight diagnostics for the migrator. Eight checks (D-17 + Phase 2 / Plan 05 + Phase 02.1 / D-31 + Phase 3 / Plan 03-13 + Phase 4 / Plan 04-11 / D-69):
  *   1. Legacy DB reachability (SELECT 1)
  *   2. Anthropic key presence (Settings override OR env; never echoes the value — T-1-03)
  *   3. storage/migration/ writable (auto-creates if missing — D-18 greenfield behavior)
  *   4. mapping.yaml health (deferred from Phase 1 / D-17 — landed alongside MappingFile in Phase 2)
  *   5. Kunstmaan source path (D-31 — KUNSTMAAN_SOURCE_PATH env or kunstmaanSourcePath Settings)
  *   6. State table reachability (Phase 3 / CONTEXT Discretion — catches Phase 1 install drift before migrate runs)
+ *   7. Adapter plugin health (D-69 — SEOmatic + Retour optional, INFO on absence per ADP-01..03)
+ *   8. Verify baseline presence (D-69 — INFO when storage/migration/baseline.json missing)
  *
  * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline).
  *
@@ -60,6 +62,9 @@ class DoctorController extends Controller
         $ok = $this->checkMappingFile()          && $ok;
         $ok = $this->checkKunstmaanSourcePath()  && $ok;
         $ok = $this->checkStateTable()           && $ok;
+        // Phase 4 extensions — D-69. Both always return true (INFO not FAIL):
+        $ok = $this->checkAdapterPlugins()       && $ok;
+        $ok = $this->checkVerifyBaseline()       && $ok;
 
         $this->stdout(
             "\n" . ($ok ? "Doctor: PASS\n" : "Doctor: FAIL — fix the above before running migrate\n"),
@@ -242,5 +247,47 @@ class DoctorController extends Controller
             $this->stderr("  FAIL state table check: {$e->getMessage()}\n", Console::FG_RED);
             return false;
         }
+    }
+
+    /**
+     * Check #7 (D-69): adapter plugin presence — informational only.
+     * SEOmatic + Retour are optional per ADP-01..03; absence is not a FAIL.
+     */
+    private function checkAdapterPlugins(): bool
+    {
+        $seomatic = Craft::$app->plugins->getPlugin('seomatic');
+        if ($seomatic !== null) {
+            $version = (string) $seomatic->getVersion();
+            $this->stdout("  OK   seomatic v{$version} installed\n", Console::FG_GREEN);
+        } else {
+            $this->stdout("  INFO seomatic not installed (adapter will skip)\n", Console::FG_YELLOW);
+        }
+
+        $retour = Craft::$app->plugins->getPlugin('retour');
+        if ($retour !== null) {
+            $version = (string) $retour->getVersion();
+            $this->stdout("  OK   retour v{$version} installed\n", Console::FG_GREEN);
+        } else {
+            $this->stdout("  INFO retour not installed (adapter will skip)\n", Console::FG_YELLOW);
+        }
+        return true; // D-69: always OK — adapter absence is informational.
+    }
+
+    /**
+     * Check #8 (D-69): verify baseline presence — informational only.
+     * Operators may run doctor before capturing baseline.
+     */
+    private function checkVerifyBaseline(): bool
+    {
+        $path = Craft::$app->path->getStoragePath() . '/migration/baseline.json';
+        if (is_file($path)) {
+            $this->stdout("  OK   baseline.json present at {$path}\n", Console::FG_GREEN);
+        } else {
+            $this->stdout(
+                "  INFO baseline.json missing — run `verify capture-baseline` first if you want to gate migrate runs.\n",
+                Console::FG_YELLOW,
+            );
+        }
+        return true; // D-69: always OK.
     }
 }
