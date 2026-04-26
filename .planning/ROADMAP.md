@@ -244,13 +244,13 @@ Plans:
 **Plans:** 7 plans (rough breakdown — confirmed during plan-phase)
 
 Plans:
-- [ ] 04.1-01-env-reader-PLAN.md — `KunstmaanEnvReader` + 2-key whitelist + `.env.example` + `.env` precedence + doctor 9th check
-- [ ] 04.1-02-database-url-autofill-PLAN.md — Settings::beforeValidate auto-fill from DATABASE_URL when blank (CFG-04)
-- [ ] 04.1-03-locale-preflight-rung0-PLAN.md — DEFAULT_LOCALE Rung 0 + primary-handle alignment doctor WARN (LOC-03)
-- [ ] 04.1-04-cp-slimming-and-config-example-PLAN.md — strip 14 fields from CP, ship `config/kunstmaan-migrator.example.php`, dropdowns where data is knowable (CFG-05, CFG-06)
-- [ ] 04.1-05-adapter-disable-and-filter-plumbthrough-PLAN.md — seoEnabled/retourEnabled + VerifyController $filters wiring + REPORT.md always-emit (ADP-04, VER-04, CFG-07)
-- [ ] 04.1-06-attributes-only-parser-PLAN.md — strip annotation parsing from DoctrineEntityParser (SRC-20); pre-flight grep across cqm/simac/enreach
-- [ ] 04.1-07-recovery-commands-PLAN.md — `migrate sync-assets` + `migrate sync-relations` + terminal-state marker + Phase 4.1 RECONCILIATION.md (REC-01, REC-02)
+- [x] 04.1-01-env-reader-PLAN.md — `KunstmaanEnvReader` + 2-key whitelist + `.env.example` + `.env` precedence + doctor 9th check
+- [x] 04.1-02-database-url-autofill-PLAN.md — Settings::beforeValidate auto-fill from DATABASE_URL when blank (CFG-04)
+- [x] 04.1-03-locale-preflight-rung0-PLAN.md — DEFAULT_LOCALE Rung 0 + primary-handle alignment doctor WARN (LOC-03)
+- [x] 04.1-04-cp-slimming-and-config-example-PLAN.md — strip 14 fields from CP, ship `config/kunstmaan-migrator.example.php`, dropdowns where data is knowable (CFG-05, CFG-06)
+- [x] 04.1-05-adapter-disable-and-filter-plumbthrough-PLAN.md — seoEnabled/retourEnabled + VerifyController $filters wiring + REPORT.md always-emit (ADP-04, VER-04, CFG-07)
+- [x] 04.1-06-attributes-only-parser-PLAN.md — strip annotation parsing from DoctrineEntityParser (SRC-20); pre-flight grep across cqm/simac/enreach
+- [x] 04.1-07-recovery-commands-PLAN.md — `migrate sync-assets` + terminal-state marker + Phase 4.1 RECONCILIATION.md (REC-01 ✅; REC-02 deferred to Phase 4.2 — no `relation:deferred` marker exists in state schema, see `04.1-07-DISCOVERY.md` Finding B)
 
 ### Phase 5: Tests, Rehearsal & Release
 
