@@ -40,8 +40,13 @@ class DoctorController extends Controller
 {
     use NeverProductionTrait;
 
-    // FILT-03: doctor accepts the three filter flags for command-surface uniformity but
-    // ignores them — doctor doesn't read legacy data, so filters are a no-op here.
+    // FILT-03 + Phase 4.1 / D-30: doctor accepts the three filter flags for
+    // command-surface uniformity. Phase 4 made these no-ops (doctor doesn't
+    // read legacy data); Phase 4.1 / D-30 makes them load-bearing for the 8th
+    // check (`checkVerifyBaseline`) — when the operator passes
+    // `--entities=...` / `--locales=...` / `--since=...`, those values are
+    // compared against baseline.json's captured `filterScope` JSON header and
+    // any mismatch escalates the row from OK to WARN with verbatim D-30 copy.
     public ?string $entities = null;
     public ?string $locales  = null;
     public ?string $since    = null;

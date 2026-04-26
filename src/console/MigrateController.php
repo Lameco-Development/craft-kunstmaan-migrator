@@ -399,7 +399,17 @@ class MigrateController extends Controller
         $this->stdout("Migrate (seo): SEOmatic MetaBundles per migrated entry\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        // Phase 4.1 / D-26: actionSeo IS the SEO sub-action; honoring --no-seo
+        // here would defeat its purpose. Force noSeo=false; pass --no-retour
+        // through unchanged (inert here — actionSeo never calls the Retour
+        // service — but faithfully reflects the operator's invocation).
+        $filters = $plugin->filterFactory->fromCli(
+            $this->entities,
+            $this->locales,
+            $this->since,
+            false,
+            $this->noRetour,
+        );
 
         if (!$this->live) {
             $this->stdout(
@@ -408,6 +418,9 @@ class MigrateController extends Controller
             );
             return ExitCode::OK;
         }
+
+        // Note: Settings::seoEnabled still gates inside SeoMigrationService::migrateAll();
+        // operators who want a persistent disable use Settings, not --no-seo.
 
         $plugin->seoMigrationService->filters = $filters;
         $opts = new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false);
@@ -447,7 +460,17 @@ class MigrateController extends Controller
         );
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        // Phase 4.1 / D-26: actionRetour IS the Retour sub-action; honoring
+        // --no-retour here would defeat its purpose. Force noRetour=false;
+        // pass --no-seo through unchanged (inert here — actionRetour never
+        // calls the SEO service — but faithfully reflects the invocation).
+        $filters = $plugin->filterFactory->fromCli(
+            $this->entities,
+            $this->locales,
+            $this->since,
+            $this->noSeo,
+            false,
+        );
 
         if (!$this->live) {
             $this->stdout(
@@ -456,6 +479,9 @@ class MigrateController extends Controller
             );
             return ExitCode::OK;
         }
+
+        // Note: Settings::retourEnabled still gates inside RedirectMigrationService::migrateAll();
+        // operators who want a persistent disable use Settings, not --no-retour.
 
         $plugin->redirectMigrationService->filters = $filters;
         $opts = new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false);
