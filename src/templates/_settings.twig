@@ -2,17 +2,15 @@
    Decisions: D-62 (single page, H2-grouped sections — Connectivity / AI /
    Defaults / Verify / Adapters), D-63 (editableTable for array fields),
    D-64 (masked anthropicApiKey + env hint).
-   Rendering contract: hasCpSettings = true (Phase 1 / D-16) +
-   Plugin::settingsHtml() already point at this template; the form
-   roundtrips through Craft's standard plugin-settings save handler, so
-   no csrfInput / actionInput / <form> tags here — Craft's CP layout
-   wraps the block content in the form automatically. #}
-{% extends "_layouts/cp" %}
+   Rendering contract: hasCpSettings = true + Plugin::settingsHtml() point
+   at this template. Craft's settings/plugins/_settings.twig (cms vendor)
+   already extends _layouts/cp, opens fullPageForm, injects
+   actionInput/pluginHandle/redirectInput, then dumps `settingsHtml|raw`
+   inside its own `{% block content %}`. This template is therefore an
+   HTML FRAGMENT — no `{% extends %}`, no `{% block content %}` wrapper,
+   no <form> or csrf/action inputs (would nest layouts and double-form).
+#}
 {% import "_includes/forms" as forms %}
-
-{% set title = "Kunstmaan Migrator"|t('kunstmaan-migrator') %}
-
-{% block content %}
 
 <h2>{{ 'Connectivity'|t('kunstmaan-migrator') }}</h2>
 
@@ -255,5 +253,3 @@
     suggestEnvVars: true,
     instructions: 'Legacy table name read by the Retour adapter (D-57). Defaults to `kuma_redirects`; override for non-CQM Kunstmaan flavours.'|t('kunstmaan-migrator'),
 }) }}
-
-{% endblock %}
