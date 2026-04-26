@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\analyze;
 
+use lameco\kunstmaanmigrator\source\DoctrineEntityInfo;
 use yii\base\Component;
 
 /**
- * HeuristicProposer — REFAC-03.
+ * HeuristicProposer — REFAC-03 + Phase 02.1 / D-44 entity-aware heuristic 1.5.
  *
- * Runs the 9 deterministic heuristics that were Phase 9 in the v1
+ * Runs the 10 deterministic heuristics that were Phase 9 in the v1
  * MappingProposalService. Single responsibility: take a flat list of
  * coverage-violation rows + a Craft field index keyed by entry type, and
  * return [matched, residual] where matched carries `decision` + `confidence`
@@ -17,14 +18,18 @@ use yii\base\Component;
  * the columns no heuristic matched (handed off to LlmClassifier downstream).
  *
  * Heuristics (applied in order, first match wins):
- *   1. Fill-rate = 0          → drop (high confidence)
- *   2. Exact name equality    → map  (high confidence)
- *   3. *_id stem → asset      → map  (high confidence)
- *   4. TEXT/LONGTEXT/MEDIUMTEXT + richtext field → map (high confidence)
- *   5. *_image / *_photo → asset (high confidence)
- *   6. *_date / *_at → date (high confidence)
- *   7. *_url / *_link → url/link (high confidence)
- *   8. *_email / 'email' → email field (high confidence)
+ *   1.   Fill-rate = 0                               → drop (high confidence)
+ *   1.5  (D-44) Entity-aware: column → entity        → map  (high confidence)
+ *        property → Craft field handle, scoped by
+ *        entity-class context (table → accepted-row
+ *        targetEntryType → property name match)
+ *   3.   Exact name equality                          → map  (high confidence)
+ *   4.   *_id stem → asset                            → map  (high confidence)
+ *   5.   TEXT/LONGTEXT/MEDIUMTEXT + richtext field   → map  (high confidence)
+ *   6.   *_image / *_photo → asset                    → map  (high confidence)
+ *   7.   *_date / *_at → date                         → map  (high confidence)
+ *   8.   *_url / *_link → url/link                    → map  (high confidence)
+ *   9.   *_email / 'email' → email field              → map  (high confidence)
  *
  * Pure logic — no I/O, no LLM, no file writes. The caller (Plan 03
  * AnalyzeController) maps each proposal's `confidence` to mapping.yaml's
@@ -39,6 +44,25 @@ use yii\base\Component;
  */
 final class HeuristicProposer extends Component
 {
+    /**
+     * Entity index for heuristic 1.5 (D-44). Set by AnalyzeController from
+     * KunstmaanSourceScanner.scan()['entities'] before calling autoMatch().
+     * Keyed by entity FQCN; value is the parsed Doctrine entity metadata.
+     *
+     * @var array<string, DoctrineEntityInfo>
+     */
+    public array $entityIndex = [];
+
+    /**
+     * Existing accepted column-row proposals for heuristic 1.5 (D-44). Set by
+     * AnalyzeController from MappingFile::load($mappingPath)['proposals'] filtered
+     * to status=accepted + kind=column rows. Heuristic 1.5 walks this list to
+     * resolve a column's parent table to the operator-confirmed targetEntryType.
+     *
+     * @var list<array<string, mixed>>
+     */
+    public array $acceptedRows = [];
+
     /**
      * Auto-match deterministically. Returns [$matched, $residual] where:
      *   - $matched: list of proposals for columns matched by heuristic alone
@@ -55,6 +79,7 @@ final class HeuristicProposer extends Component
 
         foreach ($violations as $v) {
             $entryType = (string) ($v['targetEntryType'] ?? '');
+            $tableName = (string) ($v['table'] ?? '');
             $column = (string) ($v['column'] ?? '');
             $fillRate = (float) ($v['fillRate'] ?? -1);
             $sqlType = strtoupper((string) ($v['sqlType'] ?? ''));
@@ -68,7 +93,79 @@ final class HeuristicProposer extends Component
                 continue;
             }
 
-            // 2. Exact name match (high confidence).
+            // Heuristic 1.5 (D-44): entity-aware match. Column → entity property →
+            // Craft field handle, scoped by entity-class context. Resolution chain:
+            //   $tableName → DoctrineEntityInfo (via entityIndex) → look up an
+            //   accepted column row for this table → that row's targetEntryType →
+            //   match property name against fields on that entry type.
+            // Higher confidence than heuristic 3 (exact-name) because it's scoped to
+            // the entity that owns the column, not a global handle search. Confidence
+            // = 'high' → AnalyzeController::statusForHeuristic auto-promotes to
+            // status=accepted (Phase 2 / D-02). When no accepted row exists for the
+            // entity yet, this heuristic falls through and the existing heuristics
+            // 3-9 fire as before.
+            if ($tableName !== '' && $this->entityIndex !== []) {
+                $entityForTable = null;
+                foreach ($this->entityIndex as $entityInfo) {
+                    if ($entityInfo->tableName === $tableName) {
+                        $entityForTable = $entityInfo;
+                        break;
+                    }
+                }
+                if ($entityForTable !== null) {
+                    $resolvedEntryType = '';
+                    foreach ($this->acceptedRows as $acceptedRow) {
+                        if ((string) ($acceptedRow['table'] ?? '') === $tableName) {
+                            $resolvedEntryType = (string) ($acceptedRow['targetEntryType'] ?? '');
+                            if ($resolvedEntryType !== '') { break; }
+                        }
+                    }
+                    if ($resolvedEntryType !== '') {
+                        $propertyName = '';
+                        foreach ($entityForTable->columns as $colInfo) {
+                            if ($colInfo->columnName === $column) {
+                                $propertyName = $colInfo->propertyName;
+                                break;
+                            }
+                        }
+                        $resolvedFields = $craftFieldIndex[$resolvedEntryType] ?? [];
+                        if ($propertyName !== '') {
+                            $matchField = null;
+                            foreach ($resolvedFields as $f) {
+                                if ((string) ($f['handle'] ?? '') === $propertyName) {
+                                    $matchField = $f;
+                                    break;
+                                }
+                            }
+                            if ($matchField !== null) {
+                                // Re-target the violation to the resolved entry type so
+                                // buildProposal carries the entity-scoped target. Confidence
+                                // is explicitly 'high' so AnalyzeController::statusForHeuristic
+                                // auto-promotes to status=accepted (Phase 2 / D-02 + D-44).
+                                $vScoped = $v;
+                                $vScoped['targetEntryType'] = $resolvedEntryType;
+                                $matched[] = $this->buildProposal(
+                                    $vScoped,
+                                    (string) $matchField['handle'],
+                                    $this->handlerForClassification((string) ($matchField['classification'] ?? '')),
+                                    sprintf(
+                                        'heuristic 1.5: entity %s property %s → %s.%s',
+                                        $entityForTable->fqcn,
+                                        $propertyName,
+                                        $resolvedEntryType,
+                                        (string) $matchField['handle'],
+                                    ),
+                                    'high',
+                                    'map',
+                                );
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Exact name match (high confidence).
             $handle = $this->exactNameMatch($column, $fields);
             if ($handle !== null) {
                 $matched[] = $this->buildProposal(
@@ -80,7 +177,7 @@ final class HeuristicProposer extends Component
                 continue;
             }
 
-            // 3. *_id → asset field by stem (high confidence).
+            // 4. *_id → asset field by stem (high confidence).
             // Skip when the column is literally `_id` (empty stem matches every asset field).
             if (str_ends_with($column, '_id') && strlen($column) > 3) {
                 $stem = substr($column, 0, -3);
@@ -93,7 +190,7 @@ final class HeuristicProposer extends Component
                 }
             }
 
-            // 4. SQL type TEXT/LONGTEXT/MEDIUMTEXT → ckeditor (high confidence).
+            // 5. SQL type TEXT/LONGTEXT/MEDIUMTEXT → ckeditor (high confidence).
             // Only when the entry type has a richtext-classified field.
             if ($sqlType !== '' && str_contains($sqlType, 'TEXT')) {
                 $richtextField = $this->findFieldByClassification('richtext', $fields);
@@ -108,7 +205,7 @@ final class HeuristicProposer extends Component
                 }
             }
 
-            // 5. *_image / *_photo → asset field (high confidence).
+            // 6. *_image / *_photo → asset field (high confidence).
             if ($this->columnEndsWith($column, ['_image', '_photo'])) {
                 $assetField = $this->findFieldByClassification('asset', $fields);
                 if ($assetField !== null) {
@@ -122,7 +219,7 @@ final class HeuristicProposer extends Component
                 }
             }
 
-            // 6. *_date / *_at → date field (high confidence).
+            // 7. *_date / *_at → date field (high confidence).
             if ($this->columnEndsWith($column, ['_date', '_at'])) {
                 $dateField = $this->findFieldByClassificationOrHandle('date', 'date', $fields);
                 if ($dateField !== null) {
@@ -136,7 +233,7 @@ final class HeuristicProposer extends Component
                 }
             }
 
-            // 7. *_url / *_link → url or link field (high confidence).
+            // 8. *_url / *_link → url or link field (high confidence).
             if ($this->columnEndsWith($column, ['_url', '_link'])) {
                 $urlField = $this->findFieldByClassificationOrHandle('url', 'url', $fields)
                     ?? $this->findFieldByClassificationOrHandle('url', 'link', $fields);
@@ -151,7 +248,7 @@ final class HeuristicProposer extends Component
                 }
             }
 
-            // 8. *_email or bare 'email' → email field (high confidence).
+            // 9. *_email or bare 'email' → email field (high confidence).
             if (str_ends_with(strtolower($column), '_email') || strtolower($column) === 'email') {
                 $emailField = $this->findFieldByHandleContaining('email', $fields);
                 if ($emailField !== null) {

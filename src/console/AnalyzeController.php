@@ -201,6 +201,22 @@ class AnalyzeController extends Controller
         // and returns ([], []) — heuristics produce zero proposals on a fresh run.
         $violations = $this->buildViolationsFromSchema($schemaDump);
         $craftFieldIndex = $this->buildCraftFieldIndex();
+
+        // Phase 02.1 / D-44: wire heuristic 1.5 entity context. Load the existing
+        // mapping.yaml HERE (early — same payload is reused at the merge step) so
+        // accepted column rows can resolve table → targetEntryType for the entity-
+        // aware match. On a fresh run with no mapping.yaml, acceptedRows is empty
+        // and heuristic 1.5 falls through silently (heuristics 3-9 fire as before).
+        $mappingPath = $plugin->mappingFile->resolvePath();
+        $existing = $plugin->mappingFile->load($mappingPath);
+        $plugin->heuristicProposer->entityIndex = (array) ($sourceScan['entities'] ?? []);
+        $plugin->heuristicProposer->acceptedRows = array_values(array_filter(
+            $existing['proposals'] ?? [],
+            static fn(array $r): bool =>
+                ((string) ($r['status'] ?? '')) === 'accepted'
+                && ((string) ($r['kind'] ?? 'column')) === 'column',
+        ));
+
         try {
             [$heuristicProposals, $residual] = $plugin->heuristicProposer->autoMatch(
                 $violations,
@@ -305,8 +321,8 @@ class AnalyzeController extends Controller
         }
 
         // Step 9 cont. (skip-existing merge — D-04 + D-34 kind-prefixed identity tuple).
-        $mappingPath = $plugin->mappingFile->resolvePath();
-        $existing = $plugin->mappingFile->load($mappingPath);
+        // $mappingPath / $existing were loaded earlier (step 7) so heuristic 1.5 could
+        // populate acceptedRows; reuse the same payload here without a second disk read.
         $merged = $plugin->mappingFile->merge($existing, $rows);
 
         $yaml = Yaml::dump($merged, 4, 2, Yaml::DUMP_MULTI_LINE_LITERAL_BLOCK);
