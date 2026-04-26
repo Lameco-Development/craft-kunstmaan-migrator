@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 4.1 closed (PASS-WITH-NOTES) — 7 plans shipped, 9/10 requirements PASS, REC-02 deferred to Phase 4.2 (Finding B: no `relation:deferred` marker exists in state schema). 179 tests / 488 assertions green. Next: Phase 5 (Tests, Rehearsal & Release) via /gsd-discuss-phase 5.
-stopped_at: Phase 4.1 verified — ready for /gsd-discuss-phase 5
-last_updated: "2026-04-26T23:55:00.000Z"
+status: Phase 5 context captured — 26 decisions across 4 areas (TST-02 fixtures pre-extracted PHP/JSON narrow corpus + UPDATE_SNAPSHOTS=1 refresh; TST-01 PCOV + per-module 70% gate via phpunit.xml + 7 new direct-test files; TST-03 composer create-project smoke on PHP 8.3 with doctor exit 0; TST-04 CQM-blocking + simac/enreach-advisory rehearsal via new `kunstmaan-migrator/rehearsal-check` CLI + `.planning/RELEASE-CHECKLIST.md`). Tests reorganize: tests/ → tests/unit + tests/integration as the FIRST plan to avoid merge churn. Next: /gsd-plan-phase 5.
+stopped_at: Phase 5 context gathered — ready for /gsd-plan-phase 5
+last_updated: "2026-04-27T00:00:00.000Z"
 progress:
   total_phases: 7
   completed_phases: 6
