@@ -93,9 +93,9 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 
 ### Verify (VER)
 
-- [ ] **VER-01**: `kunstmaan-migrator/verify capture-baseline` snapshots pre-migration counts (entries, assets, taxonomies, redirects, SEOmatic bundles) into a JSON artifact.
+- [ ] **VER-01**: `kunstmaan-migrator/verify capture-baseline` snapshots pre-migration counts (entries, assets, taxonomies, redirects, SEOmatic bundles) into a JSON artifact. _(Phase 4 / Plan 04 partial — `src/verify/BaselineCounterService.php` ships the D-59 light-counts shape (`format: counts-v1` — sections + countsBySite, assets state-table mirror, per-category-group taxonomies, Retour/SEOmatic optional-plugin gated to 0 when absent). SHA-heavy snapshot path explicitly NOT in v1.0 — deferred to a future `verify capture-baseline --deep` flag. JSON serialization + atomic write + storage path resolution wire via VerifyController in Plan 04-09.)_
 - [ ] **VER-02**: Optional `verify capture-baseline-html` snapshots rendered HTML for a configurable URL set.
-- [ ] **VER-03**: `verify` runs the parity gate — counts diff vs baseline plus optional URL spot-check — and writes a `VERIFY-<timestamp>.md` report under `storage/migration/` regardless of outcome.
+- [ ] **VER-03**: `verify` runs the parity gate — counts diff vs baseline plus optional URL spot-check — and writes a `VERIFY-<timestamp>.md` report under `storage/migration/` regardless of outcome. _(Phase 4 / Plan 04 partial — `src/verify/CountGateService.php` ships the count-match gate-rows producer with D-60 signature (`run(array $expectedCounts, float $tolerance)`), D-58 Retour gate, D-58/D-59 per-category-group taxonomy gate, and v1's verbatim per-key delta formula + asset-count-from-state-table idiom. Skip-row semantics reshape: optional-plugin-absent emits `['skip' => true, 'note' => …]` rows excluded from overall pass calculation. Plan 04-09 owns reading baseline.json for `$expectedCounts`, resolving `$tolerance` via Settings + `--count-tolerance=` ladder, calling `CountGateService::run()` + `SpotCheckUrlFetcher::diffAgainstBaseline()`, and writing `VERIFY-<timestamp>.md` regardless of outcome.)_
 
 ### Settings + observability (CFG)
 
