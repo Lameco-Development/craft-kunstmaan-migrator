@@ -203,6 +203,55 @@ Plans:
 - [x] 04-11-doctor-7th-8th-checks-PLAN.md — Doctor adapter health + verify baseline presence checks (ADP-01..03, VER-01) — completed 2026-04-26
 - [x] 04-12-tests-and-reconciliation-PLAN.md — PHPUnit unit tests (60 → 83 tests, +23) + Phase 4 RECONCILIATION.md aggregate + ADP-03 composer-suggest invariant guard (ADP-01..03, VER-01..03, CFG-02 complete) — completed 2026-04-26
 
+### Phase 4.1: Polish, Recovery & .env Source-of-Truth
+
+**Goal:** Close real correctness, ergonomics, and operator-recovery gaps surfaced by Phase 4 UAT and the .env source-of-truth survey across cqm/simac/enreach. Locked-decision reversals (CP runner, Craft queue, FeedMe-style remap utility) explicitly stay OUT of scope — they get their own Phase 4.2 if pursued.
+
+**Why a 4.1 instead of folding into Phase 5:** Phase 4 shipped twelve plans, ten passed UAT, but five gaps surfaced (two fixed in-band: G-01 settings template fragment, G-03 forms.passwordField masking; three deferred: G-02 CP page slimming, G-04 dropdowns, G-05 REPORT.md always-emit). Plus one critical bug-trap caught mid-execution (04-06 inherited v1's `MigrationFilters` properties that don't exist in v2 — same trap latent in any other v1-port that touches filters). Phase 5 (rehearsal + release) needs a clean foundation; 4.1 closes the loop before simac/enreach rehearsal exposes more.
+
+**Requirements:** CFG-04..07, LOC-03, ADP-04, VER-04, SRC-20, REC-01, REC-02.
+
+**Success criteria:**
+
+*.env source-of-truth (load-bearing for correctness):*
+1. `KunstmaanEnvReader` reads `KUNSTMAAN_SOURCE_PATH/.env.example` then `.env` (override) with a strict 2-key whitelist: `DATABASE_URL`, `DEFAULT_LOCALE`. Every other key is deliberately ignored — secrets never enter memory.
+2. When `Settings::legacyDb*` are blank, `DATABASE_URL` parses to per-component defaults (host, port, database, user, password). Operator-supplied Settings values always override the env-derived defaults.
+3. `LocalePreflight` consults `DEFAULT_LOCALE` as Rung 0 and validates that the first handle in `Settings::localeMap` aligns with it. Mismatch → doctor WARN (advisory; some projects intentionally diverge); no auto-correction, no hard-fail.
+4. Doctor 9th check reports the env reader's state: file presence at the source path + whether `DEFAULT_LOCALE` was found.
+
+*CP page slimming + Craft-convention config overrides:*
+5. CP Settings page renders only operator-touch-essential fields (~9, two H2 groups: Connectivity + Mapping). Page height ~40% of current. Remaining advanced fields (14) move to `config/kunstmaan-migrator.example.php` documentation.
+6. Craft's auto-loaded `config/kunstmaan-migrator.php` already-supported override mechanism exposes every Settings field at runtime — no new code path needed; the change is template + documentation.
+7. Surviving CP editable-table columns use Craft `cols: { handle: { type: 'select', options: [...] } }` dropdowns where values are knowable from existing services: Craft site handles (always available), legacy locale codes (when DB reachable), Kunstmaan entity basenames (when KUNSTMAAN_SOURCE_PATH set + scanner can run). Free-text fallback when source data isn't available.
+
+*Adapter behavior + filter contract:*
+8. `Settings::seoEnabled` + `Settings::retourEnabled` booleans (default `true` to preserve current behavior) gate the SEOmatic + Retour adapters even when the respective plugin IS installed. Operator can disable per-run via CLI flag (`--no-seo`, `--no-retour`) for the same effect without touching settings.
+9. `VerifyController` CLI filter options (`--entity=`, `--locale=`, `--since=`) flow into `CountGateService::run()` and `BaselineCounterService::capture()`. The intelephense `$filters unused` finding from Phase 4 is closed.
+
+*Doctrine entity parser scope reduction:*
+10. `DoctrineEntityParser` parses PHP 8 attributes only. Annotation parsing is removed (not deprecated). All targeted Kunstmaan projects (cqm, simac, enreach) verified as PHP 8+ before this lands.
+
+*Operator recovery commands:*
+11. `migrate sync-assets` ingests every `kuma_media` row that any prior atomic run referenced but skipped (filesystem_404 / mime_mismatch / too_large / etc.). Idempotent: re-running with everything healed exits cleanly. Permanently-failed assets get a terminal-state marker in migration_state to prevent retry loops.
+12. `migrate sync-relations` resolves any `relation:deferred` rows in the migration state table that couldn't be resolved during their owning entry's atomic save (typical: forward-references, taxonomies migrated after the entry that references them). Same idempotence + terminal-state contract.
+
+*REPORT.md operator-diagnosability:*
+13. `## Skipped stages` and `## Asset RCA` sections in REPORT.md always emit, even when empty. Empty state shows placeholder copy ("_No skipped stages — all configured adapters were exercised._" / "_No asset RCA rows — no assets were migrated, or all migrated cleanly._"). Constant report shape across runs makes "did this code path run?" trivially answerable.
+
+*Phase 4 RECONCILIATION update:*
+14. Phase 4.1 RECONCILIATION.md retires three plan-04-05 acceptance greps that codified bugs (`extends "_layouts/cp" = 1`, `type: 'password' = 2`) in favor of fragment-shape + explicit `passwordField` checks. References commits 363cc5c (G-01 fix) and 0f56288 (G-03 fix).
+
+**Plans:** 7 plans (rough breakdown — confirmed during plan-phase)
+
+Plans:
+- [ ] 04.1-01-env-reader-PLAN.md — `KunstmaanEnvReader` + 2-key whitelist + `.env.example` + `.env` precedence + doctor 9th check
+- [ ] 04.1-02-database-url-autofill-PLAN.md — Settings::beforeValidate auto-fill from DATABASE_URL when blank (CFG-04)
+- [ ] 04.1-03-locale-preflight-rung0-PLAN.md — DEFAULT_LOCALE Rung 0 + primary-handle alignment doctor WARN (LOC-03)
+- [ ] 04.1-04-cp-slimming-and-config-example-PLAN.md — strip 14 fields from CP, ship `config/kunstmaan-migrator.example.php`, dropdowns where data is knowable (CFG-05, CFG-06)
+- [ ] 04.1-05-adapter-disable-and-filter-plumbthrough-PLAN.md — seoEnabled/retourEnabled + VerifyController $filters wiring + REPORT.md always-emit (ADP-04, VER-04, CFG-07)
+- [ ] 04.1-06-attributes-only-parser-PLAN.md — strip annotation parsing from DoctrineEntityParser (SRC-20); pre-flight grep across cqm/simac/enreach
+- [ ] 04.1-07-recovery-commands-PLAN.md — `migrate sync-assets` + `migrate sync-relations` + terminal-state marker + Phase 4.1 RECONCILIATION.md (REC-01, REC-02)
+
 ### Phase 5: Tests, Rehearsal & Release
 
 **Goal:** Characterization tests on the Transform stage make regressions cheap to catch, the CI workflow gates every PR, and the v1.0 release ships green against the CQM rehearsal corpus.
