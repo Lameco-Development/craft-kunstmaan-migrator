@@ -97,6 +97,21 @@ class AssetMigrationService extends Component
     public ?object $serializedDecoder = null;
 
     /**
+     * D-66 / D-68: per-asset RCA rows accumulated across one MigrateController
+     * run. Populated by ingestRow() catch blocks every time an asset failure is
+     * classified into the closed-set reason taxonomy. Read by
+     * MigrateController::writeReport when emitting the `## Asset RCA` REPORT.md
+     * section. Deliberately a property on the service (not threaded through
+     * MigrationReport) so neither ingestRow nor ingestReferenced/ingestBatch
+     * need a report-ref signature change — see plan 04-10 / Task 04 rationale.
+     *
+     * Each row: ['legacyId' => int, 'reason' => string, 'path' => string].
+     *
+     * @var list<array{legacyId: int, reason: string, path: string}>
+     */
+    public array $rcaRows = [];
+
+    /**
      * JIT entry point (FH-03 default): materialise one asset by legacy
      * kuma_media id and return the Craft asset id. Returns 0 if the kuma_media
      * row is missing, the file cannot be located, or the asset is a remote
@@ -247,6 +262,28 @@ class AssetMigrationService extends Component
                         ],
                         __METHOD__,
                     );
+                    // D-66: structured single-line RCA emission. Closed-set reason
+                    // taxonomy (filesystem_404 | mime_mismatch | too_large |
+                    // deferred_unresolved). The dedicated 'kunstmaanmigrator.rca'
+                    // log category lets operators grep run logs deterministically.
+                    $reason = $this->classifyAssetFailureReason($e, $row);
+                    $relativePath = (string) ($row['location'] ?? '');
+                    Craft::info(
+                        sprintf(
+                            'RCA asset=%s reason=%s path=%s',
+                            $row['id'] ?? '?',
+                            $reason,
+                            $relativePath,
+                        ),
+                        'kunstmaanmigrator.rca',
+                    );
+                    // Push into the per-run RCA collection so writeReport (D-68)
+                    // can render the `## Asset RCA` table without re-grepping logs.
+                    $this->rcaRows[] = [
+                        'legacyId' => (int) ($row['id'] ?? 0),
+                        'reason'   => $reason,
+                        'path'     => $relativePath,
+                    ];
                 }
 
                 $done++;
@@ -615,8 +652,58 @@ class AssetMigrationService extends Component
                     "kuma_media:{$row['id']} failed: {$e->getMessage()}",
                     __METHOD__,
                 );
+                // D-66: structured single-line RCA emission. Same closed-set
+                // reasons as ingestReferenced(); programmatic callers (queue
+                // jobs, integration tests) feed REPORT.md too.
+                $reason = $this->classifyAssetFailureReason($e, $row);
+                $relativePath = (string) ($row['location'] ?? '');
+                Craft::info(
+                    sprintf(
+                        'RCA asset=%s reason=%s path=%s',
+                        $row['id'] ?? '?',
+                        $reason,
+                        $relativePath,
+                    ),
+                    'kunstmaanmigrator.rca',
+                );
+                $this->rcaRows[] = [
+                    'legacyId' => (int) ($row['id'] ?? 0),
+                    'reason'   => $reason,
+                    'path'     => $relativePath,
+                ];
             }
         }
+    }
+
+    /**
+     * D-66: closed-set reason taxonomy classifier.
+     *
+     * Reasons: filesystem_404 | mime_mismatch | too_large | deferred_unresolved.
+     * String-matching is intentionally loose — operators grep REPORT.md by
+     * reason; over-classification is preferable to dropping into the catch-all
+     * 'deferred_unresolved' bucket too eagerly.
+     *
+     * @param array<string, mixed> $row kuma_media row
+     */
+    private function classifyAssetFailureReason(Throwable $e, array $row): string
+    {
+        $msg = $e->getMessage();
+        if (str_contains($msg, 'No such file')
+            || str_contains($msg, 'not found')
+            || str_contains($msg, 'Copy failed')
+        ) {
+            return 'filesystem_404';
+        }
+        if (str_contains($msg, 'mime')
+            || str_contains($msg, 'content_type')
+            || str_contains($msg, 'allowedFileExtensions')
+        ) {
+            return 'mime_mismatch';
+        }
+        if (str_contains($msg, 'too large') || str_contains($msg, 'PostMaxSize')) {
+            return 'too_large';
+        }
+        return 'deferred_unresolved';
     }
 
     /**
