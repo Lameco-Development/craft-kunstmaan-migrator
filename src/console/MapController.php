@@ -444,7 +444,7 @@ class MapController extends Controller
 
         if ($blockTypes === []) {
             // No block-types discoverable — fall straight through to type-manually.
-            return $this->typeManuallyBlockType($row, $entryType, $matrixField, $blockTypes);
+            return $this->typeManuallyBlockType($row, $blockTypes);
         }
 
         $picked = (string) $this->select(
@@ -455,7 +455,7 @@ class MapController extends Controller
             return $row;
         }
         if ($picked === 't') {
-            return $this->typeManuallyBlockType($row, $entryType, $matrixField, $blockTypes);
+            return $this->typeManuallyBlockType($row, $blockTypes);
         }
         $row['targetBlockType'] = $picked;
         return $row;
@@ -470,7 +470,7 @@ class MapController extends Controller
      * @param list<string>         $valid
      * @return array<string, mixed>
      */
-    private function typeManuallyBlockType(array $row, string $entryType, string $matrixField, array $valid): array
+    private function typeManuallyBlockType(array $row, array $valid): array
     {
         while (true) {
             $h = (string) $this->prompt('  type a block-type handle (or "back"):', ['required' => false]);
