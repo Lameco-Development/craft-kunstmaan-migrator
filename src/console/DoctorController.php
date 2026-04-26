@@ -14,12 +14,13 @@ use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Doctor — preflight diagnostics for the migrator. Five checks (D-17 + Phase 2 / Plan 05 + Phase 02.1 / D-31):
+ * Doctor — preflight diagnostics for the migrator. Six checks (D-17 + Phase 2 / Plan 05 + Phase 02.1 / D-31 + Phase 3 / Plan 03-13):
  *   1. Legacy DB reachability (SELECT 1)
  *   2. Anthropic key presence (Settings override OR env; never echoes the value — T-1-03)
  *   3. storage/migration/ writable (auto-creates if missing — D-18 greenfield behavior)
  *   4. mapping.yaml health (deferred from Phase 1 / D-17 — landed alongside MappingFile in Phase 2)
  *   5. Kunstmaan source path (D-31 — KUNSTMAAN_SOURCE_PATH env or kunstmaanSourcePath Settings)
+ *   6. State table reachability (Phase 3 / CONTEXT Discretion — catches Phase 1 install drift before migrate runs)
  *
  * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline).
  *
@@ -58,6 +59,7 @@ class DoctorController extends Controller
         $ok = $this->checkStorageDir()           && $ok;
         $ok = $this->checkMappingFile()          && $ok;
         $ok = $this->checkKunstmaanSourcePath()  && $ok;
+        $ok = $this->checkStateTable()           && $ok;
 
         $this->stdout(
             "\n" . ($ok ? "Doctor: PASS\n" : "Doctor: FAIL — fix the above before running migrate\n"),
@@ -211,5 +213,34 @@ class DoctorController extends Controller
         }
         $this->stdout("  OK   Kunstmaan source path → {$path}\n", Console::FG_GREEN);
         return true;
+    }
+
+    /**
+     * Check #6 (Phase 3 / Plan 03-13 — CONTEXT Discretion): state-table reachability.
+     *
+     * Catches the case where Phase 1 install drifted (table missing or schema-incompatible)
+     * before migrate runs. Cheap, deterministic. FAIL when missing — operator must run
+     * `./craft kunstmaan-migrator/migrate/install` to recreate.
+     */
+    private function checkStateTable(): bool
+    {
+        try {
+            $tableName = '{{%kunstmaanmigrator_state}}';
+            if (!Craft::$app->db->getTableSchema($tableName)) {
+                $this->stderr(
+                    "  FAIL state table '{$tableName}' missing — run "
+                    . "`./craft kunstmaan-migrator/migrate/install` first.\n",
+                    Console::FG_RED,
+                );
+                return false;
+            }
+            // Probe reachability with a no-op SELECT against the table.
+            Craft::$app->db->createCommand("SELECT COUNT(*) FROM {$tableName}")->queryScalar();
+            $this->stdout("  OK   kunstmaanmigrator_state table reachable\n", Console::FG_GREEN);
+            return true;
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL state table check: {$e->getMessage()}\n", Console::FG_RED);
+            return false;
+        }
     }
 }
