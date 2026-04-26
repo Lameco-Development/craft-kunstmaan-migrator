@@ -135,7 +135,7 @@ What v1 had that we are NOT porting in 02.1 (deferred to Phase 3 where they belo
 **Plans:** 9 plans
 
 Plans:
-- [ ] 02.1-01-source-path-infra-PLAN.md — Settings field + KunstmaanSourcePathResolver + Doctor 5th check + --source-strict declarations (SRC-10)
+- [x] 02.1-01-source-path-infra-PLAN.md — Settings field + KunstmaanSourcePathResolver + Doctor 5th check + --source-strict declarations (SRC-10) — completed 2026-04-26
 - [ ] 02.1-02-doctrine-port-PLAN.md — DoctrineEntityParser + DetailTableResolver + 3 VOs + KunstmaanCoreTables (SRC-11, SRC-12)
 - [ ] 02.1-03-discovery-port-PLAN.md — BodyScanColumnFinder + MediaFkScanner + TopologicalOrderer + KnowledgeBase partial port (SRC-13, SRC-14)
 - [ ] 02.1-04-page-structure-scanner-PLAN.md — KunstmaanPageStructureScanner + nikic/php-parser direct require (SRC-05, SRC-06, SRC-07)
