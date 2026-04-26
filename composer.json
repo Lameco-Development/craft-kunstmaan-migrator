@@ -12,8 +12,9 @@
     "require": {
         "php": "^8.3",
         "craftcms/cms": "^5.0",
-        "symfony/yaml": "^6.0 || ^7.0",
-        "guzzlehttp/guzzle": "^7.0"
+        "guzzlehttp/guzzle": "^7.0",
+        "nikic/php-parser": "^5.0",
+        "symfony/yaml": "^6.0 || ^7.0"
     },
     "suggest": {
         "nystudio107/craft-seomatic": "Enables the SEOmatic adapter (^5.1).",
