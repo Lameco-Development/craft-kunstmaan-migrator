@@ -354,7 +354,33 @@ class Plugin extends BasePlugin
      */
     private function resolveSitesMap(): array
     {
-        // Static cache: Plugin::init() is single-shot but defensive against re-entry.
+        // Phase 6 precedence change: prefer the operator-curated mapping.yaml
+        // `sites:` block (when present) over LocalePreflight's language-prefix
+        // guesswork. LocalePreflight::resolve() will happily return language
+        // codes (e.g. nl → 'nl-NL') because it dual-indexes site handles +
+        // languages — but downstream EntryMigrationService::saveEntryForSites
+        // calls `getSiteByHandle()` which can't find a Site whose handle is
+        // the language code (the NL site's handle is 'default', language is
+        // 'nl-NL'). The mapping.yaml sites: block lets the operator (or
+        // compile's auto-derive) lock in the correct handle explicitly.
+        try {
+            $mapping = $this->mappingFile->load();
+            $mappingSites = (array) ($mapping['sites'] ?? []);
+            if ($mappingSites !== []) {
+                $out = [];
+                foreach ($mappingSites as $legacy => $handle) {
+                    if (is_string($legacy) && is_string($handle) && $legacy !== '' && $handle !== '') {
+                        $out[$legacy] = $handle;
+                    }
+                }
+                if ($out !== []) {
+                    return $out;
+                }
+            }
+        } catch (\Throwable) {
+            // Mapping unreadable — fall through to localePreflight detection.
+        }
+
         try {
             $detected = $this->localePreflight->detect();
         } catch (\Throwable) {

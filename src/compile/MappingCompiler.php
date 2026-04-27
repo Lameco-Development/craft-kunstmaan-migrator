@@ -98,12 +98,28 @@ final class MappingCompiler extends Component
         // Group accepted column rows by targetEntryType.
         $byEntryType = $this->groupByEntryType($accepted);
 
-        // Build sections[]: one entry per distinct targetEntryType.
+        // Build sections[]: one entry per distinct targetEntryType. When the
+        // LLM produced an accepted nodeClass row that names a `targetSection`
+        // distinct from the entry-type handle, use it — Craft sections and
+        // entry types are NOT the same string in general (e.g. entry-type
+        // `casePage` lives in section `casePages`). Without this distinction,
+        // EntryMigrationService::saveEntryForSites looks up section=casePage
+        // and fails because `casePage` is an entry-type handle, not a
+        // section handle.
+        $entryTypeToSection = [];
+        foreach ($acceptedNodeClassByFqcn as $row) {
+            $et  = (string) ($row['targetEntryType'] ?? '');
+            $sec = (string) ($row['targetSection'] ?? '');
+            if ($et !== '' && $sec !== '') {
+                $entryTypeToSection[$et] = $sec;
+            }
+        }
         $sections = [];
         foreach (array_keys($byEntryType) as $entryType) {
+            $sectionHandle = $entryTypeToSection[$entryType] ?? $entryType;
             $sections[$entryType] = [
                 'entryType' => $entryType,
-                'section'   => $entryType, // default: section handle == entryType handle (operator can rename)
+                'section'   => $sectionHandle,
             ];
         }
         ksort($sections);
@@ -138,15 +154,19 @@ final class MappingCompiler extends Component
             }
 
             // Phase 6: prefer the LLM's accepted nodeClass row when present.
-            // Falls back to majority-vote across accepted column rows otherwise
-            // (operators who ran analyze with --no-ai, or whose entity step
-            // proposed needs-review and they haven't promoted yet).
-            $sectionKey = '';
+            // The LLM emits BOTH targetEntryType AND targetSection — they
+            // are NOT the same thing in Craft (entryType lives in a section,
+            // and the section handle is what Craft looks up for save). Use
+            // both when available; fall back to majority-vote across accepted
+            // column rows otherwise (operators who ran analyze with --no-ai,
+            // or whose entity step proposed needs-review and they haven't
+            // promoted yet).
+            $entryTypeForFqcn = '';
             $nodeClassRow = $acceptedNodeClassByFqcn[$fqcn] ?? null;
             if ($nodeClassRow !== null) {
-                $sectionKey = (string) ($nodeClassRow['targetEntryType'] ?? '');
+                $entryTypeForFqcn = (string) ($nodeClassRow['targetEntryType'] ?? '');
             }
-            if ($sectionKey === '') {
+            if ($entryTypeForFqcn === '') {
                 $entryTypeCounts = [];
                 foreach ($tableRows as $r) {
                     $et = (string) ($r['targetEntryType'] ?? '');
@@ -159,8 +179,13 @@ final class MappingCompiler extends Component
                     $skipped[] = $fqcn . ' (no targetEntryType assigned on any accepted column or nodeClass row)';
                     continue;
                 }
-                $sectionKey = $this->majorityKey($entryTypeCounts);
+                $entryTypeForFqcn = $this->majorityKey($entryTypeCounts);
             }
+            // sectionKey is the LOOKUP KEY into the sections[] map; by
+            // convention sections[] is keyed by entry-type handle (the
+            // sections[entryTypeForFqcn] entry's `.section` field carries
+            // the real Craft section handle separately).
+            $sectionKey = $entryTypeForFqcn;
 
             // Build fields[targetHandle] from accepted rows whose targetEntryType matches.
             $sectionRows = array_values(array_filter(
