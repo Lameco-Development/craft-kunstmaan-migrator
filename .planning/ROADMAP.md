@@ -316,12 +316,12 @@ Plans:
 - [x] 08-08-PLAN.md — Settings + AnalyzeController flags + 3 proposer dispatch steps (PROP-04)
 - [x] 08-09-PLAN.md — MappingCompiler compile passes + counter wiring (TAX-01, PROP-05)
 - [x] 08-10-PLAN.md — MigrationFilters reachability auto-include (TAX-03)
-- [ ] 08-11-PLAN.md — TaxonomyMigrationService verbatim port (TAX-06, TAX-07)
+- [x] 08-11-PLAN.md — TaxonomyMigrationService verbatim port (TAX-06, TAX-07)
 - [ ] 08-12-PLAN.md — Plugin DI + MigrateController bolt-on/sub-action (TAX-08)
-- [ ] 08-13-PLAN.md — _settings.twig AI H2 group (PROP-04 polish)
+- [x] 08-13-PLAN.md — _settings.twig AI H2 group (PROP-04 polish)
 - [x] 08-14-PLAN.md — Doctor 11th check ext_translations (TAX-09)
 - [ ] 08-15-PLAN.md — TaxonomyMigrationTest integration (TAX-10)
-- [ ] 08-16-PLAN.md — MappingCompiler taxonomies/layout/dataProviders unit tests (TAX-10, PROP-06)
+- [x] 08-16-PLAN.md — MappingCompiler taxonomies/layout/dataProviders unit tests (TAX-10, PROP-06)
 - [ ] 08-17-PLAN.md — RECONCILIATION.md + CHANGELOG known-omissions + REQUIREMENTS codification (DOC-01, DOC-02)
 
 > Note: plan numbers 08-06 and 08-07 are intentionally absent. The three proposer additions originally drafted as 08-05/06/07 were merged into 08-05 (single plan, 3 tasks) because all three modify the same file (`src/analyze/LlmClassifier.php`) and same-wave plans require zero file overlap.
