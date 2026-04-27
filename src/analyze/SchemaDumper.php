@@ -187,8 +187,12 @@ final class SchemaDumper extends Component
         $needles = [];
         foreach ($filters->entities as $e) {
             // 'NewsPage' → 'news_page' (Kunstmaan table convention).
-            $snake = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $e) ?? $e);
-            $needles[] = 'kuma_' . $snake;
+            // The pattern is a literal so preg_replace can only return null
+            // if PCRE itself is broken. The `?? $e` fallback documents that
+            // and prevents a silent type-juggle to null on the strtolower call.
+            $snake = preg_replace('/(?<!^)[A-Z]/', '_$0', $e);
+            assert(is_string($snake), 'preg_replace returned null for literal snake-case pattern');
+            $needles[] = 'kuma_' . strtolower($snake ?? $e);
         }
         $out = [];
         foreach ($tables as $t) {

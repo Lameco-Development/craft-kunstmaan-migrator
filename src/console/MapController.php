@@ -695,7 +695,12 @@ class MapController extends Controller
 
         $table = (string) ($row['table'] ?? '');
         foreach ($filters->entities as $e) {
-            $snake = strtolower(preg_replace('/(?<!^)[A-Z]/', '_$0', $e) ?? $e);
+            // Pattern is a literal — preg_replace can only return null if
+            // PCRE itself is broken. Assert documents the invariant; the
+            // `?? $e` keeps the strtolower call type-safe regardless.
+            $replaced = preg_replace('/(?<!^)[A-Z]/', '_$0', $e);
+            assert(is_string($replaced), 'preg_replace returned null for literal snake-case pattern');
+            $snake = strtolower($replaced ?? $e);
             if (str_starts_with($table, 'kuma_' . $snake)) {
                 return true;
             }
