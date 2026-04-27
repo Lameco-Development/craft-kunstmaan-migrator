@@ -168,6 +168,69 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
+        // Step 4.6 (Phase 7): synthetic page-part emitter for content-only pages.
+        // Detects Page FQCNs that have NO real page-parts AND DO have content-like
+        // columns on their source table (longtext content/body/intro, banner_*, etc.)
+        // — emits a synthetic kind=pagePart row with pagePartClass='__implicit_content__'
+        // so the downstream proposePagePartBlocks LLM step proposes a Matrix
+        // wrapping just like it does for real page-parts. The synthetic rows
+        // carry their content columns in `fields` so the LLM has data to propose
+        // against. Operator-curated decisions on these rows survive re-analyze
+        // via the structural-only merge identity tuple (W1 fix).
+        $fqcnsWithRealPageParts = [];
+        foreach ($pagePartProposals as $r) {
+            $fqcnsWithRealPageParts[(string) ($r['parentPageClass'] ?? '')] = true;
+        }
+        $contentLikeNamePatterns = '/^(content|body|intro|text|description|banner_|header_|hero_)/i';
+        $contentLikeSqlTypes = ['longtext', 'mediumtext', 'text'];
+        $columnsByTable = (array) ($schemaDump['columns'] ?? []);
+        $implicitCount = 0;
+        foreach ($pageStructure as $pageFqcn => $pageRecord) {
+            if (!is_array($pageRecord)) { continue; }
+            $shortFqcn = $this->shortClassName((string) $pageFqcn);
+            if (isset($fqcnsWithRealPageParts[$shortFqcn])) { continue; }
+            $sourceTable = (string) ($pageRecord['tableName'] ?? '');
+            if ($sourceTable === '') { continue; }
+            $tableCols = (array) ($columnsByTable[$sourceTable] ?? []);
+            $contentColumns = [];
+            foreach ($tableCols as $c) {
+                if (!is_array($c)) { continue; }
+                $colName = (string) ($c['column'] ?? '');
+                $sqlType = strtolower((string) ($c['sqlType'] ?? ''));
+                if ($colName === '' || $sqlType === '') { continue; }
+                $isContentSqlType = in_array($sqlType, $contentLikeSqlTypes, true);
+                $isContentName = (bool) preg_match($contentLikeNamePatterns, $colName);
+                if ($isContentSqlType || $isContentName) {
+                    $contentColumns[] = [
+                        'sourceProperty' => $colName,
+                        'targetHandle'   => '',
+                        'handler'        => '',
+                    ];
+                }
+            }
+            if ($contentColumns === []) { continue; }
+            $columnList = implode(', ', array_map(static fn(array $c): string => (string) $c['sourceProperty'], $contentColumns));
+            $pagePartProposals[] = $plugin->mappingFile->buildPagePartRow(
+                pagePartClass: '__implicit_content__',
+                sourceTable: $sourceTable,
+                parentPageClass: $shortFqcn,
+                context: 'main',
+                targetEntryType: '',
+                targetMatrixField: '',
+                targetBlockType: '',
+                fields: $contentColumns,
+                confidence: 'medium',
+                rationale: "Page {$shortFqcn} has no real page-parts but carries content-like columns ({$columnList}). Propose a Matrix wrapping so the page's primary content actually migrates instead of being silently dropped.",
+            );
+            $implicitCount++;
+        }
+        if ($implicitCount > 0) {
+            $this->stdout(
+                "  OK   implicit-content emitter produced {$implicitCount} synthetic page-part proposals (content-only Pages)\n",
+                Console::FG_GREEN,
+            );
+        }
+
         // Step 5: pageStructure.json write (atomic JSON; sibling of schema-dump.json).
         $pageStructurePath = $storageDir . '/pageStructure.json';
         if (!$plugin->mappingFile->writeAtomicJson($pageStructurePath, $pageStructure)) {

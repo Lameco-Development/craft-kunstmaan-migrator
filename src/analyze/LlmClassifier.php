@@ -592,12 +592,26 @@ final class LlmClassifier extends Component
 
         $partLines = [];
         foreach ($chunk as $row) {
-            $partLines[] = sprintf(
+            $base = sprintf(
                 '- pagePartClass=%s, parentPageClass=%s, context=%s',
                 (string) ($row['pagePartClass'] ?? '?'),
                 (string) ($row['parentPageClass'] ?? '?'),
                 (string) ($row['context'] ?? '?'),
             );
+            // Phase 7: synthetic implicit-content rows carry their candidate
+            // source columns in `fields` so the LLM has data to propose
+            // against. For real page-parts `fields` is typically empty.
+            $fields = (array) ($row['fields'] ?? []);
+            if ($fields !== []) {
+                $colNames = array_filter(array_map(
+                    static fn($f): string => is_array($f) ? (string) ($f['sourceProperty'] ?? '') : '',
+                    $fields,
+                ), static fn(string $s): bool => $s !== '');
+                if ($colNames !== []) {
+                    $base .= ', sourceColumns=[' . implode(', ', $colNames) . ']';
+                }
+            }
+            $partLines[] = $base;
         }
 
         $userParts = [];
