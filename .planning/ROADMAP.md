@@ -14,6 +14,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 | 3 | ETL Pipeline & Field Handlers | Extract → Transform → Load → Finalize stages with topological ordering, per-entry atomic load, idempotent re-runs, JIT assets (with `--preload-assets`), the six built-in field handlers, and CKEditor token rewrite. | ETL-01..07, FH-01..04, FIN-01..02 | 4 | no |
 | 4 | Adapters, Verify & Settings | Optional SEOmatic + Retour adapters (runtime-detected, not composer-required), `verify` parity gate (counts + optional URL spot-check) producing a timestamped report, CP Settings page, console verbosity, rehearsal report artifact. | ADP-01..03, VER-01..03, CFG-01..03 | 4 | yes |
 | 5 | Tests, Rehearsal & Release | Transform-stage characterization fixtures from a real dump, full unit suite green, CI workflow running validate + PHPUnit + plugin-load smoke test, rehearsal pass against the CQM dump, release checklist + tag. | TST-01..04 | 4 | no |
+| 8 | Taxonomies & AI Proposer Coverage | Port v1's `TaxonomyMigrationService` and add the missing `taxonomies:` mapping block (analyze proposer + compile + extract + load); extend the analyze AI proposer to cover `dataProviders` and page-builder layout (`headerBlock` / `bodyWrapBlock` / `bodyColumn`) so operator hand-authoring shrinks; document remaining out-of-scope Kunstmaan surfaces (Forms, Search, Menus, Users, asset folder hierarchy, slug-history) in CHANGELOG. Closes the "useful as a plugin" gap before v1.0 tag. | TAX-01..0N, PROP-01..0N (codified during plan-phase) | TBD | no |
 
 ### Phase 1: Foundation & Connectivity
 
@@ -276,6 +277,36 @@ Plans:
 - [x] 05-07-ci-smoke-job-PLAN.md — .github/workflows/ci.yml splits into unit (test + coverage gate + clover artifact) and smoke (scratch-Craft + path-repo + ./craft kunstmaan-migrator/doctor exit 0); needs: unit gates smoke (TST-03 / D-15..D-18)
 - [x] 05-08-release-checklist-changelog-reconciliation-PLAN.md — .planning/RELEASE-CHECKLIST.md (8 steps; D-25 step 8 omitted per verified Lameco convention); CHANGELOG.md at repo root in Keep-a-Changelog format; Phase 5 RECONCILIATION.md; REQUIREMENTS.md TST-01..04 flipped to [x] (TST-04 / D-25, D-26)
 
+### Phase 8: Taxonomies & AI Proposer Coverage
+
+**Goal:** The plugin migrates Kunstmaan taxonomy entities (NewsCategory / CaseStudyCategory / employee-style flat-table standalones) into Craft category groups or sections, and the analyze AI proposer covers two surfaces it currently leaves to the operator: `dataProviders` block typing and per-page Matrix layout (`headerBlock` / `bodyWrapBlock` / `bodyColumn`). Closes the gaps surveyed after Phase 7 part 2 — these together are what makes the plugin useful for any real Kunstmaan project before the v1.0 tag.
+
+**Why this phase exists:** A post-Phase-7 coverage survey (see commit history `5f547cb..` and the CONTEXT.md gap analysis) showed three gaps between what Kunstmaan supports and what the v2 mapper handles:
+
+1. **Taxonomies** — v1's `TaxonomyMigrationService` (443 LOC) and its `taxonomies:` mapping block were never ported. Doctrine standalone entities (categories, tags) silently fail to migrate.
+2. **dataProviders proposer** — `TransformService` already dispatches `mapping.dataProviders[]` (B9 wiring), but `MappingCompiler` doesn't propose them. Operator must hand-author every entry.
+3. **Page-builder layout proposer** — `headerBlock` / `bodyWrapBlock` / `bodyColumn` are honored by transform but never proposed by analyze. Phase 7's implicit-content emitter is the closest precedent and the same shape of work.
+
+**Requirements:** TAX-01..0N + PROP-01..0N (TBD — codified during `/gsd-plan-phase 8`).
+
+**Success criteria (vision — refine in CONTEXT.md):**
+
+*Taxonomies:*
+1. `taxonomies:` mapping block accepted by `MappingFile` / `MappingAuditor` / `MappingCompiler`. Per-FQCN spec at minimum: `{ sourceTable, section, entryType, fields, translatableFields[]?, action: SKIP? }`.
+2. Analyze AI proposer emits taxonomy candidates: scans Doctrine entities NOT reachable from `kuma_nodes` (no node join), classifies as taxonomy when it has translation rows in `ext_translations` or carries a `name`/`slug` shape.
+3. New `TaxonomyMigrationService` (port v1's 443 LOC; reshape only where v2 architectural ground rules require: single `mapping.yaml`, atomic-always-on, runtime-zero-AI). Site-agnostic state rows keyed by FQCN-slug.
+4. End-to-end test (a la Phase 7's `TransformImplicitContentTest`) drives one taxonomy entity through analyze → compile → load and asserts a Craft entry exists.
+
+*AI proposers:*
+5. `dataProviders` proposer: for any extracted page-part FQCN whose source table doesn't match a node-attached page-part, the LLM proposes a `(target, configFields)` shape against the Matrix catalog.
+6. Page-builder layout proposer: for each accepted `nodeClass`, the LLM proposes `headerBlock` / `bodyWrapBlock` / `bodyColumn` when the parent entry-type's Matrix catalog suggests one. Operator-set values always win (skip-existing).
+7. Compile surfaces a counter for each proposer (`dataProvidersEmitted`, `headerBlocksEmitted`, etc.) the same way Phase 7 surfaced `implicitBlocksEmitted`.
+
+*Documentation:*
+8. CHANGELOG.md "Known omissions in v1.0" section listing Kunstmaan surfaces this migrator deliberately does NOT cover: FormBundle, SearchBundle, MenuBundle, user accounts / roles / ACLs, `kuma_translations` (i18n string catalog), media folder hierarchy, asset metadata (alt text / focal point), slug history (Retour-style mining beyond `kuma_redirects`).
+
+**Plans:** TBD (codified during `/gsd-plan-phase 8` — rough breakdown lands in CONTEXT.md).
+
 ---
 
 ## Dependencies
@@ -284,6 +315,7 @@ Plans:
 - Phase 3 depends on Phase 2 (needs `mapping.yaml` and filter spec).
 - Phase 4 can start after Phase 3 begins — adapter and verify work is largely independent of ETL details.
 - Phase 5 depends on Phase 3 + Phase 4 being feature-complete.
+- Phase 8 depends on Phase 3 (Load stage + Asset/SEO/Redirect migration shape) + Phase 02.1 (KnowledgeBase + DoctrineEntityParser → fed to LLM for new proposers).
 
 ## Out-of-milestone (deferred)
 
