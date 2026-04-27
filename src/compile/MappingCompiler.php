@@ -56,9 +56,17 @@ final class MappingCompiler extends Component
     /**
      * Compile v1-shaped runtime structures from v2 proposals + page structure.
      *
-     * @param array<string, mixed> $mapping        Existing mapping.yaml contents (must contain `proposals` key)
-     * @param array<string, mixed> $pageStructure  pageStructure.json contents (FQCN-keyed)
-     * @param array<string, string> $sites         Operator-curated locale → Craft-site-handle map
+     * @param array<string, mixed>  $mapping           Existing mapping.yaml contents (must contain `proposals` key)
+     * @param array<string, mixed>  $pageStructure     pageStructure.json contents (FQCN-keyed)
+     * @param array<string, string> $sites             Operator-curated locale → Craft-site-handle map
+     * @param ?string               $defaultEntryType  Phase 6 fallback — Settings::defaultEntryType. When non-null,
+     *                                                 FQCNs that have neither an accepted nodeClass row nor any
+     *                                                 column-row targetEntryType land on this entry type instead
+     *                                                 of being skipped (the row dies at load time today). Should
+     *                                                 be a real Craft entry-type handle.
+     * @param ?string               $defaultBlockType  Phase 6 fallback — Settings::defaultBlockType. (Reserved for
+     *                                                 page-part fallback; not used in this signature today but
+     *                                                 surfaced in the compile report for symmetry / operator visibility.)
      * @return array{
      *   proposals: list<array<string, mixed>>,
      *   nodeClasses: array<string, array<string, mixed>>,
@@ -69,12 +77,18 @@ final class MappingCompiler extends Component
      *     sectionsEmitted: int,
      *     fieldsEmittedPerSection: array<string, int>,
      *     skippedNodeClasses: list<string>,
+     *     fallbackEntryTypeApplied: list<string>,
      *     warnings: list<string>,
      *   },
      * }
      */
-    public function compile(array $mapping, array $pageStructure, array $sites): array
-    {
+    public function compile(
+        array $mapping,
+        array $pageStructure,
+        array $sites,
+        ?string $defaultEntryType = null,
+        ?string $defaultBlockType = null,
+    ): array {
         $proposals = (array) ($mapping['proposals'] ?? []);
 
         // Phase 6 primary path: harvest accepted kind=nodeClass rows. These are
@@ -130,6 +144,7 @@ final class MappingCompiler extends Component
         $skipped = [];
         $warnings = [];
         $fieldsPerSection = [];
+        $fallbackEntryTypeApplied = [];
 
         foreach ($pageStructure as $fqcn => $pageInfo) {
             if (!is_string($fqcn) || !is_array($pageInfo)) {
@@ -176,10 +191,19 @@ final class MappingCompiler extends Component
                     $entryTypeCounts[$et] = ($entryTypeCounts[$et] ?? 0) + 1;
                 }
                 if ($entryTypeCounts === []) {
-                    $skipped[] = $fqcn . ' (no targetEntryType assigned on any accepted column or nodeClass row)';
-                    continue;
+                    // Phase 6 fallback: if Settings::defaultEntryType is set, route this
+                    // FQCN there so it migrates into a generic catch-all instead of
+                    // failing at load time. Otherwise skip as before.
+                    if ($defaultEntryType !== null && $defaultEntryType !== '') {
+                        $entryTypeForFqcn = $defaultEntryType;
+                        $fallbackEntryTypeApplied[] = $fqcn;
+                    } else {
+                        $skipped[] = $fqcn . ' (no targetEntryType assigned on any accepted column or nodeClass row; set Settings::defaultEntryType to enable graceful fallback)';
+                        continue;
+                    }
+                } else {
+                    $entryTypeForFqcn = $this->majorityKey($entryTypeCounts);
                 }
-                $entryTypeForFqcn = $this->majorityKey($entryTypeCounts);
             }
             // sectionKey is the LOOKUP KEY into the sections[] map; by
             // convention sections[] is keyed by entry-type handle (the
@@ -257,12 +281,15 @@ final class MappingCompiler extends Component
             'sections'     => $sections,
             'sites'        => $sitesOut,
             '_compileReport' => [
-                'nodeClassesEmitted'      => count($nodeClasses),
-                'sectionsEmitted'         => count($sections),
-                'fieldsEmittedPerSection' => $fieldsPerSection,
-                'skippedNodeClasses'      => $skipped,
-                'autoAssignedTargets'     => $autoAssigned,
-                'warnings'                => $warnings,
+                'nodeClassesEmitted'        => count($nodeClasses),
+                'sectionsEmitted'           => count($sections),
+                'fieldsEmittedPerSection'   => $fieldsPerSection,
+                'skippedNodeClasses'        => $skipped,
+                'autoAssignedTargets'       => $autoAssigned,
+                'fallbackEntryTypeApplied'  => $fallbackEntryTypeApplied,
+                'fallbackEntryTypeUsed'     => $defaultEntryType,
+                'fallbackBlockTypeUsed'     => $defaultBlockType,
+                'warnings'                  => $warnings,
             ],
         ];
     }

@@ -53,6 +53,23 @@ class Settings extends Model
     public ?int    $defaultMaxPerEntity  = null;
     public bool    $dryRunDefault        = true;
 
+    /**
+     * Phase 6 — graceful-fallback handles for the AI mapping flow. When the
+     * entity-level LLM step returns low/empty confidence for a given Kunstmaan
+     * Page FQCN (or page-part), the compiler falls back to these handles
+     * instead of letting the row die at load time. The compiled mapping flags
+     * the fallback in its compile report so the operator can review.
+     *
+     * Both null by default → keeps the existing fail-loud behavior. Set to a
+     * real Craft entry-type / block-type handle to opt in to graceful fallback.
+     *
+     * Typical values for cqm-style projects: defaultEntryType="contentPage",
+     * defaultBlockType="textContentBlock" (or whatever generic catch-all the
+     * project's Craft schema provides).
+     */
+    public ?string $defaultEntryType     = null;
+    public ?string $defaultBlockType     = null;
+
     // Phase 4 / D-60 — verify-stage tolerances. Defaults: ±1% count tolerance,
     // 5% URL-diff threshold. CLI `--count-tolerance` overrides at controller seam.
     public float $verifyCountTolerance = 0.01;
@@ -203,7 +220,7 @@ class Settings extends Model
             [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
-            [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince', 'kunstmaanSourcePath'], 'string'],
+            [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince', 'kunstmaanSourcePath', 'defaultEntryType', 'defaultBlockType'], 'string'],
             [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
             [['defaultEntities', 'defaultLocales', 'localeMap'], 'safe'],
             [['dryRunDefault'], 'boolean'],

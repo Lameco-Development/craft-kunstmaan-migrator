@@ -180,6 +180,86 @@ final class CraftKnowledgeBase extends Component
         return $out;
     }
 
+    /**
+     * Phase 6 — enumerate every Matrix field in the project + the block-type
+     * entry handles each Matrix accepts. Drives the page-part LLM proposer
+     * (proposePagePartBlocks) so the AI picks (matrixField, blockType) pairs
+     * that actually exist together.
+     *
+     * @return array<string, list<string>>  matrixFieldHandle → list of blockType handles
+     */
+    public function matrixFieldCatalog(): array
+    {
+        $out = [];
+        foreach (Craft::$app->fields->getAllFields() as $field) {
+            if (!($field instanceof \craft\fields\Matrix)) {
+                continue;
+            }
+            $handle = (string) $field->handle;
+            if ($handle === '') {
+                continue;
+            }
+            $blocks = [];
+            foreach ($field->getEntryTypes() as $bt) {
+                $bh = (string) $bt->handle;
+                if ($bh !== '') {
+                    $blocks[] = $bh;
+                }
+            }
+            // Multiple Matrix fields can share a handle across different entry types
+            // (rare but possible) — merge their block-type lists.
+            $out[$handle] = array_values(array_unique(array_merge(
+                $out[$handle] ?? [],
+                $blocks,
+            )));
+        }
+        ksort($out);
+        return $out;
+    }
+
+    /**
+     * Render the Matrix catalog as LLM-prompt markdown. Keep it tight — one
+     * line per (matrixField → blockTypes) pair so prompt token cost stays
+     * bounded as projects grow.
+     */
+    public function renderMatrixCatalogMarkdown(): string
+    {
+        $catalog = $this->matrixFieldCatalog();
+        if ($catalog === []) {
+            return '_No Matrix fields configured in this Craft install._';
+        }
+        $out = [];
+        $out[] = '# Craft Matrix-field block catalog';
+        $out[] = '';
+        $out[] = '_For page-part proposals: pick a `targetMatrixField` and a `targetBlockType` from the same row._';
+        $out[] = '';
+        foreach ($catalog as $matrixHandle => $blocks) {
+            sort($blocks);
+            $out[] = sprintf('- **%s**: %s', $matrixHandle, implode(', ', $blocks));
+        }
+        return implode("\n", $out);
+    }
+
+    /**
+     * Flat list of all block-type handles across every Matrix field. Used by
+     * the page-part LLM proposer's closed-set validation (the LLM may not
+     * invent block-type handles).
+     *
+     * @return list<string>
+     */
+    public function allBlockTypeHandles(): array
+    {
+        $catalog = $this->matrixFieldCatalog();
+        $out = [];
+        foreach ($catalog as $blocks) {
+            foreach ($blocks as $b) {
+                $out[] = $b;
+            }
+        }
+        sort($out);
+        return array_values(array_unique($out));
+    }
+
     /** Trim Craft\\fields\\PlainText → PlainText for compact prompt formatting. */
     private function shortClassName(string $fqcn): string
     {

@@ -132,8 +132,17 @@ class CompileController extends Controller
             $sitesSource,
         ), Console::FG_GREEN);
 
-        // 5. Compile.
-        $compiled = $plugin->mappingCompiler->compile($mapping, $pageStructure, $sites);
+        // 5. Compile. Pass Settings::defaultEntryType / defaultBlockType so the
+        //    compiler can apply graceful fallback for FQCNs / page-parts the AI
+        //    could not confidently map (Phase 6, opt-in by the operator).
+        $settings = $plugin->getSettings();
+        $compiled = $plugin->mappingCompiler->compile(
+            $mapping,
+            $pageStructure,
+            $sites,
+            $settings->defaultEntryType ?: null,
+            $settings->defaultBlockType ?: null,
+        );
         $report = $compiled['_compileReport'];
 
         if ((int) ($report['autoAssignedTargets'] ?? 0) > 0) {
@@ -141,6 +150,31 @@ class CompileController extends Controller
                 "  OK   auto-assigned targetEntryType on %d previously-empty proposal rows (basename heuristic)\n",
                 (int) $report['autoAssignedTargets'],
             ), Console::FG_GREEN);
+        }
+        $fallbackApplied = (array) ($report['fallbackEntryTypeApplied'] ?? []);
+        if ($fallbackApplied !== []) {
+            $fallbackTo = (string) ($report['fallbackEntryTypeUsed'] ?? '?');
+            $this->stdout(sprintf(
+                "  OK   fallback applied: %d FQCNs routed to Settings::defaultEntryType=%s\n",
+                count($fallbackApplied),
+                $fallbackTo,
+            ), Console::FG_GREEN);
+            foreach ($fallbackApplied as $fqcn) {
+                $this->stdout("        - {$fqcn}\n", Console::FG_GREY);
+            }
+        } elseif ($report['fallbackEntryTypeUsed'] === null) {
+            // Operator hasn't opted in to graceful fallback. If we skipped any
+            // FQCNs for "no targetEntryType", nudge them toward the setting.
+            $skippedNoTarget = array_filter(
+                (array) ($report['skippedNodeClasses'] ?? []),
+                static fn(string $s): bool => str_contains($s, 'no targetEntryType assigned'),
+            );
+            if ($skippedNoTarget !== []) {
+                $this->stdout(sprintf(
+                    "  INFO %d FQCN(s) skipped for missing targetEntryType. Set Settings::defaultEntryType (e.g. 'contentPage') to route them to a generic catch-all.\n",
+                    count($skippedNoTarget),
+                ), Console::FG_GREY);
+            }
         }
         $this->stdout(sprintf(
             "  OK   compile produced %d nodeClasses + %d sections + %d sites\n",

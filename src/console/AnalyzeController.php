@@ -338,6 +338,82 @@ class AnalyzeController extends Controller
             }
         }
 
+        // Step 7.6 (Phase 6): page-part LLM proposer. For each kind=pagePart row
+        // the page-part emitter produced (one per pagePartClass × parentPage ×
+        // context), ask the LLM to pick a (targetMatrixField, targetBlockType)
+        // pair from the Craft Matrix-field catalog. Closed-set validated — the
+        // LLM cannot invent handles. Without this step page-part rows always
+        // landed status:needs-review with empty target (D-35 historical default,
+        // since no deterministic heuristic exists). With it, AI-promoted page
+        // parts get the same D-02 confidence-tier → status mapping as nodeClass
+        // and column rows. Skipped when --no-ai or no API key (page-part rows
+        // remain needs-review for operator hand-fill via map).
+        $matrixCatalog = $plugin->craftKnowledgeBase->matrixFieldCatalog();
+        $skipPagePartLlm = $this->noAi
+            || $apiKeyForEntityStep === ''
+            || $pagePartProposals === []
+            || $matrixCatalog === [];
+        if ($skipPagePartLlm) {
+            $reason = $this->noAi
+                ? '--no-ai set'
+                : ($apiKeyForEntityStep === ''
+                    ? 'ANTHROPIC_API_KEY not set'
+                    : ($pagePartProposals === [] ? 'no page-parts emitted' : 'no Matrix fields configured in Craft'));
+            $this->stdout(
+                "  WARN page-part LLM skipped ({$reason}) — pagePart rows remain status:needs-review\n",
+                Console::FG_YELLOW,
+            );
+        } else {
+            try {
+                // Reuse the legacy + craft KB markdown built for the entity-level
+                // step. Append the Matrix catalog markdown so the LLM sees the
+                // canonical (matrixField → blocks) listing in addition to the
+                // entry-type catalog.
+                $kbCraftWithMatrixMd = $kbCraftMd . "\n\n" . $plugin->craftKnowledgeBase->renderMatrixCatalogMarkdown();
+                $this->stdout(
+                    "  ... page-part LLM batching " . count($pagePartProposals) . " page parts (chunks of 8) against "
+                    . count($matrixCatalog) . " Matrix fields\n",
+                    Console::FG_GREY,
+                );
+                $ppProgressStarted = false;
+                $pagePartProposals = $plugin->llmClassifier->proposePagePartBlocks(
+                    $pagePartProposals,
+                    $matrixCatalog,
+                    $kbLegacyMd,
+                    $kbCraftWithMatrixMd,
+                    function (int $i, int $n, int $partsInChunk, int $proposalsReturned, float $sec) use (&$ppProgressStarted): void {
+                        if (!$ppProgressStarted) {
+                            Console::startProgress(0, $n, '  ... LLM-pagePart ');
+                            $ppProgressStarted = true;
+                        }
+                        Console::updateProgress(
+                            $i,
+                            $n,
+                            sprintf(
+                                '  ... LLM-pagePart [chunk %d/%d parts=%d→props=%d %.1fs] ',
+                                $i, $n, $partsInChunk, $proposalsReturned, $sec,
+                            ),
+                        );
+                    },
+                );
+                if ($ppProgressStarted) {
+                    Console::endProgress();
+                }
+                $matchedPp = count(array_filter(
+                    $pagePartProposals,
+                    static fn(array $p): bool => (string) ($p['targetBlockType'] ?? '') !== '',
+                ));
+                $this->stdout(
+                    "  OK   page-part LLM produced " . count($pagePartProposals) . " proposals "
+                    . "({$matchedPp} with non-empty targetBlockType)\n",
+                    Console::FG_GREEN,
+                );
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL page-part LLM: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+        }
+
         // Step 8: LLM batch proposals for residuals (skip when --no-ai or key missing).
         // Phase 02.1 (B2 fix): KB markdown placeholders replaced with rendered Pages +
         // PageParts markdown — but only via a v1-shaped MAPPING ADAPTER built from v2's
@@ -419,6 +495,15 @@ class AnalyzeController extends Controller
             $rows[] = $plugin->mappingFile->buildRow($p, $this->statusForLlm($p, $skipLlm));
         }
         foreach ($pagePartProposals as $p) {
+            // Phase 6: AI-promoted page parts use the same D-02 confidence-tier
+            // mapping as nodeClass + column rows. Page-part rows that came back
+            // with a non-empty targetBlockType + a valid confidence get promoted
+            // accordingly; rows with empty targetBlockType (or the AI step was
+            // skipped) keep their default needs-review status from the emitter.
+            $hasAiTarget = ((string) ($p['targetBlockType'] ?? '')) !== '';
+            if ($hasAiTarget) {
+                $p['status'] = $this->statusForLlm($p, false);
+            }
             $rows[] = $p;
         }
         // Phase 6: persist entity-level (kind=nodeClass) proposals via the same
