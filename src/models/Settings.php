@@ -87,6 +87,12 @@ class Settings extends Model
     public bool $seoEnabled = true;
     public bool $retourEnabled = true;
 
+    // Phase 8 / D-14 — AI proposer scope gates. Defaults to true (proposers run);
+    // flip to false to disable per Settings persistence. CLI --no-layout / --no-providers
+    // bypass per-run.
+    public bool $proposeLayout = true;
+    public bool $proposeProviders = true;
+
     public function behaviors(): array
     {
         return [
@@ -225,7 +231,8 @@ class Settings extends Model
             [['defaultEntities', 'defaultLocales', 'localeMap'], 'safe'],
             [['dryRunDefault'], 'boolean'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
-            [['seoEnabled', 'retourEnabled'], 'boolean'],
+            // Phase 8 / D-14 — AI proposer scope gates (proposeLayout, proposeProviders).
+            [['seoEnabled', 'retourEnabled', 'proposeLayout', 'proposeProviders'], 'boolean'],
             // Phase 4 / D-60 — verify-stage tolerances pinned to [0, 1].
             [['verifyCountTolerance', 'verifyUrlDiffThreshold'], 'number', 'min' => 0, 'max' => 1],
             // Phase 4 / D-57 — adapter source-table overrides.
