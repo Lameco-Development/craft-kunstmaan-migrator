@@ -117,6 +117,27 @@
     allowDelete: true,
 }) }}
 
+<h2>{{ 'AI'|t('kunstmaan-migrator') }}</h2>
+
+{# Phase 8 / D-14 — AI proposer scope gates. Defaults to ON (proposers run);
+   flip OFF to disable per Settings persistence. CLI --no-layout / --no-providers
+   bypass per-run. The blanket --no-ai flag still disables every LLM call. #}
+{{ forms.lightswitchField({
+    label: 'Propose page-builder layout (header / body-wrap / body-column)'|t('kunstmaan-migrator'),
+    id: 'proposeLayout',
+    name: 'proposeLayout',
+    on: settings.proposeLayout,
+    instructions: 'When ON, analyze proposes Matrix layout slots (headerBlock / bodyWrapBlock / bodyColumn) for each accepted nodeClass. Heuristic-gated by Matrix catalog. CLI --no-layout bypasses per-run.'|t('kunstmaan-migrator'),
+}) }}
+
+{{ forms.lightswitchField({
+    label: 'Propose dataProviders (orphan page-parts)'|t('kunstmaan-migrator'),
+    id: 'proposeProviders',
+    name: 'proposeProviders',
+    on: settings.proposeProviders,
+    instructions: 'When ON, analyze proposes mapping.dataProviders rows for orphan page-parts (no kuma_page_part_refs row + sourceTable not joined to kuma_node_versions). CLI --no-providers bypasses per-run.'|t('kunstmaan-migrator'),
+}) }}
+
 <h2>{{ 'Fallback'|t('kunstmaan-migrator') }}</h2>
 
 {# Phase 6 — graceful fallback for AI-uncertain mappings. Three-state via the
