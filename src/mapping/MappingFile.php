@@ -228,6 +228,60 @@ final class MappingFile extends Component
     }
 
     /**
+     * Build a kind=taxonomy row (Phase 8 / D-07) representing the LLM's entity-level
+     * decision: "Kunstmaan non-page Doctrine entity FQCN X maps to Craft section Y /
+     * entry-type Z, treated as a taxonomy". Mirrors buildNodeClassRow() shape exactly
+     * — taxonomies have NO nested fields[] (D-07: field-level mapping is inferred
+     * from same-sourceTable kind=column rows, the same convention nodeClasses use).
+     *
+     * Identity tuple is structural-only on FQCN (see identityKey()). Skip-existing
+     * merge per MAP-04 — operator decisions are sacred.
+     *
+     * @param array<string, mixed> $proposal
+     * @return array<string, mixed>
+     */
+    public function buildTaxonomyRow(array $proposal, string $initialStatus): array
+    {
+        return [
+            'kind'            => 'taxonomy',
+            'fqcn'            => (string) ($proposal['fqcn'] ?? ''),
+            'sourceTable'     => (string) ($proposal['sourceTable'] ?? ''),
+            'targetSection'   => (string) ($proposal['targetSection'] ?? ''),
+            'targetEntryType' => (string) ($proposal['targetEntryType'] ?? ''),
+            'confidence'      => (string) ($proposal['confidence'] ?? 'medium'),
+            'rationale'       => (string) ($proposal['rationale'] ?? ''),
+            'status'          => $initialStatus,
+        ];
+    }
+
+    /**
+     * Build a kind=dataProvider row (Phase 8 / D-13) for orphan page-parts the
+     * page-builder consumes via runtime injection rather than via kuma_page_part_refs.
+     * Carries `target` (the runtime hook name the provider feeds into) and
+     * `configFields` (an arbitrary list of provider-specific config keys captured
+     * during proposal — shape evolves per provider).
+     *
+     * Identity tuple is structural-only on FQCN (see identityKey()).
+     *
+     * @param array<string, mixed> $proposal
+     * @return array<string, mixed>
+     */
+    public function buildDataProviderRow(array $proposal, string $initialStatus): array
+    {
+        $configFields = (array) ($proposal['configFields'] ?? []);
+        return [
+            'kind'         => 'dataProvider',
+            'fqcn'         => (string) ($proposal['fqcn'] ?? ''),
+            'sourceTable'  => (string) ($proposal['sourceTable'] ?? ''),
+            'target'       => (string) ($proposal['target'] ?? ''),
+            'configFields' => $configFields,
+            'confidence'   => (string) ($proposal['confidence'] ?? 'medium'),
+            'rationale'    => (string) ($proposal['rationale'] ?? ''),
+            'status'       => $initialStatus,
+        ];
+    }
+
+    /**
      * Build the merge identity key for a single row (D-34 kind-prefixed tuple).
      *
      * Page-part identity is structural — STRUCTURAL ONLY, no targetEntryType in the key
@@ -249,6 +303,12 @@ final class MappingFile extends Component
         }
         if ($kind === 'nodeClass') {
             return 'nodeClass|' . ($row['fqcn'] ?? '');
+        }
+        if ($kind === 'taxonomy') {
+            return 'taxonomy|' . ($row['fqcn'] ?? '');
+        }
+        if ($kind === 'dataProvider') {
+            return 'dataProvider|' . ($row['fqcn'] ?? '');
         }
         return 'column|' . ($row['table'] ?? '')
             . '|' . ($row['column'] ?? '')
