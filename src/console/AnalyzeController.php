@@ -141,12 +141,36 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
+        // Phase 8.6 — scope pageStructure to --entities for the LLM-driven
+        // proposer steps. The unfiltered $pageStructure is still used for the
+        // full-project artifacts (pageStructure.json, relation-graph.json) so
+        // those stay accurate; only the proposer inputs (page-part emitter +
+        // entity-level LLM batch) walk the scoped subset. Without this scoping
+        // `--entities=HomePage` runs the entity-level + page-part + fields LLM
+        // batches across every page in the project (matters: each chunk is a
+        // 30-40s LLM call, so 28 entities → 7+ minutes vs ~1 minute for one).
+        $scopedPageStructure = $pageStructure;
+        if ($filters->entities !== []) {
+            $scopedPageStructure = [];
+            foreach ($pageStructure as $fqcn => $rec) {
+                $short = $this->shortClassName((string) $fqcn);
+                if (in_array($short, $filters->entities, true)) {
+                    $scopedPageStructure[$fqcn] = $rec;
+                }
+            }
+            $this->stdout(
+                "  OK   --entities scoped pageStructure: "
+                . count($scopedPageStructure) . " of " . count($pageStructure) . " pages will be proposed\n",
+                Console::FG_GREEN,
+            );
+        }
+
         // Step 4.5 (Phase 02.1 / D-35, locked here per advisor): walk pageStructure and
         // emit a kind=pagePart mapping row per (pagePartClass × parentPageClass × context)
         // tuple. Plan 06's structural-only merge identity tuple ensures re-runs dedupe
         // even when the operator has filled in targetEntryType.
         $pagePartProposals = [];
-        foreach ($pageStructure as $pageFqcn => $pageRecord) {
+        foreach ($scopedPageStructure as $pageFqcn => $pageRecord) {
             $parentPageClass = $this->shortClassName((string) $pageFqcn);
             foreach ((array) ($pageRecord['contexts'] ?? []) as $contextRecord) {
                 $contextName = (string) ($contextRecord['name'] ?? '');
@@ -238,7 +262,9 @@ class AnalyzeController extends Controller
         $contentLikeSqlTypes = ['longtext', 'mediumtext', 'text'];
         $columnsByTable = (array) ($schemaDump['columns'] ?? []);
         $implicitCount = 0;
-        foreach ($pageStructure as $pageFqcn => $pageRecord) {
+        // Phase 8.6 — implicit-content emitter follows the same scoping as the
+        // page-part emitter: walk only the entities allowed by --entities.
+        foreach ($scopedPageStructure as $pageFqcn => $pageRecord) {
             if (!is_array($pageRecord)) { continue; }
             $shortFqcn = $this->shortClassName((string) $pageFqcn);
             if (isset($fqcnsWithRealPageParts[$shortFqcn])) { continue; }
@@ -332,7 +358,7 @@ class AnalyzeController extends Controller
         // when --no-ai or no API key — falls back to the basename heuristic in
         // MappingCompiler downstream.
         $apiKeyForEntityStep = (string) ($plugin->getSettings()->anthropicApiKey ?? '');
-        $skipEntityLlm = $this->noAi || $apiKeyForEntityStep === '' || $pageStructure === [];
+        $skipEntityLlm = $this->noAi || $apiKeyForEntityStep === '' || $scopedPageStructure === [];
         $nodeClassProposals = [];
         $craftEntryTypeHandles = $plugin->craftKnowledgeBase->entryTypeHandles();
         $kbCraftMd = '';
@@ -360,13 +386,13 @@ class AnalyzeController extends Controller
                 $kbPagePartsEarly = $plugin->knowledgeBase->renderPagePartsMarkdown($kbAdapterEarly, $nowEarly);
                 $kbLegacyMd = $kbPagesEarly . "\n\n" . $kbPagePartsEarly;
                 $this->stdout(
-                    "  ... entity-level LLM batching " . count($pageStructure) . " page entities (chunks of 8) against "
+                    "  ... entity-level LLM batching " . count($scopedPageStructure) . " page entities (chunks of 8) against "
                     . count($craftEntryTypeHandles) . " Craft entry-type handles\n",
                     Console::FG_GREY,
                 );
                 $entityProgressStarted = false;
                 $nodeClassProposals = $plugin->llmClassifier->proposeNodeClasses(
-                    $pageStructure,
+                    $scopedPageStructure,
                     $craftEntryTypeHandles,
                     $kbLegacyMd,
                     $kbCraftMd,
