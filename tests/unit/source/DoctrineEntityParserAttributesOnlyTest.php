@@ -210,6 +210,195 @@ final class DoctrineEntityParserAttributesOnlyTest extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // Plan 08-02 / D-10 — Gedmo Translatable per-property flag (signal #1)
+    // -----------------------------------------------------------------------
+
+    public function testCapturesGedmoTranslatableViaShortClassUseMap(): void
+    {
+        // Standard pattern in Kunstmaan-shaped entities: `use Gedmo\Mapping\Annotation as Gedmo;`
+        // or `use Gedmo\Mapping\Annotation\Translatable;` so the attribute is
+        // written `#[Gedmo\Translatable]` or `#[Translatable]`. Either short
+        // form must resolve via the use-map to FQCN
+        // `Gedmo\Mapping\Annotation\Translatable` and flag the column.
+        $this->writeEntity('Tag.php', <<<'PHP'
+        <?php
+        namespace App\Entity;
+
+        use Doctrine\ORM\Mapping as ORM;
+        use Gedmo\Mapping\Annotation as Gedmo;
+
+        #[ORM\Entity]
+        #[ORM\Table(name: 'kuma_tag')]
+        class Tag
+        {
+            #[Gedmo\Translatable]
+            #[ORM\Column(type: 'string', name: 'name')]
+            private $name;
+
+            #[ORM\Column(type: 'string', name: 'slug')]
+            private $slug;
+        }
+        PHP);
+
+        $parser = $this->newParser();
+        $info = $parser->getByFqcn('App\\Entity\\Tag');
+
+        self::assertInstanceOf(DoctrineEntityInfo::class, $info);
+        self::assertCount(2, $info->columns);
+
+        $name = $this->columnByProperty($info->columns, 'name');
+        self::assertTrue(
+            $name->isGedmoTranslatable,
+            'name column must be flagged isGedmoTranslatable=true (use-map alias form)',
+        );
+
+        $slug = $this->columnByProperty($info->columns, 'slug');
+        self::assertFalse(
+            $slug->isGedmoTranslatable,
+            'slug column must NOT be flagged isGedmoTranslatable (no Gedmo attribute on this property)',
+        );
+    }
+
+    public function testCapturesGedmoTranslatableViaDirectShortClassImport(): void
+    {
+        // Alternate pattern: import the Translatable class directly so the
+        // attribute is written `#[Translatable]`. Use-map MUST resolve the
+        // bare short class to FQCN `Gedmo\Mapping\Annotation\Translatable`.
+        $this->writeEntity('Category.php', <<<'PHP'
+        <?php
+        namespace App\Entity;
+
+        use Doctrine\ORM\Mapping as ORM;
+        use Gedmo\Mapping\Annotation\Translatable;
+
+        #[ORM\Entity]
+        #[ORM\Table(name: 'kuma_category')]
+        class Category
+        {
+            #[Translatable]
+            #[ORM\Column(type: 'string', name: 'title')]
+            private $title;
+        }
+        PHP);
+
+        $parser = $this->newParser();
+        $info = $parser->getByFqcn('App\\Entity\\Category');
+
+        self::assertInstanceOf(DoctrineEntityInfo::class, $info);
+        self::assertCount(1, $info->columns);
+
+        $title = $this->columnByProperty($info->columns, 'title');
+        self::assertTrue(
+            $title->isGedmoTranslatable,
+            'title column must be flagged isGedmoTranslatable=true (direct short-class import)',
+        );
+    }
+
+    public function testCapturesGedmoTranslatableViaFullyQualifiedAttribute(): void
+    {
+        // Edge case: FQCN attribute form `#[\Gedmo\Mapping\Annotation\Translatable]`
+        // — no use statement required. Must still flag the column.
+        $this->writeEntity('Region.php', <<<'PHP'
+        <?php
+        namespace App\Entity;
+
+        use Doctrine\ORM\Mapping as ORM;
+
+        #[ORM\Entity]
+        #[ORM\Table(name: 'kuma_region')]
+        class Region
+        {
+            #[\Gedmo\Mapping\Annotation\Translatable]
+            #[ORM\Column(type: 'string', name: 'label')]
+            private $label;
+        }
+        PHP);
+
+        $parser = $this->newParser();
+        $info = $parser->getByFqcn('App\\Entity\\Region');
+
+        self::assertInstanceOf(DoctrineEntityInfo::class, $info);
+        self::assertCount(1, $info->columns);
+
+        $label = $this->columnByProperty($info->columns, 'label');
+        self::assertTrue(
+            $label->isGedmoTranslatable,
+            'label column must be flagged isGedmoTranslatable=true (FQCN attribute form)',
+        );
+    }
+
+    public function testIgnoresGedmoTranslatableInDocblock(): void
+    {
+        // SRC-20 invariant: parser is attributes-only. A `@Gedmo\Translatable`
+        // inside a docblock MUST NOT flag the column — that's the annotation
+        // path and it stays dead.
+        $this->writeEntity('LegacyTag.php', <<<'PHP'
+        <?php
+        namespace App\Entity;
+
+        use Doctrine\ORM\Mapping as ORM;
+
+        #[ORM\Entity]
+        #[ORM\Table(name: 'kuma_legacy_tag')]
+        class LegacyTag
+        {
+            /**
+             * @Gedmo\Translatable
+             */
+            #[ORM\Column(type: 'string', name: 'name')]
+            private $name;
+        }
+        PHP);
+
+        $parser = $this->newParser();
+        $info = $parser->getByFqcn('App\\Entity\\LegacyTag');
+
+        self::assertInstanceOf(DoctrineEntityInfo::class, $info);
+        self::assertCount(1, $info->columns);
+
+        $name = $this->columnByProperty($info->columns, 'name');
+        self::assertFalse(
+            $name->isGedmoTranslatable,
+            'docblock @Gedmo\\Translatable must NOT flag the column (SRC-20 attributes-only invariant)',
+        );
+    }
+
+    public function testGedmoFlagIsFalseByDefault(): void
+    {
+        // Backward-compat: pre-Phase-8 entities with no Gedmo attributes must
+        // expose isGedmoTranslatable=false on every column (default value).
+        $this->writeEntity('Plain.php', <<<'PHP'
+        <?php
+        namespace App\Entity;
+
+        use Doctrine\ORM\Mapping as ORM;
+
+        #[ORM\Entity]
+        #[ORM\Table(name: 'kuma_plain')]
+        class Plain
+        {
+            #[ORM\Column(type: 'string', name: 'title')]
+            private $title;
+
+            #[ORM\Column(type: 'integer')]
+            private $count;
+        }
+        PHP);
+
+        $parser = $this->newParser();
+        $info = $parser->getByFqcn('App\\Entity\\Plain');
+
+        self::assertInstanceOf(DoctrineEntityInfo::class, $info);
+        self::assertCount(2, $info->columns);
+        foreach ($info->columns as $col) {
+            self::assertFalse(
+                $col->isGedmoTranslatable,
+                "column {$col->propertyName} must default to isGedmoTranslatable=false",
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Annotation-input removal proof (load-bearing)
     // -----------------------------------------------------------------------
 
