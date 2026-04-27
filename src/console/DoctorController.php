@@ -11,11 +11,12 @@ use craft\helpers\Console;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
+use lameco\kunstmaanmigrator\source\KunstmaanCoreTables;
 use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Doctor — preflight diagnostics for the migrator. Eight checks (D-17 + Phase 2 / Plan 05 + Phase 02.1 / D-31 + Phase 3 / Plan 03-13 + Phase 4 / Plan 04-11 / D-69):
+ * Doctor — preflight diagnostics for the migrator. Eleven checks (D-17 + Phase 2 / Plan 05 + Phase 02.1 / D-31 + Phase 3 / Plan 03-13 + Phase 4 / Plan 04-11 / D-69 + Phase 8 / Plan 08-14 / D-09):
  *   1. Legacy DB reachability (SELECT 1)
  *   2. Anthropic key presence (Settings override OR env; never echoes the value — T-1-03)
  *   3. storage/migration/ writable (auto-creates if missing — D-18 greenfield behavior)
@@ -30,6 +31,10 @@ use yii\console\ExitCode;
  *  10. LocalePreflight Rung 0 advisory consult (Phase 4.1 / D-11..D-13 — INFO/WARN/silent;
  *      never FAILs. Compares env DEFAULT_LOCALE against Settings::localeMap first key.
  *      Silent when env unset (D-13); WARN on mismatch (D-12 verbatim copy).)
+ *  11. ext_translations presence (Phase 8 / Plan 08-14 / TAX-09 / D-09 — INFO/WARN/OK;
+ *      never FAILs. Empty table → WARN (Gedmo overlay falls back to source-locale-only
+ *      per D-09's pragmatic monolingual-Kunstmaan default); missing table → INFO (Gedmo
+ *      Translatable absent); populated → OK with row count.)
  *
  * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline).
  *
@@ -81,6 +86,8 @@ class DoctorController extends Controller
         $ok = $this->checkKunstmaanEnvSource()   && $ok;
         // Phase 4.1 / D-11..D-13 (10th — info/warn/silent; never blocks):
         $ok = $this->checkLocalePreflightRung0() && $ok;
+        // Phase 8 / Plan 08-14 / TAX-09 / D-09 (11th — info/warn/ok; never blocks):
+        $ok = $this->checkExtTranslations()      && $ok;
 
         $this->stdout(
             "\n" . ($ok ? "Doctor: PASS\n" : "Doctor: FAIL — fix the above before running migrate\n"),
@@ -559,5 +566,52 @@ class DoctorController extends Controller
                 return true; // D-12: WARN, never FAIL.
         }
         return true;
+    }
+
+    /**
+     * Check #11 (Phase 8 / Plan 08-14 / TAX-09 / D-09): ext_translations presence.
+     *
+     * D-09 mandate: WARN-only when empty (NEVER FAIL). The Gedmo Translatable
+     * table is optional in Kunstmaan deployments — many sites are monolingual,
+     * which Phase 8 treats as a first-class default rather than an error. The
+     * three branches (each returns true):
+     *
+     *   - Populated → OK with row count.
+     *   - Empty     → WARN: Gedmo Translatable taxonomy migration will fall back
+     *                 to source-locale-only (D-09 monolingual-Kunstmaan default).
+     *   - Missing   → INFO: table not present in legacy DB (Gedmo Translatable
+     *                 not installed at all). Detected via Throwable on the count
+     *                 query (table-not-found → SQLSTATE[42S02]).
+     *
+     * Surfaces the operator-visible signal that Phase 8's monolingual-fallback
+     * path was taken in TaxonomyMigrationService (Plan 08-11).
+     */
+    private function checkExtTranslations(): bool
+    {
+        try {
+            $svc = Plugin::getInstance()->legacyDbService;
+            $count = (int) $svc->queryScalar(
+                'SELECT COUNT(*) FROM ' . KunstmaanCoreTables::EXT_TRANSLATIONS,
+            );
+            if ($count === 0) {
+                $this->stdout(
+                    "  WARN ext_translations is empty — Gedmo Translatable taxonomy migration will fall back "
+                    . "to source-locale-only (D-09 monolingual-Kunstmaan default).\n",
+                    Console::FG_YELLOW,
+                );
+                return true;
+            }
+            $this->stdout(
+                sprintf("  OK   ext_translations populated (%d rows)\n", $count),
+                Console::FG_GREEN,
+            );
+            return true;
+        } catch (Throwable) {
+            $this->stdout(
+                "  INFO ext_translations table not present in legacy DB — Gedmo Translatable absent\n",
+                Console::FG_YELLOW,
+            );
+            return true;
+        }
     }
 }
