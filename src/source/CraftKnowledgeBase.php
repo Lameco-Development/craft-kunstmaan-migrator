@@ -163,10 +163,7 @@ final class CraftKnowledgeBase extends Component
                 if ($fhandle === '') {
                     continue;
                 }
-                $fields[] = [
-                    'handle' => $fhandle,
-                    'type'   => $this->shortClassName(get_class($field)),
-                ];
+                $fields[] = $this->describeField($field);
 
                 // Phase 8.2 / D-15 — flatten Matrix sub-entry-type sub-fields
                 // into the index using dotted-path handles (e.g.
@@ -182,11 +179,10 @@ final class CraftKnowledgeBase extends Component
                         foreach ($innerLayout->getCustomFields() as $innerField) {
                             $innerHandle = (string) $innerField->handle;
                             if ($innerHandle === '') { continue; }
-                            $fields[] = [
-                                'handle'         => $fhandle . '.' . $innerHandle,
-                                'type'           => $this->shortClassName(get_class($innerField)),
-                                'classification' => 'matrixSub',
-                            ];
+                            $sub = $this->describeField($innerField);
+                            $sub['handle'] = $fhandle . '.' . $innerHandle;
+                            $sub['classification'] = 'matrixSub';
+                            $fields[] = $sub;
                         }
                     }
                 }
@@ -366,6 +362,100 @@ final class CraftKnowledgeBase extends Component
         }
         sort($out);
         return array_values(array_unique($out));
+    }
+
+    /**
+     * Phase 8.6 / D-28 — describe a Craft field with enough type-specific
+     * metadata that the LLM proposer can avoid plausible-name-matches that
+     * fail at handler-time.
+     *
+     * Per-type meta keys (omitted when not applicable):
+     *   - Dropdown    → `options: [...]`           (the values the field accepts;
+     *                                                 free-text source values must
+     *                                                 match one of these or the
+     *                                                 mapping won't stick)
+     *   - Matrix      → `allowedBlockTypes: [...]` (entry-type handles)
+     *   - Entries     → `sources: [...]`           (section handles the relation
+     *                                                 may target — drives
+     *                                                 stateSource picks for the
+     *                                                 relation handler)
+     *   - Assets      → `allowedKinds: [...]`      ("image" / "video" / etc.)
+     *
+     * Other field types (PlainText, CKEditor, Date, Lightswitch, Number, …) get
+     * just `{handle, type}` — those have no closed-set metadata that needs
+     * surfacing.
+     *
+     * @return array{handle: string, type: string, options?: list<string>, allowedBlockTypes?: list<string>, sources?: list<string>, allowedKinds?: list<string>}
+     */
+    private function describeField(\craft\base\FieldInterface $field): array
+    {
+        $out = [
+            'handle' => (string) $field->handle,
+            'type'   => $this->shortClassName(get_class($field)),
+        ];
+
+        if ($field instanceof \craft\fields\Dropdown) {
+            $opts = [];
+            foreach ((array) $field->options as $opt) {
+                if (!is_array($opt)) { continue; }
+                $val = (string) ($opt['value'] ?? '');
+                if ($val !== '') {
+                    $opts[] = $val;
+                }
+            }
+            if ($opts !== []) {
+                $out['options'] = $opts;
+            }
+        }
+
+        if ($field instanceof \craft\fields\Matrix) {
+            $blocks = [];
+            foreach ($field->getEntryTypes() as $bt) {
+                $bh = (string) $bt->handle;
+                if ($bh !== '') {
+                    $blocks[] = $bh;
+                }
+            }
+            if ($blocks !== []) {
+                $out['allowedBlockTypes'] = $blocks;
+            }
+        }
+
+        if ($field instanceof \craft\fields\Entries) {
+            // Entries field's `sources` is either '*' (any) or a list of
+            // `section:<uid>` strings. Convert UIDs to section handles when
+            // possible so the LLM can choose a stateSource that matches the
+            // migrated section.
+            $rawSources = $field->sources;
+            $sources = [];
+            if (is_array($rawSources)) {
+                foreach ($rawSources as $src) {
+                    if (!is_string($src)) { continue; }
+                    if (str_starts_with($src, 'section:')) {
+                        $uid = substr($src, strlen('section:'));
+                        $section = \Craft::$app->entries->getSectionByUid($uid);
+                        if ($section !== null && $section->handle !== '') {
+                            $sources[] = $section->handle;
+                        }
+                    } elseif ($src !== '*' && $src !== '') {
+                        $sources[] = $src;
+                    }
+                }
+            }
+            if ($sources !== []) {
+                $out['sources'] = $sources;
+            }
+        }
+
+        if ($field instanceof \craft\fields\Assets) {
+            $kinds = is_array($field->allowedKinds) ? array_values($field->allowedKinds) : [];
+            $kinds = array_filter($kinds, static fn($k): bool => is_string($k) && $k !== '');
+            if ($kinds !== []) {
+                $out['allowedKinds'] = array_values($kinds);
+            }
+        }
+
+        return $out;
     }
 
     /** Trim Craft\\fields\\PlainText → PlainText for compact prompt formatting. */

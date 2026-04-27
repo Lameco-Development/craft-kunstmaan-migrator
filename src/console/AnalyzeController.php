@@ -1354,7 +1354,7 @@ class AnalyzeController extends Controller
 
             if (!isset($blockTypeFields[$blockType])) {
                 $fields = $fieldIndex[$blockType] ?? [];
-                $simple = [];
+                $rich = [];
                 foreach ($fields as $f) {
                     if (!is_array($f)) { continue; }
                     $h = (string) ($f['handle'] ?? '');
@@ -1362,13 +1362,24 @@ class AnalyzeController extends Controller
                     // rarely contain nested Matrix fields, and when they do
                     // the column proposer is the wrong tool. Flat fields only.
                     if ($h === '' || str_contains($h, '.')) { continue; }
-                    $simple[] = [
+                    // Phase 8.6 / D-28 — pass through the type-specific meta
+                    // (options / allowedBlockTypes / sources / allowedKinds)
+                    // emitted by CraftKnowledgeBase::describeField. The LLM
+                    // prompt builder renders them inline so name-matches
+                    // can't ride past closed-set constraints unchecked.
+                    $entry = [
                         'handle' => $h,
                         'type'   => (string) ($f['type'] ?? ''),
                     ];
+                    foreach (['options', 'allowedBlockTypes', 'sources', 'allowedKinds'] as $metaKey) {
+                        if (isset($f[$metaKey]) && is_array($f[$metaKey]) && $f[$metaKey] !== []) {
+                            $entry[$metaKey] = $f[$metaKey];
+                        }
+                    }
+                    $rich[] = $entry;
                 }
-                if ($simple !== []) {
-                    $blockTypeFields[$blockType] = $simple;
+                if ($rich !== []) {
+                    $blockTypeFields[$blockType] = $rich;
                 }
             }
         }

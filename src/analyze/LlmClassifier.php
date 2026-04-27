@@ -1663,6 +1663,14 @@ final class LlmClassifier extends Component
             $blockType = (string) ($row['targetBlockType'] ?? '');
             $sourceCols = array_column($pagePartColumns[(string) ($row['pagePartClass'] ?? '')] ?? [], 'column');
             $allowedFieldHandles = array_column($blockTypeFields[$blockType] ?? [], 'handle');
+            // Phase 8.6 / D-28 — allow `title` and `heading` even when not
+            // declared as custom fields on the block. EntryMigrationService::
+            // stripSourcePartRefs auto-lifts them from `fields[]` to the
+            // block's peer-level `title` (the entry's built-in title field
+            // — every Craft entry has one when hasTitleField=true). Without
+            // this, the closed-set check would reject the LLM's perfectly
+            // valid `title→title` pick on every block-with-title.
+            $allowedFieldHandles = array_merge($allowedFieldHandles, ['title', 'heading']);
 
             $fieldsOut = [];
             if (is_array($p) && isset($p['fields']) && is_array($p['fields'])) {
@@ -1713,6 +1721,36 @@ final class LlmClassifier extends Component
     }
 
     /**
+     * Phase 8.6 / D-28 — render a single block-field with its type-specific
+     * closed-set metadata in a compact form for the LLM prompt.
+     *
+     * Examples:
+     *   handle:Type
+     *   titleLevel:Dropdown(opts: heading2|heading3|heading4)
+     *   buttons:Matrix(blocks: button|secondaryButton)
+     *   relatedNews:Entries(from: newsPages)
+     *   image:Assets(kinds: image)
+     *
+     * @param array<string, mixed> $f one entry from the blockTypeFields list
+     */
+    private static function formatBlockFieldHint(array $f): string
+    {
+        $handle = (string) ($f['handle'] ?? '?');
+        $type   = (string) ($f['type']   ?? '?');
+        $extras = '';
+        if (isset($f['options']) && is_array($f['options']) && $f['options'] !== []) {
+            $extras = '(opts: ' . implode('|', array_map('strval', $f['options'])) . ')';
+        } elseif (isset($f['allowedBlockTypes']) && is_array($f['allowedBlockTypes']) && $f['allowedBlockTypes'] !== []) {
+            $extras = '(blocks: ' . implode('|', array_map('strval', $f['allowedBlockTypes'])) . ')';
+        } elseif (isset($f['sources']) && is_array($f['sources']) && $f['sources'] !== []) {
+            $extras = '(from: ' . implode('|', array_map('strval', $f['sources'])) . ')';
+        } elseif (isset($f['allowedKinds']) && is_array($f['allowedKinds']) && $f['allowedKinds'] !== []) {
+            $extras = '(kinds: ' . implode('|', array_map('strval', $f['allowedKinds'])) . ')';
+        }
+        return $handle . ':' . $type . $extras;
+    }
+
+    /**
      * @param  list<array<string, mixed>>                                  $chunk
      * @param  array<string, list<array{column: string, type: string}>>    $pagePartColumns
      * @param  array<string, list<array{handle: string, type: string}>>    $blockTypeFields
@@ -1739,6 +1777,12 @@ final class LlmClassifier extends Component
             . '- Pick a handler whose semantics match the source column type (e.g. ckeditor for longtext/HTML body, asset for *_id columns referencing Media, plain for short strings, url for URL columns, date for datetime columns).' . "\n"
             . '- Drop columns that have no good target. Do not force-map. Omit them from `fields[]` instead.' . "\n"
             . '- Each sourceColumn maps to AT MOST one targetField. Each targetField gets AT MOST one sourceColumn.' . "\n"
+            . '- Phase 8.6 / D-28: each `allowedBlockFields` entry now carries TYPE-SPECIFIC METADATA after the type. Use it to validate fit:' . "\n"
+            . '  * `Dropdown(opts: a|b|c)` — source value must be one of `a`, `b`, `c`. If not, DROP the mapping. Do NOT match by name (e.g. "title" → "titleLevel") — they\'re different concepts.' . "\n"
+            . '  * `Matrix(blocks: x|y)` — Matrix expects structured sub-blocks. A scalar source CANNOT map directly. DROP unless the source is itself a list of structured rows.' . "\n"
+            . '  * `Entries(from: sectionA|sectionB)` — relation field. Use handler="relation" when the source is an FK column or list of FK ids; the migrator will resolve via the state table.' . "\n"
+            . '  * `Assets(kinds: image|video)` — asset relation. Use handler="asset" for `*_id` columns referencing Media; the migrator resolves to the migrated asset.' . "\n"
+            . '- A page-part block entry has a built-in `title` field (block-level peer, not a custom field). The migrator auto-lifts `title` from `fields[]` into the block-title position. So if the source has a `title` column whose value is a free-text heading (e.g. "Het laatste nieuws"), map it to a literal `title` targetField with handler="plain" — the lift is automatic, you don\'t need to look for a `title` handle in `allowedBlockFields`.' . "\n"
             . '- Do not output prose outside the JSON object.';
 
         $partLines = [];
@@ -1753,7 +1797,7 @@ final class LlmClassifier extends Component
                 $cols,
             ));
             $allowedFieldsHint = implode(', ', array_map(
-                static fn(array $f): string => sprintf('%s:%s', (string) ($f['handle'] ?? '?'), (string) ($f['type'] ?? '?')),
+                static fn(array $f): string => self::formatBlockFieldHint($f),
                 $allowedFields,
             ));
 
@@ -2016,12 +2060,29 @@ final class LlmClassifier extends Component
             . 'via Doctrine ManyToOne FK (see the Relations subsection in the Kunstmaan schema). They may '
             . 'map to ANY field on the parent\'s Craft entry-type — pick the best semantic fit from the '
             . '`allowed=[…]` hint just like a native column.' . "\n"
+            . '- Phase 8.6 / D-28: each `allowed=[…]` entry now carries TYPE-SPECIFIC METADATA after the type. Use it to validate fit:' . "\n"
+            . '  * `Dropdown(opts: a|b|c)` — source value must be one of `a`, `b`, `c`. If not, set decision="drop". Do NOT match by name (e.g. "title" → "titleLevel") — they\'re different concepts.' . "\n"
+            . '  * `Matrix(blocks: x|y)` — Matrix expects structured sub-blocks. A scalar source CANNOT map directly. Use decision="drop" unless the source is itself a list of structured rows.' . "\n"
+            . '  * `Entries(from: sectionA|sectionB)` — relation field. Use handler="relation" when the source is an FK column or list of FK ids.' . "\n"
+            . '  * `Assets(kinds: image|video)` — asset relation. Use handler="asset" for `*_id` columns referencing Media.' . "\n"
             . '- Do not output prose outside the JSON object.';
 
         $residualLines = [];
         foreach ($residual as $v) {
             $entryType = (string) ($v['targetEntryType'] ?? '');
-            $allowed = $this->extractAllowedHandles($craftFieldIndex, $entryType);
+            // Phase 8.6 / D-28 — render the `allowed=[...]` hint with the
+            // type-specific metadata each field carries (Dropdown options,
+            // Matrix block-types, Entries sources, Assets kinds). Without
+            // this, the residual proposer was making the same plausible-name
+            // matches that bit the page-part fields proposer (e.g. `title →
+            // titleLevel` where titleLevel is a heading-level dropdown).
+            $allowedRich = (array) ($craftFieldIndex[$entryType] ?? []);
+            $allowedHints = [];
+            foreach ($allowedRich as $f) {
+                if (is_array($f)) {
+                    $allowedHints[] = self::formatBlockFieldHint($f);
+                }
+            }
             // IN-01: residual samples are read from the legacy DB and inlined
             // into the user prompt. Sanitize to printable ASCII (strip
             // backticks, newlines, control chars) before truncating to 40
@@ -2040,7 +2101,7 @@ final class LlmClassifier extends Component
                 (string) ($v['fillRate'] ?? '?'),
                 $sqlTypePart,
                 $entryType,
-                implode(',', $allowed),
+                implode(', ', $allowedHints),
                 implode(' | ', $samples),
             );
         }
