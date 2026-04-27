@@ -52,7 +52,16 @@ foreach ($xml->project->file as $file) {
     $metrics = $file->metrics;
     $statements = (int) $metrics['statements'];
     $covered    = (int) $metrics['coveredstatements'];
-    $pct        = $statements === 0 ? 100.0 : ($covered / $statements) * 100.0;
+    if ($statements === 0) {
+        // Interface-only / abstract / declaration-only files have no executable
+        // statements. Reporting 100% would silently mask coverage gaps in the
+        // MODULES allow-list (Phase 5 review MEDIUM #1). Skip with a visible
+        // notice so CI logs make the omission auditable.
+        fwrite(STDOUT, sprintf("  SKIP  ----   %s (zero statements)\n", $rel));
+        $rowsPrinted++;
+        continue;
+    }
+    $pct        = ($covered / $statements) * 100.0;
     $marker     = $pct >= THRESHOLD ? 'OK  ' : 'FAIL';
     fwrite(STDOUT, sprintf("  %s %5.1f%%  %s\n", $marker, $pct, $rel));
     $rowsPrinted++;
