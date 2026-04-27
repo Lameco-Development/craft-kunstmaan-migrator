@@ -133,6 +133,58 @@ class LegacyDbService extends Component
     }
 
     /**
+     * Phase 8 / D-08 — verbatim port of v1's extTranslationsFor() (v1
+     * LegacyDbService lines 214-250). Reshape: literal 'ext_translations'
+     * replaced with KunstmaanCoreTables::EXT_TRANSLATIONS (v2 convention).
+     *
+     * Returns Gedmo Translatable rows for the given entity FQCN(s) and legacy
+     * id, keyed by locale and field. Empty result `[]` is the consumed-as-
+     * monolingual signal — D-09's source-locale fallback lives in
+     * TaxonomyMigrationService, NOT here.
+     *
+     * Named bind parameters (`:fqcn0`, `:fqcn1`, `:foreignKey`) are mandatory:
+     * Yii 2 / PDO have a positional-index mismatch when `?` placeholders are
+     * mixed with the IN-clause expansion shape.
+     *
+     * Canonical-FQCN-first iteration semantics: when a caller passes
+     * `[$canonical, $alias]`, rows whose `object_class` matches the alias are
+     * later overwritten by canonical rows at the same locale+field key.
+     *
+     * @param string|string[] $fqcns
+     * @return array<string, array<string, string>>
+     */
+    public function extTranslationsFor(string|array $fqcns, int $id): array
+    {
+        $list = is_array($fqcns) ? array_values($fqcns) : [$fqcns];
+        if ($list === []) {
+            return [];
+        }
+        $namedParams = [':foreignKey' => $id];
+        $placeholders = [];
+        foreach ($list as $i => $fqcn) {
+            $key = ':fqcn' . $i;
+            $namedParams[$key] = $fqcn;
+            $placeholders[] = $key;
+        }
+        $inClause = implode(',', $placeholders);
+        $rows = $this->db()
+            ->createCommand(
+                'SELECT object_class, locale, field, content FROM ' . KunstmaanCoreTables::EXT_TRANSLATIONS
+                . " WHERE object_class IN ($inClause) AND foreign_key = :foreignKey",
+                $namedParams,
+            )
+            ->queryAll();
+        $result = [];
+        foreach ($rows as $row) {
+            $locale  = (string) $row['locale'];
+            $field   = (string) $row['field'];
+            $content = (string) ($row['content'] ?? '');
+            $result[$locale][$field] = $content;
+        }
+        return $result;
+    }
+
+    /**
      * Returns the current MySQL database name. Ported verbatim from v1 — used
      * by DoctorController's connectivity check to confirm the connection points
      * at the expected legacy DB rather than just any reachable server.
