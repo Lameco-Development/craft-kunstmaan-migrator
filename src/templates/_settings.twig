@@ -116,3 +116,27 @@
     allowAdd: true,
     allowDelete: true,
 }) }}
+
+<h2>{{ 'Fallback'|t('kunstmaan-migrator') }}</h2>
+
+{# Phase 6 — graceful fallback for AI-uncertain mappings. Three-state via the
+   "(no fallback — skip)" sentinel option pre-pended to each dropdown. The
+   compiler reads these settings and routes unmatched FQCNs / page-parts to
+   the chosen handle (or skips them when no fallback is selected). #}
+{{ forms.selectField({
+    label: 'Default entry type (Pages)'|t('kunstmaan-migrator'),
+    instructions: 'When the AI cannot confidently map a Kunstmaan Page to a Craft entry type, route it here instead of dropping it. Pick "(no fallback — skip)" to keep the legacy fail-loud behavior.'|t('kunstmaan-migrator'),
+    id: 'defaultEntryType',
+    name: 'defaultEntryType',
+    options: entryTypeFallbackOptions,
+    value: settings.defaultEntryType ?? '',
+}) }}
+
+{{ forms.selectField({
+    label: 'Default block type (PageParts)'|t('kunstmaan-migrator'),
+    instructions: 'When the AI cannot confidently map a Kunstmaan PagePart to a Craft Matrix block type, route it here. Status flips to accepted automatically. Pick "(no fallback — skip)" to keep page-parts as needs-review for hand-fill via map.'|t('kunstmaan-migrator'),
+    id: 'defaultBlockType',
+    name: 'defaultBlockType',
+    options: blockTypeFallbackOptions,
+    value: settings.defaultBlockType ?? '',
+}) }}

@@ -82,12 +82,21 @@ final class MappingCompiler extends Component
      *   },
      * }
      */
+    /**
+     * @param list<string> $craftEntryTypeHandles Phase 6 — closed set of real Craft entry-type handles.
+     *                                            When provided, the compiler validates derived
+     *                                            entry-type handles against this set and routes
+     *                                            invalid ones to $defaultEntryType (when set) so
+     *                                            FQCNs the LLM was unsure about don't die at load time.
+     *                                            Empty list = no validation (legacy behavior).
+     */
     public function compile(
         array $mapping,
         array $pageStructure,
         array $sites,
         ?string $defaultEntryType = null,
         ?string $defaultBlockType = null,
+        array $craftEntryTypeHandles = [],
     ): array {
         $proposals = (array) ($mapping['proposals'] ?? []);
 
@@ -145,6 +154,30 @@ final class MappingCompiler extends Component
         $warnings = [];
         $fieldsPerSection = [];
         $fallbackEntryTypeApplied = [];
+        $fallbackBlockTypeApplied = []; // [pagePartClass|parentPageClass|context, ...]
+
+        // Phase 6 page-part fallback (companion to the page fallback). Walk
+        // kind=pagePart rows in proposals; for any row with empty
+        // targetBlockType where Settings::defaultBlockType is set, fill it
+        // in. Operator's explicit edits survive — only empties get touched.
+        // Mutation is in-memory on $proposals; the augmented rows get
+        // persisted when CompileController writes the result back.
+        if ($defaultBlockType !== null && $defaultBlockType !== '') {
+            foreach ($proposals as &$pRow) {
+                if (!is_array($pRow)) { continue; }
+                if (((string) ($pRow['kind'] ?? '')) !== 'pagePart') { continue; }
+                if (((string) ($pRow['targetBlockType'] ?? '')) !== '') { continue; }
+                $pRow['targetBlockType'] = $defaultBlockType;
+                $fallbackBlockTypeApplied[] = (string) ($pRow['pagePartClass'] ?? '?')
+                    . '|' . (string) ($pRow['parentPageClass'] ?? '?')
+                    . '|' . (string) ($pRow['context'] ?? '?');
+                // Also bump status from needs-review to accepted so the row
+                // actually flows through the load pipeline. Operator can
+                // re-edit afterward if the fallback is wrong.
+                $pRow['status'] = 'accepted';
+            }
+            unset($pRow);
+        }
 
         foreach ($pageStructure as $fqcn => $pageInfo) {
             if (!is_string($fqcn) || !is_array($pageInfo)) {
@@ -204,6 +237,20 @@ final class MappingCompiler extends Component
                 } else {
                     $entryTypeForFqcn = $this->majorityKey($entryTypeCounts);
                 }
+            }
+            // Phase 6 closed-set validation: if the chosen entryType handle isn't a
+            // real Craft entry type AND the operator opted in to graceful fallback,
+            // route the FQCN to the default. Catches the basename-heuristic case
+            // where derived handles like `loginPage` or `topLevelPage` look plausible
+            // but don't exist in the project's Craft schema.
+            if (
+                $craftEntryTypeHandles !== []
+                && !in_array($entryTypeForFqcn, $craftEntryTypeHandles, true)
+                && $defaultEntryType !== null
+                && $defaultEntryType !== ''
+            ) {
+                $entryTypeForFqcn = $defaultEntryType;
+                $fallbackEntryTypeApplied[] = $fqcn;
             }
             // sectionKey is the LOOKUP KEY into the sections[] map; by
             // convention sections[] is keyed by entry-type handle (the
@@ -287,6 +334,7 @@ final class MappingCompiler extends Component
                 'skippedNodeClasses'        => $skipped,
                 'autoAssignedTargets'       => $autoAssigned,
                 'fallbackEntryTypeApplied'  => $fallbackEntryTypeApplied,
+                'fallbackBlockTypeApplied'  => $fallbackBlockTypeApplied,
                 'fallbackEntryTypeUsed'     => $defaultEntryType,
                 'fallbackBlockTypeUsed'     => $defaultBlockType,
                 'warnings'                  => $warnings,

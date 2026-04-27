@@ -134,7 +134,9 @@ class CompileController extends Controller
 
         // 5. Compile. Pass Settings::defaultEntryType / defaultBlockType so the
         //    compiler can apply graceful fallback for FQCNs / page-parts the AI
-        //    could not confidently map (Phase 6, opt-in by the operator).
+        //    could not confidently map (Phase 6, opt-in by the operator). Pass
+        //    the Craft entry-type catalog so the compiler can validate basename-
+        //    derived handles and route invalid ones to the fallback.
         $settings = $plugin->getSettings();
         $compiled = $plugin->mappingCompiler->compile(
             $mapping,
@@ -142,6 +144,7 @@ class CompileController extends Controller
             $sites,
             $settings->defaultEntryType ?: null,
             $settings->defaultBlockType ?: null,
+            $plugin->craftKnowledgeBase->entryTypeHandles(),
         );
         $report = $compiled['_compileReport'];
 
@@ -162,7 +165,17 @@ class CompileController extends Controller
             foreach ($fallbackApplied as $fqcn) {
                 $this->stdout("        - {$fqcn}\n", Console::FG_GREY);
             }
-        } elseif ($report['fallbackEntryTypeUsed'] === null) {
+        }
+        $fallbackPagePartsApplied = (array) ($report['fallbackBlockTypeApplied'] ?? []);
+        if ($fallbackPagePartsApplied !== []) {
+            $blockFallbackTo = (string) ($report['fallbackBlockTypeUsed'] ?? '?');
+            $this->stdout(sprintf(
+                "  OK   page-part fallback applied: %d page parts routed to Settings::defaultBlockType=%s (status flipped to accepted)\n",
+                count($fallbackPagePartsApplied),
+                $blockFallbackTo,
+            ), Console::FG_GREEN);
+        }
+        if ($fallbackApplied === [] && $report['fallbackEntryTypeUsed'] === null) {
             // Operator hasn't opted in to graceful fallback. If we skipped any
             // FQCNs for "no targetEntryType", nudge them toward the setting.
             $skippedNoTarget = array_filter(

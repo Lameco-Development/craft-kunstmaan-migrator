@@ -63,12 +63,13 @@ final class SettingsHtmlTest extends TestCase
         );
     }
 
-    public function testTwoH2GroupsConnectivityAndMapping(): void
+    public function testThreeH2GroupsConnectivityMappingFallback(): void
     {
         $body = file_get_contents(self::TWIG_PATH);
-        self::assertSame(2, preg_match_all('/<h2>/', $body), 'expected exactly two <h2> tags');
+        self::assertSame(3, preg_match_all('/<h2>/', $body), 'expected exactly three <h2> tags');
         self::assertStringContainsString("'Connectivity'|t", $body);
         self::assertStringContainsString("'Mapping'|t", $body);
+        self::assertStringContainsString("'Fallback'|t", $body);
     }
 
     public function testNineEssentialFieldsPresent(): void

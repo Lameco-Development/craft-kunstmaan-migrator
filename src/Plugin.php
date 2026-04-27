@@ -418,8 +418,58 @@ class Plugin extends BasePlugin
                 'settings' => $this->getSettings(),
                 'localeOptions' => $this->resolveLocaleOptions(), // [] on DB failure (D-21)
                 'siteHandleOptions' => $this->resolveSiteHandleOptions(), // always available (D-22)
+                // Phase 6 — fallback dropdown options. Three-state: a top "(no
+                // fallback — skip unmapped)" sentinel mapping to '', followed by
+                // every real Craft handle. Operator picks one or leaves empty
+                // for the explicit-skip behavior.
+                'entryTypeFallbackOptions' => $this->resolveEntryTypeFallbackOptions(),
+                'blockTypeFallbackOptions' => $this->resolveBlockTypeFallbackOptions(),
             ],
         );
+    }
+
+    /**
+     * Phase 6 — dropdown options for Settings::defaultEntryType. Top option is
+     * the "no fallback" sentinel (empty value). Following options are every
+     * Craft entry-type handle, sorted alphabetically.
+     *
+     * @return array<int,array{label:string,value:string}>
+     */
+    private function resolveEntryTypeFallbackOptions(): array
+    {
+        $opts = [
+            ['label' => '(no fallback — skip unmapped)', 'value' => ''],
+        ];
+        try {
+            foreach ($this->craftKnowledgeBase->entryTypeHandles() as $h) {
+                $opts[] = ['label' => $h, 'value' => $h];
+            }
+        } catch (\Throwable $e) {
+            Craft::warning('entry-type fallback options unavailable: ' . $e->getMessage(), __METHOD__);
+        }
+        return $opts;
+    }
+
+    /**
+     * Phase 6 — dropdown options for Settings::defaultBlockType. Same shape as
+     * resolveEntryTypeFallbackOptions; values are the union of block-type
+     * handles across every Matrix field.
+     *
+     * @return array<int,array{label:string,value:string}>
+     */
+    private function resolveBlockTypeFallbackOptions(): array
+    {
+        $opts = [
+            ['label' => '(no fallback — skip unmapped)', 'value' => ''],
+        ];
+        try {
+            foreach ($this->craftKnowledgeBase->allBlockTypeHandles() as $h) {
+                $opts[] = ['label' => $h, 'value' => $h];
+            }
+        } catch (\Throwable $e) {
+            Craft::warning('block-type fallback options unavailable: ' . $e->getMessage(), __METHOD__);
+        }
+        return $opts;
     }
 
     /**
