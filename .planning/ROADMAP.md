@@ -287,7 +287,7 @@ Plans:
 2. **dataProviders proposer** — `TransformService` already dispatches `mapping.dataProviders[]` (B9 wiring), but `MappingCompiler` doesn't propose them. Operator must hand-author every entry.
 3. **Page-builder layout proposer** — `headerBlock` / `bodyWrapBlock` / `bodyColumn` are honored by transform but never proposed by analyze. Phase 7's implicit-content emitter is the closest precedent and the same shape of work.
 
-**Requirements:** TAX-01..0N + PROP-01..0N (TBD — codified during `/gsd-plan-phase 8`).
+**Requirements:** TAX-01..10, PROP-01..06, DOC-01..02 (codified by Plan 08-17 in REQUIREMENTS.md).
 
 **Success criteria (vision — refine in CONTEXT.md):**
 
@@ -305,7 +305,26 @@ Plans:
 *Documentation:*
 8. CHANGELOG.md "Known omissions in v1.0" section listing Kunstmaan surfaces this migrator deliberately does NOT cover: FormBundle, SearchBundle, MenuBundle, user accounts / roles / ACLs, `kuma_translations` (i18n string catalog), media folder hierarchy, asset metadata (alt text / focal point), slug history (Retour-style mining beyond `kuma_redirects`).
 
-**Plans:** TBD (codified during `/gsd-plan-phase 8` — rough breakdown lands in CONTEXT.md).
+**Plans:** 15 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — MappingFile/MappingAuditor/MappingCompiler taxonomy + dataProvider row scaffolding (TAX-01, PROP-03)
+- [ ] 08-02-PLAN.md — DoctrineEntityParser Gedmo namespace scan (TAX-04)
+- [ ] 08-03-PLAN.md — KnowledgeBase::renderTaxonomiesMarkdown (TAX-05)
+- [ ] 08-04-PLAN.md — LegacyDbService::extTranslationsFor + EXT_TRANSLATIONS constant (TAX-06)
+- [ ] 08-05-PLAN.md — LlmClassifier 3 new proposers: proposeNonPageEntities + proposeLayoutBlocks + proposeDataProviders (TAX-02, PROP-01..03)
+- [ ] 08-08-PLAN.md — Settings + AnalyzeController flags + 3 proposer dispatch steps (PROP-04)
+- [ ] 08-09-PLAN.md — MappingCompiler compile passes + counter wiring (TAX-01, PROP-05)
+- [ ] 08-10-PLAN.md — MigrationFilters reachability auto-include (TAX-03)
+- [ ] 08-11-PLAN.md — TaxonomyMigrationService verbatim port (TAX-06, TAX-07)
+- [ ] 08-12-PLAN.md — Plugin DI + MigrateController bolt-on/sub-action (TAX-08)
+- [ ] 08-13-PLAN.md — _settings.twig AI H2 group (PROP-04 polish)
+- [ ] 08-14-PLAN.md — Doctor 11th check ext_translations (TAX-09)
+- [ ] 08-15-PLAN.md — TaxonomyMigrationTest integration (TAX-10)
+- [ ] 08-16-PLAN.md — MappingCompiler taxonomies/layout/dataProviders unit tests (TAX-10, PROP-06)
+- [ ] 08-17-PLAN.md — RECONCILIATION.md + CHANGELOG known-omissions + REQUIREMENTS codification (DOC-01, DOC-02)
+
+> Note: plan numbers 08-06 and 08-07 are intentionally absent. The three proposer additions originally drafted as 08-05/06/07 were merged into 08-05 (single plan, 3 tasks) because all three modify the same file (`src/analyze/LlmClassifier.php`) and same-wave plans require zero file overlap.
 
 ---
 
