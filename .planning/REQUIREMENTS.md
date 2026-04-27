@@ -134,7 +134,8 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 - [x] **TAX-07**: `TaxonomyMigrationService` ported verbatim from v1 (443 LOC → 483 LOC; +40 LOC reflects inline D-08/D-09/D-56 reshape comments + the new D-09 fallback branch) with five documented reshape points (single mapping.yaml, atomic-always-on, D-09 empty-table fallback, compiler-emitted block shape, detection-inside-service short-circuit). _(Phase 8 / Plan 08-11; D-08.)_
 - [x] **TAX-08**: `TaxonomyMigrationService` wired into `Plugin` DI (`config()` slot + `init()` sibling-DI fanout) and `MigrateController` (Step 4.5 bolt-on inserted BEFORE the load step, plus an `actionTaxonomies` resume sub-action gated by `NeverProductionTrait`). Run order: taxonomies migrate BEFORE pages. _(Phase 8 / Plan 08-12; D-03.)_
 - [x] **TAX-09**: Doctor 11th check `checkExtTranslations()` for `ext_translations` table presence (WARN-only when empty per D-09; INFO when table absent; never FAIL). _(Phase 8 / Plan 08-14; D-09.)_
-- [x] **TAX-10**: Integration test (`tests/integration/load/TaxonomyMigrationTest.php`) drives `TaxonomyMigrationService` via stubbed dependencies and asserts D-08 reshape #4 / #5 invariants + D-03 run-order regression guard (4 active tests + 1 plan-permitted `markTestIncomplete` for the D-09 fallback). Unit tests for `MappingCompiler::compileTaxonomies()` (`tests/unit/compile/MappingCompilerTaxonomiesTest.php`) lock the compile invariants. _(Phase 8 / Plans 08-15 + 08-16.)_
+- [x] **TAX-10**: Integration test (`tests/integration/load/TaxonomyMigrationTest.php`) drives `TaxonomyMigrationService` via stubbed dependencies and asserts D-08 reshape #4 / #5 invariants + D-03 run-order regression guard (4 active tests + 1 plan-permitted `markTestIncomplete` for the D-09 fallback). _(Phase 8 / Plan 08-15.)_
+- [x] **TAX-11**: Unit tests for `MappingCompiler::compileTaxonomies()` + the two new compile passes (`compileLayoutBlocks` + `compileDataProviders`) — `tests/unit/compile/MappingCompilerTaxonomiesTest.php` (3 tests / 12 assertions pinning the D-07 field-fold contract from `kind=taxonomy` + same-`sourceTable` `kind=column` rows), `MappingCompilerLayoutBlocksTest.php` (3 tests pinning the D-12 nodeClass partial-update slot fold + per-slot skip-existing), `MappingCompilerDataProvidersTest.php` (3 tests pinning the D-13 dataProviders emit + skip-existing). Counter assertions cover `taxonomiesEmitted` / `layoutBlocksEmitted` / `dataProvidersEmitted` in `_compileReport`. _(Phase 8 / Plan 08-16.)_
 
 ### AI Proposer Coverage (PROP)
 
@@ -191,4 +192,4 @@ Filled in by the roadmap step. Every requirement above must map to exactly one p
 | CFG-04, CFG-05, CFG-06, CFG-07, LOC-03, ADP-04, VER-04, SRC-20, REC-01 | 4.1 |
 | REC-02 | 4.2 (deferred from 4.1 — see RECONCILIATION.md) |
 | TST-01 … TST-04 | 5 |
-| TAX-01 … TAX-10, PROP-01 … PROP-06, DOC-01, DOC-02 | 8 |
+| TAX-01 … TAX-11, PROP-01 … PROP-06, DOC-01, DOC-02 | 8 |

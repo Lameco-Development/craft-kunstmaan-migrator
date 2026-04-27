@@ -14,7 +14,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 | 3 | ETL Pipeline & Field Handlers | Extract → Transform → Load → Finalize stages with topological ordering, per-entry atomic load, idempotent re-runs, JIT assets (with `--preload-assets`), the six built-in field handlers, and CKEditor token rewrite. | ETL-01..07, FH-01..04, FIN-01..02 | 4 | no |
 | 4 | Adapters, Verify & Settings | Optional SEOmatic + Retour adapters (runtime-detected, not composer-required), `verify` parity gate (counts + optional URL spot-check) producing a timestamped report, CP Settings page, console verbosity, rehearsal report artifact. | ADP-01..03, VER-01..03, CFG-01..03 | 4 | yes |
 | 5 | Tests, Rehearsal & Release | Transform-stage characterization fixtures from a real dump, full unit suite green, CI workflow running validate + PHPUnit + plugin-load smoke test, rehearsal pass against the CQM dump, release checklist + tag. | TST-01..04 | 4 | no |
-| 8 | Taxonomies & AI Proposer Coverage | Port v1's `TaxonomyMigrationService` and add the missing `taxonomies:` mapping block (analyze proposer + compile + extract + load); extend the analyze AI proposer to cover `dataProviders` and page-builder layout (`headerBlock` / `bodyWrapBlock` / `bodyColumn`) so operator hand-authoring shrinks; document remaining out-of-scope Kunstmaan surfaces (Forms, Search, Menus, Users, asset folder hierarchy, slug-history) in CHANGELOG. Closes the "useful as a plugin" gap before v1.0 tag. | TAX-01..10, PROP-01..06, DOC-01..02 | TBD | no |
+| 8 | Taxonomies & AI Proposer Coverage | Port v1's `TaxonomyMigrationService` and add the missing `taxonomies:` mapping block (analyze proposer + compile + extract + load); extend the analyze AI proposer to cover `dataProviders` and page-builder layout (`headerBlock` / `bodyWrapBlock` / `bodyColumn`) so operator hand-authoring shrinks; document remaining out-of-scope Kunstmaan surfaces (Forms, Search, Menus, Users, asset folder hierarchy, slug-history) in CHANGELOG. Closes the "useful as a plugin" gap before v1.0 tag. | TAX-01..11, PROP-01..06, DOC-01..02 | TBD | no |
 
 ### Phase 1: Foundation & Connectivity
 
@@ -287,7 +287,7 @@ Plans:
 2. **dataProviders proposer** — `TransformService` already dispatches `mapping.dataProviders[]` (B9 wiring), but `MappingCompiler` doesn't propose them. Operator must hand-author every entry.
 3. **Page-builder layout proposer** — `headerBlock` / `bodyWrapBlock` / `bodyColumn` are honored by transform but never proposed by analyze. Phase 7's implicit-content emitter is the closest precedent and the same shape of work.
 
-**Requirements:** TAX-01..10, PROP-01..06, DOC-01..02 (codified by Plan 08-17 in REQUIREMENTS.md).
+**Requirements:** TAX-01..11, PROP-01..06, DOC-01..02 (codified by Plan 08-17 in REQUIREMENTS.md).
 
 **Success criteria (vision — refine in CONTEXT.md):**
 
