@@ -338,6 +338,168 @@ final class KnowledgeBase extends Component
     }
 
     /**
+     * Phase 8 / Plan 03 — render the third KB surface: non-page Doctrine
+     * entity candidates that the Wave 2 LLM proposer (`proposeNonPageEntities`)
+     * classifies as taxonomy / supporting / drop.
+     *
+     * Walks the warmed `DoctrineEntityParser` (Plan 02 source-truth) and
+     * filters out every FQCN persisted in `kuma_nodes.ref_entity_name`
+     * (those are page entities — already rendered by `renderPagesMarkdown`).
+     *
+     * Each candidate gets:
+     *   - one-line metadata (FQCN, source table, COUNT(*) row count),
+     *   - a columns table reused from `renderTableColumns()`,
+     *   - a "Gedmo translatable fields" subsection IFF Plan 02's parser flag
+     *     is present on the column object (defensive feature-detect via
+     *     `property_exists` so this plan can land independently of 08-02).
+     *
+     * Truncation contract: emits the FULL string. The KnowledgeBase docblock
+     * (lines 36-37) and the `must_haves.truths` row both pin the convention
+     * that LlmClassifier::batchPropose handles truncation downstream — adding
+     * truncation here would diverge from the existing two render methods.
+     * (Rule 1 deviation from the plan's `<action>` skeleton; documented in
+     * SUMMARY.md.)
+     *
+     * @param array<string, mixed>|null $mapping  Reserved for symmetry with
+     *                                            the existing render methods;
+     *                                            no overlay annotations consumed
+     *                                            in the Phase 8 / Plan 05 prompt
+     *                                            scope, but the parameter is
+     *                                            kept on the signature so
+     *                                            callers can pass `mapping.yaml`
+     *                                            uniformly across all three
+     *                                            render methods.
+     */
+    public function renderTaxonomiesMarkdown(?array $mapping, DateTimeInterface $now): string
+    {
+        if ($this->legacyDb === null) {
+            throw new \LogicException('KnowledgeBase requires legacyDb service for renderTaxonomiesMarkdown().');
+        }
+
+        $out   = [];
+        $out[] = '# Kunstmaan Taxonomy Candidates (non-Page Doctrine entities, generated ' . $now->format(DATE_ATOM) . ')';
+        $out[] = '';
+        $out[] = '_Non-Page Doctrine entities discovered by the source parser. Categories, tags and other standalone entities live here._';
+        $out[] = '_Each entity may carry Gedmo Translatable properties — listed per FQCN when the source attribute is present._';
+        $out[] = '';
+
+        // 1. Page-entity exclusion set: every FQCN that has a row in kuma_nodes
+        //    is a page entity (already rendered by renderPagesMarkdown). Mirrors
+        //    the discovery query at lines 365-370.
+        $pageFqcns = [];
+        try {
+            $nodeRows = $this->legacyDb->queryAll(
+                'SELECT DISTINCT ref_entity_name'
+                . ' FROM ' . KunstmaanCoreTables::NODES
+                . ' WHERE deleted = 0 AND ref_entity_name IS NOT NULL',
+            );
+            foreach ($nodeRows as $r) {
+                $fqcn = (string) ($r['ref_entity_name'] ?? '');
+                if ($fqcn !== '') {
+                    $pageFqcns[$fqcn] = true;
+                }
+            }
+        } catch (\Throwable $e) {
+            $out[] = sprintf('_Could not load page-entity exclusion set: %s_', $e->getMessage());
+            return implode("\n", $out);
+        }
+
+        // 2. Walk every parsed Doctrine entity. Null parser → empty list →
+        //    "no entities discovered" footer.
+        $entities = $this->entityParser?->getAll() ?? [];
+
+        /** @var array<string, \lameco\kunstmaanmigrator\source\DoctrineEntityInfo> $candidates */
+        $candidates = [];
+        foreach ($entities as $fqcn => $entityInfo) {
+            if (!is_string($fqcn) || $fqcn === '') {
+                continue;
+            }
+            if (isset($pageFqcns[$fqcn])) {
+                continue; // page entity — out of scope for this surface.
+            }
+            $candidates[$fqcn] = $entityInfo;
+        }
+
+        if ($candidates === []) {
+            $out[] = '_No non-Page entities discovered._';
+            return implode("\n", $out);
+        }
+
+        ksort($candidates);
+
+        // 3. Pre-load the prefix-scoped column index once. renderTableColumns()
+        //    consumes it by reference + appends to $out (signature lines 498-563).
+        $allColumns = $this->loadAllColumns();
+
+        foreach ($candidates as $fqcn => $entityInfo) {
+            $sourceTable = $entityInfo->tableName;
+
+            $shortName = $fqcn;
+            $lastBs = strrpos($fqcn, '\\');
+            if ($lastBs !== false) {
+                $shortName = substr($fqcn, $lastBs + 1);
+            }
+
+            $rowCount = '?';
+            if ($sourceTable !== '' && preg_match(self::IDENT_RX, $sourceTable) === 1) {
+                try {
+                    $rowCount = (string) (int) $this->legacyDb->queryScalar(
+                        'SELECT COUNT(*) FROM `' . $sourceTable . '`',
+                    );
+                } catch (\Throwable) {
+                    $rowCount = '?';
+                }
+            }
+
+            $out[] = sprintf('## %s', $shortName);
+            $out[] = sprintf('- **FQCN**: `%s`', $fqcn);
+            $out[] = sprintf(
+                '- **Source table**: %s',
+                $sourceTable !== '' ? '`' . $sourceTable . '`' : '_(none)_',
+            );
+            $out[] = sprintf('- **Row count**: %s', $rowCount);
+            $out[] = '';
+
+            if ($sourceTable !== '') {
+                $this->renderTableColumns($out, $sourceTable, $allColumns);
+            }
+
+            // 4. Gedmo translatable subsection — defensive feature-detect.
+            //    Plan 08-02 (sibling, wave 1) adds `isGedmoTranslatable` to
+            //    DoctrineColumnInfo; until that lands, this method emits no
+            //    Gedmo subsection. property_exists() is the contract: it
+            //    returns true once the property is declared, regardless of
+            //    visibility.
+            $translatable = [];
+            foreach ($entityInfo->columns as $col) {
+                if (
+                    property_exists($col, 'isGedmoTranslatable')
+                    // @phpstan-ignore-next-line property is added by Plan 08-02
+                    && $col->isGedmoTranslatable === true
+                ) {
+                    $name = $col->columnName !== '' ? $col->columnName : $col->propertyName;
+                    if ($name !== '') {
+                        $translatable[] = $name;
+                    }
+                }
+            }
+            if ($translatable !== []) {
+                $out[] = '### Gedmo translatable fields';
+                $out[] = '';
+                foreach ($translatable as $field) {
+                    $out[] = '- `' . $field . '`';
+                }
+                $out[] = '';
+            }
+
+            $out[] = '---';
+            $out[] = '';
+        }
+
+        return implode("\n", $out);
+    }
+
+    /**
      * @param array<string, mixed>|null $mapping
      */
     public function renderPagesMarkdown(?array $mapping, DateTimeInterface $now): string
