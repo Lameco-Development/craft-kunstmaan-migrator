@@ -32,6 +32,7 @@ use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\RedirectMigrationService;
 use lameco\kunstmaanmigrator\load\SeoMigrationService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
+use lameco\kunstmaanmigrator\load\TaxonomyMigrationService;
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
 use lameco\kunstmaanmigrator\mapping\BlockAvailabilityValidator;
 use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
@@ -101,6 +102,7 @@ use yii\db\Connection;
  * @property-read SeoMigrationService $seoMigrationService
  * @property-read SeomaticPayloadBuilder $seomaticPayloadBuilder
  * @property-read RedirectMigrationService $redirectMigrationService
+ * @property-read TaxonomyMigrationService $taxonomyMigrationService
  * @property-read BaselineCounterService $baselineCounterService
  * @property-read CountGateService $countGateService
  * @property-read SnapshotDiffer $snapshotDiffer
@@ -163,6 +165,8 @@ class Plugin extends BasePlugin
                 'seoMigrationService'        => SeoMigrationService::class,
                 'seomaticPayloadBuilder'     => SeomaticPayloadBuilder::class,
                 'redirectMigrationService'   => RedirectMigrationService::class,
+                // Phase 8 / D-08 — verbatim-ported taxonomy load service (TAX-08).
+                'taxonomyMigrationService'   => TaxonomyMigrationService::class,
                 'baselineCounterService'     => BaselineCounterService::class,
                 'countGateService'           => CountGateService::class,
                 'snapshotDiffer'             => SnapshotDiffer::class,
@@ -316,6 +320,16 @@ class Plugin extends BasePlugin
         $this->redirectMigrationService->stateService = $this->migrationStateService;
         $this->redirectMigrationService->sites        = $this->resolveSitesMap();
         // $filters wired at invocation time.
+
+        // Phase 8 / D-08 / TAX-08 — TaxonomyMigrationService sibling DI fanout.
+        // Service public slots: legacyDb / migrationState / mappingFile (Plan 11).
+        // No sites-map: TaxonomyMigrationService reads mapping.sites itself via
+        // mappingFile->load() (D-09 fallback branch). NeverProductionTrait is NOT
+        // applied at the service level — applied at the controller seam
+        // (MigrateController::actionTaxonomies / actionIndex bolt-on, Plan 12).
+        $this->taxonomyMigrationService->legacyDb       = $this->legacyDbService;
+        $this->taxonomyMigrationService->migrationState = $this->migrationStateService;
+        $this->taxonomyMigrationService->mappingFile    = $this->mappingFile;
 
         // CaptureBaselineHtmlService → SpotCheckUrlFetcher.
         $this->captureBaselineHtmlService->fetcher = $this->spotCheckUrlFetcher;
