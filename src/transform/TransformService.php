@@ -50,6 +50,16 @@ class TransformService extends Component
     public string $storagePath = '@storage/migration';
 
     /**
+     * Phase 8.2 / D-15 test seam — overrides Craft fields lookup in
+     * resolveMatrixInnerEntryType so the dotted-path collapse logic is unit
+     * testable without a Craft fields service. Production code never sets
+     * this — Craft is canonical.
+     *
+     * @var array<string, string>  matrixFieldHandle => innerEntryTypeHandle
+     */
+    public array $matrixInnerTypeMap = [];
+
+    /**
      * CONTEXT D-48 in-process pipeline reshape — extracted rows arrive via iterable instead of disk artifacts.
      *
      * v1 signature: `run(array $mapping, array $options = []): array` — walked
@@ -272,6 +282,15 @@ class TransformService extends Component
                 $report['warnings'][] = "Handler '{$handlerId}' failed on {$targetHandle}: " . $e->getMessage();
             }
         }
+
+        // Phase 8.2 / D-15 — collapse dotted-path target handles into nested
+        // Matrix-of-entries payloads. The residual-column LLM may propose
+        // `headerHome.heading -> banner_heading` (and siblings) when a column
+        // cluster on the source page table maps into a Matrix-of-sub-entry
+        // field on the Craft entry-type. Aggregate same-matrix-field writes
+        // into a single block payload (Craft 5 shape: `<matrix>['new1'] =
+        // ['type' => <innerType>, 'fields' => [...]]`).
+        $fieldValues = $this->collapseDottedPathTargets($fieldValues, $report);
 
         // 2) PageBuilder — pagePart + dataProvider blocks in Craft 5 native matrix shape.
         $pageBuilderHandle = (string) ($nodeSpec['pageBuilderHandle'] ?? '');
@@ -598,6 +617,148 @@ class TransformService extends Component
      * @param  array<string, mixed>  $opts     Current handlerOptions.
      * @return array<string, mixed>            Augmented handlerOptions.
      */
+    /**
+     * Phase 8.2 / D-15 — collapse dotted-path target handles into Craft 5
+     * Matrix-of-entries payloads.
+     *
+     * Input:  fieldValues with mixed flat + dotted keys, e.g.
+     *           ['title' => 'X', 'headerHome.heading' => 'Welcome', 'headerHome.subheading' => '...']
+     * Output: dotted keys removed, replaced with single matrix-shaped value
+     *           ['title' => 'X', 'headerHome' => ['new1' => ['type' => 'headerHero',
+     *                                                        'enabled' => true,
+     *                                                        'fields' => ['heading' => 'Welcome', 'subheading' => '...']]]]
+     *
+     * Inner entry-type resolution: looks up via Craft::$app->fields->getFieldByHandle.
+     * If the field is not a Matrix or has no entry-types, the dotted entries
+     * are left untouched and a WARN is logged. If the Matrix has multiple
+     * inner entry-types, the first (alphabetically by handle) is picked and a
+     * WARN is logged so the operator can re-mapping with explicit 3-part
+     * dotted handles if needed.
+     *
+     * Operator-set Matrix value (already a flat assign for `headerHome` from
+     * a top-level mapping) wins — sibling dotted entries are merged into it
+     * if the value is array-shaped, otherwise dropped with a WARN.
+     *
+     * @param  array<string, mixed> $fieldValues
+     * @param  array<string, mixed> $report  by-ref accumulator
+     * @return array<string, mixed>
+     */
+    private function collapseDottedPathTargets(array $fieldValues, array &$report): array
+    {
+        // Group dotted keys by their leading prefix (the matrix-field handle).
+        $groups = [];
+        foreach ($fieldValues as $handle => $value) {
+            if (!is_string($handle) || strpos($handle, '.') === false) {
+                continue;
+            }
+            $parts = explode('.', $handle, 2);
+            $matrixHandle = $parts[0];
+            $subHandle = $parts[1] ?? '';
+            if ($matrixHandle === '' || $subHandle === '') {
+                continue;
+            }
+            $groups[$matrixHandle][$subHandle] = $value;
+        }
+        if ($groups === []) {
+            return $fieldValues;
+        }
+
+        foreach ($groups as $matrixHandle => $subFields) {
+            $innerType = $this->resolveMatrixInnerEntryType($matrixHandle, $report);
+            if ($innerType === null) {
+                // Resolution failed — keep dotted keys as-is (defense: never
+                // silently drop data). The WARN logged inside the resolver
+                // tells the operator what to fix.
+                continue;
+            }
+
+            // Build the new block payload.
+            $newBlock = [
+                'new1' => [
+                    'type'    => $innerType,
+                    'enabled' => true,
+                    'fields'  => $subFields,
+                ],
+            ];
+
+            // Skip-existing: if the operator already set fieldValues[$matrixHandle]
+            // (rare — would require a flat top-level mapping AND a dotted-path
+            // mapping for the same matrix on the same entry), prefer the
+            // operator's value and drop the dotted siblings with a WARN. We
+            // do not try to merge — that would silently change operator intent.
+            if (array_key_exists($matrixHandle, $fieldValues)) {
+                $report['warnings'][] = sprintf(
+                    'Matrix field %s already has a top-level value; dotted-path siblings (%s) skipped to preserve operator intent',
+                    $matrixHandle,
+                    implode(', ', array_keys($subFields)),
+                );
+                // Still remove the dotted entries — they would otherwise
+                // hit Craft as unknown field handles and warn there.
+                foreach (array_keys($subFields) as $sub) {
+                    unset($fieldValues[$matrixHandle . '.' . $sub]);
+                }
+                continue;
+            }
+
+            $fieldValues[$matrixHandle] = $newBlock;
+            foreach (array_keys($subFields) as $sub) {
+                unset($fieldValues[$matrixHandle . '.' . $sub]);
+            }
+        }
+        return $fieldValues;
+    }
+
+    /**
+     * Phase 8.2 / D-15 — resolve a Matrix field's inner entry-type handle
+     * from its handle. Returns null + WARN on any miss / ambiguity that the
+     * caller treats as "leave dotted keys untouched".
+     *
+     * Test seam: $matrixInnerTypeMap (set by tests via reflection) overrides
+     * Craft lookup so this method is exercisable without a live Craft fields
+     * service.
+     *
+     * @param  array<string, mixed> $report
+     */
+    private function resolveMatrixInnerEntryType(string $matrixHandle, array &$report): ?string
+    {
+        // Test seam — see TransformServiceMatrixSubFieldTest.
+        if (isset($this->matrixInnerTypeMap[$matrixHandle])) {
+            return (string) $this->matrixInnerTypeMap[$matrixHandle];
+        }
+
+        $field = Craft::$app->fields->getFieldByHandle($matrixHandle);
+        if ($field === null) {
+            $report['warnings'][] = "Matrix field '{$matrixHandle}' not found in Craft — dotted-path target handles left as-is";
+            return null;
+        }
+        if (!($field instanceof \craft\fields\Matrix)) {
+            $report['warnings'][] = "Field '{$matrixHandle}' is not a Matrix field — cannot collapse dotted-path siblings";
+            return null;
+        }
+        $entryTypes = $field->getEntryTypes();
+        if ($entryTypes === []) {
+            $report['warnings'][] = "Matrix field '{$matrixHandle}' has no inner entry-types — cannot collapse dotted-path siblings";
+            return null;
+        }
+        if (count($entryTypes) > 1) {
+            // Pick the first (alphabetical by handle) but warn so the operator
+            // can re-map with an explicit 3-part dotted handle if the wrong
+            // type was chosen.
+            usort(
+                $entryTypes,
+                static fn($a, $b): int => strcmp((string) $a->handle, (string) $b->handle),
+            );
+            $report['warnings'][] = sprintf(
+                'Matrix field %s has %d inner entry-types; auto-picked %s (re-map with explicit 3-part dotted handle to override)',
+                $matrixHandle,
+                count($entryTypes),
+                (string) $entryTypes[0]->handle,
+            );
+        }
+        $h = (string) $entryTypes[0]->handle;
+        return $h !== '' ? $h : null;
+    }
+
     private function applyTargetShorthand(array $mapping, array $spec, array $opts): array
     {
         $target = (string) ($spec['target'] ?? '');
