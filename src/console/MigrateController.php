@@ -64,6 +64,18 @@ class MigrateController extends Controller
     public ?string $locales  = null;
     public ?string $since    = null;
 
+    /**
+     * Phase 7 debug flags. `--limit=N` caps per-FQCN extraction (combine with
+     * --entities for "first N rows of class X"). `--only-id=N` extracts the
+     * single legacy node row whose `kuma_nodes.id` matches — combined with
+     * --entities for an unambiguous "this exact entry" target.
+     *
+     * Both null by default → no scoping. Designed for fast-iteration debug
+     * cycles where re-running the whole migration is too slow.
+     */
+    public ?int $limit  = null;
+    public ?int $onlyId = null;
+
     // Phase 4.1 / D-26 — CLI override flags for adapter bypass per-run. Distinct
     // from Settings::seoEnabled / retourEnabled (which persist across runs);
     // these flip the adapter for THIS invocation only and emit a distinct
@@ -91,6 +103,8 @@ class MigrateController extends Controller
             'noSeo', 'noRetour',
             // D-65: -v..-vvv verbosity (string|int — see verbosityLevel()).
             'verbose',
+            // Phase 7 debug flags.
+            'limit', 'onlyId',
         ]);
     }
 
@@ -104,6 +118,7 @@ class MigrateController extends Controller
     {
         return array_merge(parent::optionAliases(), [
             'v' => 'verbose',
+            'l' => 'limit',
         ]);
     }
 
@@ -194,7 +209,7 @@ class MigrateController extends Controller
         // Step 3: extract (writes storage/migration/extracted/<fqcn-slug>/<node-id>.json).
         $extractProgress = $this->makeExtractProgress();
         try {
-            $extractReport = $plugin->extractService->run($mapping, $filters, [], $extractProgress);
+            $extractReport = $plugin->extractService->run($mapping, $filters, $this->buildExtractOptions(), $extractProgress);
             $extractCounts = is_array($extractReport) ? $extractReport : iterator_to_array($extractReport);
         } catch (Throwable $e) {
             $this->endProgressIfStarted();
@@ -219,7 +234,7 @@ class MigrateController extends Controller
         $transformProgress = $this->makeTransformProgress($extractedNodes);
         try {
             $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, [], $transformProgress) as $payload) {
+            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions(), $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
                     continue; // sentinel — counters available via the Transform run report
                 }
@@ -538,7 +553,7 @@ class MigrateController extends Controller
 
         $extractProgress = $this->makeExtractProgress();
         try {
-            $extractReport = $plugin->extractService->run($mapping, $filters, [], $extractProgress);
+            $extractReport = $plugin->extractService->run($mapping, $filters, $this->buildExtractOptions(), $extractProgress);
             $extractCounts = is_array($extractReport) ? $extractReport : iterator_to_array($extractReport);
         } catch (Throwable $e) {
             $this->endProgressIfStarted();
@@ -588,7 +603,7 @@ class MigrateController extends Controller
         $transformProgress = $this->makeTransformProgress($this->countExtractedFiles($storageDir));
         try {
             $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, [], $transformProgress) as $payload) {
+            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions(), $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
                     continue;
                 }
@@ -1738,6 +1753,45 @@ class MigrateController extends Controller
 
     /** Set true when Console::startProgress has been called and not yet ended. */
     private bool $progressStarted = false;
+
+    /**
+     * Phase 7 — build the options array passed to ExtractService::run() from the
+     * controller's --limit / --only-id flags. Returns [] when neither is set so
+     * the default no-scoping behavior is preserved.
+     *
+     * --only-id is only meaningful in combination with --entities (an unscoped
+     * id lookup against multiple node-class tables is ambiguous on conflicting
+     * ids). When both --limit and --only-id are set, --only-id wins (limit is
+     * implicitly 1).
+     *
+     * @return array<string, mixed>
+     */
+    private function buildExtractOptions(): array
+    {
+        $opts = [];
+        if ($this->onlyId !== null) {
+            $opts['onlyId'] = (int) $this->onlyId;
+        } elseif ($this->limit !== null) {
+            $opts['limit'] = (int) $this->limit;
+        }
+        return $opts;
+    }
+
+    /**
+     * Phase 7 — same shape as buildExtractOptions but for TransformService.
+     * Transform consumes the on-disk extracted/ tree, so --limit has the
+     * effect of capping the number of payloads emitted.
+     *
+     * @return array<string, mixed>
+     */
+    private function buildTransformOptions(): array
+    {
+        $opts = [];
+        if ($this->limit !== null) {
+            $opts['limit'] = (int) $this->limit;
+        }
+        return $opts;
+    }
 
     /**
      * Build the per-row callback for ExtractService. Lazy-starts the bar on the

@@ -213,6 +213,11 @@ class ExtractService extends Component
         } elseif (isset($options['onlyNodeClass'])) {
             $onlyFqcns = [(string) $options['onlyNodeClass']];
         }
+        // Phase 7 — single-id debug filter. When set, only the legacy node
+        // row whose `kuma_nodes.id` matches gets extracted. Designed for
+        // fast-iteration debug; combine with --entities for an unambiguous
+        // single-entry target.
+        $onlyId = isset($options['onlyId']) ? (int) $options['onlyId'] : null;
 
         // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port (not in v1).
         // entities allow-list scopes the FQCN walk. MigrationFilters::$entities holds
@@ -283,6 +288,10 @@ class ExtractService extends Component
 
                 $nodeId = (int) ($nodeRow['id'] ?? 0);
                 if ($nodeId <= 0) {
+                    continue;
+                }
+                // Phase 7 — single-id debug filter applied at the streamed-row site.
+                if ($onlyId !== null && $nodeId !== $onlyId) {
                     continue;
                 }
 
