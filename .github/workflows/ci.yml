@@ -36,8 +36,13 @@ jobs:
           php-version: '8.3'
 
       - name: Bootstrap scratch Craft 5
+        # Pin to the supported major (composer requires craftcms/cms ^5.0).
+        # Without the constraint, the smoke job would silently install Craft 6
+        # the moment it ships, producing a confusing solver failure or a
+        # half-installed scratch site (Phase 5 review MEDIUM #2). Bump
+        # deliberately when Phase 6 / Craft 6 work begins.
         run: |
-          composer create-project craftcms/craft scratch-craft \
+          composer create-project "craftcms/craft:^5.0" scratch-craft \
             --no-interaction --prefer-dist --no-progress
 
       - name: Register plugin as path repository + install
