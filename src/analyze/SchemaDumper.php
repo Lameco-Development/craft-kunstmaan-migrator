@@ -202,11 +202,22 @@ final class SchemaDumper extends Component
         return $out;
     }
 
+    /**
+     * Pull the schema name out of the legacy DSN. Fail-fast on parse miss
+     * (IN-03): if `dbname=...` isn't present (e.g. unix-socket-only DSN,
+     * custom DSN forms), returning an empty string would silently propagate
+     * into the `:s` bind on the information_schema queries and surface as a
+     * baffling "0 tables found". Throwing here aligns with the preflight
+     * philosophy — operators see a clear, actionable error.
+     */
     private function extractSchemaName(string $dsn): string
     {
         if (preg_match('/dbname=([^;]+)/', $dsn, $m)) {
             return $m[1];
         }
-        return '';
+        throw new \RuntimeException(
+            'Could not extract dbname from legacy DSN. '
+            . 'Set legacyDbDatabase in plugin Settings (or include dbname=... in the DSN).',
+        );
     }
 }
