@@ -66,11 +66,14 @@ final class TransformCharacterizationTest extends TestCase
     {
         $base = __DIR__ . '/../../fixtures/transform';
         $inputBase = $base . '/input';
-        if (!is_dir($inputBase)) {
+        $matches = is_dir($inputBase) ? (glob($inputBase . '/*/*.json') ?: []) : [];
+        sort($matches);
+        if ($matches === []) {
+            // PHPUnit 11 errors on empty data providers. Yield a sentinel so
+            // the on-ship empty-corpus state stays non-fatal (skipped, not failed).
+            yield '__no_fixtures__' => ['', ''];
             return;
         }
-        $matches = glob($inputBase . '/*/*.json') ?: [];
-        sort($matches);
         foreach ($matches as $inputPath) {
             $rel = substr($inputPath, strlen($inputBase . '/'));
             $goldenPath = $base . '/golden/' . $rel;
@@ -83,6 +86,9 @@ final class TransformCharacterizationTest extends TestCase
      */
     public function testTransformRowMatchesGolden(string $inputPath, string $goldenPath): void
     {
+        if ($inputPath === '' && $goldenPath === '') {
+            self::markTestSkipped('No transform fixtures present (run tools/capture-transform-fixtures.php to populate).');
+        }
         $rawJson = file_get_contents($inputPath);
         self::assertNotFalse($rawJson, "Input fixture unreadable: {$inputPath}");
         $input = json_decode($rawJson, true);
