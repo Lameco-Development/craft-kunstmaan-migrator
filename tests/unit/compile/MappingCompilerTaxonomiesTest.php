@@ -110,6 +110,73 @@ final class MappingCompilerTaxonomiesTest extends TestCase
         $this->assertSame(0, (int) $compiled['_compileReport']['taxonomiesEmitted']);
     }
 
+    public function testTaxonomyWithEmptyTargetSectionIsSkippedWithWarning(): void
+    {
+        // Phase 8.1 / D-07a: defensive skip for accepted-but-incomplete rows
+        // (proposeNonPageEntities can emit status:accepted with empty
+        // targetSection — we must not fold these into mapping.taxonomies).
+        $mapping = [
+            'proposals' => [
+                $this->taxonomyRow(
+                    fqcn: 'App\\Entity\\Employee',
+                    sourceTable: 'lameco_websitebundle_employee_employees',
+                    targetSection: '',
+                    targetEntryType: 'teamMember',
+                    status: 'accepted',
+                ),
+            ],
+        ];
+
+        $compiled = $this->compiler->compile($mapping, [], ['nl' => 'default']);
+
+        $this->assertArrayNotHasKey('App\\Entity\\Employee', (array) ($compiled['taxonomies'] ?? []));
+        $this->assertSame(0, (int) $compiled['_compileReport']['taxonomiesEmitted']);
+
+        $warningJoin = implode("\n", (array) ($compiled['_compileReport']['warnings'] ?? []));
+        $this->assertStringContainsString('App\\Entity\\Employee', $warningJoin);
+        $this->assertStringContainsString('incomplete', $warningJoin);
+    }
+
+    public function testTaxonomyWithEmptyTargetEntryTypeIsSkippedWithWarning(): void
+    {
+        $mapping = [
+            'proposals' => [
+                $this->taxonomyRow(
+                    fqcn: 'App\\Entity\\Whatever',
+                    sourceTable: 'kuma_whatever',
+                    targetSection: 'whateverSection',
+                    targetEntryType: '',
+                    status: 'accepted',
+                ),
+            ],
+        ];
+
+        $compiled = $this->compiler->compile($mapping, [], ['nl' => 'default']);
+
+        $this->assertArrayNotHasKey('App\\Entity\\Whatever', (array) ($compiled['taxonomies'] ?? []));
+        $this->assertSame(0, (int) $compiled['_compileReport']['taxonomiesEmitted']);
+    }
+
+    public function testTaxonomyWithEmptySourceTableIsSkippedWithWarning(): void
+    {
+        $mapping = [
+            'proposals' => [
+                $this->taxonomyRow(
+                    fqcn: 'App\\Entity\\NoTable',
+                    sourceTable: '',
+                    targetSection: 'someSection',
+                    targetEntryType: 'someEntryType',
+                    status: 'accepted',
+                ),
+            ],
+        ];
+
+        $compiled = $this->compiler->compile($mapping, [], ['nl' => 'default']);
+
+        $this->assertArrayNotHasKey('App\\Entity\\NoTable', (array) ($compiled['taxonomies'] ?? []));
+        $this->assertSame(0, (int) $compiled['_compileReport']['taxonomiesEmitted']);
+    }
+
     /** @return array<string, mixed> */
     private function taxonomyRow(
         string $fqcn,

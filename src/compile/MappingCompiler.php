@@ -778,7 +778,26 @@ final class MappingCompiler extends Component
             // Skip-existing: operator-curated mapping.taxonomies wins (MAP-04).
             if (isset($taxonomiesOut[$fqcn])) { continue; }
 
-            $sourceTable = (string) ($row['sourceTable'] ?? '');
+            $sourceTable    = (string) ($row['sourceTable'] ?? '');
+            $taxSection     = (string) ($row['targetSection'] ?? '');
+            $taxEntryType   = (string) ($row['targetEntryType'] ?? '');
+
+            // Phase 8.1 / D-07a: defensive skip — refuse to fold rows where any
+            // of the three required keys is empty. TaxonomyMigrationService::migrateAll
+            // hard-fails on incomplete rows, so emitting them here would crash the
+            // load step. The MappingAuditor surfaces a missing-section / missing-entry-type
+            // finding for these (advisory) — this guard makes compile defensive
+            // even when the operator has not run audit + remediated upstream.
+            if ($sourceTable === '' || $taxSection === '' || $taxEntryType === '') {
+                $warnings[] = sprintf(
+                    'taxonomy %s skipped: incomplete (sourceTable=%s, targetSection=%s, targetEntryType=%s) — re-run analyze or fix mapping.yaml',
+                    $fqcn,
+                    $sourceTable !== '' ? $sourceTable : '∅',
+                    $taxSection !== '' ? $taxSection : '∅',
+                    $taxEntryType !== '' ? $taxEntryType : '∅',
+                );
+                continue;
+            }
 
             // D-07 field-fold: walk accepted same-sourceTable kind=column rows
             // and project each into fields[<legacyCol>] = <craftFieldHandle>.
@@ -806,8 +825,8 @@ final class MappingCompiler extends Component
 
             $taxonomiesOut[$fqcn] = [
                 'sourceTable'     => $sourceTable,
-                'targetSection'   => (string) ($row['targetSection'] ?? ''),
-                'targetEntryType' => (string) ($row['targetEntryType'] ?? ''),
+                'targetSection'   => $taxSection,
+                'targetEntryType' => $taxEntryType,
                 'fields'          => $fields,
             ];
             $emitted++;
