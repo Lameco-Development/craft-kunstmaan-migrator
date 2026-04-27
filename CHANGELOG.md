@@ -113,4 +113,31 @@ from cqm/simac/enreach pilots.
 - **Anthropic API calls only during `analyze`** — no runtime AI in the
   ETL path; no API key required to run `migrate`.
 
+### Known omissions in v1.0
+
+The following Kunstmaan surfaces are deliberately out of scope for v1.0:
+
+- **FormBundle** — form schemas + submissions are not migrated.
+- **SearchBundle** — Elasticsearch / search-index integration is not
+  migrated.
+- **MenuBundle** — menu trees are not migrated.
+- **User accounts / roles / ACLs** — operator authentication and
+  authorization are not migrated.
+- **`kuma_translations`** — Kunstmaan's i18n string catalog (distinct
+  from `ext_translations`, which Phase 8 DOES support for Gedmo
+  Translatable taxonomies).
+- **Media folder hierarchy** — `kuma_media_folder` parent_id chains are
+  dropped at migrate time; assets land flat. May become a v1.1 phase if
+  a real project demands it.
+- **Asset metadata** — alt text, copyright, focal point. May become a
+  v1.1 phase.
+- **Slug history** — beyond `kuma_redirects`, Kunstmaan tracks slug
+  changes that could feed Retour as historical redirects. Deferred.
+- **Drafts / non-public node versions** — `streamLiveNodes` filters
+  `online=1 AND public_node_version_id`; drafts are explicitly skipped
+  by design (carryover from v1). Permanently out of scope.
+
+Operators needing any of these should treat this migrator as a starting
+point and write project-specific extensions.
+
 [1.0.0]: https://github.com/lameco/kunstmaan-migrator/releases/tag/v1.0.0

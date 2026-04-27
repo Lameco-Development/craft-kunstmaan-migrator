@@ -19,6 +19,11 @@ they already exist.
 
 ## Installation
 
+> For Kunstmaan surfaces this migrator deliberately does NOT cover (FormBundle,
+> SearchBundle, MenuBundle, user accounts, media folder hierarchy, slug history
+> beyond `kuma_redirects`, drafts), see
+> [Known omissions in v1.0](CHANGELOG.md#known-omissions-in-v10).
+
 ```bash
 composer require lameco/craft-kunstmaan-migrator
 ./craft plugin/install kunstmaan-migrator

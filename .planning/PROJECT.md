@@ -47,6 +47,8 @@ Headline scope:
 - **Atomic flag, runtime AI calls, always-on asset preload** — Resolved decisions from v1.1 carried forward: atomic-always (transactional rollback per entry), runtime-zero-AI, JIT assets driven by page/entry references.
 - **Migrating orphan assets** — Out of scope for v1. The migration is page-driven by design (see Migration model below) — only assets actually referenced from migrated entries get pulled in. A post-run "sync remaining" pass for un-referenced media is roadmapped (`NEXT-05`).
 
+> See also [CHANGELOG.md > Known omissions in v1.0](../CHANGELOG.md#known-omissions-in-v10) for the operator-facing summary of Kunstmaan surfaces this migrator deliberately does not cover (FormBundle, SearchBundle, MenuBundle, user accounts/roles/ACLs, `kuma_translations`, media folder hierarchy, asset metadata, slug history, drafts).
+
 ## Context
 
 ### What we're rewriting from
