@@ -79,6 +79,31 @@ if (!is_array($mapping) || $mapping === []) {
     exit(2);
 }
 
+// Snapshot the active mapping alongside the input tree so the
+// characterization test can drive TransformService::run() with a non-empty
+// $mapping (otherwise every fixture short-circuits at "No nodeClasses
+// mapping for {fqcn}" and the goldens become useless empty-array stubs).
+// One mapping.json per repo, not per fixture: the operator captures the
+// corpus + mapping snapshot atomically and commits both together.
+$mappingFixturePath = __DIR__ . '/../tests/fixtures/transform/mapping.json';
+if (!is_dir(dirname($mappingFixturePath))
+    && !mkdir(dirname($mappingFixturePath), 0755, true)
+    && !is_dir(dirname($mappingFixturePath))
+) {
+    fwrite(STDERR, "FAIL: cannot create " . dirname($mappingFixturePath) . "\n");
+    exit(2);
+}
+$mappingJson = json_encode(
+    $mapping,
+    JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
+);
+if ($mappingJson === false) {
+    fwrite(STDERR, "FAIL: json_encode mapping snapshot: " . json_last_error_msg() . "\n");
+    exit(2);
+}
+file_put_contents($mappingFixturePath, $mappingJson . "\n");
+echo "Wrote mapping snapshot: tests/fixtures/transform/mapping.json\n";
+
 $filters = new MigrationFilters(
     entities: $TARGET_ENTITIES,
     locales: [],

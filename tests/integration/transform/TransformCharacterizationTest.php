@@ -43,12 +43,19 @@ use RuntimeException;
  *      sentinel, and asserts exactly one entry-payload comes back.
  *   4. Canonicalizes that payload + diffs against the golden.
  *
- * The mapping argument supplied to `run()` is reconstructed from the input
- * fixture itself (the operator-captured fixtures already include the
- * `nodeClasses` + `sections` snippets that drove the original extract — see
- * tools/capture-transform-fixtures.php) so the test stays self-contained
- * and doesn't depend on a sibling mapping.yaml file. If a fixture lacks the
- * `_mapping` key, the test fails fast with an actionable error.
+ * The mapping argument supplied to `run()` is loaded from
+ * `tests/fixtures/transform/mapping.json` — a one-shot snapshot the operator
+ * capture script (`tools/capture-transform-fixtures.php`) writes alongside
+ * the input tree so every fixture is exercised against the same mapping
+ * rules that produced its source row. Without this snapshot, every fixture
+ * would short-circuit at TransformService's "No nodeClasses mapping for
+ * {fqcn}" warning and the goldens would degenerate to empty-array stubs —
+ * defeating the TST-02 regression-signal goal entirely.
+ *
+ * When the snapshot is absent (the on-ship state, before the operator runs
+ * the capture workflow), the data provider also yields nothing — the test
+ * reports as risky / no-tests-found, which is non-fatal under the current
+ * phpunit.xml.dist (failOnRisky not set).
  */
 final class TransformCharacterizationTest extends TestCase
 {
@@ -81,17 +88,7 @@ final class TransformCharacterizationTest extends TestCase
         $input = json_decode($rawJson, true);
         self::assertIsArray($input, "Input fixture not a JSON object: {$inputPath}");
 
-        // Operator-captured fixtures may carry the originating mapping snippet
-        // under a `_mapping` key (added by tools/capture-transform-fixtures.php
-        // in a follow-up patch once the corpus lands). When absent, fall back
-        // to an empty mapping — TransformService will warn `No nodeClasses
-        // mapping for {fqcn}` and short-circuit to the report sentinel, which
-        // is itself a stable, characterizable output.
-        $mapping = is_array($input['_mapping'] ?? null) ? (array) $input['_mapping'] : [];
-        // Strip the synthetic key from the payload before feeding it back into
-        // TransformService so the captured-row shape matches Phase 3's
-        // ExtractService output format byte-for-byte.
-        unset($input['_mapping']);
+        $mapping = self::loadMapping();
 
         $service = self::createService();
         $payloads = [];
@@ -127,6 +124,28 @@ final class TransformCharacterizationTest extends TestCase
         }
 
         self::assertSame($expected, $actualJson, "Diff vs golden: {$goldenPath}");
+    }
+
+    /**
+     * Load the mapping snapshot the operator capture script writes alongside
+     * the input fixture tree. Returns [] when the snapshot is absent so the
+     * empty-corpus on-ship state is still observable (data provider empty +
+     * test risky-no-tests).
+     *
+     * @return array<string, mixed>
+     */
+    private static function loadMapping(): array
+    {
+        $path = __DIR__ . '/../../fixtures/transform/mapping.json';
+        if (!is_file($path)) {
+            return [];
+        }
+        $raw = file_get_contents($path);
+        if ($raw === false) {
+            return [];
+        }
+        $decoded = json_decode($raw, true);
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**
