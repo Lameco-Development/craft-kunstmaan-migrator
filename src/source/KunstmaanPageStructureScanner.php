@@ -133,6 +133,17 @@ final class KunstmaanPageStructureScanner extends Component
                             try {
                                 $table = $this->tableResolver->resolve($cls);
                             } catch (InvalidArgumentException $e) {
+                                // IN-04: emit info (not warning) so operators can grep
+                                // storage logs for page-part classes whose legacy table
+                                // the resolver legitimately could not map.
+                                Craft::info(
+                                    sprintf(
+                                        'KunstmaanPageStructureScanner: tableResolver->resolve(%s) unresolved: %s',
+                                        $cls,
+                                        $e->getMessage(),
+                                    ),
+                                    __METHOD__,
+                                );
                                 $table = '';
                             } catch (Throwable $e) {
                                 Craft::warning(
@@ -200,6 +211,18 @@ final class KunstmaanPageStructureScanner extends Component
             try {
                 $tableName = $this->tableResolver->resolve($fqcn);
             } catch (InvalidArgumentException $e) {
+                // IN-04: emit info (not warning) so operators can grep storage
+                // logs for Page entities whose legacy table the resolver
+                // legitimately could not map (downstream pageStructure.json
+                // consumers would otherwise see empty tableName silently).
+                Craft::info(
+                    sprintf(
+                        'KunstmaanPageStructureScanner: tableResolver->resolve(%s) unresolved: %s',
+                        $fqcn,
+                        $e->getMessage(),
+                    ),
+                    __METHOD__,
+                );
                 $tableName = '';
             } catch (Throwable $e) {
                 Craft::warning(
