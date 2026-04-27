@@ -123,6 +123,33 @@ hypotheses until shipped and validated by the rehearsal pass at the end of v1.
 - [x] **TST-03**: CI workflow runs `composer validate --strict`, PHPUnit, and a smoke test that the plugin loads in a scratch Craft install. _(Phase 5 / Plan 05-07 — `.github/workflows/ci.yml` splits into `unit` + `smoke` jobs; `unit` runs validate + phpunit + per-module 70% coverage gate via PCOV at the system level; `smoke` (`needs: unit`) gates on `./craft kunstmaan-migrator/doctor` exit 0 in a scratch Craft 5 install via `composer create-project` + path-repo `@dev` install; PHP 8.3 only.)_
 - [x] **TST-04**: `kunstmaan-migrator/doctor` and the rehearsal smoke check are part of the release checklist before any tag. _(Phase 5 / Plans 05-04 + 05-08 — `RehearsalController::actionCheck` with three mechanical gate parsers (count tolerance, zero unresolved CKEditor tokens, full asset RCA) over committed VERIFY.md + REPORT.md text; `.planning/rehearsal/v1.0/{cqm,simac,enreach}/` directory shape with BLOCKING (cqm) vs ADVISORY (simac/enreach) READMEs (D-19, D-23); `.planning/RELEASE-CHECKLIST.md` operator workflow with CQM `rehearsal/check` exit 0 as the binding v1.0 tag gate (step 5).)_
 
+### Taxonomies (TAX)
+
+- [x] **TAX-01**: `mapping.taxonomies` block accepted by `MappingFile` / `MappingAuditor` / `MappingCompiler`. Identity tuple `(kind, fqcn)`. Field-level mapping inferred from same-`sourceTable` `kind=column` rows (no nested `fields[]` on the taxonomy row — that pattern is reserved for `kind=pagePart`). Skip-existing merge per MAP-04. _(Phase 8 / Plans 08-01 + 08-09; D-07.)_
+- [x] **TAX-02**: Analyze AI proposer emits taxonomy candidates via `LlmClassifier::proposeNonPageEntities()` for non-Page Doctrine entities; output validated against the closed Craft entry-type catalog (`craftKnowledgeBase->entryTypeHandles()`). _(Phase 8 / Plan 08-05; D-05.)_
+- [x] **TAX-03**: `--entities=` filter scoping auto-includes taxonomies referenced by allowed FQCNs (relation-graph reachability computed at extract-time from the FK index). No `--taxonomies=` flag added — preserves Phase 2 / D-12 three-flag cap. _(Phase 8 / Plan 08-10; D-04.)_
+- [x] **TAX-04**: `DoctrineEntityParser` captures Gedmo Translatable as a per-property attribute scan extending the existing `Doctrine\ORM\Mapping\*` namespace scan with `Gedmo\Mapping\Annotation\*`. SRC-20 attributes-only invariant preserved (no annotation-parser revival). _(Phase 8 / Plan 08-02; D-10 signal #1.)_
+- [x] **TAX-05**: `KnowledgeBase` exposes `renderTaxonomiesMarkdown()` mirroring `renderPagePartsMarkdown()`; output fed to `proposeNonPageEntities()` the same way `kbPagePartsEarly` is fed to `proposeNodeClasses()`. _(Phase 8 / Plan 08-03.)_
+- [x] **TAX-06**: `LegacyDbService::extTranslationsFor()` restored on v2 (verbatim port from v1, byte-for-byte at the named-bind-parameter shape); `KunstmaanCoreTables::EXT_TRANSLATIONS = 'ext_translations'` constant added. _(Phase 8 / Plan 08-04; D-08.)_
+- [x] **TAX-07**: `TaxonomyMigrationService` ported verbatim from v1 (443 LOC → 483 LOC; +40 LOC reflects inline D-08/D-09/D-56 reshape comments + the new D-09 fallback branch) with five documented reshape points (single mapping.yaml, atomic-always-on, D-09 empty-table fallback, compiler-emitted block shape, detection-inside-service short-circuit). _(Phase 8 / Plan 08-11; D-08.)_
+- [x] **TAX-08**: `TaxonomyMigrationService` wired into `Plugin` DI (`config()` slot + `init()` sibling-DI fanout) and `MigrateController` (Step 4.5 bolt-on inserted BEFORE the load step, plus an `actionTaxonomies` resume sub-action gated by `NeverProductionTrait`). Run order: taxonomies migrate BEFORE pages. _(Phase 8 / Plan 08-12; D-03.)_
+- [x] **TAX-09**: Doctor 11th check `checkExtTranslations()` for `ext_translations` table presence (WARN-only when empty per D-09; INFO when table absent; never FAIL). _(Phase 8 / Plan 08-14; D-09.)_
+- [x] **TAX-10**: Integration test (`tests/integration/load/TaxonomyMigrationTest.php`) drives `TaxonomyMigrationService` via stubbed dependencies and asserts D-08 reshape #4 / #5 invariants + D-03 run-order regression guard (4 active tests + 1 plan-permitted `markTestIncomplete` for the D-09 fallback). Unit tests for `MappingCompiler::compileTaxonomies()` (`tests/unit/compile/MappingCompilerTaxonomiesTest.php`) lock the compile invariants. _(Phase 8 / Plans 08-15 + 08-16.)_
+
+### AI Proposer Coverage (PROP)
+
+- [x] **PROP-01**: `LlmClassifier::proposeNonPageEntities()` emits `kind=taxonomy` rows (high → `status:accepted`, medium/low → `status:needs-review`) and `kind=column` drop rows with `reason="not-taxonomy-likely-supporting"` per the Phase 2 / D-02 confidence-tier ladder. _(Phase 8 / Plan 08-05; D-05, D-06.)_
+- [x] **PROP-02**: `LlmClassifier::proposeLayoutBlocks()` emits `kind=nodeClass` partial-update rows for `headerBlock` / `bodyWrapBlock` / `bodyColumn` slots, gated by Matrix-catalog signal heuristic (fires only when the parent entry-type's Matrix catalog contains a header-shaped or wrap-shaped block). _(Phase 8 / Plan 08-06; D-11, D-12.)_
+- [x] **PROP-03**: `LlmClassifier::proposeDataProviders()` emits `kind=dataProvider` rows for orphan page-parts (no `kuma_page_part_refs` row + sourceTable not joined to `kuma_node_versions`). _(Phase 8 / Plan 08-07; D-13.)_
+- [x] **PROP-04**: `Settings::proposeLayout` + `Settings::proposeProviders` (default `true`) + CLI flags `--no-layout` / `--no-providers` + CP `_settings.twig` "AI" H2 group. Mirrors Phase 4.1 / ADP-04 ladder (`seoEnabled` / `--no-seo`). `--no-ai` blanket override still disables every LLM call. _(Phase 8 / Plans 08-08 + 08-13; D-14.)_
+- [x] **PROP-05**: `MappingCompiler` folds layout-block proposals into `nodeClasses` (skip-existing per slot) and emits top-level `mapping.dataProviders`. `_compileReport` surfaces `taxonomiesEmitted`, `layoutBlocksEmitted`, `dataProvidersEmitted` counters alongside Phase 7's `implicitBlocksEmitted`. _(Phase 8 / Plan 08-09.)_
+- [x] **PROP-06**: Unit tests (`MappingCompilerLayoutBlocksTest`, `MappingCompilerDataProvidersTest`) pin compile invariants for the two new proposer surfaces. _(Phase 8 / Plan 08-16.)_
+
+### Phase 8 Documentation (DOC)
+
+- [x] **DOC-01**: `08-RECONCILIATION.md` documents every v1 `TaxonomyMigrationService` rule with explicit v2 disposition (kept-verbatim / reshaped / dropped) — 16-row reshape table covering all five D-08 reshape points + 8 net-additive non-load surfaces with no v1 analog. _(Phase 8 / Plan 08-17; D-08 mandate.)_
+- [x] **DOC-02**: `CHANGELOG.md` "Known omissions in v1.0" section lists 9 Kunstmaan surfaces deliberately out of scope (FormBundle, SearchBundle, MenuBundle, user accounts/roles/ACLs, `kuma_translations`, media folder hierarchy, asset metadata, slug history beyond `kuma_redirects`, drafts/non-public node versions). README.md Installation section and `.planning/PROJECT.md` Out of Scope section cross-link the section so operators can find the boundary without reading the source. _(Phase 8 / Plan 08-17; ROADMAP success criterion 8.)_
+
 ## v2 Requirements (deferred)
 
 - [ ] **NEXT-01**: Writer seam — abstract the Craft-write side behind a `Writer` interface so a future `ProjectConfigWriter` can scaffold sections / fields / entry types from a Kunstmaan dump + `~/Sites/craft-starter-kit` instead of writing into pre-existing schema.
@@ -164,3 +191,4 @@ Filled in by the roadmap step. Every requirement above must map to exactly one p
 | CFG-04, CFG-05, CFG-06, CFG-07, LOC-03, ADP-04, VER-04, SRC-20, REC-01 | 4.1 |
 | REC-02 | 4.2 (deferred from 4.1 — see RECONCILIATION.md) |
 | TST-01 … TST-04 | 5 |
+| TAX-01 … TAX-10, PROP-01 … PROP-06, DOC-01, DOC-02 | 8 |
