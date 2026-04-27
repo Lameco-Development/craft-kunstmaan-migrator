@@ -232,6 +232,112 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
+        // Step 7.5 (Phase 6): entity-level LLM proposer. Asks the LLM "for each
+        // Kunstmaan Page FQCN, which Craft entry-type handle is the best fit?"
+        // before the column-level batch step runs — so column proposals get a
+        // real targetEntryType context instead of the empty-string placeholder
+        // that Plan 03 shipped (Plan 05 follow-up that never landed). Skipped
+        // when --no-ai or no API key — falls back to the basename heuristic in
+        // MappingCompiler downstream.
+        $apiKeyForEntityStep = (string) ($plugin->getSettings()->anthropicApiKey ?? '');
+        $skipEntityLlm = $this->noAi || $apiKeyForEntityStep === '' || $pageStructure === [];
+        $nodeClassProposals = [];
+        $craftEntryTypeHandles = $plugin->craftKnowledgeBase->entryTypeHandles();
+        $kbCraftMd = '';
+        if ($skipEntityLlm) {
+            $reason = $this->noAi
+                ? '--no-ai set'
+                : ($apiKeyForEntityStep === '' ? 'ANTHROPIC_API_KEY not set' : 'no page entities discovered');
+            $this->stdout(
+                "  WARN entity-level LLM skipped ({$reason}) — nodeClass rows will fall back to compiler basename heuristic\n",
+                Console::FG_YELLOW,
+            );
+        } else {
+            try {
+                $kbCraftMd = $plugin->craftKnowledgeBase->renderEntryTypesMarkdown();
+                // Build legacy KB markdown ONCE here so both step 7.5 and step 8 share it.
+                $preLlmProposals = array_merge($heuristicProposals, $pagePartProposals);
+                $kbAdapterEarly  = self::buildKbMappingAdapter($preLlmProposals);
+                $nowEarly        = new \DateTimeImmutable();
+                $kbPagesEarly    = $plugin->knowledgeBase->renderPagesMarkdown($kbAdapterEarly, $nowEarly);
+                $kbPagePartsEarly = $plugin->knowledgeBase->renderPagePartsMarkdown($kbAdapterEarly, $nowEarly);
+                $kbLegacyMd = $kbPagesEarly . "\n\n" . $kbPagePartsEarly;
+                $this->stdout(
+                    "  ... entity-level LLM batching " . count($pageStructure) . " page entities (chunks of 8) against "
+                    . count($craftEntryTypeHandles) . " Craft entry-type handles\n",
+                    Console::FG_GREY,
+                );
+                $entityProgressStarted = false;
+                $nodeClassProposals = $plugin->llmClassifier->proposeNodeClasses(
+                    $pageStructure,
+                    $craftEntryTypeHandles,
+                    $kbLegacyMd,
+                    $kbCraftMd,
+                    function (int $i, int $n, int $entitiesInChunk, int $proposalsReturned, float $sec) use (&$entityProgressStarted): void {
+                        if (!$entityProgressStarted) {
+                            Console::startProgress(0, $n, '  ... LLM-entity ');
+                            $entityProgressStarted = true;
+                        }
+                        Console::updateProgress(
+                            $i,
+                            $n,
+                            sprintf(
+                                '  ... LLM-entity [chunk %d/%d entities=%d→props=%d %.1fs] ',
+                                $i, $n, $entitiesInChunk, $proposalsReturned, $sec,
+                            ),
+                        );
+                    },
+                );
+                if ($entityProgressStarted) {
+                    Console::endProgress();
+                }
+                $matched = count(array_filter($nodeClassProposals, static fn(array $p): bool => (string) $p['targetEntryType'] !== ''));
+                $this->stdout(
+                    "  OK   entity-level LLM produced " . count($nodeClassProposals) . " nodeClass proposals "
+                    . "({$matched} with non-empty targetEntryType)\n",
+                    Console::FG_GREEN,
+                );
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL entity-level LLM: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+        }
+
+        // Backfill column violations' targetEntryType from accepted-tier nodeClass
+        // proposals (high confidence → status will be `accepted`; medium/low → won't
+        // be applied here but the operator can promote via map). This bridges the
+        // entity decision into the column-level batch so column proposals come back
+        // with a meaningful entryType context.
+        if ($nodeClassProposals !== []) {
+            $tableToEntryType = [];
+            foreach ($nodeClassProposals as $p) {
+                if (((string) $p['confidence']) !== 'high') {
+                    continue;
+                }
+                if (((string) $p['targetEntryType']) === '') {
+                    continue;
+                }
+                $tableToEntryType[(string) $p['sourceTable']] = (string) $p['targetEntryType'];
+            }
+            $backfilled = 0;
+            foreach ($residual as &$rRow) {
+                if (!is_array($rRow)) { continue; }
+                if ((string) ($rRow['targetEntryType'] ?? '') !== '') { continue; }
+                $tbl = (string) ($rRow['table'] ?? '');
+                if (isset($tableToEntryType[$tbl])) {
+                    $rRow['targetEntryType'] = $tableToEntryType[$tbl];
+                    $backfilled++;
+                }
+            }
+            unset($rRow);
+            if ($backfilled > 0) {
+                $this->stdout(
+                    "  OK   backfilled targetEntryType on {$backfilled} residual columns from high-confidence nodeClass proposals\n",
+                    Console::FG_GREEN,
+                );
+            }
+        }
+
         // Step 8: LLM batch proposals for residuals (skip when --no-ai or key missing).
         // Phase 02.1 (B2 fix): KB markdown placeholders replaced with rendered Pages +
         // PageParts markdown — but only via a v1-shaped MAPPING ADAPTER built from v2's
@@ -272,7 +378,7 @@ class AnalyzeController extends Controller
                     $residual,
                     $craftFieldIndex,
                     $kbPages . "\n\n" . $kbPageParts,
-                    '', // Craft-side KB stays empty until Phase 4 / verify
+                    $kbCraftMd, // Phase 6: real Craft KB markdown (empty when entity step skipped)
                     function (int $i, int $n, string $et, int $cols, int $props, float $sec) use (&$progressStarted): void {
                         if (!$progressStarted) {
                             Console::startProgress(0, $n, '  ... LLM ');
@@ -314,6 +420,12 @@ class AnalyzeController extends Controller
         }
         foreach ($pagePartProposals as $p) {
             $rows[] = $p;
+        }
+        // Phase 6: persist entity-level (kind=nodeClass) proposals via the same
+        // D-02 confidence-tier → status mapping. High-confidence rows land
+        // `accepted`; medium/low → `needs-review` (operator must promote in map).
+        foreach ($nodeClassProposals as $p) {
+            $rows[] = $plugin->mappingFile->buildNodeClassRow($p, $this->statusForLlm($p, false));
         }
         // For LLM-skipped residuals (no LLM call, no proposals returned), still
         // emit a row with status: needs-review so the operator sees the gap.
@@ -496,7 +608,7 @@ class AnalyzeController extends Controller
      */
     private function buildCraftFieldIndex(): array
     {
-        return [];
+        return Plugin::getInstance()->craftKnowledgeBase->buildFieldIndex();
     }
 
     /**

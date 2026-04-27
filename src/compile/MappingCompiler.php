@@ -77,14 +77,20 @@ final class MappingCompiler extends Component
     {
         $proposals = (array) ($mapping['proposals'] ?? []);
 
-        // First pass: auto-assign targetEntryType on rows that lack one but whose
-        // source table maps to a known FQCN in pageStructure. Workaround for the
-        // AnalyzeController gap where buildViolationsFromSchema ships
-        // `targetEntryType => ''` and CoverageAuditor wiring was never finished
-        // (Plan 03 → Plan 05 carry-over). We derive the entry-type handle from
-        // the FQCN basename (NewsPage → newsPage). Operators who want different
-        // handles can edit mapping.yaml and re-run compile with --overwrite.
-        $tableToEntryType = $this->buildTableToEntryTypeMap($pageStructure);
+        // Phase 6 primary path: harvest accepted kind=nodeClass rows. These are
+        // the LLM's entity-level decisions ("FQCN X → Craft entry-type Y") that
+        // analyze step 7.5 emits. They take precedence over the basename
+        // heuristic for both the column targetEntryType backfill AND the
+        // downstream nodeClasses[].section assignment.
+        $acceptedNodeClassByTable = $this->indexAcceptedNodeClassesByTable($proposals);
+        $acceptedNodeClassByFqcn  = $this->indexAcceptedNodeClassesByFqcn($proposals);
+
+        // First pass: auto-assign targetEntryType on column rows that lack one.
+        // Precedence: accepted nodeClass row's targetEntryType > basename
+        // heuristic. The heuristic stays as a fallback for projects that
+        // ran analyze with --no-ai (no nodeClass proposals were emitted).
+        $tableToEntryTypeFromHeuristic = $this->buildTableToEntryTypeMap($pageStructure);
+        $tableToEntryType = $acceptedNodeClassByTable + $tableToEntryTypeFromHeuristic;
         [$proposals, $autoAssigned] = $this->autoAssignTargetEntryType($proposals, $tableToEntryType);
 
         $accepted = $this->filterAccepted($proposals);
@@ -131,20 +137,30 @@ final class MappingCompiler extends Component
                 continue;
             }
 
-            // Majority vote on targetEntryType; alphabetical tiebreak for stability.
-            $entryTypeCounts = [];
-            foreach ($tableRows as $r) {
-                $et = (string) ($r['targetEntryType'] ?? '');
-                if ($et === '') {
+            // Phase 6: prefer the LLM's accepted nodeClass row when present.
+            // Falls back to majority-vote across accepted column rows otherwise
+            // (operators who ran analyze with --no-ai, or whose entity step
+            // proposed needs-review and they haven't promoted yet).
+            $sectionKey = '';
+            $nodeClassRow = $acceptedNodeClassByFqcn[$fqcn] ?? null;
+            if ($nodeClassRow !== null) {
+                $sectionKey = (string) ($nodeClassRow['targetEntryType'] ?? '');
+            }
+            if ($sectionKey === '') {
+                $entryTypeCounts = [];
+                foreach ($tableRows as $r) {
+                    $et = (string) ($r['targetEntryType'] ?? '');
+                    if ($et === '') {
+                        continue;
+                    }
+                    $entryTypeCounts[$et] = ($entryTypeCounts[$et] ?? 0) + 1;
+                }
+                if ($entryTypeCounts === []) {
+                    $skipped[] = $fqcn . ' (no targetEntryType assigned on any accepted column or nodeClass row)';
                     continue;
                 }
-                $entryTypeCounts[$et] = ($entryTypeCounts[$et] ?? 0) + 1;
+                $sectionKey = $this->majorityKey($entryTypeCounts);
             }
-            if ($entryTypeCounts === []) {
-                $skipped[] = $fqcn . ' (no targetEntryType assigned on any accepted column)';
-                continue;
-            }
-            $sectionKey = $this->majorityKey($entryTypeCounts);
 
             // Build fields[targetHandle] from accepted rows whose targetEntryType matches.
             $sectionRows = array_values(array_filter(
@@ -224,6 +240,53 @@ final class MappingCompiler extends Component
                 'warnings'                => $warnings,
             ],
         ];
+    }
+
+    /**
+     * Index accepted kind=nodeClass rows by source table → targetEntryType.
+     * Phase 6: feeds the column-row backfill pass so column proposals inherit
+     * the LLM's entity-level decision before the majority-vote fallback fires.
+     *
+     * @param  list<array<string, mixed>> $proposals
+     * @return array<string, string>      sourceTable → targetEntryType
+     */
+    private function indexAcceptedNodeClassesByTable(array $proposals): array
+    {
+        $out = [];
+        foreach ($proposals as $r) {
+            if (!is_array($r)) { continue; }
+            if (((string) ($r['kind'] ?? '')) !== 'nodeClass') { continue; }
+            if (((string) ($r['status'] ?? '')) !== 'accepted') { continue; }
+            $tbl = (string) ($r['sourceTable'] ?? '');
+            $et  = (string) ($r['targetEntryType'] ?? '');
+            if ($tbl !== '' && $et !== '') {
+                $out[$tbl] = $et;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Index accepted kind=nodeClass rows by FQCN → row. Used by the per-FQCN
+     * loop in compile() so the LLM's targetEntryType wins over the basename
+     * heuristic / majority-vote fallback.
+     *
+     * @param  list<array<string, mixed>> $proposals
+     * @return array<string, array<string, mixed>>
+     */
+    private function indexAcceptedNodeClassesByFqcn(array $proposals): array
+    {
+        $out = [];
+        foreach ($proposals as $r) {
+            if (!is_array($r)) { continue; }
+            if (((string) ($r['kind'] ?? '')) !== 'nodeClass') { continue; }
+            if (((string) ($r['status'] ?? '')) !== 'accepted') { continue; }
+            $fqcn = (string) ($r['fqcn'] ?? '');
+            if ($fqcn !== '') {
+                $out[$fqcn] = $r;
+            }
+        }
+        return $out;
     }
 
     /**

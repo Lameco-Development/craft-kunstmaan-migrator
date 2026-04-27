@@ -46,6 +46,7 @@ use lameco\kunstmaanmigrator\source\KunstmaanEnvReader;
 use lameco\kunstmaanmigrator\source\KunstmaanPageStructureScanner;
 use lameco\kunstmaanmigrator\source\KunstmaanSourcePathResolver;
 use lameco\kunstmaanmigrator\source\KunstmaanSourceScanner;
+use lameco\kunstmaanmigrator\source\CraftKnowledgeBase;
 use lameco\kunstmaanmigrator\source\MediaFkScanner;
 use lameco\kunstmaanmigrator\source\TopologicalOrderer;
 use lameco\kunstmaanmigrator\transform\TransformService;
@@ -78,6 +79,7 @@ use yii\db\Connection;
  * @property-read BodyScanColumnFinder $bodyScanColumnFinder
  * @property-read MediaFkScanner $mediaFkScanner
  * @property-read KnowledgeBase $knowledgeBase
+ * @property-read CraftKnowledgeBase $craftKnowledgeBase
  * @property-read KunstmaanPageStructureScanner $kunstmaanPageStructureScanner
  * @property-read KunstmaanSourceScanner $kunstmaanSourceScanner
  * @property-read BlockAvailabilityValidator $blockAvailabilityValidator
@@ -137,6 +139,7 @@ class Plugin extends BasePlugin
                 'bodyScanColumnFinder'          => BodyScanColumnFinder::class,         // Phase 02.1 (Plan 03) — body-col discovery
                 'mediaFkScanner'                => MediaFkScanner::class,               // Phase 02.1 (Plan 03) — kuma_media FK discovery
                 'knowledgeBase'                 => KnowledgeBase::class,                // Phase 02.1 (Plan 03) — D-42 step 8 KB markdown
+                'craftKnowledgeBase'            => CraftKnowledgeBase::class,           // Phase 6 — target Craft schema renderer for LLM prompts
                 'kunstmaanPageStructureScanner' => KunstmaanPageStructureScanner::class, // Phase 02.1 (Plan 04) — D-40 right side
                 'kunstmaanSourceScanner'        => KunstmaanSourceScanner::class,        // Phase 02.1 (Plan 05) — D-40 left side orchestrator
                 'blockAvailabilityValidator'    => BlockAvailabilityValidator::class,    // Phase 02.1 (Plan 08) — D-36 fourth finding kind

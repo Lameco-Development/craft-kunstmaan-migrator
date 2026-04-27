@@ -204,10 +204,37 @@ final class MappingFile extends Component
     }
 
     /**
+     * Build a kind=nodeClass row (Phase 6) representing the LLM's entity-level
+     * decision: "Kunstmaan FQCN X maps to Craft entry-type handle Y in section Z".
+     * Identity tuple is structural-only on FQCN — same dedupe-on-empty-target
+     * rationale as page-part rows: incoming re-runs with operator-cleared
+     * targetEntryType must not append duplicates.
+     *
+     * @param array{fqcn: string, sourceTable: string, targetEntryType: string, targetSection: string, confidence: string, rationale: string} $proposal
+     * @return array<string, mixed>
+     */
+    public function buildNodeClassRow(array $proposal, string $initialStatus): array
+    {
+        return [
+            'kind'            => 'nodeClass',
+            'fqcn'            => (string) ($proposal['fqcn'] ?? ''),
+            'sourceTable'     => (string) ($proposal['sourceTable'] ?? ''),
+            'targetEntryType' => (string) ($proposal['targetEntryType'] ?? ''),
+            'targetSection'   => (string) ($proposal['targetSection'] ?? ''),
+            'confidence'      => (string) ($proposal['confidence'] ?? 'medium'),
+            'rationale'       => (string) ($proposal['rationale'] ?? ''),
+            'status'          => $initialStatus,
+        ];
+    }
+
+    /**
      * Build the merge identity key for a single row (D-34 kind-prefixed tuple).
      *
      * Page-part identity is structural — STRUCTURAL ONLY, no targetEntryType in the key
      * (W1 fix). See merge() docblock for the dedupe-on-empty-targetEntryType rationale.
+     * NodeClass identity is FQCN-only — same dedupe rationale: empty
+     * targetEntryType from a re-analyze run must not append a duplicate when the
+     * operator filled it in via map.
      *
      * @param array<string, mixed> $row
      */
@@ -219,6 +246,9 @@ final class MappingFile extends Component
             return 'pagePart|' . ($row['pagePartClass'] ?? '')
                 . '|' . ($row['parentPageClass'] ?? '')
                 . '|' . ($row['context'] ?? '');
+        }
+        if ($kind === 'nodeClass') {
+            return 'nodeClass|' . ($row['fqcn'] ?? '');
         }
         return 'column|' . ($row['table'] ?? '')
             . '|' . ($row['column'] ?? '')
