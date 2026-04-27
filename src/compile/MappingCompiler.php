@@ -73,7 +73,8 @@ final class MappingCompiler extends Component
      *   sections: array<string, array<string, mixed>>,
      *   sites: array<string, string>,
      *   pageParts: array<string, array<string, mixed>>,
-     *   taxonomies: array<string, array<string, string>>,
+     *   taxonomies: array<string, array<string, mixed>>,
+     *   dataProviders: array<string, array<string, mixed>>,
      *   _compileReport: array{
      *     nodeClassesEmitted: int,
      *     sectionsEmitted: int,
@@ -351,13 +352,31 @@ final class MappingCompiler extends Component
         ksort($taxonomiesOut);
         $warnings = array_merge($warnings, $taxonomyWarnings);
 
+        // Phase 8 / D-12: fold layout-block proposer output (headerBlock /
+        // bodyWrapBlock / bodyColumn) into the existing nodeClasses entries.
+        // Per-slot skip-existing — if the operator already filled a slot, the
+        // proposal does not overwrite it.
+        [$nodeClasses, $layoutBlocksEmitted, $layoutWarnings] =
+            $this->compileLayoutBlocks($proposals, $nodeClasses);
+        $warnings = array_merge($warnings, $layoutWarnings);
+
+        // Phase 8 / D-13: emit top-level mapping.dataProviders block from accepted
+        // kind=dataProvider proposals. Identity key = FQCN. Skip-existing per
+        // MAP-04 — operator-curated entries always win.
+        $existingDataProviders = (array) ($mapping['dataProviders'] ?? []);
+        [$dataProvidersOut, $dataProvidersEmitted, $dataProviderWarnings] =
+            $this->compileDataProviders($proposals, $existingDataProviders);
+        ksort($dataProvidersOut);
+        $warnings = array_merge($warnings, $dataProviderWarnings);
+
         return [
-            'proposals'    => array_values($proposals),
-            'nodeClasses'  => $nodeClasses,
-            'sections'     => $sections,
-            'sites'        => $sitesOut,
-            'pageParts'    => $pagePartsOut,
-            'taxonomies'   => $taxonomiesOut,
+            'proposals'      => array_values($proposals),
+            'nodeClasses'    => $nodeClasses,
+            'sections'       => $sections,
+            'sites'          => $sitesOut,
+            'pageParts'      => $pagePartsOut,
+            'taxonomies'     => $taxonomiesOut,
+            'dataProviders'  => $dataProvidersOut,
             '_compileReport' => [
                 'nodeClassesEmitted'        => count($nodeClasses),
                 'sectionsEmitted'           => count($sections),
@@ -370,8 +389,8 @@ final class MappingCompiler extends Component
                 'fallbackBlockTypeUsed'     => $defaultBlockType,
                 'implicitBlocksEmitted'     => $implicitEmitted,
                 'taxonomiesEmitted'         => $taxonomiesEmitted,
-                'layoutBlocksEmitted'       => 0,  // populated by Plan 09 / Wave 3
-                'dataProvidersEmitted'      => 0,  // populated by Plan 09 / Wave 3
+                'layoutBlocksEmitted'       => $layoutBlocksEmitted,
+                'dataProvidersEmitted'      => $dataProvidersEmitted,
                 'warnings'                  => $warnings,
             ],
         ];
@@ -726,13 +745,18 @@ final class MappingCompiler extends Component
      * proposals. Identity key = FQCN. Skip-existing per MAP-04 — operator-curated
      * mapping.taxonomies entries always win.
      *
-     * Output entry shape (per FQCN): { sourceTable, targetSection, targetEntryType }.
-     * No nested fields[] — field-level mapping is inferred from same-sourceTable
-     * kind=column rows at compile/transform time, the same convention nodeClasses use.
+     * Output entry shape (per FQCN):
+     *   { sourceTable, targetSection, targetEntryType, fields: {legacyCol => craftHandle, ...} }
+     *
+     * Field-level mapping is inferred from same-sourceTable kind=column rows
+     * (D-07: no nested fields[] on the taxonomy row itself; same convention
+     * nodeClasses already use). The fold walks accepted column rows whose
+     * `table` matches the taxonomy row's `sourceTable` and projects each into
+     * `fields[$column] = $targetHandle`.
      *
      * @param  list<array<string, mixed>>          $proposals
      * @param  array<string, mixed>                $existingTaxonomies  Operator-curated taxonomies block from mapping.yaml
-     * @return array{0: array<string, array<string, string>>, 1: int, 2: list<string>}
+     * @return array{0: array<string, array<string, mixed>>, 1: int, 2: list<string>}
      *         [taxonomiesOut, taxonomiesEmitted, warnings]
      */
     private function compileTaxonomies(array $proposals, array $existingTaxonomies): array
@@ -753,13 +777,129 @@ final class MappingCompiler extends Component
             if ($fqcn === '') { continue; }
             // Skip-existing: operator-curated mapping.taxonomies wins (MAP-04).
             if (isset($taxonomiesOut[$fqcn])) { continue; }
+
+            $sourceTable = (string) ($row['sourceTable'] ?? '');
+
+            // D-07 field-fold: walk accepted same-sourceTable kind=column rows
+            // and project each into fields[<legacyCol>] = <craftFieldHandle>.
+            // Column row shape (MappingFile::buildRow): kind=column, table,
+            // column, targetHandle, targetEntryType, status. The column-row
+            // accessor is `targetHandle` (not the plan example's `targetField`,
+            // which doesn't exist on the column row payload — see Plan 09
+            // action: "Adjust the kind=column row's accessor — Plan 01
+            // introduced targetField but the existing column-row shape may
+            // use different keys").
+            $fields = [];
+            if ($sourceTable !== '') {
+                foreach ($proposals as $colRow) {
+                    if (!is_array($colRow)) { continue; }
+                    if (((string) ($colRow['kind'] ?? 'column')) !== 'column') { continue; }
+                    if (((string) ($colRow['status'] ?? '')) !== 'accepted') { continue; }
+                    if (((string) ($colRow['table'] ?? '')) !== $sourceTable) { continue; }
+                    $legacyCol   = (string) ($colRow['column'] ?? '');
+                    $craftHandle = (string) ($colRow['targetHandle'] ?? $colRow['targetField'] ?? '');
+                    if ($legacyCol === '' || $craftHandle === '') { continue; }
+                    $fields[$legacyCol] = $craftHandle;
+                }
+                ksort($fields);
+            }
+
             $taxonomiesOut[$fqcn] = [
-                'sourceTable'     => (string) ($row['sourceTable'] ?? ''),
+                'sourceTable'     => $sourceTable,
                 'targetSection'   => (string) ($row['targetSection'] ?? ''),
                 'targetEntryType' => (string) ($row['targetEntryType'] ?? ''),
+                'fields'          => $fields,
             ];
             $emitted++;
         }
         return [$taxonomiesOut, $emitted, $warnings];
+    }
+
+    /**
+     * Phase 8 / D-12 — fold accepted kind=nodeClass partial-update rows
+     * carrying headerBlock / bodyWrapBlock / bodyColumn into existing
+     * nodeClasses[fqcn] entries. Per-slot skip-existing: a slot the operator
+     * has already filled is never overwritten.
+     *
+     * Filters: kind === 'nodeClass' AND status === 'accepted' AND row carries
+     * any of the three slot keys. Only mutates entries already present in
+     * $nodeClassesIn (derived from pageStructure earlier in compile()) — a
+     * proposal for an FQCN with no nodeClasses entry to ride on is silently
+     * skipped (extract has nothing to dispatch through).
+     *
+     * @param  list<array<string, mixed>>          $proposals
+     * @param  array<string, array<string, mixed>> $nodeClassesIn
+     * @return array{0: array<string, array<string, mixed>>, 1: int, 2: list<string>}
+     *         [nodeClassesOut, layoutBlocksEmitted, warnings]
+     */
+    private function compileLayoutBlocks(array $proposals, array $nodeClassesIn): array
+    {
+        $nodeClassesOut = $nodeClassesIn;
+        $emitted = 0;
+        $warnings = [];
+        foreach ($proposals as $row) {
+            if (!is_array($row)) { continue; }
+            if (((string) ($row['kind'] ?? '')) !== 'nodeClass') { continue; }
+            if (((string) ($row['status'] ?? '')) !== 'accepted') { continue; }
+            $fqcn = (string) ($row['fqcn'] ?? '');
+            if ($fqcn === '' || !isset($nodeClassesOut[$fqcn])) { continue; }
+            $entry = $nodeClassesOut[$fqcn];
+            $touched = false;
+            foreach (['headerBlock', 'bodyWrapBlock', 'bodyColumn'] as $slot) {
+                if (!array_key_exists($slot, $row)) { continue; }
+                $proposed = $row[$slot];
+                if ($proposed === null || $proposed === '') { continue; }
+                // Per-slot skip-existing: operator-set wins.
+                $existing = $entry[$slot] ?? null;
+                if ($existing !== null && $existing !== '') { continue; }
+                $entry[$slot] = (string) $proposed;
+                $touched = true;
+            }
+            if ($touched) {
+                $nodeClassesOut[$fqcn] = $entry;
+                $emitted++;
+            }
+        }
+        return [$nodeClassesOut, $emitted, $warnings];
+    }
+
+    /**
+     * Phase 8 / D-13 — emit top-level mapping.dataProviders block from accepted
+     * kind=dataProvider proposals. Identity key = FQCN. Skip-existing per
+     * MAP-04 — operator-curated entries always win.
+     *
+     * Output entry shape (per FQCN): { sourceTable, target, configFields }.
+     *
+     * @param  list<array<string, mixed>>  $proposals
+     * @param  array<string, mixed>        $existing  Operator-curated dataProviders block from mapping.yaml
+     * @return array{0: array<string, array<string, mixed>>, 1: int, 2: list<string>}
+     *         [dataProvidersOut, dataProvidersEmitted, warnings]
+     */
+    private function compileDataProviders(array $proposals, array $existing): array
+    {
+        $out = [];
+        foreach ($existing as $k => $v) {
+            if (is_string($k) && is_array($v)) {
+                $out[$k] = $v;
+            }
+        }
+        $emitted = 0;
+        $warnings = [];
+        foreach ($proposals as $row) {
+            if (!is_array($row)) { continue; }
+            if (((string) ($row['kind'] ?? '')) !== 'dataProvider') { continue; }
+            if (((string) ($row['status'] ?? '')) !== 'accepted') { continue; }
+            $fqcn = (string) ($row['fqcn'] ?? '');
+            if ($fqcn === '') { continue; }
+            // Skip-existing: operator-curated mapping.dataProviders wins (MAP-04).
+            if (isset($out[$fqcn])) { continue; }
+            $out[$fqcn] = [
+                'sourceTable'  => (string) ($row['sourceTable'] ?? ''),
+                'target'       => (string) ($row['target'] ?? ''),
+                'configFields' => (array) ($row['configFields'] ?? []),
+            ];
+            $emitted++;
+        }
+        return [$out, $emitted, $warnings];
     }
 }
