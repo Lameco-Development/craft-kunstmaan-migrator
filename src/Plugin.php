@@ -217,6 +217,12 @@ class Plugin extends BasePlugin
         $this->kunstmaanSourceScanner->mediaScanner  = $this->mediaFkScanner;
         $this->kunstmaanSourceScanner->legacyDb      = $this->legacyDbService;
 
+        // KnowledgeBase needs legacyDb for renderPagesMarkdown / renderPagePartsMarkdown
+        // (used by AnalyzeController's LLM classifier step). Without this wire the LLM
+        // pass throws LogicException at first KB render.
+        $this->knowledgeBase->legacyDb     = $this->legacyDbService;
+        $this->knowledgeBase->entityParser = $this->doctrineEntityParser;
+
         $this->kunstmaanPageStructureScanner->pathResolver  = $this->kunstmaanSourcePathResolver;
         $this->kunstmaanPageStructureScanner->tableResolver = $this->detailTableResolver;
 
