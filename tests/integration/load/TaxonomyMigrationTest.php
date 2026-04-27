@@ -131,6 +131,58 @@ final class TaxonomyMigrationTest extends TestCase
     }
 
     /**
+     * Phase 8.1 / D-08a — soft-skip on incomplete taxonomy rows.
+     *
+     * compileTaxonomies (8.1 / D-07a) refuses to emit incomplete entries, but
+     * the operator may still hand-edit mapping.yaml. migrateAll must NOT
+     * throw on such rows — it must increment 'skipped', emit a WARN, and
+     * continue processing the next entry.
+     */
+    public function testIncompleteTaxonomyRowIsSoftSkippedWithWarning(): void
+    {
+        $mapping = [
+            'sites' => [
+                'default' => ['siteHandle' => 'default'],
+            ],
+            'taxonomies' => [
+                'App\\Entity\\Employee' => [
+                    'sourceTable'     => 'lameco_websitebundle_employee_employees',
+                    'targetSection'   => '', // incomplete — soft-skip path
+                    'targetEntryType' => 'teamMember',
+                    'fields'          => ['name' => 'fullName'],
+                ],
+            ],
+        ];
+
+        $mappingFile = $this->createStub(MappingFile::class);
+        $mappingFile->method('load')->willReturn($mapping);
+
+        $legacyDb = $this->createStub(LegacyDbService::class);
+        $legacyDb->method('queryAll')->willReturn([]);
+        $legacyDb->method('extTranslationsFor')->willReturn([]);
+
+        $stateService = $this->createMock(MigrationStateService::class);
+        $stateService->expects($this->never())->method('record');
+
+        $svc = new TaxonomyMigrationService();
+        $svc->mappingFile    = $mappingFile;
+        $svc->legacyDb       = $legacyDb;
+        $svc->migrationState = $stateService;
+
+        $opts   = new MigrationOptions();
+        $report = $svc->migrateAll($opts);
+
+        $this->assertInstanceOf(MigrationReport::class, $report);
+        $this->assertSame(1, (int) ($report->counts['skipped'] ?? 0));
+        $this->assertSame(0, (int) ($report->counts['created'] ?? 0));
+        $this->assertSame(0, (int) ($report->counts['failed']  ?? 0));
+
+        $warningJoin = implode("\n", $report->warnings);
+        $this->assertStringContainsString('App\\Entity\\Employee', $warningJoin);
+        $this->assertStringContainsString('incomplete', $warningJoin);
+    }
+
+    /**
      * D-08 reshape #4 defense-in-depth: the SQL-injection regex whitelist
      * (`preg_match('/^[a-z0-9_]+$/', $sourceTable)`) at TaxonomyMigrationService
      * line 150 throws BEFORE the first Craft::$app call (line 156). Locks the

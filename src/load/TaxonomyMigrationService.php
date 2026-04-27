@@ -108,6 +108,26 @@ class TaxonomyMigrationService extends Component
                 continue;
             }
 
+            // Phase 8.1 / D-08a — soft-skip on incomplete rows. Compile (with
+            // 8.1 / D-07a in place) refuses to emit incomplete rows, but the
+            // operator may still hand-edit mapping.yaml. Skipping with WARN
+            // (instead of throwing) lets the rest of the taxonomies stage
+            // continue and surfaces the gap operator-actionably in REPORT.md.
+            $taxSection = (string) ($row['targetSection'] ?? '');
+            $taxEntryType = (string) ($row['targetEntryType'] ?? '');
+            $taxSourceTable = (string) ($row['sourceTable'] ?? '');
+            if ($taxSection === '' || $taxEntryType === '' || $taxSourceTable === '') {
+                $report->incr('skipped');
+                $report->warn(sprintf(
+                    'taxonomies[%s] skipped: incomplete (sourceTable=%s, targetSection=%s, targetEntryType=%s) — re-run analyze or fix mapping.yaml',
+                    (string) $fqcn,
+                    $taxSourceTable !== '' ? $taxSourceTable : '∅',
+                    $taxSection !== '' ? $taxSection : '∅',
+                    $taxEntryType !== '' ? $taxEntryType : '∅',
+                ));
+                continue;
+            }
+
             $this->migrateOneTaxonomy((string) $fqcn, $row, $mapping, $opts, $report);
         }
 
