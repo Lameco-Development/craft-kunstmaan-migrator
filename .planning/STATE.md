@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Ready to execute
-stopped_at: Phase 4 closed. All 12 plans shipped; Plan 12 grew the test corpus 60 → 83 tests / 137 → 210 assertions across 7 new test files + the phase-level RECONCILIATION.md aggregate. Phase 4 ready for `/gsd-verify-work`; Phase 5 (Tests, Rehearsal & Release) is the next milestone phase via `/gsd-discuss-phase 5`.
-last_updated: "2026-04-27T14:35:50.057Z"
+stopped_at: Phase 8 Plan 15 (TaxonomyMigrationTest integration) shipped 2026-04-27 — 1 atomic commit (6b5e447) carrying 4 active integration tests + 1 markTestIncomplete (D-09 fallback, plan-permitted) covering D-08 reshape #4 (action:SKIP defensive branch + SQL-injection regex), D-08 reshape #5 / D-56 (empty-taxonomies short-circuit), and D-03 (taxonomies-before-load run-order regression guard via source-string scan). Test corpus grew 370 → 375 tests / 1030 → 1048 assertions; composer test exits 0 with no new warnings. Three Rule 3 deviations all documented in SUMMARY: (a) reshaped Test 1 from Craft-coupled migrateAll happy path to three pre-Craft invariant tests since TaxonomyMigrationService walks deep into Craft::$app once a non-empty/non-SKIP row enters migrateOneTaxonomy() and bootstrap.php is bare; (b) dropped `final` from src/mapping/MappingFile.php so PHPUnit 11 can createStub it (PHPUnit 10+ removed final-class doubling); (c) hand-wrote a minimal global Craft class shim at tests/integration/load/_craft_shim.php providing only Craft::warning() / Craft::info() — avoids loading vendor/yiisoft/yii2/Yii.php which would surface latent PHP 8.5 warnings in unrelated pre-existing tests. TAX-10 + TAX-11 codification deferred to Plan 08-17 (DOC-01/DOC-02 owns REQUIREMENTS.md taxonomy-section work, mirrors the TAX-08 deferral pattern from Plan 08-12). Phase 8 advances to its final plan: 08-17 (RECONCILIATION.md + CHANGELOG known-omissions + REQUIREMENTS codification — DOC-01, DOC-02, TAX-08, TAX-10, TAX-11).
+last_updated: "2026-04-27T15:55:00.000Z"
 progress:
   total_phases: 8
   completed_phases: 7
   total_plans: 76
-  completed_plans: 61
-  percent: 80
+  completed_plans: 62
+  percent: 82
 ---
 
 # State
