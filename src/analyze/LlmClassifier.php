@@ -96,6 +96,10 @@ final class LlmClassifier extends Component
      * @param array<string, list<array{handle: string, type: string, classification?: string}>> $craftFieldIndex
      * @param string $legacyKbMarkdown  Full or truncated Kunstmaan KB markdown
      * @param string $targetKbMarkdown  Full or truncated Craft KB markdown
+     * @param (callable(int $chunkIndex, int $chunkTotal, string $entryType, int $colsInChunk, int $proposalsReturned, float $durationSec): void)|null $onChunk
+     *   Optional progress callback fired once per chunk (after the API call returns). Used by
+     *   AnalyzeController to print per-chunk progress to stdout so a 33-chunk run isn't silent
+     *   for 5+ minutes. Null skips emission entirely (test path / library-style use).
      * @return list<array<string, mixed>>
      */
     public function batchPropose(
@@ -103,6 +107,7 @@ final class LlmClassifier extends Component
         array $craftFieldIndex,
         string $legacyKbMarkdown,
         string $targetKbMarkdown,
+        ?callable $onChunk = null,
     ): array {
         if ($residual === []) {
             return [];
@@ -129,6 +134,12 @@ final class LlmClassifier extends Component
             $grouped[$et][] = $v;
         }
 
+        // Pre-count chunks so the progress callback can render N/M.
+        $chunkTotal = 0;
+        foreach ($grouped as $etGroup) {
+            $chunkTotal += (int) ceil(count($etGroup) / 10);
+        }
+
         // Log truncation warning once before the loop.
         if ($this->wasTruncated($legacyKbMarkdown, 8000)) {
             Craft::warning(
@@ -139,7 +150,8 @@ final class LlmClassifier extends Component
 
         $all = [];
         $first = true;
-        foreach ($grouped as $etGroup) {
+        $chunkIndex = 0;
+        foreach ($grouped as $entryType => $etGroup) {
             $chunks = array_chunk($etGroup, 10);
             foreach ($chunks as $chunk) {
                 if (!$first && $this->interChunkDelay > 0) {
@@ -150,10 +162,23 @@ final class LlmClassifier extends Component
                     sleep($this->interChunkDelay);
                 }
                 $first = false;
-                $all = array_merge($all, $this->proposeOneChunk(
+                $chunkIndex++;
+                $startedAt = microtime(true);
+                $proposals = $this->proposeOneChunk(
                     $chunk, $craftFieldIndex, $legacyKbMarkdown, $targetKbMarkdown,
                     $client, $apiKey, $model, $timeout,
-                ));
+                );
+                $all = array_merge($all, $proposals);
+                if ($onChunk !== null) {
+                    $onChunk(
+                        $chunkIndex,
+                        $chunkTotal,
+                        (string) $entryType,
+                        count($chunk),
+                        count($proposals),
+                        microtime(true) - $startedAt,
+                    );
+                }
             }
         }
         return $all;

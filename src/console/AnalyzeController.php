@@ -261,12 +261,37 @@ class AnalyzeController extends Controller
                 $now = new \DateTimeImmutable();
                 $kbPages     = $plugin->knowledgeBase->renderPagesMarkdown($adapter, $now);
                 $kbPageParts = $plugin->knowledgeBase->renderPagePartsMarkdown($adapter, $now);
+                $this->stdout(
+                    "  ... LLM batching " . count($residual) . " residual columns (chunks of 10, grouped by targetEntryType)\n",
+                    Console::FG_GREY,
+                );
+                // Progress bar via Yii Console helper (same pattern as AssetMigrationService).
+                // Lazy-started inside the callback so we know $chunkTotal up-front.
+                $progressStarted = false;
                 $llmProposals = $plugin->llmClassifier->batchPropose(
                     $residual,
                     $craftFieldIndex,
                     $kbPages . "\n\n" . $kbPageParts,
                     '', // Craft-side KB stays empty until Phase 4 / verify
+                    function (int $i, int $n, string $et, int $cols, int $props, float $sec) use (&$progressStarted): void {
+                        if (!$progressStarted) {
+                            Console::startProgress(0, $n, '  ... LLM ');
+                            $progressStarted = true;
+                        }
+                        $etLabel = $et === '' ? '(unmapped)' : $et;
+                        Console::updateProgress(
+                            $i,
+                            $n,
+                            sprintf(
+                                '  ... LLM [chunk %d/%d et=%s cols=%d→props=%d %.1fs] ',
+                                $i, $n, $etLabel, $cols, $props, $sec,
+                            ),
+                        );
+                    },
                 );
+                if ($progressStarted) {
+                    Console::endProgress();
+                }
                 $this->stdout(
                     "  OK   LLM produced " . count($llmProposals) . " proposals\n",
                     Console::FG_GREEN,
