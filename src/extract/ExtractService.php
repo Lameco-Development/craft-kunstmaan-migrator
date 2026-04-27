@@ -338,6 +338,19 @@ class ExtractService extends Component
                         : null;
                     $pageParts = $this->loadPageParts($perLocaleRefId, $fqcn);
 
+                    // Phase 7: synthetic page-part injection for content-only pages.
+                    // When mapping.pageParts has any '__implicit_content__|<shortFqcn>|<context>'
+                    // entries for this FQCN's short name, synthesize a pagePart record per
+                    // (key, detail-row) so TransformService.transformPageBuilder dispatches
+                    // through the regular pageParts pipeline. The synthetic row IS the page
+                    // detail row — that's where the content-like columns live by definition.
+                    if ($detail !== null) {
+                        $synthetic = self::buildImplicitContentPageParts($fqcn, $detail, $mapping);
+                        if ($synthetic !== []) {
+                            $pageParts = array_merge($pageParts, $synthetic);
+                        }
+                    }
+
                     $perSite[$lang] = [
                         'online'     => (bool) ($t['online'] ?? false),
                         'title'      => (string) ($t['title'] ?? ''),
@@ -634,6 +647,55 @@ class ExtractService extends Component
             }
         }
         return $row;
+    }
+
+    /**
+     * Phase 7 — synthesize page-part records for content-only pages.
+     *
+     * When MappingCompiler emitted `mapping.pageParts['__implicit_content__|<short>|<context>']`
+     * entries for the current FQCN's short name, this method produces a synthetic
+     * pagePart record per (key, detail) pair. The synthetic record carries the page's
+     * own detail row as its `row`, which is the only legal source for content-like
+     * columns on content-only pages (no real page-part rows exist by definition).
+     *
+     * Sequence numbers start at 1_000_000 so synthetic blocks always sort AFTER real
+     * page-parts when both are present (defence-in-depth — the "no real page-parts"
+     * predicate at compile time should already preclude that case).
+     *
+     * @param  array<string, mixed> $detail   page detail row
+     * @param  array<string, mixed> $mapping  full parsed mapping.yaml
+     * @return list<array<string, mixed>>     synthetic pagePart records
+     */
+    public static function buildImplicitContentPageParts(string $fqcn, array $detail, array $mapping): array
+    {
+        $pageParts = (array) ($mapping['pageParts'] ?? []);
+        if ($pageParts === []) {
+            return [];
+        }
+        $parts = explode('\\', trim($fqcn, '\\'));
+        $short = (string) end($parts);
+        if ($short === '') {
+            return [];
+        }
+        $prefix = '__implicit_content__|' . $short . '|';
+        $detailId = (int) ($detail['id'] ?? 0);
+        $sequence = 1_000_000;
+        $out = [];
+        foreach ($pageParts as $key => $spec) {
+            if (!is_string($key) || !is_array($spec)) { continue; }
+            if (!str_starts_with($key, $prefix)) { continue; }
+            $context = (string) substr($key, strlen($prefix));
+            if ($context === '') { continue; }
+            $out[] = [
+                'fqcn'         => $key,
+                'sourcePartId' => $detailId !== 0 ? $detailId : $sequence,
+                'sequence'     => $sequence,
+                'context'      => $context,
+                'row'          => $detail,
+            ];
+            $sequence++;
+        }
+        return $out;
     }
 
     /**

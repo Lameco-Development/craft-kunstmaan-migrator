@@ -195,6 +195,13 @@ class CompileController extends Controller
             (int) $report['sectionsEmitted'],
             count($compiled['sites']),
         ), Console::FG_GREEN);
+        $implicitEmitted = (int) ($report['implicitBlocksEmitted'] ?? 0);
+        if ($implicitEmitted > 0) {
+            $this->stdout(sprintf(
+                "  OK   compiled %d implicit-content page-part block(s) into mapping.pageParts + nodeClasses.pageBuilderHandle\n",
+                $implicitEmitted,
+            ), Console::FG_GREEN);
+        }
 
         // Validate compiled section handles against Craft's actual entry-type
         // catalog. Compiler derives candidate handles from FQCN basenames
@@ -261,13 +268,19 @@ class CompileController extends Controller
         // 7. Serialize + write atomically.
         unset($compiled['_compileReport']); // never persist the report into mapping.yaml
         // Order keys so reads land in the operator-friendly order:
-        //   sites → sections → nodeClasses → proposals (small-to-large)
+        //   sites → sections → nodeClasses → pageParts → proposals (small-to-large).
+        // pageParts is only written when the compiler produced any (implicit-content
+        // emission, or operator-curated entries already in the input mapping).
+        $pagePartsOut = (array) ($compiled['pageParts'] ?? []);
         $ordered = [
             'sites'       => $compiled['sites'],
             'sections'    => $compiled['sections'],
             'nodeClasses' => $compiled['nodeClasses'],
-            'proposals'   => $compiled['proposals'],
         ];
+        if ($pagePartsOut !== []) {
+            $ordered['pageParts'] = $pagePartsOut;
+        }
+        $ordered['proposals'] = $compiled['proposals'];
         try {
             $yaml = SymfonyYaml::dump($ordered, 8, 2, SymfonyYaml::DUMP_NULL_AS_TILDE);
         } catch (Throwable $e) {

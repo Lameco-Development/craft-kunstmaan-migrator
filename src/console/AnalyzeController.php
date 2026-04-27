@@ -168,15 +168,38 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
-        // Step 4.6 (Phase 7): synthetic page-part emitter for content-only pages.
+        // Step 5: pageStructure.json write (atomic JSON; sibling of schema-dump.json).
+        $pageStructurePath = $storageDir . '/pageStructure.json';
+        if (!$plugin->mappingFile->writeAtomicJson($pageStructurePath, $pageStructure)) {
+            $this->stderr("  FAIL could not write {$pageStructurePath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout("  OK   pageStructure.json written → {$pageStructurePath}\n", Console::FG_GREEN);
+
+        // Step 6: schema dump (consumes Phase 02.1 source-scanner table list).
+        try {
+            $schemaDump = $plugin->schemaDumper->dump($filters, (array) ($sourceScan['tables'] ?? []));
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL schema dump: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $tableCount = count($schemaDump['tables'] ?? []);
+        $colCount   = array_sum(array_map('count', $schemaDump['columns'] ?? []));
+        $schemaPath = $storageDir . '/schema-dump.json';
+        if (!$plugin->mappingFile->writeAtomicJson($schemaPath, $schemaDump)) {
+            $this->stderr("  FAIL could not write {$schemaPath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout("  OK   schema dumped ({$tableCount} tables, {$colCount} columns) → {$schemaPath}\n", Console::FG_GREEN);
+
+        // Step 6.5 (Phase 7): synthetic page-part emitter for content-only pages.
         // Detects Page FQCNs that have NO real page-parts AND DO have content-like
         // columns on their source table (longtext content/body/intro, banner_*, etc.)
         // — emits a synthetic kind=pagePart row with pagePartClass='__implicit_content__'
         // so the downstream proposePagePartBlocks LLM step proposes a Matrix
-        // wrapping just like it does for real page-parts. The synthetic rows
-        // carry their content columns in `fields` so the LLM has data to propose
-        // against. Operator-curated decisions on these rows survive re-analyze
-        // via the structural-only merge identity tuple (W1 fix).
+        // wrapping just like it does for real page-parts. Must run AFTER step 6
+        // (schemaDump) — earlier placement read $schemaDump before it was defined
+        // and silently produced zero rows.
         $fqcnsWithRealPageParts = [];
         foreach ($pagePartProposals as $r) {
             $fqcnsWithRealPageParts[(string) ($r['parentPageClass'] ?? '')] = true;
@@ -230,30 +253,6 @@ class AnalyzeController extends Controller
                 Console::FG_GREEN,
             );
         }
-
-        // Step 5: pageStructure.json write (atomic JSON; sibling of schema-dump.json).
-        $pageStructurePath = $storageDir . '/pageStructure.json';
-        if (!$plugin->mappingFile->writeAtomicJson($pageStructurePath, $pageStructure)) {
-            $this->stderr("  FAIL could not write {$pageStructurePath}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-        $this->stdout("  OK   pageStructure.json written → {$pageStructurePath}\n", Console::FG_GREEN);
-
-        // Step 6: schema dump (consumes Phase 02.1 source-scanner table list).
-        try {
-            $schemaDump = $plugin->schemaDumper->dump($filters, (array) ($sourceScan['tables'] ?? []));
-        } catch (Throwable $e) {
-            $this->stderr("  FAIL schema dump: {$e->getMessage()}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-        $tableCount = count($schemaDump['tables'] ?? []);
-        $colCount   = array_sum(array_map('count', $schemaDump['columns'] ?? []));
-        $schemaPath = $storageDir . '/schema-dump.json';
-        if (!$plugin->mappingFile->writeAtomicJson($schemaPath, $schemaDump)) {
-            $this->stderr("  FAIL could not write {$schemaPath}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-        $this->stdout("  OK   schema dumped ({$tableCount} tables, {$colCount} columns) → {$schemaPath}\n", Console::FG_GREEN);
 
         // Step 7: heuristic proposals.
         // HeuristicProposer::autoMatch returns [matched, residual]. The schema dump

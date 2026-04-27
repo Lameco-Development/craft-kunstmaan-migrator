@@ -72,12 +72,14 @@ final class MappingCompiler extends Component
      *   nodeClasses: array<string, array<string, mixed>>,
      *   sections: array<string, array<string, mixed>>,
      *   sites: array<string, string>,
+     *   pageParts: array<string, array<string, mixed>>,
      *   _compileReport: array{
      *     nodeClassesEmitted: int,
      *     sectionsEmitted: int,
      *     fieldsEmittedPerSection: array<string, int>,
      *     skippedNodeClasses: list<string>,
      *     fallbackEntryTypeApplied: list<string>,
+     *     implicitBlocksEmitted: int,
      *     warnings: list<string>,
      *   },
      * }
@@ -322,11 +324,26 @@ final class MappingCompiler extends Component
             $warnings[] = 'No sites map provided — Settings::localeMap is empty. Migrate cannot resolve per-locale Craft site IDs without it.';
         }
 
+        // Phase 7: implicit-content page-part compilation. Walk accepted kind=pagePart
+        // rows whose pagePartClass is the synthetic '__implicit_content__' marker
+        // (analyze step 6.5 emits these for content-only pages). For each such row,
+        // emit a synthetic mapping.pageParts entry keyed by '__implicit_content__|<short>|<context>'
+        // and wire the parent nodeClasses entry's pageBuilderHandle/pageBuilderContexts
+        // so ExtractService's synthetic page-part injection has a target to dispatch into.
+        // Operator hand-edits to mapping.pageParts/nodeClasses are preserved (skip-existing).
+        $existingPageParts = (array) ($mapping['pageParts'] ?? []);
+        [$pagePartsOut, $nodeClasses, $implicitEmitted, $implicitWarnings] =
+            $this->compileImplicitBlocks($proposals, $pageStructure, $existingPageParts, $nodeClasses);
+        ksort($pagePartsOut);
+        ksort($nodeClasses);
+        $warnings = array_merge($warnings, $implicitWarnings);
+
         return [
             'proposals'    => array_values($proposals),
             'nodeClasses'  => $nodeClasses,
             'sections'     => $sections,
             'sites'        => $sitesOut,
+            'pageParts'    => $pagePartsOut,
             '_compileReport' => [
                 'nodeClassesEmitted'        => count($nodeClasses),
                 'sectionsEmitted'           => count($sections),
@@ -337,9 +354,175 @@ final class MappingCompiler extends Component
                 'fallbackBlockTypeApplied'  => $fallbackBlockTypeApplied,
                 'fallbackEntryTypeUsed'     => $defaultEntryType,
                 'fallbackBlockTypeUsed'     => $defaultBlockType,
+                'implicitBlocksEmitted'     => $implicitEmitted,
                 'warnings'                  => $warnings,
             ],
         ];
+    }
+
+    /**
+     * Phase 7 — compile accepted '__implicit_content__' pagePart rows into runtime shape.
+     *
+     * For each such row:
+     *   - emit `mapping.pageParts['__implicit_content__|<parentShort>|<context>']` with
+     *     `target: targetBlockType` and `fields: {<targetHandle>: {source, handler}}` so
+     *     TransformService.transformPageBuilder dispatches the synthetic page-part injected
+     *     by ExtractService through the regular pageParts pipeline.
+     *   - mutate `nodeClasses[<fqcn>]` for the parent FQCN matching parentPageClass:
+     *       * pageBuilderHandle ← targetMatrixField (only if currently empty;
+     *         operator-set wins).
+     *       * pageBuilderContexts ← merged with [context] (de-duped).
+     *     The FQCN is resolved by short-class match against pageStructure (the same
+     *     convention analyze uses when it emits parentPageClass).
+     *
+     * Skip-existing semantics: a row whose synthetic key already exists in the
+     * operator's mapping.pageParts is left untouched (operator decisions are sacred).
+     *
+     * Empty `handler` defaults to 'plain' so TransformService doesn't warn
+     * "Unknown handler ''" for every implicit block.
+     *
+     * @param  list<array<string, mixed>>                    $proposals
+     * @param  array<string, mixed>                          $pageStructure
+     * @param  array<string, mixed>                          $existingPageParts  Operator-curated pageParts block from mapping.yaml
+     * @param  array<string, array<string, mixed>>           $nodeClasses        Already-built nodeClasses (mutated in-place)
+     * @return array{0: array<string, array<string, mixed>>, 1: array<string, array<string, mixed>>, 2: int, 3: list<string>}
+     *         [pagePartsOut, nodeClassesOut, implicitEmittedCount, warnings]
+     */
+    private function compileImplicitBlocks(
+        array $proposals,
+        array $pageStructure,
+        array $existingPageParts,
+        array $nodeClasses,
+    ): array {
+        $pagePartsOut = [];
+        foreach ($existingPageParts as $k => $v) {
+            if (is_string($k) && is_array($v)) {
+                $pagePartsOut[$k] = $v;
+            }
+        }
+
+        // Build short-class → FQCN lookup once. Two FQCNs sharing a basename
+        // (e.g. App\Entity\Pages\NewsPage vs App\Entity\Archive\NewsPage) is
+        // rare in real Kunstmaan repos but defensible to surface — without a
+        // warning, an implicit row whose parentPageClass is the colliding name
+        // would silently route to whichever FQCN won the last-write race.
+        $shortToFqcn = [];
+        $shortCollisions = [];
+        foreach (array_keys($pageStructure) as $fqcn) {
+            if (!is_string($fqcn)) { continue; }
+            $parts = explode('\\', trim($fqcn, '\\'));
+            $short = (string) end($parts);
+            if ($short === '') { continue; }
+            if (isset($shortToFqcn[$short]) && $shortToFqcn[$short] !== $fqcn) {
+                $shortCollisions[$short][] = $fqcn;
+                $shortCollisions[$short] = array_values(array_unique(
+                    array_merge([$shortToFqcn[$short]], $shortCollisions[$short]),
+                ));
+            } else {
+                $shortToFqcn[$short] = $fqcn;
+            }
+        }
+
+        $emitted = 0;
+        $warnings = [];
+        foreach ($shortCollisions as $short => $fqcns) {
+            $warnings[] = sprintf(
+                'pageStructure has %d FQCNs sharing basename "%s" (%s) — implicit-content rows referencing this short name route to the first one. Rename or split the colliding entities to disambiguate.',
+                count($fqcns),
+                $short,
+                implode(', ', $fqcns),
+            );
+        }
+
+        foreach ($proposals as $row) {
+            if (!is_array($row)) { continue; }
+            if (((string) ($row['kind'] ?? '')) !== 'pagePart') { continue; }
+            if (((string) ($row['pagePartClass'] ?? '')) !== '__implicit_content__') { continue; }
+            if (((string) ($row['status'] ?? '')) !== 'accepted') { continue; }
+
+            $parentShort = (string) ($row['parentPageClass'] ?? '');
+            $context     = (string) ($row['context'] ?? 'main');
+            $matrixField = (string) ($row['targetMatrixField'] ?? '');
+            $blockType   = (string) ($row['targetBlockType'] ?? '');
+
+            if ($parentShort === '' || $matrixField === '' || $blockType === '') {
+                $warnings[] = sprintf(
+                    'implicit-content row for %s/%s skipped: needs targetMatrixField AND targetBlockType (got matrix=%s block=%s)',
+                    $parentShort ?: '?',
+                    $context ?: '?',
+                    $matrixField ?: '∅',
+                    $blockType ?: '∅',
+                );
+                continue;
+            }
+
+            $key = '__implicit_content__|' . $parentShort . '|' . $context;
+
+            // Build fields[<targetHandle>] = {source, handler}. Skip rows missing
+            // targetHandle — those are unfilled operator decisions.
+            $fieldsOut = [];
+            foreach ((array) ($row['fields'] ?? []) as $f) {
+                if (!is_array($f)) { continue; }
+                $tgt = (string) ($f['targetHandle'] ?? '');
+                $src = (string) ($f['sourceProperty'] ?? '');
+                if ($tgt === '' || $src === '') { continue; }
+                $handler = (string) ($f['handler'] ?? '');
+                if ($handler === '') {
+                    $handler = 'plain';
+                }
+                $fieldsOut[$tgt] = ['source' => $src, 'handler' => $handler];
+            }
+            if ($fieldsOut === []) {
+                $warnings[] = sprintf(
+                    'implicit-content row for %s/%s skipped: no fields with both sourceProperty and targetHandle filled in',
+                    $parentShort,
+                    $context,
+                );
+                continue;
+            }
+            ksort($fieldsOut);
+
+            // Skip-existing: operator-curated mapping.pageParts wins.
+            if (isset($pagePartsOut[$key])) {
+                continue;
+            }
+            $pagePartsOut[$key] = [
+                'target' => $blockType,
+                'fields' => $fieldsOut,
+            ];
+            $emitted++;
+
+            // Wire the parent nodeClasses entry. The parent FQCN must match a real
+            // pageStructure entry by short-class basename, AND must already have a
+            // nodeClasses[fqcn] entry (built earlier in compile()) — otherwise the
+            // implicit block has no entry to ride on at extract time.
+            $fqcn = $shortToFqcn[$parentShort] ?? null;
+            if ($fqcn === null || !isset($nodeClasses[$fqcn])) {
+                $warnings[] = sprintf(
+                    'implicit-content row for %s/%s emitted to mapping.pageParts but no matching nodeClasses[%s] — extract will not inject',
+                    $parentShort,
+                    $context,
+                    $fqcn ?? $parentShort,
+                );
+                continue;
+            }
+
+            // Operator-set pageBuilderHandle wins; only fill when empty.
+            if ((string) ($nodeClasses[$fqcn]['pageBuilderHandle'] ?? '') === '') {
+                $nodeClasses[$fqcn]['pageBuilderHandle'] = $matrixField;
+            }
+            // Merge context into pageBuilderContexts (de-dupe; preserve order).
+            $existingCtxs = array_values(array_filter(
+                (array) ($nodeClasses[$fqcn]['pageBuilderContexts'] ?? []),
+                static fn(mixed $c): bool => is_string($c) && $c !== '',
+            ));
+            if (!in_array($context, $existingCtxs, true)) {
+                $existingCtxs[] = $context;
+            }
+            $nodeClasses[$fqcn]['pageBuilderContexts'] = $existingCtxs;
+        }
+
+        return [$pagePartsOut, $nodeClasses, $emitted, $warnings];
     }
 
     /**
