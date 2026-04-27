@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests;
+namespace lameco\kunstmaanmigrator\tests\integration;
 
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;

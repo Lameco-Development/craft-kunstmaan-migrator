@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\console;
+namespace lameco\kunstmaanmigrator\tests\unit\console;
 
 use lameco\kunstmaanmigrator\console\AnalyzeController;
 use PHPUnit\Framework\TestCase;

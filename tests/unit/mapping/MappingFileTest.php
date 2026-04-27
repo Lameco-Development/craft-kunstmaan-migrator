@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\mapping;
+namespace lameco\kunstmaanmigrator\tests\unit\mapping;
 
 use lameco\kunstmaanmigrator\mapping\MappingFile;
 use PHPUnit\Framework\TestCase;

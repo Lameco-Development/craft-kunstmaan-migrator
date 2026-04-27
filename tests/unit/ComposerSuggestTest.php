@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests;
+namespace lameco\kunstmaanmigrator\tests\unit;
 
 use PHPUnit\Framework\TestCase;
 
@@ -20,7 +20,7 @@ final class ComposerSuggestTest extends TestCase
 {
     public function testSeomaticAndRetourAreSuggestNotRequire(): void
     {
-        $composerPath = __DIR__ . '/../composer.json';
+        $composerPath = __DIR__ . '/../../composer.json';
         $this->assertFileExists($composerPath);
 
         $composer = json_decode((string) file_get_contents($composerPath), true);

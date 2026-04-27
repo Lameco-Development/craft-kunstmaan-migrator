@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\verify;
+namespace lameco\kunstmaanmigrator\tests\unit\verify;
 
 use PHPUnit\Framework\TestCase;
 

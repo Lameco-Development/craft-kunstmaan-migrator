@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\Plugin;
+namespace lameco\kunstmaanmigrator\tests\unit\Plugin;
 
 use PHPUnit\Framework\TestCase;
 
@@ -14,8 +14,8 @@ use PHPUnit\Framework\TestCase;
  */
 final class SettingsHtmlTest extends TestCase
 {
-    private const TWIG_PATH = __DIR__ . '/../../src/templates/_settings.twig';
-    private const PLUGIN_PATH = __DIR__ . '/../../src/Plugin.php';
+    private const TWIG_PATH = __DIR__ . '/../../../src/templates/_settings.twig';
+    private const PLUGIN_PATH = __DIR__ . '/../../../src/Plugin.php';
 
     private const NINE_ESSENTIAL_FIELDS = [
         'legacyDbServer', 'legacyDbPort', 'legacyDbDatabase',

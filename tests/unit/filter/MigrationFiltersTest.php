@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\filter;
+namespace lameco\kunstmaanmigrator\tests\unit\filter;
 
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use PHPUnit\Framework\TestCase;

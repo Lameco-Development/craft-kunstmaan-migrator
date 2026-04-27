@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\load;
+namespace lameco\kunstmaanmigrator\tests\unit\load;
 
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use PHPUnit\Framework\TestCase;

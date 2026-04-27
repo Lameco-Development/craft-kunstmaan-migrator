@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\verify;
+namespace lameco\kunstmaanmigrator\tests\unit\verify;
 
 use lameco\kunstmaanmigrator\verify\SnapshotDiffer;
 use PHPUnit\Framework\TestCase;

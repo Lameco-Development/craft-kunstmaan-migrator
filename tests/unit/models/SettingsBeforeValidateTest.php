@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\models;
+namespace lameco\kunstmaanmigrator\tests\unit\models;
 
 use lameco\kunstmaanmigrator\models\Settings;
 use lameco\kunstmaanmigrator\source\KunstmaanEnvReader;

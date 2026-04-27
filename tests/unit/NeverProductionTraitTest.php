@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests;
+namespace lameco\kunstmaanmigrator\tests\unit;
 
 use craft\helpers\Console;
 use lameco\kunstmaanmigrator\NeverProductionTrait;

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\locale;
+namespace lameco\kunstmaanmigrator\tests\unit\locale;
 
 use lameco\kunstmaanmigrator\locale\LocalePreflight;
 use PHPUnit\Framework\TestCase;

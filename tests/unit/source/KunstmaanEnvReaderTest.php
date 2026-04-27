@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\source;
+namespace lameco\kunstmaanmigrator\tests\unit\source;
 
 use lameco\kunstmaanmigrator\source\KunstmaanEnvReader;
 use PHPUnit\Framework\TestCase;
