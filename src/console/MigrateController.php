@@ -84,6 +84,16 @@ class MigrateController extends Controller
     public bool $noRetour = false;
 
     /**
+     * Phase 8.5 / D-24 — `--no-rel-join` per-run override. Bypasses
+     * ExtractService's Doctrine ManyToOne FK join (the helper that embeds
+     * `_rel:<prop>.<col>` keys into detail rows + page-part rows). When
+     * the related tables are large or the join queries dominate extract
+     * latency, flip this on to fall back to "FK column only" payloads.
+     * Default false → join runs (when Settings::joinFkRelations also true).
+     */
+    public bool $noRelJoin = false;
+
+    /**
      * D-65 verbosity counter — `-v` / `-vv` / `-vvv`. Yii parses repeated
      * short flags as a string value (`-vv` → `verbose='v'`); verbosityLevel()
      * does the str-length count. Accept int form too so `--verbose=2` works.
@@ -101,6 +111,8 @@ class MigrateController extends Controller
             'live', 'confirm', 'preloadAssets', 'force', 'entities', 'locales', 'since',
             // Phase 4.1 / D-26 — adapter bypass per-run.
             'noSeo', 'noRetour',
+            // Phase 8.5 / D-24 — Doctrine ManyToOne FK join bypass per-run.
+            'noRelJoin',
             // D-65: -v..-vvv verbosity (string|int — see verbosityLevel()).
             'verbose',
             // Phase 7 debug flags.
@@ -177,6 +189,7 @@ class MigrateController extends Controller
 
         $plugin = Plugin::getInstance();
         $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $this->applyNoRelJoinOverride($plugin);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $report = new MigrationReport();
 
@@ -634,6 +647,7 @@ class MigrateController extends Controller
 
         $plugin = Plugin::getInstance();
         $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $this->applyNoRelJoinOverride($plugin);
 
         if (($exit = $this->preflightLocale($filters)) !== ExitCode::OK) {
             return $exit;
@@ -1291,6 +1305,26 @@ class MigrateController extends Controller
     // --------------------------------------------------------------------------
     // Internal helpers
     // --------------------------------------------------------------------------
+
+    /**
+     * Phase 8.5 / D-24 — apply `--no-rel-join` per-run override on the
+     * extract service. The flag only DISABLES (mirrors `--no-seo`); it never
+     * enables. So when `Settings::joinFkRelations` is already false, this
+     * method is a no-op even with the flag set.
+     *
+     * Plugin::init() seeds `extractService->joinFkRelations` from Settings;
+     * we only need to override here when the operator opts out per-run.
+     */
+    private function applyNoRelJoinOverride(Plugin $plugin): void
+    {
+        if ($this->noRelJoin) {
+            $plugin->extractService->joinFkRelations = false;
+            $this->stdout(
+                "  OK   --no-rel-join → ManyToOne FK join disabled for this run\n",
+                Console::FG_YELLOW,
+            );
+        }
+    }
 
     /**
      * LOC-02 preflight gate — shared by every action that reads legacy data.

@@ -181,6 +181,31 @@ class AnalyzeController extends Controller
         }
         $this->stdout("  OK   pageStructure.json written → {$pageStructurePath}\n", Console::FG_GREEN);
 
+        // Step 5.1 (Phase 8.5 / D-23): relation-graph.json. One row per parsed
+        // Doctrine entity that owns at least one ManyToOne relation. Useful for
+        // debugging the FK-join layer, future verify-style audits, and operators
+        // inspecting what gets embedded under `_rel:<prop>.<col>` keys at extract
+        // time. Best-effort — a missing parser or empty entity index drops the
+        // file silently rather than failing the analyze run.
+        $relationGraph = $this->buildRelationGraph();
+        $relationGraphPath = $storageDir . '/relation-graph.json';
+        if ($relationGraph !== []) {
+            if (!$plugin->mappingFile->writeAtomicJson($relationGraphPath, $relationGraph)) {
+                $this->stderr("  FAIL could not write {$relationGraphPath}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->stdout(
+                "  OK   relation-graph.json written ("
+                . count($relationGraph) . " entities) → {$relationGraphPath}\n",
+                Console::FG_GREEN,
+            );
+        } else {
+            $this->stdout(
+                "  WARN relation-graph.json skipped (no ManyToOne relations parsed)\n",
+                Console::FG_YELLOW,
+            );
+        }
+
         // Step 6: schema dump (consumes Phase 02.1 source-scanner table list).
         try {
             $schemaDump = $plugin->schemaDumper->dump($filters, (array) ($sourceScan['tables'] ?? []));
@@ -1167,6 +1192,60 @@ class AnalyzeController extends Controller
     private function buildCraftFieldIndex(): array
     {
         return Plugin::getInstance()->craftKnowledgeBase->buildFieldIndex();
+    }
+
+    /**
+     * Phase 8.5 / D-23 — build the relation-graph.json payload.
+     *
+     * Walks every parsed Doctrine entity and emits one record per FQCN that
+     * owns at least one ManyToOne relation. The shape mirrors the LLM-facing
+     * Relations table in `KnowledgeBase::renderPagesMarkdown` (D-20) and the
+     * `_rel:<prop>.<col>` keys produced by `ExtractService::joinManyToOneRelations`
+     * (D-21) so operators can correlate the three artifacts.
+     *
+     * Output:
+     *   {
+     *     "App\\Entity\\Pages\\EmployeePage": {
+     *       "manyToOne": [
+     *         {
+     *           "property": "employee",
+     *           "targetEntity": "App\\Entity\\Employee",
+     *           "fkColumn": "employee_id",
+     *           "targetTable": "lameco_websitebundle_employee_employees"
+     *         }
+     *       ]
+     *     }
+     *   }
+     *
+     * Empty array when the parser is null or no ManyToOne relations exist —
+     * caller falls back to skipping the file write rather than emitting `[]`.
+     *
+     * @return array<string, array{manyToOne: list<array{property: string, targetEntity: string, fkColumn: string|null, targetTable: string}>}>
+     */
+    private function buildRelationGraph(): array
+    {
+        $parser = Plugin::getInstance()->doctrineEntityParser;
+        $out = [];
+        foreach ($parser->getAll() as $fqcn => $info) {
+            $manyToOne = [];
+            foreach ($info->relations as $rel) {
+                if ($rel->relationType !== 'ManyToOne') {
+                    continue;
+                }
+                $targetTable = $parser->getByFqcn($rel->targetEntity)?->tableName ?? '';
+                $manyToOne[] = [
+                    'property'     => $rel->propertyName,
+                    'targetEntity' => $rel->targetEntity,
+                    'fkColumn'     => $rel->fkColumn,
+                    'targetTable'  => $targetTable,
+                ];
+            }
+            if ($manyToOne === []) {
+                continue;
+            }
+            $out[(string) $fqcn] = ['manyToOne' => $manyToOne];
+        }
+        return $out;
     }
 
     /**

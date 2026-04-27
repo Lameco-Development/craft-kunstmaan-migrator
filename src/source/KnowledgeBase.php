@@ -261,6 +261,12 @@ final class KnowledgeBase extends Component
             if ($relations !== []) {
                 $out[] = '### Relations';
                 $out[] = '';
+                // Phase 8.5 / D-20 — concise summary table (ManyToOne + ManyToMany).
+                // Surfaces target table + target columns inline so the LLM can map
+                // `_rel:<prop>.<col>` columns (D-21) without an additional lookup.
+                // Detailed per-relation blocks (join-table sample nodes, child
+                // table info for OneToMany) follow below.
+                $this->appendRelationsTable($out, $relations);
                 foreach ($relations as $rel) {
                     $relType      = $rel->relationType;
                     $propName     = $rel->propertyName;
@@ -577,6 +583,17 @@ final class KnowledgeBase extends Component
                 $this->renderTableColumns($out, $sourceTable, $allColumns);
             }
 
+            // Phase 8.5 / D-20 — Relations subsection. Surfaces ManyToOne /
+            // ManyToMany relations (target table + target columns) so the LLM
+            // can interpret `_rel:<prop>.<col>` joined columns (see
+            // ExtractService::joinManyToOneRelations + D-21).
+            $pageRelations = $entityInfo?->relations ?? [];
+            if ($pageRelations !== []) {
+                $out[] = '### Relations';
+                $out[] = '';
+                $this->appendRelationsTable($out, $pageRelations);
+            }
+
             // Page parts used by this page type.
             try {
                 $ppRows = $this->legacyDb->queryAll(
@@ -649,6 +666,76 @@ final class KnowledgeBase extends Component
         $out[] = '';
 
         return implode("\n", $out);
+    }
+
+    /**
+     * Phase 8.5 / D-20 — emit the canonical Relations summary table inline.
+     *
+     * | property | type | target | FK column | target table | target columns |
+     *
+     * Filters to ManyToOne + ManyToMany only (the relations the LLM can act on
+     * via `_rel:` joined columns or join-table walks). OneToMany / OneToOne are
+     * intentionally excluded — they don't produce a `_rel:` column at extract
+     * time and the per-relation detail block below the table covers OneToMany
+     * with its child-table info.
+     *
+     * `target table` + `target columns` are resolved via the entity parser on
+     * the target FQCN. When the target isn't a parsed Doctrine entity (e.g.
+     * vendor class outside `src/Entity/`), both cells render as `—` rather
+     * than failing — the summary degrades gracefully.
+     *
+     * Pipe characters in identifiers are escaped (Doctrine doesn't allow them
+     * in column names but the escape is cheap defense-in-depth).
+     *
+     * @param list<string> $out
+     * @param \lameco\kunstmaanmigrator\source\DoctrineRelationInfo[] $relations
+     */
+    private function appendRelationsTable(array &$out, array $relations): void
+    {
+        $rows = [];
+        foreach ($relations as $rel) {
+            if ($rel->relationType !== 'ManyToOne' && $rel->relationType !== 'ManyToMany') {
+                continue;
+            }
+            $targetInfo = $this->entityParser?->getByFqcn($rel->targetEntity);
+            $targetTable = $targetInfo?->tableName ?? '';
+            $targetCols = '';
+            if ($targetInfo !== null && $targetInfo->columns !== []) {
+                $names = array_map(static fn($c) => $c->columnName, $targetInfo->columns);
+                $targetCols = implode(', ', $names);
+            }
+            $rows[] = [
+                'property'      => $rel->propertyName,
+                'type'          => $rel->relationType,
+                'target'        => $rel->targetEntity,
+                'fkColumn'      => $rel->fkColumn ?? '',
+                'targetTable'   => $targetTable,
+                'targetColumns' => $targetCols,
+            ];
+        }
+        if ($rows === []) {
+            return;
+        }
+
+        $out[] = '| property | type | target | FK column | target table | target columns |';
+        $out[] = '|----------|------|--------|-----------|--------------|----------------|';
+        foreach ($rows as $r) {
+            $out[] = sprintf(
+                '| %s | %s | %s | %s | %s | %s |',
+                self::escapePipe($r['property']),
+                self::escapePipe($r['type']),
+                self::escapePipe($r['target']),
+                $r['fkColumn'] !== '' ? '`' . self::escapePipe($r['fkColumn']) . '`' : '—',
+                $r['targetTable'] !== '' ? '`' . self::escapePipe($r['targetTable']) . '`' : '—',
+                $r['targetColumns'] !== '' ? self::escapePipe($r['targetColumns']) : '—',
+            );
+        }
+        $out[] = '';
+    }
+
+    private static function escapePipe(string $v): string
+    {
+        return str_replace('|', '\\|', $v);
     }
 
     /**

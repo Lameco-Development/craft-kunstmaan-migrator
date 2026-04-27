@@ -295,6 +295,10 @@ class Plugin extends BasePlugin
         $this->extractService->legacyDb            = $this->legacyDbService;
         $this->extractService->detailTableResolver = $this->detailTableResolver;
         $this->extractService->topologicalOrderer  = new TopologicalOrderer();
+        // Phase 8.5 / D-21 — Doctrine relation introspection for ManyToOne
+        // FK joins under the `_rel:<prop>.<col>` namespace.
+        $this->extractService->entityParser        = $this->doctrineEntityParser;
+        $this->extractService->joinFkRelations     = (bool) $this->getSettings()->joinFkRelations;
 
         // TransformService deps (5 slots). migrationState is typed ?MigrationStateReader
         // — MigrationStateService implements that interface (verified). assetPathResolver

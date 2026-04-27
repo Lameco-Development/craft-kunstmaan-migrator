@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\extract;
 
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\source\DetailTableResolver;
+use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
 use lameco\kunstmaanmigrator\source\TopologicalOrderer;
 use lameco\kunstmaanmigrator\source\KunstmaanCoreTables;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
@@ -42,6 +43,23 @@ class ExtractService extends Component
     public ?LegacyDbService $legacyDb = null;
     public ?DetailTableResolver $detailTableResolver = null;
     public ?TopologicalOrderer $topologicalOrderer = null;
+
+    /**
+     * Phase 8.5 / D-21 — Doctrine relation introspection for ManyToOne FK joins.
+     * When non-null and `$joinFkRelations` is true, page-row + page-part-row
+     * loads embed each ManyToOne target row's columns under the `_rel:<prop>.<col>`
+     * synthetic-key namespace so the LLM proposer (and operator) can map the
+     * cross-relation columns directly. Null parser → join is silently skipped.
+     */
+    public ?DoctrineEntityParser $entityParser = null;
+
+    /**
+     * Phase 8.5 / D-24 — runtime gate for `joinManyToOneRelations()`. Default
+     * true. Flipped to false by Settings::joinFkRelations or the
+     * `--no-rel-join` CLI flag (see MigrateController). When false the
+     * helper short-circuits: no `_rel:` keys are merged into detail rows.
+     */
+    public bool $joinFkRelations = true;
 
     /** B11 — injected for T-04-05-03 mitigation; every serialized blob routes through here.
      *  v2 port: typed slot replaced with `?object` — the decoder dependency is deferred to Phase 4
@@ -334,7 +352,7 @@ class ExtractService extends Component
                     }
 
                     $detail = $sourceTable !== ''
-                        ? $this->loadDetailRow($sourceTable, $perLocaleRefId)
+                        ? $this->loadDetailRow($sourceTable, $perLocaleRefId, $fqcn)
                         : null;
                     $pageParts = $this->loadPageParts($perLocaleRefId, $fqcn);
 
@@ -422,9 +440,13 @@ class ExtractService extends Component
      * kuma_media references are skipped here (they are handled by AssetHandler
      * at transform time via the state table).
      *
+     * @param  string $entityFqcn  Phase 8.5 / D-21 — owning entity FQCN; used by
+     *                              `joinManyToOneRelations()` to resolve Doctrine
+     *                              relation metadata. Empty string preserves the
+     *                              pre-8.5 behaviour (no `_rel:*` keys).
      * @return array<string, mixed>|null
      */
-    private function loadDetailRow(string $table, int $refId): ?array
+    private function loadDetailRow(string $table, int $refId, string $entityFqcn = ''): ?array
     {
         // Defence-in-depth: repeat the identifier-whitelist check so this method is also safe when
         // called directly from unit tests or future integrations.
@@ -441,6 +463,15 @@ class ExtractService extends Component
         }
 
         $detail = $this->decodeSerializedColumns($row);
+
+        // Phase 8.5 / D-21 — Doctrine ManyToOne join. Embeds each related row's
+        // columns under `_rel:<prop>.<col>` so the LLM (and operator) can map
+        // cross-relation fields without an additional SQL hop. Runs BEFORE the
+        // legacy information_schema-based FK auto-discovery so the
+        // source-truth (Doctrine attributes) wins on key ordering.
+        if ($entityFqcn !== '') {
+            $detail = $this->joinManyToOneRelations($entityFqcn, $detail);
+        }
 
         // Auto-follow FK relations to non-system, non-media tables.
         foreach ($this->discoverFkRelations($table) as $fkCol => [$refTable, $refPk]) {
@@ -470,6 +501,96 @@ class ExtractService extends Component
         }
 
         return $detail;
+    }
+
+    /**
+     * Phase 8.5 / D-21 — embed every ManyToOne related row's columns under
+     * `_rel:<property>.<column>` keys.
+     *
+     * Reads the owning entity's Doctrine relation list via
+     * `DoctrineEntityParser->getByFqcn()`. For each ManyToOne with a non-null
+     * FK column AND a non-null FK value in the input row, the target table is
+     * queried by primary key and every column of the result is merged into the
+     * row under the `_rel:<prop>.` namespace.
+     *
+     * Why a `_rel:` prefix:
+     *   - `_` already signals "synthetic" elsewhere (e.g. `__implicit_content__`
+     *     pageparts, `_sourcePartRef` in transform output).
+     *   - `:` cannot appear in a Doctrine column name, so the prefix is collision-free.
+     *   - Property name (not target FQCN, not target table alias) gives operator-
+     *     friendly identity that matches the KB markdown's Relations table.
+     *
+     * Failures (parser missing, target not parsed, target table invalid, FK row
+     * not found, query error) are silently swallowed — extract is best-effort.
+     * The FK column itself stays in the row so operators can still map
+     * `employee_id → relation field` directly if they prefer.
+     *
+     * ManyToMany / OneToMany are out of scope for v1 (different join shape).
+     *
+     * @param  array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function joinManyToOneRelations(string $entityFqcn, array $row): array
+    {
+        if (!$this->joinFkRelations || $this->entityParser === null) {
+            return $row;
+        }
+        $info = $this->entityParser->getByFqcn($entityFqcn);
+        if ($info === null) {
+            return $row;
+        }
+        foreach ($info->relations as $rel) {
+            if ($rel->relationType !== 'ManyToOne') {
+                continue;
+            }
+            $fkCol = $rel->fkColumn;
+            if ($fkCol === null || $fkCol === '' || !array_key_exists($fkCol, $row)) {
+                continue;
+            }
+            $fkValue = $row[$fkCol];
+            if ($fkValue === null || $fkValue === '' || $fkValue === 0 || $fkValue === '0') {
+                continue;
+            }
+            $targetInfo = $this->entityParser->getByFqcn($rel->targetEntity);
+            if ($targetInfo === null) {
+                continue;
+            }
+            $targetTable = $targetInfo->tableName;
+            if ($targetTable === '' || !preg_match('/^[a-zA-Z0-9_]+$/', $targetTable)) {
+                continue;
+            }
+            try {
+                $relRow = $this->legacyDb->queryOne(
+                    "SELECT * FROM `{$targetTable}` WHERE id = :id LIMIT 1",
+                    [':id' => (int) $fkValue],
+                );
+            } catch (Throwable $e) {
+                Craft::warning(
+                    sprintf(
+                        'ExtractService: joinManyToOneRelations skipped %s.%s (target=%s id=%s): %s',
+                        $entityFqcn,
+                        $rel->propertyName,
+                        $targetTable,
+                        (string) $fkValue,
+                        $e->getMessage(),
+                    ),
+                    __METHOD__,
+                );
+                continue;
+            }
+            if ($relRow === null) {
+                continue;
+            }
+            $relRow = $this->decodeSerializedColumns($relRow);
+            $prefix = '_rel:' . $rel->propertyName . '.';
+            foreach ($relRow as $col => $val) {
+                $key = $prefix . $col;
+                if (!array_key_exists($key, $row)) {
+                    $row[$key] = $val;
+                }
+            }
+        }
+        return $row;
     }
 
     /**
@@ -597,12 +718,19 @@ class ExtractService extends Component
                 continue;
             }
 
+            $partRowDecoded = $this->decodeSerializedColumns($partRow);
+            // Phase 8.5 / D-21 — embed ManyToOne relation columns under
+            // `_rel:<prop>.<col>` so cross-relation pagepart fields (e.g. a
+            // pagepart wrapping an Author entity) become first-class
+            // candidates for the LLM proposer + operator mapping pass.
+            $partRowDecoded = $this->joinManyToOneRelations($partFqcn, $partRowDecoded);
+
             $out[] = [
                 'fqcn'          => $partFqcn,
                 'sourcePartId'  => $partId,
                 'sequence'      => (int) ($ref['sequencenumber'] ?? 0),
                 'context'       => (string) ($ref['context'] ?? ''),
-                'row'           => $this->decodeSerializedColumns($partRow),
+                'row'           => $partRowDecoded,
             ];
         }
 

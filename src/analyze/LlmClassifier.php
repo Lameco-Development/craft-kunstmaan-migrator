@@ -1663,6 +1663,10 @@ final class LlmClassifier extends Component
             . '- Use decision="map" only when an EXISTING allowed handle is a clear semantic fit.' . "\n"
             . '- Use decision="drop" whenever no existing handle fits. Do NOT invent handles. Do NOT suggest adding fields.' . "\n"
             . '- Prefer drop over a weak/forced mapping. Dropping is the correct answer for orphaned legacy fields.' . "\n"
+            . '- Columns whose name starts with `_rel:<property>.<column>` are joined from a related entity '
+            . 'via Doctrine ManyToOne FK (see the Relations subsection in the Kunstmaan schema). They may '
+            . 'map to ANY field on the parent\'s Craft entry-type — pick the best semantic fit from the '
+            . '`allowed=[…]` hint just like a native column.' . "\n"
             . '- Do not output prose outside the JSON object.';
 
         $residualLines = [];

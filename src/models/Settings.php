@@ -93,6 +93,14 @@ class Settings extends Model
     public bool $proposeLayout = true;
     public bool $proposeProviders = true;
 
+    // Phase 8.5 / D-24 — Doctrine ManyToOne FK relation join gate. Defaults to
+    // true so cross-relation columns (`_rel:<prop>.<col>`) are auto-embedded by
+    // ExtractService at extract time. Flip to false to skip the join when the
+    // related table is large or the join queries dominate extract latency.
+    // CLI `--no-rel-join` overrides per-run; mirrors the Phase 4.1 / D-24
+    // `--no-seo` / `Settings::seoEnabled` pattern.
+    public bool $joinFkRelations = true;
+
     public function behaviors(): array
     {
         return [
@@ -232,7 +240,8 @@ class Settings extends Model
             [['dryRunDefault'], 'boolean'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             // Phase 8 / D-14 — AI proposer scope gates (proposeLayout, proposeProviders).
-            [['seoEnabled', 'retourEnabled', 'proposeLayout', 'proposeProviders'], 'boolean'],
+            // Phase 8.5 / D-24 — joinFkRelations (Doctrine ManyToOne join gate).
+            [['seoEnabled', 'retourEnabled', 'proposeLayout', 'proposeProviders', 'joinFkRelations'], 'boolean'],
             // Phase 4 / D-60 — verify-stage tolerances pinned to [0, 1].
             [['verifyCountTolerance', 'verifyUrlDiffThreshold'], 'number', 'min' => 0, 'max' => 1],
             // Phase 4 / D-57 — adapter source-table overrides.
