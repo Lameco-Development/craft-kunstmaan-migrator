@@ -11,6 +11,7 @@ use lameco\kunstmaanmigrator\analyze\HeuristicProposer;
 use lameco\kunstmaanmigrator\analyze\LlmClassifier;
 use lameco\kunstmaanmigrator\analyze\ReportBuilder;
 use lameco\kunstmaanmigrator\analyze\SchemaDumper;
+use lameco\kunstmaanmigrator\compile\MappingCompiler;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\extract\ExtractService;
 use lameco\kunstmaanmigrator\fields\FieldHandlerRegistry;
@@ -69,6 +70,7 @@ use yii\db\Connection;
  * @property-read ReportBuilder $reportBuilder
  * @property-read CoverageAuditor $coverageAuditor
  * @property-read MappingAuditor $mappingAuditor
+ * @property-read MappingCompiler $mappingCompiler
  * @property-read KunstmaanSourcePathResolver $kunstmaanSourcePathResolver
  * @property-read KunstmaanEnvReader $kunstmaanEnvReader
  * @property-read DoctrineEntityParser $doctrineEntityParser
@@ -127,6 +129,7 @@ class Plugin extends BasePlugin
                 'reportBuilder'     => ReportBuilder::class,      // Phase 2 (Plan 03) — D-17 paste-ready locales block
                 'coverageAuditor'   => CoverageAuditor::class,    // Phase 2 (Plan 05) — D-14 MAP-06
                 'mappingAuditor'    => MappingAuditor::class,     // Phase 2 (Plan 05) — D-16 MAP-07
+                'mappingCompiler'   => MappingCompiler::class,    // Phase 6 — proposals[] → nodeClasses/sections/sites bridge
                 'kunstmaanSourcePathResolver' => KunstmaanSourcePathResolver::class, // Phase 02.1 (Plan 01) — D-33 source-path resolver
                 'kunstmaanEnvReader'            => KunstmaanEnvReader::class,           // Phase 4.1 / D-05 — .env reader, 2-key whitelist
                 'doctrineEntityParser'          => DoctrineEntityParser::class,         // Phase 02.1 (Plan 02) — D-41 verbatim port
