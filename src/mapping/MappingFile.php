@@ -37,7 +37,13 @@ final class MappingFile extends Component
     /**
      * Load and parse the mapping file. Returns an empty proposals shape if absent.
      *
-     * @return array{proposals: list<array<string, mixed>>}
+     * @return array<string, mixed>  Always carries `proposals` (possibly empty list);
+     *                                preserves any sibling top-level blocks
+     *                                (`nodeClasses`, `sections`, `sites`, `pageParts`, etc.)
+     *                                verbatim so ETL services that read them
+     *                                ($mapping['nodeClasses'][...], $mapping['sections'][...],
+     *                                $mapping['sites'][...]) see the operator-curated
+     *                                shape rather than an empty array.
      */
     public function load(?string $path = null): array
     {
@@ -46,17 +52,20 @@ final class MappingFile extends Component
             return ['proposals' => []];
         }
         $parsed = Yaml::parseFile($path) ?? [];
-        if (!is_array($parsed) || !isset($parsed['proposals']) || !is_array($parsed['proposals'])) {
+        if (!is_array($parsed)) {
             return ['proposals' => []];
         }
-        // Re-key as a list (drop string keys; preserve order).
+        // Normalize proposals to a list (drop string keys; preserve order).
         $rows = [];
-        foreach ($parsed['proposals'] as $row) {
-            if (is_array($row)) {
-                $rows[] = $row;
+        if (isset($parsed['proposals']) && is_array($parsed['proposals'])) {
+            foreach ($parsed['proposals'] as $row) {
+                if (is_array($row)) {
+                    $rows[] = $row;
+                }
             }
         }
-        return ['proposals' => $rows];
+        $parsed['proposals'] = $rows;
+        return $parsed;
     }
 
     /**

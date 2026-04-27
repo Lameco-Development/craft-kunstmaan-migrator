@@ -110,17 +110,27 @@ class CompileController extends Controller
             Console::FG_GREEN,
         );
 
-        // 4. Resolve sites map: prefer existing mapping.yaml sites: block (operator
-        //    edits survive --overwrite at the data level — the operator likely
-        //    hand-curated this), fall back to Settings::localeMap.
+        // 4. Resolve sites map. Precedence (highest first):
+        //    a. existing mapping.yaml `sites:` block (operator-curated)
+        //    b. Settings::localeMap (host config)
+        //    c. auto-derived from schema-dump.json legacy locales × Craft sites
+        //       (language-code match: legacy locale 'nl' → site whose language
+        //       starts with 'nl-' or equals 'nl').
         $sites = (array) ($mapping['sites'] ?? []);
+        $sitesSource = 'mapping.yaml sites: block';
         if ($sites === []) {
             $sites = (array) ($plugin->getSettings()->localeMap ?? []);
+            $sitesSource = 'Settings::localeMap';
         }
-        $this->stdout(
-            "  OK   sites map resolved (" . count($sites) . " locale → site-handle entries)\n",
-            Console::FG_GREEN,
-        );
+        if ($sites === []) {
+            $sites = $this->autoDeriveSitesFromLegacyLocales($storageDir);
+            $sitesSource = 'auto-derived (schema-dump locales × Craft sites by language code)';
+        }
+        $this->stdout(sprintf(
+            "  OK   sites map resolved: %d entries (source: %s)\n",
+            count($sites),
+            $sitesSource,
+        ), Console::FG_GREEN);
 
         // 5. Compile.
         $compiled = $plugin->mappingCompiler->compile($mapping, $pageStructure, $sites);
@@ -183,5 +193,66 @@ class CompileController extends Controller
 
         $this->stdout("\nCompile: PASS\n", Console::FG_GREEN);
         return ExitCode::OK;
+    }
+
+    /**
+     * Derive a candidate locale → siteHandle map from schema-dump.json's
+     * `locales` list cross-referenced with Craft's configured sites by
+     * language-code prefix. Returns [] when either side is empty or no
+     * languages match — operator must then hand-curate Settings::localeMap
+     * or the mapping.yaml sites: block.
+     *
+     * Match rules:
+     *   - exact: legacy locale equals Craft site language (e.g. 'en' === 'en')
+     *   - prefix: legacy locale equals first segment of Craft language
+     *     (e.g. 'nl' matches 'nl-NL' / 'nl-BE')
+     *
+     * When multiple Craft sites match a legacy locale, the primary site wins.
+     *
+     * @return array<string, string>  legacy locale → Craft site handle
+     */
+    private function autoDeriveSitesFromLegacyLocales(string $storageDir): array
+    {
+        $schemaPath = $storageDir . '/schema-dump.json';
+        if (!is_file($schemaPath)) {
+            return [];
+        }
+        $raw = (string) file_get_contents($schemaPath);
+        $schema = json_decode($raw, true);
+        $legacyLocales = (array) ($schema['locales'] ?? []);
+        if ($legacyLocales === []) {
+            return [];
+        }
+
+        $craftSites = Craft::$app->sites->getAllSites();
+        if ($craftSites === []) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($legacyLocales as $legacy) {
+            $legacy = (string) $legacy;
+            if ($legacy === '') {
+                continue;
+            }
+            $bestHandle = null;
+            $bestPrimary = false;
+            foreach ($craftSites as $site) {
+                $lang = (string) $site->language;
+                $matches = ($lang === $legacy)
+                    || (strpos($lang, $legacy . '-') === 0);
+                if (!$matches) {
+                    continue;
+                }
+                if ($bestHandle === null || (!$bestPrimary && $site->primary)) {
+                    $bestHandle = (string) $site->handle;
+                    $bestPrimary = (bool) $site->primary;
+                }
+            }
+            if ($bestHandle !== null) {
+                $out[$legacy] = $bestHandle;
+            }
+        }
+        return $out;
     }
 }
