@@ -279,6 +279,28 @@ class MigrateController extends Controller
             skipAssets: false,
         );
 
+        // Step 4.5 (Phase 8 / D-03 / TAX-08): taxonomies migrate BEFORE pages.
+        // Their state rows must exist before any page's RelationHandler does the
+        // FK -> entryId lookup, so this bolt-on lands BETWEEN transform-complete
+        // and load-entries (NOT between load and finalize like SEO/Retour).
+        // Gated on --live to match the load-entries gate; dry-run skips silently.
+        if ($this->live) {
+            try {
+                $taxonomyReport = $plugin->taxonomyMigrationService->migrateAll($opts);
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL taxonomies: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->mergeReport($report, $taxonomyReport, 'taxonomies');
+            $this->stdout(sprintf(
+                "  Stage taxonomies: created=%d updated=%d skipped=%d failed=%d\n",
+                (int) ($taxonomyReport->counts['created'] ?? 0),
+                (int) ($taxonomyReport->counts['updated'] ?? 0),
+                (int) ($taxonomyReport->counts['skipped'] ?? 0),
+                (int) ($taxonomyReport->counts['failed']  ?? 0),
+            ), Console::FG_GREEN);
+        }
+
         // Step 5: load — per-entry atomic write (or dry-run print).
         if (!$this->live) {
             $this->stdout(
@@ -524,6 +546,76 @@ class MigrateController extends Controller
             (int) ($report->counts['updated'] ?? 0),
             (int) ($report->counts['skipped'] ?? 0),
             (int) ($report->counts['failed'] ?? 0),
+        ), Console::FG_GREEN);
+        return ExitCode::OK;
+    }
+
+    /**
+     * Sub-action: migrate Doctrine standalone taxonomy entities (NewsCategory,
+     * CaseStudyCategory, Employee-style standalone tables) into Craft entries.
+     *
+     * Phase 8 / D-03 / TAX-08: standalone resume / debug entry point. The
+     * actionIndex bolt-on already runs taxonomies BEFORE pages on every full
+     * pipeline; this sub-action lets operators re-run only the taxonomies
+     * stage after a partial migrate (e.g. after fixing a mapping row).
+     *
+     * Gating mirrors actionSeo / actionRetour:
+     *   - enforceNeverProduction() FIRST (D-20).
+     *   - Default dry-run; --live writes to Craft.
+     *   - --no-seo / --no-retour are inert here (passed through to filters
+     *     for shape parity but never consulted by TaxonomyMigrationService).
+     *
+     * D-04 / D-12 invariant: NO opt-out flag for the taxonomies stage —
+     * the three-flag cap (--live / --confirm / --force) is preserved.
+     */
+    public function actionTaxonomies(): int
+    {
+        if (($gate = $this->enforceNeverProduction()) !== null) {
+            return $gate;
+        }
+        // D-67: per-run timestamped log file for resume / debug invocations.
+        $this->openLogFile($this->defaultLogPath());
+        $this->logLine('actionTaxonomies started; verbosity=' . $this->verbosityLevel(), 1);
+        $this->stdout(
+            "Migrate (taxonomies): Doctrine standalone taxonomies → Craft entries\n",
+            Console::FG_CYAN,
+        );
+
+        $plugin = Plugin::getInstance();
+        // Phase 4.1 / D-26: pass --no-seo / --no-retour through unchanged for
+        // filter shape parity. TaxonomyMigrationService never reads them.
+        $filters = $plugin->filterFactory->fromCli(
+            $this->entities,
+            $this->locales,
+            $this->since,
+            $this->noSeo,
+            $this->noRetour,
+        );
+
+        if (!$this->live) {
+            $this->stdout(
+                "  WARN taxonomies skipped (dry-run; pass --live to write entries)\n",
+                Console::FG_YELLOW,
+            );
+            return ExitCode::OK;
+        }
+
+        $opts = new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false);
+        $report = new MigrationReport();
+
+        try {
+            $taxonomyReport = $plugin->taxonomyMigrationService->migrateAll($opts);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL taxonomies: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->mergeReport($report, $taxonomyReport, 'taxonomies');
+        $this->stdout(sprintf(
+            "  Stage taxonomies: created=%d updated=%d skipped=%d failed=%d\n",
+            (int) ($taxonomyReport->counts['created'] ?? 0),
+            (int) ($taxonomyReport->counts['updated'] ?? 0),
+            (int) ($taxonomyReport->counts['skipped'] ?? 0),
+            (int) ($taxonomyReport->counts['failed']  ?? 0),
         ), Console::FG_GREEN);
         return ExitCode::OK;
     }
