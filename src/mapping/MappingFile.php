@@ -20,7 +20,7 @@ use yii\base\Component;
  *
  * Path resolution: Settings::mappingPath wins; otherwise storage/migration/mapping.yaml.
  */
-final class MappingFile extends Component
+class MappingFile extends Component
 {
     /**
      * Resolve the on-disk mapping.yaml path (Settings override or storage default).
