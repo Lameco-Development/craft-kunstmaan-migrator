@@ -19,6 +19,11 @@ use ReflectionProperty;
  * properties (CLI override flags). The "exactly three properties" assertion
  * is therefore retired; the test now locks the (entities, locales, since,
  * noSeo, noRetour) shape — five properties, all readonly.
+ *
+ * Phase 8 / D-04 extends the VO with `relationGraph` (readonly array, default
+ * `[]`) for taxonomy reachability auto-include. The expected property set is
+ * now six entries; the new `allows()` accessor uses this graph to decide
+ * whether an FQCN is in scope when --entities= is set.
  */
 final class MigrationFiltersTest extends TestCase
 {
@@ -53,7 +58,7 @@ final class MigrationFiltersTest extends TestCase
         );
         $names = array_map(static fn(ReflectionProperty $p): string => $p->getName(), $publicProps);
         sort($names);
-        self::assertSame(['entities', 'locales', 'noRetour', 'noSeo', 'since'], array_values($names));
+        self::assertSame(['entities', 'locales', 'noRetour', 'noSeo', 'relationGraph', 'since'], array_values($names));
     }
 
     public function testNoSeoAndNoRetourDefaultFalse(): void
