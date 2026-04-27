@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Executing Phase 5
-stopped_at: Phase 4 closed. All 12 plans shipped; Plan 12 grew the test corpus 60 → 83 tests / 137 → 210 assertions across 7 new test files + the phase-level RECONCILIATION.md aggregate. Phase 4 ready for `/gsd-verify-work`; Phase 5 (Tests, Rehearsal & Release) is the next milestone phase via `/gsd-discuss-phase 5`.
-last_updated: "2026-04-27T08:25:25.174Z"
+status: Phase 5 closed — v1.0 milestone complete (PASS-WITH-NOTES). All 8 plans shipped across 4 waves, REQUIREMENTS.md TST-01..04 flipped to [x], code review 0 HIGH / 3 MEDIUM (none blocking), composer test 317 / 845 / exit 0 (delta vs Phase 4.1: +138 tests / +357 assertions). v1.0 release path is now operator-driven via .planning/RELEASE-CHECKLIST.md (8 steps; CQM rehearsal/check exit 0 = step 5 = binding tag gate).
+stopped_at: Phase 5 closed 2026-04-27 across 4 waves and 9 worktree merges (8 plan worktrees + 1 cross-plan integration fix `359e1ef` for PHPUnit 11 empty-data-provider regression on TransformCharacterizationTest, caught by post-merge test gate). Wave 1 = 05-01 tests reorganization (`git mv` 30 files into tests/{unit,integration}); Wave 2 = 05-02 phpunit infra + 05-03 transform fixtures + 05-04 RehearsalController (DELIBERATELY no NeverProductionTrait per D-22, verified); Wave 3 = 05-05 analyze/finalize tests + 05-06 field-handler tests + 05-07 CI smoke job (.github/workflows/ci.yml unit + smoke jobs); Wave 4 = 05-08 RELEASE-CHECKLIST + CHANGELOG + RECONCILIATION + REQUIREMENTS.md TST flips. Code review 05-REVIEW.md = 0 HIGH / 3 MEDIUM (`tools/check-coverage.php` zero-statement files report 100%; `craftcms/craft` unpinned in CI smoke; `mkdir(0755)` umask in capture script) / 4 LOW / 2 INFO. VERIFICATION.md = PASS-WITH-NOTES (4/4 SC + 4/4 TST verified; 2 nits: ROADMAP says `MappingLoader` but actual class is `MappingFile` — substance covered, label drift only; coverage gate wired but unverifiable locally without pcov/xdebug — first end-to-end run lands in CI). Next: `/gsd-ship` for v1.0 PR + tag, OR address 3 medium code-review findings first (esp. pin `craftcms/craft@^5`).
+last_updated: "2026-04-27T11:00:00.000Z"
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 61
-  completed_plans: 53
-  percent: 87
+  completed_plans: 61
+  percent: 100
 ---
 
 # State
@@ -21,7 +21,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped.
 
-**Current focus:** Phase 5 — tests-rehearsal-release
+**Current focus:** v1.0 ship gate — operator walks `.planning/RELEASE-CHECKLIST.md` (CI green on first push to `main` → CQM rehearsal capture → `kunstmaan-migrator/rehearsal/check` exit 0 → tag v1.0.0)
 
 ## Milestone
 
