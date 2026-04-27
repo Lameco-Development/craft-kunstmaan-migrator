@@ -290,7 +290,100 @@ final class KunstmaanSourceScanner extends Component
             }
         }
 
+        // Phase 8.7 / D-29 — fallback path: M2M relations without an explicit
+        // `#[ORM\JoinTable(name: '...')]` annotation are auto-named by
+        // Doctrine. Query the legacy DB's information_schema for tables
+        // that have FK constraints to BOTH the owning entity's table AND
+        // the target entity's table — that's the join table by structural
+        // identity. Surveyed 6 CQM entities with implicit-JoinTable M2M
+        // (CasesPagePart, NewsCategory, DocumentCategory, …) — all resolve
+        // via this path. Empty-handed when the FK constraints are missing
+        // (rare; Doctrine emits them for generated M2M tables).
+        $alreadyResolved = [];
+        foreach ($joins as $j) {
+            $alreadyResolved[$j['owning'] . '|' . ((string) $j['inverse'])] = true;
+        }
+        foreach ($entities as $owningFqcn => $info) {
+            $owningTable = $info->tableName;
+            if ($owningTable === '') {
+                continue;
+            }
+            foreach ($info->relations as $relation) {
+                if ($relation->relationType !== 'ManyToMany') {
+                    continue;
+                }
+                $targetFqcn = $relation->targetEntity;
+                if ($targetFqcn === '' || isset($alreadyResolved[$owningFqcn . '|' . $targetFqcn])) {
+                    continue;
+                }
+                $targetInfo = $entities[$targetFqcn] ?? null;
+                $targetTable = $targetInfo?->tableName ?? '';
+                if ($targetTable === '') {
+                    continue;
+                }
+                $joinTable = $this->discoverM2mJoinTableViaInfoSchema($owningTable, $targetTable);
+                if ($joinTable !== null) {
+                    $joins[] = [
+                        'table'   => $joinTable,
+                        'owning'  => $owningFqcn,
+                        'inverse' => $targetFqcn,
+                    ];
+                }
+            }
+        }
+
         return $joins;
+    }
+
+    /**
+     * Phase 8.7 / D-29 — info_schema-based M2M join-table discovery.
+     *
+     * A join table has FK constraints to BOTH the owning entity's table AND
+     * the target entity's table. Query KEY_COLUMN_USAGE for FKs grouped by
+     * TABLE_NAME; the first table whose grouped REFERENCED_TABLE_NAME set
+     * contains both is the join table. Cached per (owning, target) pair for
+     * the lifetime of the service.
+     *
+     * Returns null when no such table exists OR legacyDb is unavailable
+     * (test bootstrap, source-only scan).
+     */
+    private function discoverM2mJoinTableViaInfoSchema(string $owningTable, string $targetTable): ?string
+    {
+        static $cache = [];
+        $key = $owningTable . '|' . $targetTable;
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+        if ($this->legacyDb === null) {
+            return $cache[$key] = null;
+        }
+        try {
+            $rows = $this->legacyDb->queryAll(
+                'SELECT TABLE_NAME, REFERENCED_TABLE_NAME'
+                . ' FROM information_schema.KEY_COLUMN_USAGE'
+                . ' WHERE TABLE_SCHEMA = DATABASE()'
+                . '   AND REFERENCED_TABLE_NAME IN (:owning, :target)',
+                [':owning' => $owningTable, ':target' => $targetTable],
+            );
+        } catch (Throwable) {
+            return $cache[$key] = null;
+        }
+        $byTable = [];
+        foreach ($rows as $r) {
+            $t = (string) ($r['TABLE_NAME'] ?? '');
+            $ref = (string) ($r['REFERENCED_TABLE_NAME'] ?? '');
+            if ($t === '' || $ref === '') { continue; }
+            if ($t === $owningTable || $t === $targetTable) {
+                continue; // self-references on the entity tables aren't join tables
+            }
+            $byTable[$t][$ref] = true;
+        }
+        foreach ($byTable as $t => $refs) {
+            if (isset($refs[$owningTable], $refs[$targetTable])) {
+                return $cache[$key] = $t;
+            }
+        }
+        return $cache[$key] = null;
     }
 
     // -------------------------------------------------------------------------

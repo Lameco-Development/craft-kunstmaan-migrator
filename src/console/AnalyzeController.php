@@ -564,8 +564,24 @@ class AnalyzeController extends Controller
                 // closed set. Without this step, page-parts compile with
                 // fields:{} and the migrated Craft block ends up empty.
                 if ($matchedPp > 0) {
+                    // Phase 8.7 / D-29 — build (owningFqcn, targetFqcn) →
+                    // joinTable lookup from the source scan's m2mJoins so the
+                    // pagePartRelations builder can surface auto-discovered
+                    // M2M join tables (entities without an explicit
+                    // `#[JoinTable]` annotation).
+                    $m2mJoinByPair = [];
+                    foreach ((array) ($sourceScan['m2mJoins'] ?? []) as $j) {
+                        if (!is_array($j)) { continue; }
+                        $own = (string) ($j['owning'] ?? '');
+                        $inv = (string) ($j['inverse'] ?? '');
+                        $tbl = (string) ($j['table'] ?? '');
+                        if ($own !== '' && $inv !== '' && $tbl !== '') {
+                            $m2mJoinByPair[$own . '|' . $inv] = $tbl;
+                        }
+                    }
                     [$pagePartColumns, $blockTypeFields, $pagePartRelations] = $this->buildPagePartFieldsContext(
                         $pagePartProposals,
+                        $m2mJoinByPair,
                     );
                     if ($pagePartColumns !== [] && $blockTypeFields !== []) {
                         $this->stdout(
@@ -1328,13 +1344,14 @@ class AnalyzeController extends Controller
      * the 8.5 D-21 `_rel:<prop>.<col>` embed shape.
      *
      * @param  list<array<string, mixed>> $pagePartProposals
+     * @param  array<string, string>      $m2mJoinByPair Phase 8.7 / D-29 — `<owningFqcn>|<targetFqcn>` → joinTable name
      * @return array{
      *   0: array<string, list<array{column: string, type: string}>>,
      *   1: array<string, list<array{handle: string, type: string}>>,
-     *   2: array<string, list<array{property: string, type: string, targetFqcn: string, childTable: string, backRefColumn: string|null, childColumns: list<string>}>>
+     *   2: array<string, list<array{property: string, type: string, targetFqcn: string, childTable: string, backRefColumn: string|null, childColumns: list<string>, joinTable?: string}>>
      * }
      */
-    private function buildPagePartFieldsContext(array $pagePartProposals): array
+    private function buildPagePartFieldsContext(array $pagePartProposals, array $m2mJoinByPair = []): array
     {
         $plugin = Plugin::getInstance();
         $parser = $plugin->doctrineEntityParser;
@@ -1407,7 +1424,7 @@ class AnalyzeController extends Controller
                                 $targetInfo->columns,
                             ), static fn(string $n): bool => $n !== '' && $n !== 'id' && $n !== $backRef))
                             : [];
-                        $rels[] = [
+                        $entry = [
                             'property'      => $rel->propertyName,
                             'type'          => $rel->relationType,
                             'targetFqcn'    => $rel->targetEntity,
@@ -1415,6 +1432,17 @@ class AnalyzeController extends Controller
                             'backRefColumn' => $backRef,
                             'childColumns'  => $childCols,
                         ];
+                        // Phase 8.7 / D-29 — for ManyToMany, surface the
+                        // auto-discovered (or annotation-found) join table
+                        // name. The LLM uses this for `joinTable` in
+                        // handlerOptions when proposing the relation handler.
+                        if ($rel->relationType === 'ManyToMany') {
+                            $jt = $m2mJoinByPair[$ppFqcn . '|' . $rel->targetEntity] ?? '';
+                            if ($jt !== '') {
+                                $entry['joinTable'] = $jt;
+                            }
+                        }
+                        $rels[] = $entry;
                     }
                     if ($rels !== []) {
                         $pagePartRelations[$ppFqcn] = $rels;

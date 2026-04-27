@@ -1902,12 +1902,23 @@ final class LlmClassifier extends Component
                 foreach ($relations as $r) {
                     if (!is_array($r)) { continue; }
                     $childCols = (array) ($r['childColumns'] ?? []);
+                    $relType = (string) ($r['type'] ?? '?');
+                    // Phase 8.7 / D-29 — for ManyToMany, the join-table name
+                    // (when known via #[JoinTable] annotation OR info_schema
+                    // auto-discovery) is the right `joinTable` value. For
+                    // OneToMany, the child entity's own table is.
+                    $tableHint = '';
+                    if ($relType === 'ManyToMany' && isset($r['joinTable']) && (string) $r['joinTable'] !== '') {
+                        $tableHint = sprintf(', joinTable: %s', (string) $r['joinTable']);
+                    } else {
+                        $tableHint = sprintf(', childTable: %s', (string) ($r['childTable'] ?? '?'));
+                    }
                     $bits[] = sprintf(
-                        '%s:%s(target: %s, childTable: %s, backRef: %s, childCols: %s)',
+                        '%s:%s(target: %s%s, backRef: %s, childCols: %s)',
                         (string) ($r['property'] ?? '?'),
-                        (string) ($r['type'] ?? '?'),
+                        $relType,
                         (string) ($r['targetFqcn'] ?? '?'),
-                        (string) ($r['childTable'] ?? '?'),
+                        $tableHint,
                         (string) ($r['backRefColumn'] ?? '?'),
                         $childCols !== [] ? implode('|', array_map('strval', $childCols)) : '?',
                     );
