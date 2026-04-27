@@ -86,13 +86,20 @@ if (!is_array($mapping) || $mapping === []) {
 // One mapping.json per repo, not per fixture: the operator captures the
 // corpus + mapping snapshot atomically and commits both together.
 $mappingFixturePath = __DIR__ . '/../tests/fixtures/transform/mapping.json';
+// Set restrictive umask around mkdir so 0755 survives unmodified on hosts
+// with `umask 002` (Phase 5 review MEDIUM #3). Without this, the captured
+// fixture tree under tests/fixtures/transform/ becomes group-writable, and
+// the group-writability propagates into the committed working tree.
+$prevUmask = umask(0022);
 if (!is_dir(dirname($mappingFixturePath))
     && !mkdir(dirname($mappingFixturePath), 0755, true)
     && !is_dir(dirname($mappingFixturePath))
 ) {
+    umask($prevUmask);
     fwrite(STDERR, "FAIL: cannot create " . dirname($mappingFixturePath) . "\n");
     exit(2);
 }
+umask($prevUmask);
 $mappingJson = json_encode(
     $mapping,
     JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
@@ -159,10 +166,15 @@ foreach ($TARGET_ENTITIES as $simpleName) {
             }
             $id = basename($srcFile, '.json');
             $destDir = __DIR__ . "/../tests/fixtures/transform/input/{$simpleName}";
+            // Same umask guard as the mapping snapshot above (Phase 5 review
+            // MEDIUM #3) — 0755 must survive `umask 002` shells unchanged.
+            $prevUmaskMk = umask(0022);
             if (!is_dir($destDir) && !mkdir($destDir, 0755, true) && !is_dir($destDir)) {
+                umask($prevUmaskMk);
                 fwrite(STDERR, "  FAIL could not mkdir {$destDir}\n");
                 exit(2);
             }
+            umask($prevUmaskMk);
             $destFile = "{$destDir}/{$id}.json";
 
             $raw = file_get_contents($srcFile);
