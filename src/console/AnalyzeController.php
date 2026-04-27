@@ -53,6 +53,10 @@ class AnalyzeController extends Controller
     // consume this flag for drift-strict elevation (DB↔scan mismatch findings go
     // from WARN → fail when --source-strict is set; default is WARN).
     public bool $sourceStrict = false;
+    // Phase 8 / D-14 — AI proposer scope gates (mirrors ADP-04 --no-seo / --no-retour
+    // pattern). CLI per-run override of Settings::proposeLayout / Settings::proposeProviders.
+    public bool $noLayout = false;
+    public bool $noProviders = false;
     public ?string $entities = null;
     public ?string $locales = null;
     public ?string $since = null;
@@ -61,6 +65,7 @@ class AnalyzeController extends Controller
     {
         return array_merge(parent::options($actionID), [
             'noAi', 'autoAcceptHigh', 'auditStrict', 'sourceStrict',
+            'noLayout', 'noProviders',  // NEW — Phase 8 / D-14
             'entities', 'locales', 'since',
         ]);
     }
@@ -306,6 +311,11 @@ class AnalyzeController extends Controller
         $nodeClassProposals = [];
         $craftEntryTypeHandles = $plugin->craftKnowledgeBase->entryTypeHandles();
         $kbCraftMd = '';
+        // Phase 8 / D-14: defensive scoping — Phase 8 proposer steps (7.7/7.8/7.9 below)
+        // reference $kbLegacyMd outside the entity-LLM non-skip branch where it's first
+        // built. Initialize empty here so a skipped entity-LLM step does not leave the
+        // variable undefined for the new steps.
+        $kbLegacyMd = '';
         if ($skipEntityLlm) {
             $reason = $this->noAi
                 ? '--no-ai set'
@@ -476,6 +486,363 @@ class AnalyzeController extends Controller
             }
         }
 
+        // ----------------------------------------------------------------
+        // Phase 8 / D-05, D-06, D-12, D-13, D-14 — three new proposers.
+        //
+        // Step 7.7 — proposeNonPageEntities  (taxonomy / SUPPORTING classifier)
+        // Step 7.8 — proposeLayoutBlocks    (header / wrap / column slot proposer)
+        // Step 7.9 — proposeDataProviders   (orphan page-part dataProvider proposer)
+        //
+        // Skip-gate ladder mirrors Phase 4.1 / ADP-04 (Settings + CLI override layers).
+        // ----------------------------------------------------------------
+
+        $taxonomyProposals     = [];
+        $layoutBlockProposals  = [];
+        $dataProviderProposals = [];
+
+        // Step 7.7 (Phase 8 / D-05, D-06): non-page entity (taxonomy) proposer.
+        // Filters $sourceScan['entities'] (FQCN-keyed DoctrineEntityInfo objects)
+        // to those NOT present in $pageStructure, adapts to array shape, and
+        // dispatches to LlmClassifier::proposeNonPageEntities. Output rows are
+        // either kind=taxonomy (caller routes through buildTaxonomyRow) or
+        // kind=taxonomy + status=dropped (SUPPORTING — pass through verbatim;
+        // MappingAuditor's dropped-status short-circuit handles them).
+        $skipNonPage = $this->noAi
+            || $apiKeyForEntityStep === ''
+            || ($sourceScan['entities'] ?? []) === [];
+        if ($skipNonPage) {
+            $reason = $this->noAi
+                ? '--no-ai set'
+                : ($apiKeyForEntityStep === ''
+                    ? 'ANTHROPIC_API_KEY not set'
+                    : 'no entities discovered by source scanner');
+            $this->stdout(
+                "  WARN non-page-entity LLM skipped ({$reason}) — taxonomy rows will not be proposed\n",
+                Console::FG_YELLOW,
+            );
+        } else {
+            try {
+                // Adapt DoctrineEntityInfo objects → array shape proposeNonPageEntities expects.
+                // Filter out FQCNs already classified as Pages (they have a pageStructure entry).
+                $nonPageEntityIndex = [];
+                foreach ((array) ($sourceScan['entities'] ?? []) as $fqcn => $info) {
+                    if (!is_string($fqcn) || $fqcn === '') { continue; }
+                    if (isset($pageStructure[$fqcn])) { continue; }
+                    if (!($info instanceof \lameco\kunstmaanmigrator\source\DoctrineEntityInfo)) { continue; }
+                    $nonPageEntityIndex[$fqcn] = [
+                        'tableName' => $info->tableName,
+                        'columns'   => $info->columns,
+                        'relations' => $info->relations,
+                        'contexts'  => [], // non-Page entities have no Kunstmaan page contexts
+                    ];
+                }
+                if ($nonPageEntityIndex === []) {
+                    $this->stdout(
+                        "  OK   non-page-entity LLM: no non-Page entities to classify (every entity is a Page)\n",
+                        Console::FG_GREEN,
+                    );
+                } else {
+                    // Build the taxonomy-flavoured KB markdown (renderTaxonomiesMarkdown
+                    // mirrors renderPagesMarkdown / renderPagePartsMarkdown shape; mapping
+                    // is null because no taxonomy rows exist yet).
+                    $kbTaxonomiesMd = $plugin->knowledgeBase->renderTaxonomiesMarkdown(null, new \DateTimeImmutable());
+                    // Combine the legacy KB markdown built in step 7.5 (Pages + PageParts)
+                    // with the new taxonomy markdown so the LLM has the full source picture.
+                    $kbLegacyForTaxonomies = $kbLegacyMd === ''
+                        ? $kbTaxonomiesMd
+                        : $kbLegacyMd . "\n\n" . $kbTaxonomiesMd;
+                    $this->stdout(
+                        "  ... non-page-entity LLM batching " . count($nonPageEntityIndex) . " non-page entities (chunks of 8) against "
+                        . count($craftEntryTypeHandles) . " Craft entry-type handles\n",
+                        Console::FG_GREY,
+                    );
+                    $npProgressStarted = false;
+                    $taxonomyProposals = $plugin->llmClassifier->proposeNonPageEntities(
+                        $nonPageEntityIndex,
+                        $craftEntryTypeHandles,
+                        $kbLegacyForTaxonomies,
+                        $kbCraftMd,
+                        function (int $i, int $n, int $entitiesInChunk, int $proposalsReturned, float $sec) use (&$npProgressStarted): void {
+                            if (!$npProgressStarted) {
+                                Console::startProgress(0, $n, '  ... LLM-nonPage ');
+                                $npProgressStarted = true;
+                            }
+                            Console::updateProgress(
+                                $i,
+                                $n,
+                                sprintf(
+                                    '  ... LLM-nonPage [chunk %d/%d entities=%d→props=%d %.1fs] ',
+                                    $i, $n, $entitiesInChunk, $proposalsReturned, $sec,
+                                ),
+                            );
+                        },
+                    );
+                    if ($npProgressStarted) {
+                        Console::endProgress();
+                    }
+                    $taxonomyCount = 0;
+                    $supportingCount = 0;
+                    foreach ($taxonomyProposals as $r) {
+                        if (((string) ($r['status'] ?? '')) === 'dropped') {
+                            $supportingCount++;
+                        } else {
+                            $taxonomyCount++;
+                        }
+                    }
+                    $this->stdout(
+                        "  OK   non-page-entity LLM produced " . count($taxonomyProposals) . " proposals "
+                        . "({$taxonomyCount} taxonomy, {$supportingCount} dropped supporting)\n",
+                        Console::FG_GREEN,
+                    );
+                }
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL non-page-entity LLM: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+        }
+
+        // Step 7.8 (Phase 8 / D-11, D-12, D-14): layout-block proposer for header /
+        // body-wrap / body-column slots. Heuristic-trigger gated inside the proposer
+        // (D-12 — only fires for entry-types whose Matrix catalog has a header- or
+        // wrap-shaped block). Output rows are kind=nodeClass partial updates carrying
+        // headerBlock / bodyWrapBlock / bodyColumn fields; Plan 09's compile step
+        // folds them into nodeClasses[fqcn].
+        $skipLayout = $this->noLayout
+            || !$plugin->getSettings()->proposeLayout
+            || $this->noAi
+            || $apiKeyForEntityStep === ''
+            || $pageStructure === [];
+        if ($skipLayout) {
+            $reason = $this->noLayout
+                ? '--no-layout set'
+                : (!$plugin->getSettings()->proposeLayout
+                    ? 'Settings::proposeLayout disabled'
+                    : ($this->noAi
+                        ? '--no-ai set'
+                        : ($apiKeyForEntityStep === ''
+                            ? 'ANTHROPIC_API_KEY not set'
+                            : 'no page entities discovered')));
+            $this->stdout(
+                "  WARN layout-block LLM skipped ({$reason}) — nodeClass rows will not carry layout slots\n",
+                Console::FG_YELLOW,
+            );
+        } else {
+            try {
+                // Page-aware pageStructure for the proposer: thread accepted nodeClass
+                // proposals' targetEntryType into pageStructure entries so the proposer's
+                // heuristic-trigger filter (lines 737-757 of LlmClassifier) finds the
+                // matching matrixField in the catalog. Without this, $info['targetEntryType']
+                // is empty and the filter never fires.
+                $pageStructureForLayout = [];
+                $entityTypeByFqcn = [];
+                foreach ($nodeClassProposals as $ncp) {
+                    if (!is_array($ncp)) { continue; }
+                    $f = (string) ($ncp['fqcn'] ?? '');
+                    $et = (string) ($ncp['targetEntryType'] ?? '');
+                    if ($f !== '' && $et !== '') {
+                        $entityTypeByFqcn[$f] = $et;
+                    }
+                }
+                foreach ($pageStructure as $fqcn => $info) {
+                    $copy = is_array($info) ? $info : [];
+                    if (!isset($copy['targetEntryType']) || (string) $copy['targetEntryType'] === '') {
+                        $copy['targetEntryType'] = $entityTypeByFqcn[(string) $fqcn] ?? '';
+                    }
+                    $pageStructureForLayout[(string) $fqcn] = $copy;
+                }
+                $matrixCatalog = $plugin->craftKnowledgeBase->matrixFieldCatalog();
+                $this->stdout(
+                    "  ... layout-block LLM batching " . count($pageStructureForLayout) . " page entities (chunks of 8) against "
+                    . count($matrixCatalog) . " Matrix fields\n",
+                    Console::FG_GREY,
+                );
+                $lbProgressStarted = false;
+                $layoutBlockProposals = $plugin->llmClassifier->proposeLayoutBlocks(
+                    $pageStructureForLayout,
+                    $matrixCatalog,
+                    $kbLegacyMd,
+                    $kbCraftMd,
+                    function (int $i, int $n, int $entitiesInChunk, int $proposalsReturned, float $sec) use (&$lbProgressStarted): void {
+                        if (!$lbProgressStarted) {
+                            Console::startProgress(0, $n, '  ... LLM-layout ');
+                            $lbProgressStarted = true;
+                        }
+                        Console::updateProgress(
+                            $i,
+                            $n,
+                            sprintf(
+                                '  ... LLM-layout [chunk %d/%d entities=%d→props=%d %.1fs] ',
+                                $i, $n, $entitiesInChunk, $proposalsReturned, $sec,
+                            ),
+                        );
+                    },
+                );
+                if ($lbProgressStarted) {
+                    Console::endProgress();
+                }
+                $this->stdout(
+                    "  OK   layout-block LLM produced " . count($layoutBlockProposals) . " proposals\n",
+                    Console::FG_GREEN,
+                );
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL layout-block LLM: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+        }
+
+        // Step 7.9 (Phase 8 / D-13, D-14): dataProvider proposer for orphan page-parts.
+        // D-13 orphan filter: page-part FQCNs with NO row in kuma_page_part_refs AND
+        // whose source table is NOT joined to kuma_node_versions. These are computed
+        // here in the controller and fed to LlmClassifier::proposeDataProviders as a
+        // pre-filtered list (the proposer itself does no orphan detection).
+        $skipProviders = $this->noProviders
+            || !$plugin->getSettings()->proposeProviders
+            || $this->noAi
+            || $apiKeyForEntityStep === '';
+        if ($skipProviders) {
+            $reason = $this->noProviders
+                ? '--no-providers set'
+                : (!$plugin->getSettings()->proposeProviders
+                    ? 'Settings::proposeProviders disabled'
+                    : ($this->noAi
+                        ? '--no-ai set'
+                        : 'ANTHROPIC_API_KEY not set'));
+            $this->stdout(
+                "  WARN dataProvider LLM skipped ({$reason}) — orphan page-parts will not be proposed\n",
+                Console::FG_YELLOW,
+            );
+        } else {
+            try {
+                // Build the candidate page-part set from pageStructure's allowedPagePartClasses
+                // (FQCN + sourceTable per advisor — pageStructure is the canonical surface
+                // for page-part class enumeration; $sourceScan['pageParts'] does not exist).
+                $candidatePageParts = [];
+                foreach ($pageStructure as $pageFqcn => $pageRecord) {
+                    if (!is_array($pageRecord)) { continue; }
+                    foreach ((array) ($pageRecord['contexts'] ?? []) as $contextRecord) {
+                        foreach ((array) ($contextRecord['allowedPagePartClasses'] ?? []) as $allowedClass) {
+                            $ppFqcn  = (string) ($allowedClass['class'] ?? '');
+                            if ($ppFqcn === '') { continue; }
+                            $ppTable = (string) ($allowedClass['table'] ?? '');
+                            if (!isset($candidatePageParts[$ppFqcn])) {
+                                $candidatePageParts[$ppFqcn] = [
+                                    'fqcn'        => $ppFqcn,
+                                    'sourceTable' => $ppTable,
+                                ];
+                            }
+                        }
+                    }
+                }
+
+                // D-13 orphan filter — half 1: drop FQCNs referenced by any
+                // kuma_page_part_refs row.
+                $referencedFqcns = [];
+                try {
+                    $refRows = $plugin->legacyDbService->queryAll(
+                        'SELECT DISTINCT page_part_entityname FROM '
+                        . \lameco\kunstmaanmigrator\source\KunstmaanCoreTables::PAGE_PART_REFS
+                        . ' WHERE page_part_entityname IS NOT NULL'
+                    );
+                    foreach ($refRows as $r) {
+                        $referencedFqcns[(string) ($r['page_part_entityname'] ?? '')] = true;
+                    }
+                } catch (Throwable) {
+                    // kuma_page_part_refs unreadable — treat referenced set as empty,
+                    // every candidate becomes an orphan candidate (downstream FK heuristic
+                    // still filters those joined to kuma_node_versions).
+                }
+
+                // Look up DoctrineEntityInfo for each candidate so we can run the
+                // node-version FK heuristic.
+                $entityIndexByFqcn = (array) ($sourceScan['entities'] ?? []);
+
+                $orphans = [];
+                foreach ($candidatePageParts as $ppFqcn => $candidate) {
+                    if (isset($referencedFqcns[$ppFqcn])) { continue; }
+                    // D-13 orphan filter — half 2: source table not joined to
+                    // kuma_node_versions (no FK column matching the node-version pattern).
+                    $hasNodeVersionFk = false;
+                    $info = $entityIndexByFqcn[$ppFqcn] ?? null;
+                    if ($info instanceof \lameco\kunstmaanmigrator\source\DoctrineEntityInfo) {
+                        // Probe DoctrineRelationInfo objects: targetEntity FQCN match
+                        // (str_contains 'NodeVersion') or fkColumn name match.
+                        foreach ($info->relations as $rel) {
+                            if (!($rel instanceof \lameco\kunstmaanmigrator\source\DoctrineRelationInfo)) { continue; }
+                            $relTarget = $rel->targetEntity;
+                            $relColumn = (string) ($rel->fkColumn ?? '');
+                            if (str_contains($relTarget, 'NodeVersion')
+                                || $relColumn === 'node_version_id'
+                                || $relColumn === 'kuma_node_version_id'
+                            ) {
+                                $hasNodeVersionFk = true;
+                                break;
+                            }
+                        }
+                        // Fallback: scan declared columns by columnName (covers cases
+                        // where the FK is a plain column rather than a Doctrine relation).
+                        if (!$hasNodeVersionFk) {
+                            foreach ($info->columns as $col) {
+                                if (!($col instanceof \lameco\kunstmaanmigrator\source\DoctrineColumnInfo)) { continue; }
+                                if ($col->columnName === 'node_version_id'
+                                    || $col->columnName === 'kuma_node_version_id'
+                                ) {
+                                    $hasNodeVersionFk = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if ($hasNodeVersionFk) { continue; }
+                    $orphans[] = $candidate;
+                }
+
+                if ($orphans === []) {
+                    $this->stdout(
+                        "  OK   dataProvider LLM: no orphan page-parts detected (all page-parts have kuma_page_part_refs row or kuma_node_versions FK)\n",
+                        Console::FG_GREEN,
+                    );
+                } else {
+                    $matrixCatalogForProviders = $plugin->craftKnowledgeBase->matrixFieldCatalog();
+                    $this->stdout(
+                        "  ... dataProvider LLM batching " . count($orphans) . " orphan page-parts (chunks of 8) against "
+                        . count($matrixCatalogForProviders) . " Matrix field(s)\n",
+                        Console::FG_GREY,
+                    );
+                    $dpProgressStarted = false;
+                    $dataProviderProposals = $plugin->llmClassifier->proposeDataProviders(
+                        $orphans,
+                        $matrixCatalogForProviders,
+                        $kbLegacyMd,
+                        $kbCraftMd,
+                        function (int $i, int $n, int $entitiesInChunk, int $proposalsReturned, float $sec) use (&$dpProgressStarted): void {
+                            if (!$dpProgressStarted) {
+                                Console::startProgress(0, $n, '  ... LLM-provider ');
+                                $dpProgressStarted = true;
+                            }
+                            Console::updateProgress(
+                                $i,
+                                $n,
+                                sprintf(
+                                    '  ... LLM-provider [chunk %d/%d orphans=%d→props=%d %.1fs] ',
+                                    $i, $n, $entitiesInChunk, $proposalsReturned, $sec,
+                                ),
+                            );
+                        },
+                    );
+                    if ($dpProgressStarted) {
+                        Console::endProgress();
+                    }
+                    $this->stdout(
+                        "  OK   dataProvider LLM produced " . count($dataProviderProposals) . " proposals\n",
+                        Console::FG_GREEN,
+                    );
+                }
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL dataProvider LLM: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+        }
+
         // Step 8: LLM batch proposals for residuals (skip when --no-ai or key missing).
         // Phase 02.1 (B2 fix): KB markdown placeholders replaced with rendered Pages +
         // PageParts markdown — but only via a v1-shaped MAPPING ADAPTER built from v2's
@@ -573,6 +940,40 @@ class AnalyzeController extends Controller
         // `accepted`; medium/low → `needs-review` (operator must promote in map).
         foreach ($nodeClassProposals as $p) {
             $rows[] = $plugin->mappingFile->buildNodeClassRow($p, $this->statusForLlm($p, false));
+        }
+        // Phase 8 / D-05, D-06 — non-page entity (taxonomy) proposals from step 7.7.
+        // SUPPORTING drops are emitted by the proposer with kind=taxonomy + status=dropped
+        // (advisor row-shape correction — keeps MappingAuditor's dropped-status
+        // short-circuit happy). Pass those through verbatim. TAXONOMY rows go through
+        // buildTaxonomyRow with confidence-tier → status mapping.
+        foreach ($taxonomyProposals as $p) {
+            if (((string) ($p['status'] ?? '')) === 'dropped') {
+                $rows[] = $p;
+                continue;
+            }
+            $confidence = (string) ($p['confidence'] ?? 'medium');
+            $initialStatus = $confidence === 'high' ? 'accepted' : 'needs-review';
+            $rows[] = $plugin->mappingFile->buildTaxonomyRow($p, $initialStatus);
+        }
+        // Phase 8 / D-11, D-12 — layout-block proposals from step 7.8 are partial
+        // kind=nodeClass updates (header/wrap/column slot keys + confidence + rationale).
+        // Plan 09 compile step folds them into the nodeClasses[fqcn] block. Pass through
+        // with each row's intrinsic status field (proposer already set per D-06 ladder).
+        foreach ($layoutBlockProposals as $p) {
+            $rows[] = $p;
+        }
+        // Phase 8 / D-13 — dataProvider proposals from step 7.9. Confidence-tier →
+        // status mapping; LLM-omitted FQCNs already carry status=needs-review per the
+        // proposer's own omission handling.
+        foreach ($dataProviderProposals as $p) {
+            $intrinsicStatus = (string) ($p['status'] ?? '');
+            if ($intrinsicStatus === 'needs-review') {
+                $rows[] = $plugin->mappingFile->buildDataProviderRow($p, 'needs-review');
+                continue;
+            }
+            $confidence = (string) ($p['confidence'] ?? 'medium');
+            $initialStatus = $confidence === 'high' ? 'accepted' : 'needs-review';
+            $rows[] = $plugin->mappingFile->buildDataProviderRow($p, $initialStatus);
         }
         // For LLM-skipped residuals (no LLM call, no proposals returned), still
         // emit a row with status: needs-review so the operator sees the gap.
