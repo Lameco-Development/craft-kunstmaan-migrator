@@ -104,6 +104,7 @@ final class MappingCompiler extends Component
         ?string $defaultEntryType = null,
         ?string $defaultBlockType = null,
         array $craftEntryTypeHandles = [],
+        array $matrixFieldCatalog = [],
     ): array {
         $proposals = (array) ($mapping['proposals'] ?? []);
 
@@ -182,6 +183,57 @@ final class MappingCompiler extends Component
                 // actually flows through the load pipeline. Operator can
                 // re-edit afterward if the fallback is wrong.
                 $pRow['status'] = 'accepted';
+            }
+            unset($pRow);
+        }
+
+        // Phase 8.3 / D-16 — auto-resolve targetMatrixField from targetBlockType.
+        // The page-part LLM (and the defaultBlockType fallback above) often
+        // populate `targetBlockType` without `targetMatrixField`, leaving
+        // compile unable to derive the parent nodeClass's pageBuilderHandle.
+        // Result: every page's pageBuilder Matrix stays empty, regardless of
+        // how many page-parts were proposed.
+        //
+        // The Craft side resolves this unambiguously when a block-type handle
+        // is uniquely owned by a single Matrix field — the operator's mental
+        // model "page-parts are global page-builder blocks" implies exactly
+        // this 1-to-1 majority case in practice. When the same block-type
+        // appears in multiple Matrix fields, leave the row untouched (the
+        // operator must hand-pick) and surface a warning.
+        $autoFilledMatrixField = [];
+        if ($matrixFieldCatalog !== []) {
+            // Invert the catalog: blockTypeHandle => list<matrixFieldHandle>.
+            $blockTypeOwners = [];
+            foreach ($matrixFieldCatalog as $matrixHandle => $blockTypes) {
+                if (!is_array($blockTypes)) { continue; }
+                foreach ($blockTypes as $bt) {
+                    $blockTypeOwners[(string) $bt][] = (string) $matrixHandle;
+                }
+            }
+            foreach ($proposals as &$pRow) {
+                if (!is_array($pRow)) { continue; }
+                if (((string) ($pRow['kind'] ?? '')) !== 'pagePart') { continue; }
+                if (((string) ($pRow['targetMatrixField'] ?? '')) !== '') { continue; }
+                $bt = (string) ($pRow['targetBlockType'] ?? '');
+                if ($bt === '') { continue; }
+                $owners = array_values(array_unique($blockTypeOwners[$bt] ?? []));
+                if (count($owners) === 1) {
+                    $pRow['targetMatrixField'] = $owners[0];
+                    $autoFilledMatrixField[] = (string) ($pRow['pagePartClass'] ?? '?')
+                        . '|' . (string) ($pRow['parentPageClass'] ?? '?')
+                        . '|' . (string) ($pRow['context'] ?? '?')
+                        . ' -> ' . $owners[0];
+                } elseif (count($owners) > 1) {
+                    $warnings[] = sprintf(
+                        'page-part %s|%s|%s blockType=%s appears in %d Matrix fields (%s) — operator must pick targetMatrixField',
+                        (string) ($pRow['pagePartClass'] ?? '?'),
+                        (string) ($pRow['parentPageClass'] ?? '?'),
+                        (string) ($pRow['context'] ?? '?'),
+                        $bt,
+                        count($owners),
+                        implode(', ', $owners),
+                    );
+                }
             }
             unset($pRow);
         }
@@ -343,6 +395,47 @@ final class MappingCompiler extends Component
         ksort($nodeClasses);
         $warnings = array_merge($warnings, $implicitWarnings);
 
+        // Phase 8.3 / D-16 — propagate targetMatrixField from accepted
+        // kind=pagePart rows to the parent nodeClasses[fqcn].pageBuilderHandle.
+        // Without this, parent nodeClasses keep pageBuilderHandle: '' even
+        // when there are accepted pagepart proposals targeting a Matrix on
+        // them, and TransformService::transformOne's `if ($pageBuilderHandle
+        // !== '')` gate skips the page-builder step entirely. Operator-set
+        // pageBuilderHandle wins (skip-existing).
+        $pbHandlePropagated = [];
+        foreach ($proposals as $pRow) {
+            if (!is_array($pRow)) { continue; }
+            if (((string) ($pRow['kind'] ?? '')) !== 'pagePart') { continue; }
+            if (((string) ($pRow['status'] ?? '')) !== 'accepted') { continue; }
+            $matrix = (string) ($pRow['targetMatrixField'] ?? '');
+            $parentShort = (string) ($pRow['parentPageClass'] ?? '');
+            $context = (string) ($pRow['context'] ?? '');
+            if ($matrix === '' || $parentShort === '') { continue; }
+            // Resolve parentShort to FQCN via the same short→FQCN lookup
+            // compileImplicitBlocks uses (compute inline — small N).
+            $parentFqcn = null;
+            foreach (array_keys($pageStructure) as $fqcn) {
+                if (!is_string($fqcn)) { continue; }
+                $parts = explode('\\', trim($fqcn, '\\'));
+                if (((string) end($parts)) === $parentShort) { $parentFqcn = $fqcn; break; }
+            }
+            if ($parentFqcn === null || !isset($nodeClasses[$parentFqcn])) { continue; }
+            // Skip-existing: operator-set wins.
+            if ((string) ($nodeClasses[$parentFqcn]['pageBuilderHandle'] ?? '') === '') {
+                $nodeClasses[$parentFqcn]['pageBuilderHandle'] = $matrix;
+                $pbHandlePropagated[] = $parentFqcn . ' -> ' . $matrix;
+            }
+            // Always merge context (de-duped).
+            $existingCtxs = array_values(array_filter(
+                (array) ($nodeClasses[$parentFqcn]['pageBuilderContexts'] ?? []),
+                static fn(mixed $c): bool => is_string($c) && $c !== '',
+            ));
+            if ($context !== '' && !in_array($context, $existingCtxs, true)) {
+                $existingCtxs[] = $context;
+                $nodeClasses[$parentFqcn]['pageBuilderContexts'] = $existingCtxs;
+            }
+        }
+
         // Phase 8 / D-07: compile mapping.taxonomies block from accepted kind=taxonomy
         // proposals. Identity key = FQCN. Skip-existing per MAP-04 — operator-curated
         // mapping.taxonomies entries always win.
@@ -385,6 +478,8 @@ final class MappingCompiler extends Component
                 'autoAssignedTargets'       => $autoAssigned,
                 'fallbackEntryTypeApplied'  => $fallbackEntryTypeApplied,
                 'fallbackBlockTypeApplied'  => $fallbackBlockTypeApplied,
+                'autoFilledMatrixField'     => $autoFilledMatrixField,
+                'pageBuilderHandlePropagated' => $pbHandlePropagated,
                 'fallbackEntryTypeUsed'     => $defaultEntryType,
                 'fallbackBlockTypeUsed'     => $defaultBlockType,
                 'implicitBlocksEmitted'     => $implicitEmitted,

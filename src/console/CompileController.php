@@ -145,6 +145,10 @@ class CompileController extends Controller
             $settings->defaultEntryType ?: null,
             $settings->defaultBlockType ?: null,
             $plugin->craftKnowledgeBase->entryTypeHandles(),
+            // Phase 8.3 / D-16 — pass the Matrix-field catalog so compile can
+            // auto-resolve targetMatrixField from targetBlockType for
+            // pagePart rows where the LLM populated only the block type.
+            $plugin->craftKnowledgeBase->matrixFieldCatalog(),
         );
         $report = $compiled['_compileReport'];
 
@@ -173,6 +177,21 @@ class CompileController extends Controller
                 "  OK   page-part fallback applied: %d page parts routed to Settings::defaultBlockType=%s (status flipped to accepted)\n",
                 count($fallbackPagePartsApplied),
                 $blockFallbackTo,
+            ), Console::FG_GREEN);
+        }
+        // Phase 8.3 / D-16 — surface the targetMatrixField auto-resolution count.
+        $autoFilledMatrixField = (array) ($report['autoFilledMatrixField'] ?? []);
+        if ($autoFilledMatrixField !== []) {
+            $this->stdout(sprintf(
+                "  OK   page-part Matrix-field auto-resolved: %d page parts (block-type uniquely owned by one Matrix field)\n",
+                count($autoFilledMatrixField),
+            ), Console::FG_GREEN);
+        }
+        $pbHandlePropagated = (array) ($report['pageBuilderHandlePropagated'] ?? []);
+        if ($pbHandlePropagated !== []) {
+            $this->stdout(sprintf(
+                "  OK   pageBuilderHandle propagated to %d nodeClasses from accepted page-part rows\n",
+                count($pbHandlePropagated),
             ), Console::FG_GREEN);
         }
         if ($fallbackApplied === [] && $report['fallbackEntryTypeUsed'] === null) {
