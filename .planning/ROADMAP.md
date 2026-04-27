@@ -308,10 +308,10 @@ Plans:
 **Plans:** 15 plans
 
 Plans:
-- [ ] 08-01-PLAN.md — MappingFile/MappingAuditor/MappingCompiler taxonomy + dataProvider row scaffolding (TAX-01, PROP-03)
-- [ ] 08-02-PLAN.md — DoctrineEntityParser Gedmo namespace scan (TAX-04)
-- [ ] 08-03-PLAN.md — KnowledgeBase::renderTaxonomiesMarkdown (TAX-05)
-- [ ] 08-04-PLAN.md — LegacyDbService::extTranslationsFor + EXT_TRANSLATIONS constant (TAX-06)
+- [x] 08-01-PLAN.md — MappingFile/MappingAuditor/MappingCompiler taxonomy + dataProvider row scaffolding (TAX-01, PROP-03)
+- [x] 08-02-PLAN.md — DoctrineEntityParser Gedmo namespace scan (TAX-04)
+- [x] 08-03-PLAN.md — KnowledgeBase::renderTaxonomiesMarkdown (TAX-05)
+- [x] 08-04-PLAN.md — LegacyDbService::extTranslationsFor + EXT_TRANSLATIONS constant (TAX-06)
 - [ ] 08-05-PLAN.md — LlmClassifier 3 new proposers: proposeNonPageEntities + proposeLayoutBlocks + proposeDataProviders (TAX-02, PROP-01..03)
 - [ ] 08-08-PLAN.md — Settings + AnalyzeController flags + 3 proposer dispatch steps (PROP-04)
 - [ ] 08-09-PLAN.md — MappingCompiler compile passes + counter wiring (TAX-01, PROP-05)
