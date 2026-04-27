@@ -264,6 +264,18 @@ Plans:
 3. CI workflow on `main` runs `composer validate --strict`, `phpunit`, and a plugin-load smoke test on a scratch Craft 5 install — green on the release commit.
 4. v1.0 rehearsal log against the CQM dump records: counts within tolerance vs baseline, zero unresolved CKEditor tokens beyond annotated ones, all assets ingested or explicitly recorded as failed with RCA tags.
 
+**Plans:** 8 plans
+
+Plans:
+- [ ] 05-01-tests-reorganization-PLAN.md — `git mv` every existing test path into tests/unit/<area>/; PluginBootstrapTest moves to tests/integration/; phpunit.xml.dist retargeted (D-12, D-14)
+- [ ] 05-02-phpunit-infrastructure-PLAN.md — split phpunit.xml.dist into Unit + Integration testsuites; <source> + <coverage> blocks; composer test-coverage chained-script with PCOV/Xdebug fail-fast; tools/check-coverage.php per-module 70% gate (D-06, D-07, D-08, D-13)
+- [ ] 05-03-transform-characterization-fixtures-PLAN.md — TransformCharacterizationTest with @dataProvider + UPDATE_SNAPSHOTS=1 + canonicalize-then-diff comparator; tools/capture-transform-fixtures.php operator script (TST-02 / D-01..D-05)
+- [ ] 05-04-rehearsal-controller-and-dirs-PLAN.md — src/console/RehearsalController.php with three mechanical gate parsers (DELIBERATELY OMITS NeverProductionTrait per D-22); .planning/rehearsal/v1.0/{cqm,simac,enreach}/ directory shape with operator README placeholders (D-19..D-24)
+- [ ] 05-05-unit-tests-analyze-finalize-PLAN.md — direct unit tests for HeuristicProposer (heuristics + confidence routing) and CkeditorRewriterService (Reflection-on-private-helper); biased by 05-02 baseline coverage (TST-01 / D-10)
+- [ ] 05-06-unit-tests-field-handlers-PLAN.md — direct unit tests for PlainText/SplitName/Relation/Matrix/Asset handlers; createStub for MigrationStateService where needed (TST-01 / D-10)
+- [ ] 05-07-ci-smoke-job-PLAN.md — .github/workflows/ci.yml splits into unit (test + coverage gate + clover artifact) and smoke (scratch-Craft + path-repo + ./craft kunstmaan-migrator/doctor exit 0); needs: unit gates smoke (TST-03 / D-15..D-18)
+- [ ] 05-08-release-checklist-changelog-reconciliation-PLAN.md — .planning/RELEASE-CHECKLIST.md (8 steps; D-25 step 8 omitted per verified Lameco convention); CHANGELOG.md at repo root in Keep-a-Changelog format; Phase 5 RECONCILIATION.md; REQUIREMENTS.md TST-01..04 flipped to [x] (TST-04 / D-25, D-26)
+
 ---
 
 ## Dependencies

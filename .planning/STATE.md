@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 5 context captured — 26 decisions across 4 areas (TST-02 fixtures pre-extracted PHP/JSON narrow corpus + UPDATE_SNAPSHOTS=1 refresh; TST-01 PCOV + per-module 70% gate via phpunit.xml + 7 new direct-test files; TST-03 composer create-project smoke on PHP 8.3 with doctor exit 0; TST-04 CQM-blocking + simac/enreach-advisory rehearsal via new `kunstmaan-migrator/rehearsal-check` CLI + `.planning/RELEASE-CHECKLIST.md`). Tests reorganize: tests/ → tests/unit + tests/integration as the FIRST plan to avoid merge churn. Next: /gsd-plan-phase 5.
-stopped_at: Phase 5 context gathered — ready for /gsd-plan-phase 5
-last_updated: "2026-04-27T00:00:00.000Z"
+status: Phase 5 planned — 8 plans across 4 waves (Wave 1: 05-01 tests/ reorg; Wave 2: 05-02 phpunit infra + 05-03 transform fixtures + 05-04 RehearsalController; Wave 3: 05-05 analyze/finalize unit tests + 05-06 field-handler unit tests + 05-07 CI smoke job; Wave 4: 05-08 RELEASE-CHECKLIST + CHANGELOG + RECONCILIATION). Plan-checker found 1 blocker (self-inconsistent D-22 grep in 05-04) — fixed in-band by surgical edit to inline comment. All 4 TST requirements covered, all 26 D-decisions referenced. RehearsalController DELIBERATELY OMITS NeverProductionTrait (D-22). Next: /gsd-execute-phase 5.
+stopped_at: Phase 5 plans ready — execute-phase next
+last_updated: "2026-04-27T01:00:00.000Z"
 progress:
   total_phases: 7
   completed_phases: 6
