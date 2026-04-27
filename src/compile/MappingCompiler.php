@@ -494,7 +494,12 @@ final class MappingCompiler extends Component
             $blockType = (string) ($pRow['targetBlockType'] ?? '');
             if ($blockType === '') { continue; }
             // Carry through any operator-supplied fields map; default to empty.
-            $fieldsMap = (array) ($pRow['fields'] ?? []);
+            // Phase 8.6 / D-26: the per-page-part column proposer emits fields
+            // in the residual list-of-dicts shape (each entry has
+            // sourceProperty/targetHandle/handler). Detect that shape and
+            // collapse to the final assoc map keyed by targetHandle.
+            $fieldsRaw = (array) ($pRow['fields'] ?? []);
+            $fieldsMap = $this->collapsePagePartFieldsList($fieldsRaw, $ppFqcn, $warnings);
             $pagePartsOut[$ppFqcn] = [
                 'target' => $blockType,
                 'fields' => $fieldsMap,
@@ -1148,5 +1153,73 @@ final class MappingCompiler extends Component
             $emitted++;
         }
         return [$out, $emitted, $warnings];
+    }
+
+    /**
+     * Phase 8.6 / D-26 — collapse the residual list-of-dicts fields shape
+     * the per-page-part column proposer emits into the final assoc map shape
+     * TransformService consumes.
+     *
+     * Input shapes accepted:
+     *   (a) list of dicts with sourceProperty/targetHandle/handler
+     *       (LLM-proposed; produced by proposePagePartFields):
+     *         [['sourceProperty'=>'title','targetHandle'=>'heading','handler'=>'plain'], …]
+     *   (b) assoc map keyed by targetHandle (operator-curated final form):
+     *         ['heading' => ['handler'=>'plain','source'=>'title'], …]
+     *
+     * (b) is passed through untouched (skip-existing semantics — operator
+     * already curated). (a) is collapsed to (b)-shape.
+     *
+     * Multi-source-to-same-target collisions: keep the first; warn on the
+     * rest (mirrors the column-row collision rule at line 405).
+     *
+     * @param  array<int|string, mixed> $fieldsRaw
+     * @param  list<string>             $warnings  appended to in-place
+     * @return array<string, array{handler: string, source: string}>
+     */
+    private function collapsePagePartFieldsList(array $fieldsRaw, string $ppFqcn, array &$warnings): array
+    {
+        if ($fieldsRaw === []) {
+            return [];
+        }
+        // Detect shape (b): keys are non-int and values are dicts with
+        // `source` (the final-form marker) — pass through unchanged.
+        $isFinalShape = true;
+        foreach ($fieldsRaw as $k => $v) {
+            if (!is_string($k) || !is_array($v) || !isset($v['source'])) {
+                $isFinalShape = false;
+                break;
+            }
+        }
+        if ($isFinalShape) {
+            /** @var array<string, array{handler: string, source: string}> $fieldsRaw */
+            return $fieldsRaw;
+        }
+
+        // Shape (a): list of dicts. Collapse to assoc by targetHandle.
+        $out = [];
+        foreach ($fieldsRaw as $entry) {
+            if (!is_array($entry)) { continue; }
+            $tgt = (string) ($entry['targetHandle'] ?? '');
+            $src = (string) ($entry['sourceProperty'] ?? '');
+            $handler = (string) ($entry['handler'] ?? 'plain');
+            if ($tgt === '' || $src === '') { continue; }
+            if (isset($out[$tgt])) {
+                $warnings[] = sprintf(
+                    '%s: page-part fields collision — %s already mapped to source `%s`; ignoring source `%s`',
+                    $ppFqcn,
+                    $tgt,
+                    (string) $out[$tgt]['source'],
+                    $src,
+                );
+                continue;
+            }
+            $out[$tgt] = [
+                'handler' => $handler !== '' ? $handler : 'plain',
+                'source'  => $src,
+            ];
+        }
+        ksort($out);
+        return $out;
     }
 }

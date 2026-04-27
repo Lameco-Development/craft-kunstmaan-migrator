@@ -529,6 +529,64 @@ class AnalyzeController extends Controller
                     . "({$matchedPp} with non-empty targetBlockType)\n",
                     Console::FG_GREEN,
                 );
+
+                // Phase 8.6 / D-26 — per-page-part column proposer. For every
+                // row that landed a non-empty targetBlockType, propose
+                // fields[] mappings (sourceColumn → targetBlockField) using
+                // the page-part's Doctrine columns as the source closed set
+                // and the chosen block-type's allowed fields as the target
+                // closed set. Without this step, page-parts compile with
+                // fields:{} and the migrated Craft block ends up empty.
+                if ($matchedPp > 0) {
+                    [$pagePartColumns, $blockTypeFields] = $this->buildPagePartFieldsContext(
+                        $pagePartProposals,
+                    );
+                    if ($pagePartColumns !== [] && $blockTypeFields !== []) {
+                        $this->stdout(
+                            "  ... page-part fields LLM batching {$matchedPp} resolved page parts "
+                            . "(chunks of 8)\n",
+                            Console::FG_GREY,
+                        );
+                        $ppFieldsProgressStarted = false;
+                        $pagePartProposals = $plugin->llmClassifier->proposePagePartFields(
+                            $pagePartProposals,
+                            $pagePartColumns,
+                            $blockTypeFields,
+                            $kbLegacyMd,
+                            $kbCraftWithMatrixMd,
+                            function (int $i, int $n, int $partsInChunk, int $proposalsReturned, float $sec) use (&$ppFieldsProgressStarted): void {
+                                if (!$ppFieldsProgressStarted) {
+                                    Console::startProgress(0, $n, '  ... LLM-pagePart-fields ');
+                                    $ppFieldsProgressStarted = true;
+                                }
+                                Console::updateProgress(
+                                    $i,
+                                    $n,
+                                    sprintf(
+                                        '  ... LLM-pagePart-fields [chunk %d/%d parts=%d→props=%d %.1fs] ',
+                                        $i, $n, $partsInChunk, $proposalsReturned, $sec,
+                                    ),
+                                );
+                            },
+                        );
+                        if ($ppFieldsProgressStarted) {
+                            Console::endProgress();
+                        }
+                        $totalFieldsProposed = 0;
+                        foreach ($pagePartProposals as $r) {
+                            $totalFieldsProposed += count((array) ($r['fields'] ?? []));
+                        }
+                        $this->stdout(
+                            "  OK   page-part fields LLM produced {$totalFieldsProposed} field mappings\n",
+                            Console::FG_GREEN,
+                        );
+                    } else {
+                        $this->stdout(
+                            "  WARN page-part fields LLM skipped (no parser columns or no block-type fields available)\n",
+                            Console::FG_YELLOW,
+                        );
+                    }
+                }
             } catch (Throwable $e) {
                 $this->stderr("  FAIL page-part LLM: {$e->getMessage()}\n", Console::FG_RED);
                 return ExitCode::UNSPECIFIED_ERROR;
@@ -1216,6 +1274,79 @@ class AnalyzeController extends Controller
     private function buildCraftFieldIndex(): array
     {
         return Plugin::getInstance()->craftKnowledgeBase->buildFieldIndex();
+    }
+
+    /**
+     * Phase 8.6 / D-26 — build the two closed-set lookups the per-page-part
+     * column proposer needs:
+     *
+     *   - `pagePartColumns`: pagePartFqcn → list<{column, type}> from the
+     *     Doctrine entity parser. Source columns the LLM may map FROM.
+     *   - `blockTypeFields`: blockTypeHandle → list<{handle, type}> from
+     *     CraftKnowledgeBase::buildFieldIndex (block-types are entry-types
+     *     in Craft 5; the index keys cover both pages and Matrix blocks).
+     *     Target fields the LLM may map TO.
+     *
+     * Scoped to FQCNs / handles actually present in the resolved page-part
+     * rows so we don't bloat the prompt with classes the proposer won't
+     * touch this run.
+     *
+     * @param  list<array<string, mixed>> $pagePartProposals
+     * @return array{0: array<string, list<array{column: string, type: string}>>, 1: array<string, list<array{handle: string, type: string}>>}
+     */
+    private function buildPagePartFieldsContext(array $pagePartProposals): array
+    {
+        $plugin = Plugin::getInstance();
+        $parser = $plugin->doctrineEntityParser;
+        $fieldIndex = $plugin->craftKnowledgeBase->buildFieldIndex();
+
+        $pagePartColumns = [];
+        $blockTypeFields = [];
+        foreach ($pagePartProposals as $row) {
+            if (!is_array($row)) { continue; }
+            $blockType = (string) ($row['targetBlockType'] ?? '');
+            if ($blockType === '') { continue; }
+
+            $ppFqcn = (string) ($row['pagePartClass'] ?? '');
+            if ($ppFqcn !== '' && !isset($pagePartColumns[$ppFqcn])) {
+                $info = $parser->getByFqcn($ppFqcn);
+                if ($info !== null) {
+                    $cols = [];
+                    foreach ($info->columns as $c) {
+                        $name = (string) $c->columnName;
+                        if ($name === '' || $name === 'id') { continue; }
+                        $cols[] = [
+                            'column' => $name,
+                            'type'   => (string) $c->type,
+                        ];
+                    }
+                    if ($cols !== []) {
+                        $pagePartColumns[$ppFqcn] = $cols;
+                    }
+                }
+            }
+
+            if (!isset($blockTypeFields[$blockType])) {
+                $fields = $fieldIndex[$blockType] ?? [];
+                $simple = [];
+                foreach ($fields as $f) {
+                    if (!is_array($f)) { continue; }
+                    $h = (string) ($f['handle'] ?? '');
+                    // Skip dotted-path Matrix-sub entries here — block-types
+                    // rarely contain nested Matrix fields, and when they do
+                    // the column proposer is the wrong tool. Flat fields only.
+                    if ($h === '' || str_contains($h, '.')) { continue; }
+                    $simple[] = [
+                        'handle' => $h,
+                        'type'   => (string) ($f['type'] ?? ''),
+                    ];
+                }
+                if ($simple !== []) {
+                    $blockTypeFields[$blockType] = $simple;
+                }
+            }
+        }
+        return [$pagePartColumns, $blockTypeFields];
     }
 
     /**
