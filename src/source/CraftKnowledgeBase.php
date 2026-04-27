@@ -301,6 +301,54 @@ final class CraftKnowledgeBase extends Component
     }
 
     /**
+     * Phase 8.6 — entry-type → owned Matrix-field handles lookup.
+     *
+     * Walks the entry-type's field layout and returns every Matrix field handle
+     * the entry-type's layout actually contains. The page-part LLM proposer
+     * uses this to constrain the closed-set catalog per-row: when proposing a
+     * (matrixField, blockType) pair for a page-part whose parent page lives on
+     * entry-type X, the only legal Matrix fields are those X's layout owns.
+     *
+     * Without this scoping, 8.3's auto-resolve could route a page's page-parts
+     * into a *different* Matrix that happens to share a block-type handle
+     * (CQM symptom: HomePage → pageBuilderCondensed instead of pageBuilder
+     * because both Matrices include `textContentBlock`).
+     *
+     * Returns an empty list when the entry-type has no field layout, no
+     * Matrix fields, or doesn't exist on the project. Empty list = "no
+     * scoping known" — caller falls back to the unconstrained catalog.
+     *
+     * @return list<string>  matrix-field handles owned by the entry-type
+     */
+    public function matrixFieldsForEntryType(string $entryTypeHandle): array
+    {
+        if ($entryTypeHandle === '') {
+            return [];
+        }
+        $out = [];
+        foreach (Craft::$app->entries->getAllEntryTypes() as $entryType) {
+            if ((string) $entryType->handle !== $entryTypeHandle) {
+                continue;
+            }
+            $fieldLayout = $entryType->getFieldLayout();
+            if ($fieldLayout === null) {
+                return [];
+            }
+            foreach ($fieldLayout->getCustomFields() as $field) {
+                if (!($field instanceof \craft\fields\Matrix)) {
+                    continue;
+                }
+                $h = (string) $field->handle;
+                if ($h !== '' && !in_array($h, $out, true)) {
+                    $out[] = $h;
+                }
+            }
+            break; // entry-type handle is unique within the project
+        }
+        return $out;
+    }
+
+    /**
      * Flat list of all block-type handles across every Matrix field. Used by
      * the page-part LLM proposer's closed-set validation (the LLM may not
      * invent block-type handles).

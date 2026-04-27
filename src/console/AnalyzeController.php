@@ -467,9 +467,32 @@ class AnalyzeController extends Controller
                 // canonical (matrixField → blocks) listing in addition to the
                 // entry-type catalog.
                 $kbCraftWithMatrixMd = $kbCraftMd . "\n\n" . $plugin->craftKnowledgeBase->renderMatrixCatalogMarkdown();
+
+                // Phase 8.6 — build parent-aware Matrix scoping map. For each
+                // accepted nodeClass proposal (page entity → entry-type), look
+                // up which Matrix fields that entry-type's field layout owns.
+                // The page-part LLM will then ONLY pick from those Matrix
+                // fields per row, fixing the 8.3 symptom where a block-type
+                // shared between two Matrices got routed to the wrong one.
+                $parentMatrices = [];
+                foreach ($nodeClassProposals as $ncp) {
+                    if (!is_array($ncp)) { continue; }
+                    $entryType = (string) ($ncp['targetEntryType'] ?? '');
+                    if ($entryType === '') { continue; }
+                    $parentFqcn = (string) ($ncp['fqcn'] ?? '');
+                    $parentShort = $parentFqcn !== '' ? $this->shortClassName($parentFqcn) : '';
+                    if ($parentShort === '') { continue; }
+                    $owned = $plugin->craftKnowledgeBase->matrixFieldsForEntryType($entryType);
+                    if ($owned !== []) {
+                        $parentMatrices[$parentShort] = $owned;
+                    }
+                }
+
                 $this->stdout(
                     "  ... page-part LLM batching " . count($pagePartProposals) . " page parts (chunks of 8) against "
-                    . count($matrixCatalog) . " Matrix fields\n",
+                    . count($matrixCatalog) . " Matrix fields"
+                    . ($parentMatrices !== [] ? sprintf(' (parent-scoped: %d entry-types)', count($parentMatrices)) : '')
+                    . "\n",
                     Console::FG_GREY,
                 );
                 $ppProgressStarted = false;
@@ -492,6 +515,7 @@ class AnalyzeController extends Controller
                             ),
                         );
                     },
+                    $parentMatrices,
                 );
                 if ($ppProgressStarted) {
                     Console::endProgress();

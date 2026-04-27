@@ -1231,6 +1231,12 @@ final class LlmClassifier extends Component
      * @param  string                      $kbLegacyMd     Kunstmaan KB markdown
      * @param  string                      $kbCraftMd      Craft KB markdown (entry types + Matrix catalog)
      * @param  (callable(int $chunkIndex, int $chunkTotal, int $partsInChunk, int $proposalsReturned, float $durationSec): void)|null $onChunk
+     * @param  array<string, list<string>> $parentMatrices Phase 8.6 — parentPageClass (short name) → list of Matrix
+     *                                                    handles owned by the parent's Craft entry-type. Constrains
+     *                                                    per-row catalog: when present for a row, the LLM may only pick
+     *                                                    a Matrix field that belongs to the parent page's entry-type.
+     *                                                    Empty list / missing key → fall back to the unconstrained
+     *                                                    catalog (preserves pre-8.6 behaviour).
      * @return list<array<string, mixed>>  same row shape as input + targetMatrixField/targetBlockType/confidence/rationale filled in
      */
     public function proposePagePartBlocks(
@@ -1239,6 +1245,7 @@ final class LlmClassifier extends Component
         string $kbLegacyMd,
         string $kbCraftMd,
         ?callable $onChunk = null,
+        array $parentMatrices = [],
     ): array {
         if ($pagePartRows === [] || $matrixCatalog === []) {
             return $pagePartRows;
@@ -1266,6 +1273,7 @@ final class LlmClassifier extends Component
             $enriched = $this->proposePagePartBlockChunk(
                 $chunk, $matrixCatalog, $kbLegacyMd, $kbCraftMd,
                 $client, $apiKey, $model, $timeout,
+                $parentMatrices,
             );
             $out = array_merge($out, $enriched);
             if ($onChunk !== null) {
@@ -1280,6 +1288,7 @@ final class LlmClassifier extends Component
      *
      * @param  list<array<string, mixed>>  $chunk
      * @param  array<string, list<string>> $matrixCatalog
+     * @param  array<string, list<string>> $parentMatrices Phase 8.6 — per-row catalog scoping
      * @return list<array<string, mixed>>  same shape as input + AI-filled fields
      */
     private function proposePagePartBlockChunk(
@@ -1291,8 +1300,9 @@ final class LlmClassifier extends Component
         string $apiKey,
         string $model,
         int $timeout,
+        array $parentMatrices = [],
     ): array {
-        [$system, $user] = $this->buildPagePartPrompt($chunk, $matrixCatalog, $kbLegacyMd, $kbCraftMd);
+        [$system, $user] = $this->buildPagePartPrompt($chunk, $matrixCatalog, $kbLegacyMd, $kbCraftMd, $parentMatrices);
         $response = $this->callWithBackoff($client, $apiKey, $model, $system, $user, $timeout);
         $rawBody = $this->readResponseBody($response);
         try {
@@ -1340,9 +1350,18 @@ final class LlmClassifier extends Component
             $matrixField = is_array($p) ? (string) ($p['targetMatrixField'] ?? '') : '';
             $blockType   = is_array($p) ? (string) ($p['targetBlockType'] ?? '') : '';
             // Closed-set validation: matrixField must exist in catalog AND
-            // blockType must be in that matrixField's allowed list.
+            // blockType must be in that matrixField's allowed list. Phase 8.6:
+            // when the parent's owned-Matrix list is provided, also enforce
+            // that the LLM picked from THAT subset — protects against the
+            // 8.3 symptom where a block-type owned by multiple Matrices got
+            // routed to whichever Matrix the LLM happened to pick.
+            $parentShort = (string) ($row['parentPageClass'] ?? '');
+            $parentOwned = $parentMatrices[$parentShort] ?? [];
             $allowedBlocks = $matrixCatalog[$matrixField] ?? [];
-            if ($matrixField === '' || !in_array($blockType, $allowedBlocks, true)) {
+            $matrixOk = $matrixField !== ''
+                && in_array($blockType, $allowedBlocks, true)
+                && ($parentOwned === [] || in_array($matrixField, $parentOwned, true));
+            if (!$matrixOk) {
                 $matrixField = '';
                 $blockType = '';
             }
@@ -1368,10 +1387,16 @@ final class LlmClassifier extends Component
     /**
      * @param  list<array<string, mixed>>  $chunk
      * @param  array<string, list<string>> $matrixCatalog
+     * @param  array<string, list<string>> $parentMatrices Phase 8.6 — parentPageClass → owned matrices
      * @return array{0: string, 1: string} [system, user]
      */
-    private function buildPagePartPrompt(array $chunk, array $matrixCatalog, string $kbLegacyMd, string $kbCraftMd): array
-    {
+    private function buildPagePartPrompt(
+        array $chunk,
+        array $matrixCatalog,
+        string $kbLegacyMd,
+        string $kbCraftMd,
+        array $parentMatrices = [],
+    ): array {
         // Render the catalog inline in the system prompt for short batches —
         // it's small (typically <50 lines) and gives the LLM the precise
         // closed set without it having to re-derive from the KB markdown.
@@ -1395,17 +1420,28 @@ final class LlmClassifier extends Component
             . '- "high": clear semantic + structural fit (page-part purpose maps to a block type with similar fields)' . "\n"
             . '- "medium": reasonable fit (purpose aligns but field shape differs, or vice versa)' . "\n"
             . '- "low": ambiguous or no fit — set both target fields to "" with explanation' . "\n\n"
+            . 'CRITICAL — parent-aware Matrix scoping (Phase 8.6):' . "\n"
+            . '- Each PagePart line below carries its parent page\'s `allowedMatrixFields=[...]` hint.' . "\n"
+            . '- Pick `targetMatrixField` ONLY from that hint. If the hint is empty, you may use any catalog Matrix.' . "\n"
+            . '- The same blockType handle may appear in multiple Matrix fields; pick the one the parent page\'s entry-type actually owns.' . "\n\n"
             . 'Matrix catalog (closed set — pick one matrixField, then a block type from THAT field\'s list):' . "\n"
             . implode("\n", $catalogLines);
 
         $partLines = [];
         foreach ($chunk as $row) {
+            $parentShort = (string) ($row['parentPageClass'] ?? '?');
             $base = sprintf(
                 '- pagePartClass=%s, parentPageClass=%s, context=%s',
                 (string) ($row['pagePartClass'] ?? '?'),
-                (string) ($row['parentPageClass'] ?? '?'),
+                $parentShort,
                 (string) ($row['context'] ?? '?'),
             );
+            // Phase 8.6 — surface the parent's owned-Matrix scope so the LLM
+            // restricts its pick to handles the parent entry-type actually
+            // contains. Empty list (or absent key) = no scoping known →
+            // unconstrained pick from the full catalog.
+            $owned = $parentMatrices[$parentShort] ?? [];
+            $base .= ', allowedMatrixFields=[' . implode(', ', $owned) . ']';
             // Phase 7: synthetic implicit-content rows carry their candidate
             // source columns in `fields` so the LLM has data to propose
             // against. For real page-parts `fields` is typically empty.

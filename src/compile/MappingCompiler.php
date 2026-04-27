@@ -210,6 +210,39 @@ final class MappingCompiler extends Component
                     $blockTypeOwners[(string) $bt][] = (string) $matrixHandle;
                 }
             }
+
+            // Phase 8.6 — parent-aware Matrix tie-break. Build
+            // parentShortName → list<matrixHandle> from accepted nodeClass
+            // proposals + the Craft entry-type field-layout walk. When a
+            // block-type is owned by multiple Matrices, prefer one the parent
+            // page's entry-type actually contains. Without this, 8.3 would
+            // warn-and-skip every shared block-type — which is exactly how
+            // CQM's HomePage page-parts ended up routed to the wrong Matrix.
+            $parentMatrices = [];
+            try {
+                $kb = \lameco\kunstmaanmigrator\Plugin::getInstance()->craftKnowledgeBase;
+                foreach ($proposals as $ncRow) {
+                    if (!is_array($ncRow)) { continue; }
+                    if (((string) ($ncRow['kind'] ?? '')) !== 'nodeClass') { continue; }
+                    if (((string) ($ncRow['status'] ?? '')) !== 'accepted') { continue; }
+                    $entryType = (string) ($ncRow['targetEntryType'] ?? '');
+                    $fqcn = (string) ($ncRow['fqcn'] ?? '');
+                    if ($entryType === '' || $fqcn === '') { continue; }
+                    $parts = explode('\\', trim($fqcn, '\\'));
+                    $parentShort = (string) end($parts);
+                    if ($parentShort === '') { continue; }
+                    $owned = $kb->matrixFieldsForEntryType($entryType);
+                    if ($owned !== []) {
+                        $parentMatrices[$parentShort] = $owned;
+                    }
+                }
+            } catch (\Throwable) {
+                // CraftKnowledgeBase unavailable (test bootstrap, no Craft) —
+                // skip parent-aware tie-break, fall through to the original
+                // single-owner / warn-and-skip behaviour.
+                $parentMatrices = [];
+            }
+
             foreach ($proposals as &$pRow) {
                 if (!is_array($pRow)) { continue; }
                 if (((string) ($pRow['kind'] ?? '')) !== 'pagePart') { continue; }
@@ -217,18 +250,57 @@ final class MappingCompiler extends Component
                 $bt = (string) ($pRow['targetBlockType'] ?? '');
                 if ($bt === '') { continue; }
                 $owners = array_values(array_unique($blockTypeOwners[$bt] ?? []));
+                $parentShort = (string) ($pRow['parentPageClass'] ?? '');
+                $parentOwned = $parentMatrices[$parentShort] ?? [];
+                $rowKey = (string) ($pRow['pagePartClass'] ?? '?')
+                    . '|' . $parentShort
+                    . '|' . (string) ($pRow['context'] ?? '?');
+
                 if (count($owners) === 1) {
                     $pRow['targetMatrixField'] = $owners[0];
-                    $autoFilledMatrixField[] = (string) ($pRow['pagePartClass'] ?? '?')
-                        . '|' . (string) ($pRow['parentPageClass'] ?? '?')
-                        . '|' . (string) ($pRow['context'] ?? '?')
-                        . ' -> ' . $owners[0];
-                } elseif (count($owners) > 1) {
+                    $autoFilledMatrixField[] = $rowKey . ' -> ' . $owners[0];
+                    continue;
+                }
+
+                if (count($owners) > 1 && $parentOwned !== []) {
+                    // Intersect: which of the block-type's owning Matrices
+                    // does the parent page's entry-type actually contain?
+                    $candidates = array_values(array_intersect($owners, $parentOwned));
+                    if (count($candidates) === 1) {
+                        $pRow['targetMatrixField'] = $candidates[0];
+                        $autoFilledMatrixField[] = $rowKey . ' -> ' . $candidates[0]
+                            . ' (parent-aware tie-break: ' . $parentShort . ')';
+                        continue;
+                    }
+                    if (count($candidates) > 1) {
+                        $warnings[] = sprintf(
+                            'page-part %s blockType=%s appears in %d Matrix fields (%s); parent %s owns %d of them (%s) — operator must pick targetMatrixField',
+                            $rowKey,
+                            $bt,
+                            count($owners),
+                            implode(', ', $owners),
+                            $parentShort,
+                            count($candidates),
+                            implode(', ', $candidates),
+                        );
+                        continue;
+                    }
+                    // Zero candidates means parent doesn't own ANY Matrix
+                    // containing this block-type → block-type was wrong.
                     $warnings[] = sprintf(
-                        'page-part %s|%s|%s blockType=%s appears in %d Matrix fields (%s) — operator must pick targetMatrixField',
-                        (string) ($pRow['pagePartClass'] ?? '?'),
-                        (string) ($pRow['parentPageClass'] ?? '?'),
-                        (string) ($pRow['context'] ?? '?'),
+                        'page-part %s blockType=%s does not belong to any Matrix the parent %s owns (%s); blockType is mis-routed',
+                        $rowKey,
+                        $bt,
+                        $parentShort,
+                        implode(', ', $parentOwned),
+                    );
+                    continue;
+                }
+
+                if (count($owners) > 1) {
+                    $warnings[] = sprintf(
+                        'page-part %s blockType=%s appears in %d Matrix fields (%s) — operator must pick targetMatrixField',
+                        $rowKey,
                         $bt,
                         count($owners),
                         implode(', ', $owners),
