@@ -73,6 +73,7 @@ final class MappingCompiler extends Component
      *   sections: array<string, array<string, mixed>>,
      *   sites: array<string, string>,
      *   pageParts: array<string, array<string, mixed>>,
+     *   taxonomies: array<string, array<string, string>>,
      *   _compileReport: array{
      *     nodeClassesEmitted: int,
      *     sectionsEmitted: int,
@@ -80,6 +81,9 @@ final class MappingCompiler extends Component
      *     skippedNodeClasses: list<string>,
      *     fallbackEntryTypeApplied: list<string>,
      *     implicitBlocksEmitted: int,
+     *     taxonomiesEmitted: int,
+     *     layoutBlocksEmitted: int,
+     *     dataProvidersEmitted: int,
      *     warnings: list<string>,
      *   },
      * }
@@ -338,12 +342,22 @@ final class MappingCompiler extends Component
         ksort($nodeClasses);
         $warnings = array_merge($warnings, $implicitWarnings);
 
+        // Phase 8 / D-07: compile mapping.taxonomies block from accepted kind=taxonomy
+        // proposals. Identity key = FQCN. Skip-existing per MAP-04 — operator-curated
+        // mapping.taxonomies entries always win.
+        $existingTaxonomies = (array) ($mapping['taxonomies'] ?? []);
+        [$taxonomiesOut, $taxonomiesEmitted, $taxonomyWarnings] =
+            $this->compileTaxonomies($proposals, $existingTaxonomies);
+        ksort($taxonomiesOut);
+        $warnings = array_merge($warnings, $taxonomyWarnings);
+
         return [
             'proposals'    => array_values($proposals),
             'nodeClasses'  => $nodeClasses,
             'sections'     => $sections,
             'sites'        => $sitesOut,
             'pageParts'    => $pagePartsOut,
+            'taxonomies'   => $taxonomiesOut,
             '_compileReport' => [
                 'nodeClassesEmitted'        => count($nodeClasses),
                 'sectionsEmitted'           => count($sections),
@@ -355,6 +369,9 @@ final class MappingCompiler extends Component
                 'fallbackEntryTypeUsed'     => $defaultEntryType,
                 'fallbackBlockTypeUsed'     => $defaultBlockType,
                 'implicitBlocksEmitted'     => $implicitEmitted,
+                'taxonomiesEmitted'         => $taxonomiesEmitted,
+                'layoutBlocksEmitted'       => 0,  // populated by Plan 09 / Wave 3
+                'dataProvidersEmitted'      => 0,  // populated by Plan 09 / Wave 3
                 'warnings'                  => $warnings,
             ],
         ];
@@ -702,5 +719,47 @@ final class MappingCompiler extends Component
         }
         sort($winners);
         return (string) ($winners[0] ?? '');
+    }
+
+    /**
+     * Phase 8 / D-07: compile mapping.taxonomies block from accepted kind=taxonomy
+     * proposals. Identity key = FQCN. Skip-existing per MAP-04 — operator-curated
+     * mapping.taxonomies entries always win.
+     *
+     * Output entry shape (per FQCN): { sourceTable, targetSection, targetEntryType }.
+     * No nested fields[] — field-level mapping is inferred from same-sourceTable
+     * kind=column rows at compile/transform time, the same convention nodeClasses use.
+     *
+     * @param  list<array<string, mixed>>          $proposals
+     * @param  array<string, mixed>                $existingTaxonomies  Operator-curated taxonomies block from mapping.yaml
+     * @return array{0: array<string, array<string, string>>, 1: int, 2: list<string>}
+     *         [taxonomiesOut, taxonomiesEmitted, warnings]
+     */
+    private function compileTaxonomies(array $proposals, array $existingTaxonomies): array
+    {
+        $taxonomiesOut = [];
+        foreach ($existingTaxonomies as $k => $v) {
+            if (is_string($k) && is_array($v)) {
+                $taxonomiesOut[$k] = $v;
+            }
+        }
+        $emitted = 0;
+        $warnings = [];
+        foreach ($proposals as $row) {
+            if (!is_array($row)) { continue; }
+            if (((string) ($row['kind'] ?? '')) !== 'taxonomy') { continue; }
+            if (((string) ($row['status'] ?? '')) !== 'accepted') { continue; }
+            $fqcn = (string) ($row['fqcn'] ?? '');
+            if ($fqcn === '') { continue; }
+            // Skip-existing: operator-curated mapping.taxonomies wins (MAP-04).
+            if (isset($taxonomiesOut[$fqcn])) { continue; }
+            $taxonomiesOut[$fqcn] = [
+                'sourceTable'     => (string) ($row['sourceTable'] ?? ''),
+                'targetSection'   => (string) ($row['targetSection'] ?? ''),
+                'targetEntryType' => (string) ($row['targetEntryType'] ?? ''),
+            ];
+            $emitted++;
+        }
+        return [$taxonomiesOut, $emitted, $warnings];
     }
 }
