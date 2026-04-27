@@ -6,9 +6,10 @@
          testdox="true"
          cacheDirectory=".phpunit.cache"
          requireCoverageMetadata="false">
+    <!-- Phase 5 / Plan 05-01: Integration testsuite added in Plan 05-02 (D-13). -->
     <testsuites>
         <testsuite name="Unit">
-            <directory>tests</directory>
+            <directory>tests/unit</directory>
         </testsuite>
     </testsuites>
 </phpunit>

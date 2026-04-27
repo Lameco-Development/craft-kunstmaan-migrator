@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 5 planned — 8 plans across 4 waves (Wave 1: 05-01 tests/ reorg; Wave 2: 05-02 phpunit infra + 05-03 transform fixtures + 05-04 RehearsalController; Wave 3: 05-05 analyze/finalize unit tests + 05-06 field-handler unit tests + 05-07 CI smoke job; Wave 4: 05-08 RELEASE-CHECKLIST + CHANGELOG + RECONCILIATION). Plan-checker found 1 blocker (self-inconsistent D-22 grep in 05-04) — fixed in-band by surgical edit to inline comment. All 4 TST requirements covered, all 26 D-decisions referenced. RehearsalController DELIBERATELY OMITS NeverProductionTrait (D-22). Next: /gsd-execute-phase 5.
-stopped_at: Phase 5 plans ready — execute-phase next
-last_updated: "2026-04-27T01:00:00.000Z"
+status: Executing Phase 5
+stopped_at: Phase 4 closed. All 12 plans shipped; Plan 12 grew the test corpus 60 → 83 tests / 137 → 210 assertions across 7 new test files + the phase-level RECONCILIATION.md aggregate. Phase 4 ready for `/gsd-verify-work`; Phase 5 (Tests, Rehearsal & Release) is the next milestone phase via `/gsd-discuss-phase 5`.
+last_updated: "2026-04-27T08:25:25.174Z"
 progress:
   total_phases: 7
   completed_phases: 6
-  total_plans: 53
+  total_plans: 61
   completed_plans: 53
-  percent: 100
+  percent: 87
 ---
 
 # State
@@ -21,7 +21,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped.
 
-**Current focus:** Phase 4.1 closed (2026-04-26, PASS-WITH-NOTES). All 7 plans shipped: env source-of-truth (`KunstmaanEnvReader` + `Settings::beforeValidate` DSN auto-fill + Doctor 9th/10th env-source + locale-Rung-0 checks), CP slimming to 9 fields with `config/kunstmaan-migrator.example.php` documenting 14+2 file-only overrides, adapter Settings/CLI gates with 4-distinct-warn-line REPORT.md (CFG-07 always-emit), VerifyController $filters plumb-through into CountGate + BaselineCounter (closes intelephense $filters-unused finding), `DoctrineEntityParser` slimmed to attributes-only (366→316 LOC, zero `@ORM` hits), and `migrate sync-assets` recovery command with terminal-state marker. Test corpus grew 83→179 tests / 210→488 assertions. **REC-02 deferred to Phase 4.2** — Plan 04.1-07 Task 1 discovery (Finding B) confirmed no `relation:deferred` marker exists in `kunstmaanmigrator_state`; deferred references resolve as in-memory `asset:N` / `[NT<id>]` tokens at finalize time, so there is nothing for `migrate sync-relations` to act on until `RelationHandler` / `AtomicMigrationService` gain a state-write surface. Phase-level RECONCILIATION.md cites G-01 (363cc5c) + G-03 (0f56288) preserved invariants and retires the two bug-codifying greps from Plan 04-05 per D-19. Next: Phase 5 (Tests, Rehearsal & Release) via `/gsd-discuss-phase 5`.
+**Current focus:** Phase 5 — tests-rehearsal-release
 
 ## Milestone
 
