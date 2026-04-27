@@ -149,6 +149,49 @@ class CompileController extends Controller
             count($compiled['sites']),
         ), Console::FG_GREEN);
 
+        // Validate compiled section handles against Craft's actual entry-type
+        // catalog. Compiler derives candidate handles from FQCN basenames
+        // (NewsPage → newsPage), but Craft's project-config typically uses
+        // shorter / domain-specific names (newsPages, casePage, etc.) that
+        // can't be auto-derived. Surface mismatches NOW so operators don't
+        // discover them at first --live failure.
+        $craftHandles = $this->craftEntryTypeHandles();
+        $missing = [];
+        $matched = [];
+        foreach ($compiled['nodeClasses'] as $fqcn => $spec) {
+            $section = (string) ($spec['section'] ?? '');
+            if ($section === '') {
+                continue;
+            }
+            if (in_array($section, $craftHandles, true)) {
+                $matched[] = $section;
+                continue;
+            }
+            $missing[$fqcn] = [
+                'derived' => $section,
+                'suggestions' => $this->suggestCraftHandle($section, $craftHandles),
+            ];
+        }
+        if ($missing !== []) {
+            $this->stdout(sprintf(
+                "  WARN %d nodeClasses point at entry types Craft does NOT have. Migrate --live will fail per-entry on these.\n",
+                count($missing),
+            ), Console::FG_YELLOW);
+            $this->stdout("        Either rename the section: handle in the compiled mapping.yaml,\n", Console::FG_YELLOW);
+            $this->stdout("        or create the missing entry type in Craft. Suggested matches:\n", Console::FG_YELLOW);
+            foreach ($missing as $fqcn => $info) {
+                $sugg = $info['suggestions'] !== []
+                    ? ' → try ' . implode(' / ', $info['suggestions'])
+                    : ' → no close match in Craft';
+                $this->stdout(sprintf("        - %s : section=%s%s\n", $fqcn, $info['derived'], $sugg), Console::FG_YELLOW);
+            }
+        } elseif ($matched !== []) {
+            $this->stdout(sprintf(
+                "  OK   all %d compiled section handles match real Craft entry types\n",
+                count(array_unique($matched)),
+            ), Console::FG_GREEN);
+        }
+
         if (!empty($report['skippedNodeClasses'])) {
             $this->stdout(
                 "  WARN skipped " . count($report['skippedNodeClasses']) . " page entities:\n",
@@ -193,6 +236,62 @@ class CompileController extends Controller
 
         $this->stdout("\nCompile: PASS\n", Console::FG_GREEN);
         return ExitCode::OK;
+    }
+
+    /**
+     * Snapshot Craft's currently-configured entry-type handles. Used by the
+     * compile validation step to flag compiled section: handles that don't
+     * exist in Craft (which would fail per-entry at migrate --live time).
+     *
+     * @return list<string>
+     */
+    private function craftEntryTypeHandles(): array
+    {
+        $out = [];
+        foreach (Craft::$app->entries->getAllEntryTypes() as $et) {
+            $h = (string) $et->handle;
+            if ($h !== '') {
+                $out[] = $h;
+            }
+        }
+        return array_values(array_unique($out));
+    }
+
+    /**
+     * Suggest up to 3 Craft entry-type handles closest to a derived candidate.
+     * Order: case-insensitive exact, then candidate-as-substring-of-craft,
+     * then craft-as-substring-of-candidate, then Levenshtein-nearest. Empty
+     * list when nothing within plausible edit distance.
+     *
+     * @param  list<string> $craftHandles
+     * @return list<string>
+     */
+    private function suggestCraftHandle(string $candidate, array $craftHandles): array
+    {
+        if ($candidate === '' || $craftHandles === []) {
+            return [];
+        }
+        $candidateLc = strtolower($candidate);
+        $tier1 = []; // case-insensitive exact
+        $tier2 = []; // substring match either direction
+        $tier3 = []; // levenshtein-nearest
+        foreach ($craftHandles as $h) {
+            $hLc = strtolower($h);
+            if ($hLc === $candidateLc) {
+                $tier1[] = $h;
+            } elseif (str_contains($hLc, $candidateLc) || str_contains($candidateLc, $hLc)) {
+                $tier2[] = $h;
+            } else {
+                $dist = levenshtein($candidateLc, $hLc);
+                if ($dist <= max(3, (int) (strlen($candidateLc) / 3))) {
+                    $tier3[] = [$h, $dist];
+                }
+            }
+        }
+        usort($tier3, static fn(array $a, array $b): int => $a[1] <=> $b[1]);
+        $tier3 = array_map(static fn(array $p): string => (string) $p[0], $tier3);
+        $merged = array_merge($tier1, $tier2, $tier3);
+        return array_slice(array_values(array_unique($merged)), 0, 3);
     }
 
     /**
