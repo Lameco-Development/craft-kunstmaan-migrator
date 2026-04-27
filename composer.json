@@ -36,7 +36,14 @@
         }
     },
     "scripts": {
-        "test": "vendor/bin/phpunit"
+        "test": "vendor/bin/phpunit",
+        "test-unit": "vendor/bin/phpunit --testsuite Unit",
+        "test-integration": "vendor/bin/phpunit --testsuite Integration",
+        "test-coverage": [
+            "@php -r \"if (!extension_loaded('pcov') && !extension_loaded('xdebug')) { fwrite(STDERR, 'install pcov or xdebug to run coverage' . PHP_EOL); exit(1); }\"",
+            "vendor/bin/phpunit --coverage-clover=build/coverage/clover.xml",
+            "@php tools/check-coverage.php"
+        ]
     },
     "extra": {
         "handle": "kunstmaan-migrator",
