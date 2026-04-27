@@ -391,9 +391,46 @@ final class MappingCompiler extends Component
         $existingPageParts = (array) ($mapping['pageParts'] ?? []);
         [$pagePartsOut, $nodeClasses, $implicitEmitted, $implicitWarnings] =
             $this->compileImplicitBlocks($proposals, $pageStructure, $existingPageParts, $nodeClasses);
+        $warnings = array_merge($warnings, $implicitWarnings);
+
+        // Phase 8.4 / D-19 — fold accepted kind=pagePart proposals into
+        // mapping.pageParts[<pagePartFqcn>] so TransformService::transformPageBuilder's
+        // `$mapping['pageParts'][$ppFqcn]` lookup actually finds an entry. Without
+        // this pass, every real page-part row from the LLM (or the page-part
+        // fallback) generates 0 Matrix blocks at transform time — the proposals
+        // exist in mapping.yaml but never reach the transform stage.
+        // Skip-existing: operator-curated entries always win.
+        // Field-shape: TransformService expects fields[<targetHandle>] => {source, handler}.
+        // For real pageparts the LLM doesn't propose field-level mappings yet, so we
+        // emit empty fields here — produces a Matrix block with the right type but no
+        // sub-field content. Operator can extend mapping.pageParts entries with field
+        // specs by hand. Phase 8.5+ could add a per-pagePart-table column proposer.
+        $pagePartsRegularEmitted = 0;
+        foreach ($proposals as $pRow) {
+            if (!is_array($pRow)) { continue; }
+            if (((string) ($pRow['kind'] ?? '')) !== 'pagePart') { continue; }
+            if (((string) ($pRow['status'] ?? '')) !== 'accepted') { continue; }
+            $ppFqcn = (string) ($pRow['pagePartClass'] ?? '');
+            if ($ppFqcn === '') { continue; }
+            // Skip the synthetic `__implicit_content__` rows — those are handled
+            // by compileImplicitBlocks() with parent-aware key derivation
+            // (`__implicit_content__|<parentShort>|<context>`). Folding them
+            // here under the bare `__implicit_content__` key would shadow the
+            // implicit emitter and break Phase 7's content-only flow.
+            if ($ppFqcn === '__implicit_content__') { continue; }
+            if (isset($pagePartsOut[$ppFqcn])) { continue; }
+            $blockType = (string) ($pRow['targetBlockType'] ?? '');
+            if ($blockType === '') { continue; }
+            // Carry through any operator-supplied fields map; default to empty.
+            $fieldsMap = (array) ($pRow['fields'] ?? []);
+            $pagePartsOut[$ppFqcn] = [
+                'target' => $blockType,
+                'fields' => $fieldsMap,
+            ];
+            $pagePartsRegularEmitted++;
+        }
         ksort($pagePartsOut);
         ksort($nodeClasses);
-        $warnings = array_merge($warnings, $implicitWarnings);
 
         // Phase 8.3 / D-16 — propagate targetMatrixField from accepted
         // kind=pagePart rows to the parent nodeClasses[fqcn].pageBuilderHandle.
@@ -480,6 +517,7 @@ final class MappingCompiler extends Component
                 'fallbackBlockTypeApplied'  => $fallbackBlockTypeApplied,
                 'autoFilledMatrixField'     => $autoFilledMatrixField,
                 'pageBuilderHandlePropagated' => $pbHandlePropagated,
+                'pagePartsRegularEmitted'   => $pagePartsRegularEmitted,
                 'fallbackEntryTypeUsed'     => $defaultEntryType,
                 'fallbackBlockTypeUsed'     => $defaultBlockType,
                 'implicitBlocksEmitted'     => $implicitEmitted,
@@ -915,6 +953,29 @@ final class MappingCompiler extends Component
                     if ($legacyCol === '' || $craftHandle === '') { continue; }
                     $fields[$legacyCol] = $craftHandle;
                 }
+
+                // Phase 8.4 / D-18 — taxonomy title heuristic. Taxonomy entries
+                // need a Craft `title` to render as anything other than
+                // `[legacy id N]`. The residual-column LLM tends to drop these
+                // (rationale: "categories should be a Craft Categories field
+                // type, not page columns") leaving the column row with an
+                // empty targetHandle. Auto-default common title-like column
+                // names (`name` / `title` / `label`) to `targetHandle: title`
+                // so taxonomy entries get a meaningful title without operator
+                // hand-edits. Operator-set targetHandle (non-empty) wins.
+                foreach ($proposals as $colRow) {
+                    if (!is_array($colRow)) { continue; }
+                    if (((string) ($colRow['kind'] ?? 'column')) !== 'column') { continue; }
+                    if (((string) ($colRow['table'] ?? '')) !== $sourceTable) { continue; }
+                    $legacyCol = (string) ($colRow['column'] ?? '');
+                    $tgt = (string) ($colRow['targetHandle'] ?? $colRow['targetField'] ?? '');
+                    // Skip if already mapped (operator/LLM win).
+                    if ($tgt !== '') { continue; }
+                    if (isset($fields[$legacyCol])) { continue; }
+                    if (!in_array(strtolower($legacyCol), ['name', 'title', 'label'], true)) { continue; }
+                    $fields[$legacyCol] = 'title';
+                }
+
                 ksort($fields);
             }
 

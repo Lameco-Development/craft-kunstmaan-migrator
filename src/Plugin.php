@@ -227,6 +227,24 @@ class Plugin extends BasePlugin
         $this->kunstmaanSourceScanner->mediaScanner  = $this->mediaFkScanner;
         $this->kunstmaanSourceScanner->legacyDb      = $this->legacyDbService;
 
+        // Phase 8.4 / D-17 — prime sourceCheckoutPath on the entity parser at
+        // plugin init so commands other than analyze (migrate, doctor) get a
+        // warmable parser too. Without this priming the parser stays empty
+        // outside the analyze pipeline (KunstmaanSourceScanner::scan() is the
+        // only other code path that sets the property), DetailTableResolver
+        // throws on every PagePart FQCN → ExtractService::loadPageParts()
+        // silently drops every kuma_page_part_refs row → migrate transforms
+        // every page with empty pageBuilder content. Cross-wire entityParser
+        // onto the resolver too (mirrors the scan-time wire on line ~131 of
+        // KunstmaanSourceScanner).
+        $sourceCheckoutPath = $this->kunstmaanSourcePathResolver->resolve();
+        if (is_string($sourceCheckoutPath) && $sourceCheckoutPath !== '') {
+            $this->doctrineEntityParser->sourceCheckoutPath = $sourceCheckoutPath;
+            if ($this->detailTableResolver->entityParser === null) {
+                $this->detailTableResolver->entityParser = $this->doctrineEntityParser;
+            }
+        }
+
         // KnowledgeBase needs legacyDb for renderPagesMarkdown / renderPagePartsMarkdown
         // (used by AnalyzeController's LLM classifier step). Without this wire the LLM
         // pass throws LogicException at first KB render.

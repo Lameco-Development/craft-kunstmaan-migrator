@@ -194,6 +194,13 @@ class CompileController extends Controller
                 count($pbHandlePropagated),
             ), Console::FG_GREEN);
         }
+        $pagePartsRegularEmitted = (int) ($report['pagePartsRegularEmitted'] ?? 0);
+        if ($pagePartsRegularEmitted > 0) {
+            $this->stdout(sprintf(
+                "  OK   compiled %d regular page-part(s) into mapping.pageParts\n",
+                $pagePartsRegularEmitted,
+            ), Console::FG_GREEN);
+        }
         if ($fallbackApplied === [] && $report['fallbackEntryTypeUsed'] === null) {
             // Operator hasn't opted in to graceful fallback. If we skipped any
             // FQCNs for "no targetEntryType", nudge them toward the setting.
