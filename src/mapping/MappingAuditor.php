@@ -83,7 +83,7 @@ final class MappingAuditor extends Component
      * separate concern (escalated by --source-strict, not --audit-strict).
      *
      * @param list<array<string, mixed>> $mappingProposals
-     * @return list<array{table: string, column: string, targetEntryType: string, targetHandle: string, kind: string, detail: string}>
+     * @return list<array{table: string, column: string, targetEntryType: string, targetHandle: string, kind: string, detail: string, fqcn?: string}>
      */
     public function audit(array $mappingProposals): array
     {
@@ -111,6 +111,99 @@ final class MappingAuditor extends Component
                 }
                 continue;
             }
+
+            // Phase 8 / D-07: kind=taxonomy audit branch. Taxonomy rows are entity-level
+            // (FQCN → section/entry-type) — they carry NO nested fields[] (field-level
+            // mapping is inferred from same-sourceTable kind=column rows). The
+            // block-availability validator below does NOT apply to taxonomies (they
+            // are not Matrix-block-shaped). Only `accepted` taxonomy rows are validated;
+            // `needs-review` / `proposed` are still operator-pending.
+            if (((string) ($row['kind'] ?? '')) === 'taxonomy') {
+                if ($status !== 'accepted') {
+                    continue;
+                }
+                $taxFqcn        = (string) ($row['fqcn'] ?? '');
+                $taxSourceTable = (string) ($row['sourceTable'] ?? '');
+                $taxSection     = (string) ($row['targetSection'] ?? '');
+                $taxEntryType   = (string) ($row['targetEntryType'] ?? '');
+
+                // 1) targetSection must resolve via Craft::$app->entries->getSectionByHandle.
+                $sectionResolved = false;
+                if ($taxSection !== '') {
+                    $sectionResolved = Craft::$app->entries->getSectionByHandle($taxSection) !== null;
+                }
+                if (!$sectionResolved) {
+                    $findings[] = [
+                        'table'           => $taxSourceTable,
+                        'column'          => '',
+                        'targetEntryType' => $taxEntryType,
+                        'targetHandle'    => '',
+                        'fqcn'            => $taxFqcn,
+                        'kind'            => 'missing-section',
+                        'detail'          => sprintf(
+                            "Taxonomy %s targets section '%s' which does not resolve via Craft::\$app->entries->getSectionByHandle()",
+                            $taxFqcn,
+                            $taxSection,
+                        ),
+                    ];
+                }
+
+                // 2) targetEntryType must resolve (reuse existing entryType cache + 'missing-entry-type' kind).
+                if ($taxEntryType !== '') {
+                    if (!array_key_exists($taxEntryType, $entryTypeCache)) {
+                        $entryTypeCache[$taxEntryType] = Craft::$app->entries->getEntryTypeByHandle($taxEntryType);
+                    }
+                    if ($entryTypeCache[$taxEntryType] === null) {
+                        $findings[] = [
+                            'table'           => $taxSourceTable,
+                            'column'          => '',
+                            'targetEntryType' => $taxEntryType,
+                            'targetHandle'    => '',
+                            'fqcn'            => $taxFqcn,
+                            'kind'            => 'missing-entry-type',
+                            'detail'          => "EntryType '{$taxEntryType}' not found in Craft (taxonomy {$taxFqcn}).",
+                        ];
+                    }
+                }
+
+                // 3) Taxonomy must have at least one kind=column row on its sourceTable —
+                // field-level mapping is inferred from those rows (D-07). Zero column rows
+                // on the source table means no fields can be migrated.
+                if ($taxSourceTable !== '') {
+                    $hasColumnRows = false;
+                    foreach ($mappingProposals as $sibling) {
+                        if (!is_array($sibling)) {
+                            continue;
+                        }
+                        if (((string) ($sibling['kind'] ?? 'column')) !== 'column') {
+                            continue;
+                        }
+                        if (((string) ($sibling['table'] ?? '')) === $taxSourceTable) {
+                            $hasColumnRows = true;
+                            break;
+                        }
+                    }
+                    if (!$hasColumnRows) {
+                        $findings[] = [
+                            'table'           => $taxSourceTable,
+                            'column'          => '',
+                            'targetEntryType' => $taxEntryType,
+                            'targetHandle'    => '',
+                            'fqcn'            => $taxFqcn,
+                            'kind'            => 'taxonomy-no-column-rows',
+                            'detail'          => sprintf(
+                                "Taxonomy %s on table %s has no field mappings (no kind=column rows on sourceTable)",
+                                $taxFqcn,
+                                $taxSourceTable,
+                            ),
+                        ];
+                    }
+                }
+
+                // Skip the column-handler-classification logic below — does not apply to taxonomy rows.
+                continue;
+            }
+
             $entryHandle = (string) ($row['targetEntryType'] ?? '');
             $fieldHandle = (string) ($row['targetHandle'] ?? '');
             $handler     = (string) ($row['handler'] ?? '');
