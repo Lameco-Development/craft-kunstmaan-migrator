@@ -76,10 +76,12 @@ completed: 2026-04-27
 Each task was committed atomically:
 
 1. **Task 1: MappingFile.buildTaxonomyRow + buildDataProviderRow + identityKey branches** — `ac3b8fc` (feat)
-2. **Task 2: MappingAuditor kind=taxonomy audit branch** — `7793506` (feat)
+2. **Task 2: MappingAuditor kind=taxonomy audit branch** — `7793506` (feat) + `b3ea44a` (fix: add `fqcn` structured key per plan action)
 3. **Task 3: MappingCompiler.compileTaxonomies scaffolding + counter wiring** — `e165e42` (feat)
 
-(No SUMMARY metadata commit yet — orchestrator merges and commits SUMMARY.md alongside other Wave 1 plans.)
+The `b3ea44a` follow-up restores the plan's literal action: each new taxonomy finding carries `'fqcn' => $taxFqcn` as a structured key (the initial Task 2 commit only embedded the FQCN in the human-readable `detail` string). The `audit()` `@return` docblock was widened to declare `fqcn?: string` to keep the type contract honest.
+
+(SUMMARY.md is committed in this worktree; the orchestrator picks it up alongside other Wave 1 plans and updates STATE.md / ROADMAP.md after the wave merges.)
 
 ## Files Created/Modified
 
@@ -123,7 +125,8 @@ None - this plan is pure scaffolding (no env vars, no external services, no DB s
 
 **Commits exist:**
 - FOUND: ac3b8fc (Task 1)
-- FOUND: 7793506 (Task 2)
+- FOUND: 7793506 (Task 2 — taxonomy audit branch)
+- FOUND: b3ea44a (Task 2 follow-up — add fqcn structured key per plan action)
 - FOUND: e165e42 (Task 3)
 
 **Acceptance criteria:**
