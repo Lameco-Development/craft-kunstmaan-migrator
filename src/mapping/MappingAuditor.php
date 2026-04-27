@@ -83,7 +83,7 @@ final class MappingAuditor extends Component
      * separate concern (escalated by --source-strict, not --audit-strict).
      *
      * @param list<array<string, mixed>> $mappingProposals
-     * @return list<array{table: string, column: string, targetEntryType: string, targetHandle: string, kind: string, detail: string}>
+     * @return list<array{table: string, column: string, targetEntryType: string, targetHandle: string, kind: string, detail: string, fqcn?: string}>
      */
     public function audit(array $mappingProposals): array
     {
@@ -138,6 +138,7 @@ final class MappingAuditor extends Component
                         'column'          => '',
                         'targetEntryType' => $taxEntryType,
                         'targetHandle'    => '',
+                        'fqcn'            => $taxFqcn,
                         'kind'            => 'missing-section',
                         'detail'          => sprintf(
                             "Taxonomy %s targets section '%s' which does not resolve via Craft::\$app->entries->getSectionByHandle()",
@@ -158,6 +159,7 @@ final class MappingAuditor extends Component
                             'column'          => '',
                             'targetEntryType' => $taxEntryType,
                             'targetHandle'    => '',
+                            'fqcn'            => $taxFqcn,
                             'kind'            => 'missing-entry-type',
                             'detail'          => "EntryType '{$taxEntryType}' not found in Craft (taxonomy {$taxFqcn}).",
                         ];
@@ -187,6 +189,7 @@ final class MappingAuditor extends Component
                             'column'          => '',
                             'targetEntryType' => $taxEntryType,
                             'targetHandle'    => '',
+                            'fqcn'            => $taxFqcn,
                             'kind'            => 'taxonomy-no-column-rows',
                             'detail'          => sprintf(
                                 "Taxonomy %s on table %s has no field mappings (no kind=column rows on sourceTable)",
