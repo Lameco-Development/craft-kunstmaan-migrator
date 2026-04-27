@@ -18,6 +18,13 @@ use yii\base\Component;
  * #[ORM\Column], relations from #[ORM\ManyToOne]/etc. Short targetEntity
  * names resolve to FQCNs via `use` statement parsing. Lazy — scans the
  * entity directory once on first access and caches the result.
+ *
+ * Phase 8 / Plan 08-02 / D-10: in addition to the `Doctrine\ORM\Mapping\*`
+ * namespace, the parser also scans the `Gedmo\Mapping\Annotation\*`
+ * namespace for `#[Gedmo\Translatable]` (and equivalent short-class /
+ * FQCN forms via the use-map). Each `DoctrineColumnInfo` exposes the
+ * per-property `isGedmoTranslatable` flag — signal #1 of the union the
+ * `TaxonomyMigrationService` consumes.
  */
 final class DoctrineEntityParser extends Component
 {
@@ -150,8 +157,8 @@ final class DoctrineEntityParser extends Component
         // --- Build use-statement map: short name → FQCN
         $useMap = $this->parseUseStatements($src);
 
-        // --- Columns
-        $columns = $this->parseColumns($src);
+        // --- Columns (use-map drives Gedmo Translatable short-class resolution per Plan 08-02 / D-10)
+        $columns = $this->parseColumns($src, $useMap);
 
         // --- Relations
         $relations = $this->parseRelations($src, $useMap, $namespace);
@@ -189,23 +196,29 @@ final class DoctrineEntityParser extends Component
     // Column parser
     // -------------------------------------------------------------------------
     /**
+     * @param array<string, string> $useMap short class name → FQCN (drives Gedmo resolution)
      * @return \lameco\kunstmaanmigrator\source\DoctrineColumnInfo[]
      */
-    private function parseColumns(string $src): array
+    private function parseColumns(string $src, array $useMap = []): array
     {
         $columns = [];
 
         // Match #[ORM\Column(...)] followed (within ≤600 chars) by $propertyName.
+        // Capture also the offset of the matched ORM\Column attribute so we
+        // can look for Gedmo attributes that may appear BEFORE the column
+        // attribute on the same property.
         preg_match_all(
             '/#\[ORM\\\\Column\s*\(([^)]*)\)\](.{0,600}?)\$(\w+)\s*;/s',
             $src,
             $matches,
-            PREG_SET_ORDER,
+            PREG_SET_ORDER | PREG_OFFSET_CAPTURE,
         );
 
         foreach ($matches as $row) {
-            $attrs    = $row[1];
-            $property = $row[3];
+            $attrs        = $row[1][0];
+            $property     = $row[3][0];
+            $matchOffset  = $row[0][1];
+            $matchEnd     = $row[3][1] + strlen($property);
 
             $colName = $property;
             if (preg_match('/\bname\s*:\s*[\'"]([^\'"]+)[\'"]/', $attrs, $m)) {
@@ -223,10 +236,131 @@ final class DoctrineEntityParser extends Component
 
             $nullable = (bool) preg_match('/\bnullable\s*[=:]\s*true\b/', $attrs);
 
-            $columns[] = new DoctrineColumnInfo($colName, $type, $nullable, $property);
+            // Plan 08-02 / D-10 — Gedmo Translatable per-property flag.
+            // Inspect the source span owned by this property: from the
+            // prior `;`/`{` boundary up to (and including) the matched
+            // `#[ORM\Column]` + tail captured before $property;. Gedmo
+            // attributes can appear before OR after #[ORM\Column].
+            $isGedmoTranslatable = $this->propertyHasGedmoTranslatable(
+                $src,
+                $matchOffset,
+                $matchEnd,
+                $useMap,
+            );
+
+            $columns[] = new DoctrineColumnInfo(
+                $colName,
+                $type,
+                $nullable,
+                $property,
+                $isGedmoTranslatable,
+            );
         }
 
         return $columns;
+    }
+
+    // -------------------------------------------------------------------------
+    // Gedmo Translatable detection (Plan 08-02 / D-10 signal #1)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Detect `#[Gedmo\Translatable]` (or any use-map / FQCN equivalent of
+     * `Gedmo\Mapping\Annotation\Translatable`) within the source span
+     * belonging to a single property declaration.
+     *
+     * The "property span" is the textual region from the previous statement
+     * boundary (`;` or `{`) up to the property declaration end. Both
+     * orderings — `#[Gedmo\Translatable] #[ORM\Column]` and `#[ORM\Column]
+     * #[Gedmo\Translatable]` — are recognized.
+     *
+     * SRC-20 invariant: docblock `@Gedmo\Translatable` is NOT recognized.
+     * Only PHP 8 attribute syntax (`#[...]`) flips the flag.
+     *
+     * @param array<string, string> $useMap short class name → FQCN
+     */
+    private function propertyHasGedmoTranslatable(
+        string $src,
+        int $columnAttrOffset,
+        int $propertyEndOffset,
+        array $useMap,
+    ): bool {
+        // Walk backwards from columnAttrOffset to find the previous `;` or
+        // `{` — that's the start of this property's attribute block. This
+        // anchors the lookbehind so a Gedmo attribute on the PRIOR property
+        // doesn't leak into this property's flag.
+        $blockStart = 0;
+        for ($i = $columnAttrOffset - 1; $i >= 0; $i--) {
+            $ch = $src[$i];
+            if ($ch === ';' || $ch === '{' || $ch === '}') {
+                $blockStart = $i + 1;
+                break;
+            }
+        }
+
+        $span = substr($src, $blockStart, $propertyEndOffset - $blockStart);
+
+        // Strip docblocks — SRC-20 invariant: only PHP 8 attributes count.
+        // A `@Gedmo\Translatable` inside `/** ... */` MUST NOT flip the flag.
+        $span = (string) preg_replace('!/\*.*?\*/!s', '', $span);
+
+        // Match every `#[Foo\Bar]` (or `#[\Foo\Bar]`, `#[Foo]`) attribute
+        // header in the span. Only the leading class name matters for FQCN
+        // resolution; argument lists are irrelevant for Translatable
+        // (it takes no positional args we care about).
+        if (
+            !preg_match_all(
+                '/#\[\s*\\\\?([\w\\\\]+)/',
+                $span,
+                $attrMatches,
+            )
+        ) {
+            return false;
+        }
+
+        $gedmoFqcn = 'Gedmo\\Mapping\\Annotation\\Translatable';
+
+        foreach ($attrMatches[1] as $attrName) {
+            $resolved = $this->resolveAttributeFqcn($attrName, $useMap);
+            if ($resolved === $gedmoFqcn) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve an attribute class name as written (e.g. `Gedmo\Translatable`,
+     * `Translatable`, `\Gedmo\Mapping\Annotation\Translatable`) to its FQCN
+     * via the file's use-map. Mirrors the convention used by
+     * `resolveTargetEntity()` for ManyToOne targetEntity short names.
+     *
+     * @param array<string, string> $useMap short class name → FQCN
+     */
+    private function resolveAttributeFqcn(string $attrName, array $useMap): string
+    {
+        $name = ltrim($attrName, '\\');
+        if ($name === '') {
+            return '';
+        }
+
+        // Already fully qualified: e.g. `Gedmo\Mapping\Annotation\Translatable`
+        // (with leading `\` stripped above). Match against the canonical FQCN
+        // shape directly.
+        if (strpos($name, '\\') !== false) {
+            // First segment may be a use-map alias (`Gedmo\Translatable` where
+            // `use Gedmo\Mapping\Annotation as Gedmo;`). Try alias-prefix
+            // resolution before treating the whole string as an FQCN.
+            [$head, $rest] = explode('\\', $name, 2);
+            if (isset($useMap[$head])) {
+                return $useMap[$head] . '\\' . $rest;
+            }
+            return $name;
+        }
+
+        // Bare short name: `Translatable` — must come from a `use` statement.
+        return $useMap[$name] ?? $name;
     }
 
     // -------------------------------------------------------------------------
