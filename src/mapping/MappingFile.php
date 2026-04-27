@@ -100,7 +100,7 @@ class MappingFile extends Component
      */
     public function buildRow(array $proposal, string $initialStatus): array
     {
-        return [
+        $row = [
             'kind'            => 'column',
             'table'           => (string) ($proposal['table'] ?? ''),
             'column'          => (string) ($proposal['column'] ?? ''),
@@ -114,6 +114,14 @@ class MappingFile extends Component
             'samples'         => array_slice((array) ($proposal['samples'] ?? []), 0, 3),
             'status'          => $initialStatus,
         ];
+        // Phase 8.7 / D-32 — preserve handlerOptions for relation/asset/matrix
+        // handlers that need them (e.g. relation with stateSource pointing at
+        // a migrated section). MappingCompiler also auto-fills stateSource at
+        // compile time for ManyToOne FK columns when not set here.
+        if (isset($proposal['handlerOptions']) && is_array($proposal['handlerOptions']) && $proposal['handlerOptions'] !== []) {
+            $row['handlerOptions'] = $proposal['handlerOptions'];
+        }
+        return $row;
     }
 
     /**

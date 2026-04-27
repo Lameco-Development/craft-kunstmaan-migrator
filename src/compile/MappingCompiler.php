@@ -413,10 +413,26 @@ final class MappingCompiler extends Component
                     );
                     continue;
                 }
-                $fields[$targetHandle] = [
+                $compiled = [
                     'handler' => (string) ($r['handler'] ?? 'plain'),
                     'source'  => (string) ($r['column'] ?? $targetHandle),
                 ];
+                // Phase 8.7 / D-32 — auto-fill handlerOptions.stateSource for
+                // page-level `handler: relation` rows when the source column
+                // matches a Doctrine ManyToOne FK on the owning entity. Without
+                // this, the LLM-proposed `caseCategory ← case_study_category_id`
+                // mapping has no stateSource and RelationHandler::resolveDirect
+                // can't look up the migrated category at runtime → empty
+                // relation field on every CaseStudyPage.
+                if ($compiled['handler'] === 'relation' && !isset($r['handlerOptions'])) {
+                    $opts = $this->relationOptionsForFkColumn($fqcn, $compiled['source']);
+                    if ($opts !== null) {
+                        $compiled['handlerOptions'] = $opts;
+                    }
+                } elseif (isset($r['handlerOptions']) && is_array($r['handlerOptions']) && $r['handlerOptions'] !== []) {
+                    $compiled['handlerOptions'] = $r['handlerOptions'];
+                }
+                $fields[$targetHandle] = $compiled;
             }
             ksort($fields);
 
@@ -1153,6 +1169,52 @@ final class MappingCompiler extends Component
             $emitted++;
         }
         return [$out, $emitted, $warnings];
+    }
+
+    /**
+     * Phase 8.7 / D-32 — derive `handlerOptions` for a page-level `handler:
+     * relation` field from the owning entity's Doctrine relations.
+     *
+     * The LLM proposes `handler: relation, source: <fk_col>` for FK-shaped
+     * residual columns but doesn't always know the right `stateSource`. This
+     * helper looks up the owning entity's ManyToOne relations, finds the one
+     * whose `fkColumn` matches the source, and produces:
+     *
+     *   { stateSource: '<target_FQCN_slug>' }
+     *
+     * The state-table key shape matches `kunstmaanSourceId` (FQCN slug from
+     * ExtractService::fqcnSlug) — both pages and taxonomies use it.
+     *
+     * Returns null when:
+     *   - no Doctrine entity parser is available (test bootstrap)
+     *   - the owning entity isn't parsed
+     *   - no ManyToOne relation matches the source column
+     *
+     * @return array<string, mixed>|null
+     */
+    private function relationOptionsForFkColumn(string $owningFqcn, string $sourceCol): ?array
+    {
+        if ($owningFqcn === '' || $sourceCol === '') {
+            return null;
+        }
+        try {
+            $parser = \lameco\kunstmaanmigrator\Plugin::getInstance()->doctrineEntityParser;
+        } catch (\Throwable) {
+            return null;
+        }
+        $info = $parser->getByFqcn($owningFqcn);
+        if ($info === null) {
+            return null;
+        }
+        foreach ($info->relations as $rel) {
+            if ($rel->relationType !== 'ManyToOne') { continue; }
+            if ($rel->fkColumn !== $sourceCol) { continue; }
+            $targetFqcn = trim($rel->targetEntity, '\\');
+            if ($targetFqcn === '') { continue; }
+            $stateSource = str_replace('\\', '_', $targetFqcn);
+            return ['stateSource' => $stateSource];
+        }
+        return null;
     }
 
     /**
