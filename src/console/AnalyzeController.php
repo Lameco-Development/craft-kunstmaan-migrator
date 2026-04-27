@@ -524,11 +524,21 @@ class AnalyzeController extends Controller
             try {
                 // Adapt DoctrineEntityInfo objects → array shape proposeNonPageEntities expects.
                 // Filter out FQCNs already classified as Pages (they have a pageStructure entry).
+                // Phase 8.1 / D-05a: also exclude PagePart classes — pageparts map to
+                // page-builder Matrix blocks globally (handled by step 7.6's
+                // proposePagePartBlocks). They are NOT taxonomies; emitting them
+                // here produced status:accepted+empty-targetSection rows that
+                // crashed TaxonomyMigrationService at runtime.
                 $nonPageEntityIndex = [];
                 foreach ((array) ($sourceScan['entities'] ?? []) as $fqcn => $info) {
                     if (!is_string($fqcn) || $fqcn === '') { continue; }
                     if (isset($pageStructure[$fqcn])) { continue; }
                     if (!($info instanceof \lameco\kunstmaanmigrator\source\DoctrineEntityInfo)) { continue; }
+                    // Phase 8.1 / D-05a: exclude PagePart classes by namespace + suffix
+                    // (Kunstmaan convention — page-parts live under `*\PageParts\*` or
+                    // have a `*PagePart` class-name suffix).
+                    if (preg_match('#\\\\PageParts?\\\\#', $fqcn) === 1) { continue; }
+                    if (str_ends_with($fqcn, 'PagePart')) { continue; }
                     $nonPageEntityIndex[$fqcn] = [
                         'tableName' => $info->tableName,
                         'columns'   => $info->columns,
