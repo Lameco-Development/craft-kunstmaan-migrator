@@ -322,7 +322,7 @@ Plans:
 - [x] 08-14-PLAN.md — Doctor 11th check ext_translations (TAX-09)
 - [x] 08-15-PLAN.md — TaxonomyMigrationTest integration (TAX-10)
 - [x] 08-16-PLAN.md — MappingCompiler taxonomies/layout/dataProviders unit tests (TAX-10, PROP-06)
-- [ ] 08-17-PLAN.md — RECONCILIATION.md + CHANGELOG known-omissions + REQUIREMENTS codification (DOC-01, DOC-02)
+- [x] 08-17-PLAN.md — RECONCILIATION.md + CHANGELOG known-omissions + REQUIREMENTS codification (DOC-01, DOC-02)
 
 > Note: plan numbers 08-06 and 08-07 are intentionally absent. The three proposer additions originally drafted as 08-05/06/07 were merged into 08-05 (single plan, 3 tasks) because all three modify the same file (`src/analyze/LlmClassifier.php`) and same-wave plans require zero file overlap.
 
