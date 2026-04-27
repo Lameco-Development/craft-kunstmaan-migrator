@@ -317,7 +317,7 @@ Plans:
 - [x] 08-09-PLAN.md — MappingCompiler compile passes + counter wiring (TAX-01, PROP-05)
 - [x] 08-10-PLAN.md — MigrationFilters reachability auto-include (TAX-03)
 - [x] 08-11-PLAN.md — TaxonomyMigrationService verbatim port (TAX-06, TAX-07)
-- [ ] 08-12-PLAN.md — Plugin DI + MigrateController bolt-on/sub-action (TAX-08)
+- [x] 08-12-PLAN.md — Plugin DI + MigrateController bolt-on/sub-action (TAX-08)
 - [x] 08-13-PLAN.md — _settings.twig AI H2 group (PROP-04 polish)
 - [x] 08-14-PLAN.md — Doctor 11th check ext_translations (TAX-09)
 - [ ] 08-15-PLAN.md — TaxonomyMigrationTest integration (TAX-10)
