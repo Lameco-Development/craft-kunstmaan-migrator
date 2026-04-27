@@ -91,6 +91,43 @@ final class CraftKnowledgeBase extends Component
                         $fhandle = (string) $field->handle;
                         $ftype = $this->shortClassName(get_class($field));
                         $out[] = sprintf('  - `%s` (%s)', $fhandle, $ftype);
+
+                        // Phase 8.2 / D-15 — expand Matrix fields into their
+                        // allowed inner entry-types + sub-fields. Lets the
+                        // residual-column LLM propose dotted-path targets like
+                        // `banner_heading -> headerHome.heading` when a column
+                        // cluster on the source page table maps into a
+                        // nested-block shape on the Craft entry-type. Generic:
+                        // works for any Matrix-of-sub-entry-types pattern, not
+                        // just `headerBlock` / `bodyWrapBlock` / `bodyColumn`
+                        // slot names. One level deep — Craft Matrix-of-Matrix
+                        // is a power-user shape we deliberately do not surface.
+                        if ($field instanceof \craft\fields\Matrix) {
+                            foreach ($field->getEntryTypes() as $innerEt) {
+                                $innerEtHandle = (string) $innerEt->handle;
+                                if ($innerEtHandle === '') { continue; }
+                                $innerLayout = $innerEt->getFieldLayout();
+                                if ($innerLayout === null) { continue; }
+                                $innerFields = $innerLayout->getCustomFields();
+                                if ($innerFields === []) { continue; }
+                                $out[] = sprintf(
+                                    '    - inner `%s` block — sub-fields:',
+                                    $innerEtHandle,
+                                );
+                                foreach ($innerFields as $innerField) {
+                                    $innerHandle = (string) $innerField->handle;
+                                    if ($innerHandle === '') { continue; }
+                                    $innerType = $this->shortClassName(get_class($innerField));
+                                    $out[] = sprintf(
+                                        '      - `%s.%s` (%s) — write as `%s`',
+                                        $fhandle,
+                                        $innerHandle,
+                                        $innerType,
+                                        $fhandle . '.' . $innerHandle,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -130,6 +167,29 @@ final class CraftKnowledgeBase extends Component
                     'handle' => $fhandle,
                     'type'   => $this->shortClassName(get_class($field)),
                 ];
+
+                // Phase 8.2 / D-15 — flatten Matrix sub-entry-type sub-fields
+                // into the index using dotted-path handles (e.g.
+                // `headerHome.heading`). The residual-column LLM uses this
+                // index for its `allowed=[...]` hint, so emitting the dotted
+                // forms here lets it propose them directly. Walk one level
+                // deep to mirror the markdown surface (Matrix-of-Matrix is
+                // intentionally out of scope).
+                if ($field instanceof \craft\fields\Matrix) {
+                    foreach ($field->getEntryTypes() as $innerEt) {
+                        $innerLayout = $innerEt->getFieldLayout();
+                        if ($innerLayout === null) { continue; }
+                        foreach ($innerLayout->getCustomFields() as $innerField) {
+                            $innerHandle = (string) $innerField->handle;
+                            if ($innerHandle === '') { continue; }
+                            $fields[] = [
+                                'handle'         => $fhandle . '.' . $innerHandle,
+                                'type'           => $this->shortClassName(get_class($innerField)),
+                                'classification' => 'matrixSub',
+                            ];
+                        }
+                    }
+                }
             }
             $out[$handle] = $fields;
         }
