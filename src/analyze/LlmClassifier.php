@@ -147,6 +147,12 @@ final class LlmClassifier extends Component
                 'kunstmaan-migrator',
             );
         }
+        if ($this->wasTruncated($targetKbMarkdown, 8000)) {
+            Craft::warning(
+                'Craft KB markdown was truncated to 8000 chars for LLM prompt',
+                'kunstmaan-migrator',
+            );
+        }
 
         $all = [];
         $first = true;
