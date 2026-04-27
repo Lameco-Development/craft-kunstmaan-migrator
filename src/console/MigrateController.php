@@ -330,7 +330,7 @@ class MigrateController extends Controller
                     return ExitCode::UNSPECIFIED_ERROR;
                 }
             }
-            $loadExit = $this->runLoadFromDisk($transformedDir, $opts, $report);
+            $loadExit = $this->runLoadFromDisk($transformedDir, $opts, $report, $filters);
             if ($loadExit !== ExitCode::OK) {
                 return $loadExit;
             }
@@ -806,7 +806,7 @@ class MigrateController extends Controller
             }
         }
 
-        $exit = $this->runLoadFromDisk($transformedDir, $opts, $report);
+        $exit = $this->runLoadFromDisk($transformedDir, $opts, $report, $filters);
         $this->writeReport($storageDir, $report, $filters);
         return $exit;
     }
@@ -1424,13 +1424,34 @@ class MigrateController extends Controller
      * success, and `[N/total] <slug> → FAILED: <reason>` to stderr (FG_RED) on
      * failure (recorded via $report->recordFailure with D-50 5-frame trace).
      */
-    private function runLoadFromDisk(string $transformedDir, MigrationOptions $opts, MigrationReport $report): int
-    {
+    private function runLoadFromDisk(
+        string $transformedDir,
+        MigrationOptions $opts,
+        MigrationReport $report,
+        ?MigrationFilters $filters = null,
+    ): int {
         $plugin = Plugin::getInstance();
 
         // Pre-walk to compute total — operators want [N/total] not just [N].
+        // Phase 8.6 — when --entities is set, filter files at the load site so
+        // stale `transformed/entries/` payloads from previous runs don't leak
+        // through. Transform's `--entities` filter prevents NEW writes, but
+        // load was reading every file on disk regardless. Match by FQCN slug
+        // (path is `transformed/entries/<fqcnSlug>/<nodeId>.json`).
+        $entityAllow = $filters !== null ? $filters->entities : [];
         $files = [];
         foreach ($this->iterateTransformedFiles($transformedDir) as $f) {
+            if ($entityAllow !== []) {
+                // Path is `transformed/entries/<fqcnSlug>/<nodeId>.json` — the
+                // FQCN slug is the parent dir name (e.g. `App_Entity_Pages_HomePage`).
+                // Last underscore-segment is the simple class name we filter against.
+                $fqcnSlug = basename(dirname($f));
+                $parts = explode('_', $fqcnSlug);
+                $basename = (string) end($parts);
+                if (!in_array($basename, $entityAllow, true)) {
+                    continue;
+                }
+            }
             $files[] = $f;
         }
         $total = count($files);
