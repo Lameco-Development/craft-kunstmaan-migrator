@@ -50,4 +50,52 @@ final class PluginBootstrapTest extends TestCase
             'Plugin::config() must declare legacyDbService component',
         );
     }
+
+    /**
+     * Phase 8 / Plan 12 / TAX-08 — Plugin DI must register the
+     * TaxonomyMigrationService component slot, fan its three sibling deps
+     * (legacyDb / migrationState / mappingFile) at init() time, and expose
+     * the @property-read docblock so static analyzers and the
+     * `Plugin::getInstance()->taxonomyMigrationService` call site type-check.
+     */
+    public function testPluginDeclaresTaxonomyMigrationServiceWiring(): void
+    {
+        $source = (string) file_get_contents((new ReflectionClass(Plugin::class))->getFileName());
+
+        // Component slot.
+        self::assertStringContainsString(
+            "'taxonomyMigrationService'",
+            $source,
+            'Plugin::config() must declare taxonomyMigrationService component slot',
+        );
+        self::assertMatchesRegularExpression(
+            "/'taxonomyMigrationService'\s*=>\s*TaxonomyMigrationService::class/",
+            $source,
+            'taxonomyMigrationService component must map to TaxonomyMigrationService::class',
+        );
+
+        // DI fanout — three public sibling slots wired in init().
+        self::assertStringContainsString(
+            'taxonomyMigrationService->legacyDb',
+            $source,
+            'Plugin::init() must fan legacyDb into taxonomyMigrationService',
+        );
+        self::assertStringContainsString(
+            'taxonomyMigrationService->migrationState',
+            $source,
+            'Plugin::init() must fan migrationState into taxonomyMigrationService',
+        );
+        self::assertStringContainsString(
+            'taxonomyMigrationService->mappingFile',
+            $source,
+            'Plugin::init() must fan mappingFile into taxonomyMigrationService',
+        );
+
+        // @property-read docblock.
+        self::assertStringContainsString(
+            '@property-read TaxonomyMigrationService $taxonomyMigrationService',
+            $source,
+            'Plugin class header must expose @property-read TaxonomyMigrationService',
+        );
+    }
 }
