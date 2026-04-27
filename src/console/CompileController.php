@@ -202,6 +202,29 @@ class CompileController extends Controller
                 $implicitEmitted,
             ), Console::FG_GREEN);
         }
+        // Phase 8 / Plan 09 — surface the three new compile counters.
+        // Silent when 0 to mirror implicitBlocksEmitted convention.
+        $taxonomiesEmitted = (int) ($report['taxonomiesEmitted'] ?? 0);
+        if ($taxonomiesEmitted > 0) {
+            $this->stdout(sprintf(
+                "  OK   compiled %d taxonomy block(s) into mapping.taxonomies\n",
+                $taxonomiesEmitted,
+            ), Console::FG_GREEN);
+        }
+        $layoutBlocksEmitted = (int) ($report['layoutBlocksEmitted'] ?? 0);
+        if ($layoutBlocksEmitted > 0) {
+            $this->stdout(sprintf(
+                "  OK   compiled %d page-builder layout block(s) into mapping.nodeClasses\n",
+                $layoutBlocksEmitted,
+            ), Console::FG_GREEN);
+        }
+        $dataProvidersEmitted = (int) ($report['dataProvidersEmitted'] ?? 0);
+        if ($dataProvidersEmitted > 0) {
+            $this->stdout(sprintf(
+                "  OK   compiled %d dataProvider block(s) into mapping.dataProviders\n",
+                $dataProvidersEmitted,
+            ), Console::FG_GREEN);
+        }
 
         // Validate compiled section handles against Craft's actual entry-type
         // catalog. Compiler derives candidate handles from FQCN basenames
@@ -268,10 +291,14 @@ class CompileController extends Controller
         // 7. Serialize + write atomically.
         unset($compiled['_compileReport']); // never persist the report into mapping.yaml
         // Order keys so reads land in the operator-friendly order:
-        //   sites → sections → nodeClasses → pageParts → proposals (small-to-large).
-        // pageParts is only written when the compiler produced any (implicit-content
-        // emission, or operator-curated entries already in the input mapping).
-        $pagePartsOut = (array) ($compiled['pageParts'] ?? []);
+        //   sites → sections → nodeClasses → pageParts → taxonomies → dataProviders → proposals
+        //   (small-to-large; structural blocks before the proposals audit trail).
+        // pageParts / taxonomies / dataProviders are only written when the compiler
+        // produced any (or the operator already curated them) — keeps mapping.yaml
+        // free of empty placeholder blocks for Phase ≤ 7 projects.
+        $pagePartsOut      = (array) ($compiled['pageParts'] ?? []);
+        $taxonomiesOut     = (array) ($compiled['taxonomies'] ?? []);
+        $dataProvidersOut  = (array) ($compiled['dataProviders'] ?? []);
         $ordered = [
             'sites'       => $compiled['sites'],
             'sections'    => $compiled['sections'],
@@ -279,6 +306,12 @@ class CompileController extends Controller
         ];
         if ($pagePartsOut !== []) {
             $ordered['pageParts'] = $pagePartsOut;
+        }
+        if ($taxonomiesOut !== []) {
+            $ordered['taxonomies'] = $taxonomiesOut;
+        }
+        if ($dataProvidersOut !== []) {
+            $ordered['dataProviders'] = $dataProvidersOut;
         }
         $ordered['proposals'] = $compiled['proposals'];
         try {
