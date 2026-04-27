@@ -5,11 +5,28 @@
          colors="true"
          testdox="true"
          cacheDirectory=".phpunit.cache"
-         requireCoverageMetadata="false">
-    <!-- Phase 5 / Plan 05-01: Integration testsuite added in Plan 05-02 (D-13). -->
+         requireCoverageMetadata="false"
+         failOnPhpunitWarning="false">
     <testsuites>
         <testsuite name="Unit">
             <directory>tests/unit</directory>
         </testsuite>
+        <testsuite name="Integration">
+            <directory>tests/integration</directory>
+        </testsuite>
     </testsuites>
+    <source>
+        <include>
+            <file>src/filter/MigrationFilters.php</file>
+            <file>src/mapping/MappingFile.php</file>
+            <file>src/finalize/CkeditorRewriterService.php</file>
+            <file>src/analyze/HeuristicProposer.php</file>
+            <directory>src/fields/handlers</directory>
+        </include>
+    </source>
+    <coverage>
+        <report>
+            <clover outputFile="build/coverage/clover.xml"/>
+        </report>
+    </coverage>
 </phpunit>
