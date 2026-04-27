@@ -564,13 +564,15 @@ class AnalyzeController extends Controller
                 // closed set. Without this step, page-parts compile with
                 // fields:{} and the migrated Craft block ends up empty.
                 if ($matchedPp > 0) {
-                    [$pagePartColumns, $blockTypeFields] = $this->buildPagePartFieldsContext(
+                    [$pagePartColumns, $blockTypeFields, $pagePartRelations] = $this->buildPagePartFieldsContext(
                         $pagePartProposals,
                     );
                     if ($pagePartColumns !== [] && $blockTypeFields !== []) {
                         $this->stdout(
                             "  ... page-part fields LLM batching {$matchedPp} resolved page parts "
-                            . "(chunks of 8)\n",
+                            . "(chunks of 8)"
+                            . ($pagePartRelations !== [] ? sprintf(' (with %d relation hint(s))', count($pagePartRelations)) : '')
+                            . "\n",
                             Console::FG_GREY,
                         );
                         $ppFieldsProgressStarted = false;
@@ -594,6 +596,7 @@ class AnalyzeController extends Controller
                                     ),
                                 );
                             },
+                            $pagePartRelations,
                         );
                         if ($ppFieldsProgressStarted) {
                             Console::endProgress();
@@ -1317,8 +1320,19 @@ class AnalyzeController extends Controller
      * rows so we don't bloat the prompt with classes the proposer won't
      * touch this run.
      *
+     * Phase 8.7 / D-30 also returns `pagePartRelations`: pagePartFqcn →
+     * list<{property, type, targetFqcn, childTable, backRefColumn,
+     * childColumns}> for OneToMany / ManyToMany relations the LLM can
+     * resolve via the `relation` handler with `joinTable` options. ManyToOne
+     * relations are excluded — those land on the parent row directly via
+     * the 8.5 D-21 `_rel:<prop>.<col>` embed shape.
+     *
      * @param  list<array<string, mixed>> $pagePartProposals
-     * @return array{0: array<string, list<array{column: string, type: string}>>, 1: array<string, list<array{handle: string, type: string}>>}
+     * @return array{
+     *   0: array<string, list<array{column: string, type: string}>>,
+     *   1: array<string, list<array{handle: string, type: string}>>,
+     *   2: array<string, list<array{property: string, type: string, targetFqcn: string, childTable: string, backRefColumn: string|null, childColumns: list<string>}>>
+     * }
      */
     private function buildPagePartFieldsContext(array $pagePartProposals): array
     {
@@ -1328,6 +1342,7 @@ class AnalyzeController extends Controller
 
         $pagePartColumns = [];
         $blockTypeFields = [];
+        $pagePartRelations = [];
         foreach ($pagePartProposals as $row) {
             if (!is_array($row)) { continue; }
             $blockType = (string) ($row['targetBlockType'] ?? '');
@@ -1348,6 +1363,61 @@ class AnalyzeController extends Controller
                     }
                     if ($cols !== []) {
                         $pagePartColumns[$ppFqcn] = $cols;
+                    }
+
+                    // Phase 8.7 / D-29+D-30 — surface OneToMany + ManyToMany
+                    // relation context so the LLM can propose `handler:
+                    // relation` with `handlerOptions.joinTable=<child_table>`
+                    // when the target field is Entries / Assets.
+                    $rels = [];
+                    foreach ($info->relations as $rel) {
+                        if (!in_array($rel->relationType, ['OneToMany', 'ManyToMany'], true)) {
+                            continue;
+                        }
+                        $targetInfo = $parser->getByFqcn($rel->targetEntity);
+                        $childTable = $targetInfo?->tableName ?? '';
+                        if ($childTable === '') { continue; }
+                        // Find the back-ref column on the child by walking the
+                        // target entity's ManyToOne relations for one whose
+                        // targetEntity matches this parent FQCN. That gives us
+                        // the joinLocalColumn (the FK from child → parent).
+                        $backRef = null;
+                        if ($targetInfo !== null) {
+                            foreach ($targetInfo->relations as $childRel) {
+                                if ($childRel->relationType === 'ManyToOne'
+                                    && $childRel->targetEntity === $ppFqcn
+                                    && $childRel->fkColumn !== null
+                                    && $childRel->fkColumn !== ''
+                                ) {
+                                    $backRef = $childRel->fkColumn;
+                                    break;
+                                }
+                            }
+                        }
+                        // Phase 8.7 / D-30 — childCols feeds the LLM prompt
+                        // as the candidate list for `joinForeignColumn`. Exclude
+                        // `id` (PK) AND the back-ref FK (already surfaced
+                        // separately as `backRef`) so the LLM picks from
+                        // payload columns only. Without this, the LLM was
+                        // confusing `clients_pp_id` (back-ref) and `weight`
+                        // (ordering column) with the actual asset/entry FK.
+                        $childCols = $targetInfo !== null
+                            ? array_values(array_filter(array_map(
+                                static fn($c): string => (string) $c->columnName,
+                                $targetInfo->columns,
+                            ), static fn(string $n): bool => $n !== '' && $n !== 'id' && $n !== $backRef))
+                            : [];
+                        $rels[] = [
+                            'property'      => $rel->propertyName,
+                            'type'          => $rel->relationType,
+                            'targetFqcn'    => $rel->targetEntity,
+                            'childTable'    => $childTable,
+                            'backRefColumn' => $backRef,
+                            'childColumns'  => $childCols,
+                        ];
+                    }
+                    if ($rels !== []) {
+                        $pagePartRelations[$ppFqcn] = $rels;
                     }
                 }
             }
@@ -1383,7 +1453,7 @@ class AnalyzeController extends Controller
                 }
             }
         }
-        return [$pagePartColumns, $blockTypeFields];
+        return [$pagePartColumns, $blockTypeFields, $pagePartRelations];
     }
 
     /**

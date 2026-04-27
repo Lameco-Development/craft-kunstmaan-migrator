@@ -1214,10 +1214,16 @@ final class MappingCompiler extends Component
                 );
                 continue;
             }
-            $out[$tgt] = [
+            $compiled = [
                 'handler' => $handler !== '' ? $handler : 'plain',
                 'source'  => $src,
             ];
+            // Phase 8.7 / D-31 — preserve handlerOptions for relation/asset/
+            // matrix handlers that need them (e.g. relation with joinTable).
+            if (isset($entry['handlerOptions']) && is_array($entry['handlerOptions']) && $entry['handlerOptions'] !== []) {
+                $compiled['handlerOptions'] = $entry['handlerOptions'];
+            }
+            $out[$tgt] = $compiled;
         }
         ksort($out);
         return $out;

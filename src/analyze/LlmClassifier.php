@@ -1509,6 +1509,7 @@ final class LlmClassifier extends Component
         string $kbLegacyMd,
         string $kbCraftMd,
         ?callable $onChunk = null,
+        array $pagePartRelations = [],
     ): array {
         if ($pagePartRows === []) {
             return $pagePartRows;
@@ -1565,6 +1566,7 @@ final class LlmClassifier extends Component
                 $chunk, $pagePartColumns, $blockTypeFields,
                 $kbLegacyMd, $kbCraftMd,
                 $client, $apiKey, $model, $timeout,
+                $pagePartRelations,
             );
             foreach ($enriched as $r) {
                 $key = (string) ($r['pagePartClass'] ?? '')
@@ -1610,9 +1612,10 @@ final class LlmClassifier extends Component
         string $apiKey,
         string $model,
         int $timeout,
+        array $pagePartRelations = [],
     ): array {
         [$system, $user] = $this->buildPagePartFieldsPrompt(
-            $chunk, $pagePartColumns, $blockTypeFields, $kbLegacyMd, $kbCraftMd,
+            $chunk, $pagePartColumns, $blockTypeFields, $kbLegacyMd, $kbCraftMd, $pagePartRelations,
         );
         $response = $this->callWithBackoff($client, $apiKey, $model, $system, $user, $timeout);
         $rawBody = $this->readResponseBody($response);
@@ -1683,20 +1686,38 @@ final class LlmClassifier extends Component
                     // target must exist on the block-type, handler must be a
                     // known handler. The LLM may not invent handles.
                     if ($src === '' || $tgt === '') { continue; }
-                    if (!in_array($src, $sourceCols, true)) { continue; }
+                    // Phase 8.7 / D-31 — `id` is a synthetic source for the
+                    // relation handler's joinTable path (the page-part's own
+                    // ref_id becomes :ref in the SQL). Accept it even though
+                    // it's not in the page-part's column list.
+                    if ($src !== 'id' && !in_array($src, $sourceCols, true)) { continue; }
                     if (!in_array($tgt, $allowedFieldHandles, true)) { continue; }
                     if ($handler !== '' && !in_array($handler, $allowedHandlers, true)) {
                         $handler = '';
                     }
+                    // Phase 8.7 / D-31 — preserve handlerOptions when the LLM
+                    // proposes a relation with joinTable opts. Validate that
+                    // identifier-looking values match the safe-ident pattern
+                    // (the RelationHandler also checks at runtime, but cheap
+                    // defense-in-depth here keeps malformed picks out of
+                    // mapping.yaml entirely).
+                    $handlerOptions = is_array($fp['handlerOptions'] ?? null)
+                        ? $this->sanitiseHandlerOptions((array) $fp['handlerOptions'])
+                        : null;
+
                     // Mapping shape: keyed by sourceColumn (matches the residual
                     // emitter / mapping.pageParts[].fields convention before
                     // compile collapses to target-keyed). MappingCompiler
                     // re-keys to targetField at compile time.
-                    $fieldsOut[] = [
+                    $entry = [
                         'sourceProperty' => $src,
                         'targetHandle'   => $tgt,
                         'handler'        => $handler,
                     ];
+                    if ($handlerOptions !== null && $handlerOptions !== []) {
+                        $entry['handlerOptions'] = $handlerOptions;
+                    }
+                    $fieldsOut[] = $entry;
                 }
             }
 
@@ -1717,6 +1738,61 @@ final class LlmClassifier extends Component
             }
             $out[] = array_merge($row, ['fields' => array_values($existing)]);
         }
+        return $out;
+    }
+
+    /**
+     * Phase 8.7 / D-31 — strip + validate LLM-proposed relation handlerOptions.
+     *
+     * Whitelisted keys: `joinTable`, `joinLocalColumn`, `joinForeignColumn`,
+     * `joinOrderBy`, `stateSource`, `stateKeyPrefix`, `maxResults`. Identifier
+     * values are constrained to `^[A-Za-z0-9_]+$` (matches RelationHandler's
+     * own runtime check at T-06-02-01). Unknown keys are dropped silently.
+     *
+     * @param  array<string, mixed> $opts
+     * @return array<string, mixed>
+     */
+    private function sanitiseHandlerOptions(array $opts): array
+    {
+        $identKeys = ['joinTable', 'joinLocalColumn', 'joinForeignColumn', 'joinOrderBy', 'stateSource'];
+        $stringKeys = ['stateKeyPrefix'];
+        $intKeys = ['maxResults'];
+        $out = [];
+        foreach ($identKeys as $k) {
+            if (!isset($opts[$k])) { continue; }
+            $v = (string) $opts[$k];
+            if ($v !== '' && preg_match('/^[A-Za-z0-9_]+$/', $v) === 1) {
+                $out[$k] = $v;
+            }
+        }
+        foreach ($stringKeys as $k) {
+            if (!isset($opts[$k])) { continue; }
+            $v = (string) $opts[$k];
+            if ($v !== '') {
+                $out[$k] = $v;
+            }
+        }
+        foreach ($intKeys as $k) {
+            if (!isset($opts[$k])) { continue; }
+            $v = (int) $opts[$k];
+            if ($v > 0) {
+                $out[$k] = $v;
+            }
+        }
+
+        // Phase 8.7 / D-31 — heuristic guardrail: when joinTable is set,
+        // joinForeignColumn MUST end with `_id` (it's the FK to the target
+        // entity/asset). The LLM has been observed picking ordering columns
+        // (`weight`) here. Drop the whole option set when this fails — better
+        // to land status:needs-review than write a broken SQL query.
+        if (
+            isset($out['joinTable'])
+            && isset($out['joinForeignColumn'])
+            && !str_ends_with((string) $out['joinForeignColumn'], '_id')
+        ) {
+            return [];
+        }
+
         return $out;
     }
 
@@ -1762,6 +1838,7 @@ final class LlmClassifier extends Component
         array $blockTypeFields,
         string $kbLegacyMd,
         string $kbCraftMd,
+        array $pagePartRelations = [],
     ): array {
         $system = 'You are a Kunstmaan-to-Craft page-part FIELDS-mapping assistant. Each row below has a '
             . 'resolved (targetMatrixField, targetBlockType). Your task: for each row, propose which of '
@@ -1769,11 +1846,13 @@ final class LlmClassifier extends Component
             . 'right handler.' . "\n\n"
             . 'Reply ONLY with a JSON object of the form {"proposals": [...]}. Each proposal has shape:' . "\n"
             . '{"pagePartClass": "...", "parentPageClass": "...", "context": "...", '
-            . '"fields": [{"sourceColumn": "<name from sourceColumns>", "targetField": "<handle from allowedBlockFields>", '
+            . '"fields": [{"sourceColumn": "<name from sourceColumns OR `id` for relation handler>", '
+            . '"targetField": "<handle from allowedBlockFields>", '
             . '"handler": "<one of: asset|ckeditor|date|dropdown|email|link|matrix|plain|plainText|relation|seomatic|url>", '
+            . '"handlerOptions": {<see relation rules below>} (optional), '
             . '"confidence": "<high|medium|low>", "rationale": "<one sentence>"}, ...]}' . "\n\n"
             . 'Rules:' . "\n"
-            . '- `sourceColumn` MUST be one of that row\'s sourceColumns. `targetField` MUST be one of that row\'s allowedBlockFields. Closed sets — no invention.' . "\n"
+            . '- `sourceColumn` MUST be one of that row\'s sourceColumns (or `id` when handler=relation with joinTable). `targetField` MUST be one of that row\'s allowedBlockFields. Closed sets — no invention.' . "\n"
             . '- Pick a handler whose semantics match the source column type (e.g. ckeditor for longtext/HTML body, asset for *_id columns referencing Media, plain for short strings, url for URL columns, date for datetime columns).' . "\n"
             . '- Drop columns that have no good target. Do not force-map. Omit them from `fields[]` instead.' . "\n"
             . '- Each sourceColumn maps to AT MOST one targetField. Each targetField gets AT MOST one sourceColumn.' . "\n"
@@ -1783,6 +1862,18 @@ final class LlmClassifier extends Component
             . '  * `Entries(from: sectionA|sectionB)` — relation field. Use handler="relation" when the source is an FK column or list of FK ids; the migrator will resolve via the state table.' . "\n"
             . '  * `Assets(kinds: image|video)` — asset relation. Use handler="asset" for `*_id` columns referencing Media; the migrator resolves to the migrated asset.' . "\n"
             . '- A page-part block entry has a built-in `title` field (block-level peer, not a custom field). The migrator auto-lifts `title` from `fields[]` into the block-title position. So if the source has a `title` column whose value is a free-text heading (e.g. "Het laatste nieuws"), map it to a literal `title` targetField with handler="plain" — the lift is automatic, you don\'t need to look for a `title` handle in `allowedBlockFields`.' . "\n"
+            . '- Phase 8.7 / D-29+D-30: each row may also carry a `relations=[...]` list describing OneToMany / ManyToMany Doctrine relations on the page-part. Each relation entry has shape `<property>:<type>(target:<fqcn>, childTable:<table>, backRef:<fkColumn>, childCols:<col1|col2>)`. The `childCols` list EXCLUDES both the primary key and the back-ref column — every column in that list is a payload column you can pick from for `joinForeignColumn`.' . "\n"
+            . '  When the target field is `Entries(from: ...)` or `Assets(kinds: ...)` AND the page-part has a relation whose child table contains an FK-shaped column matching the target shape, use handler="relation" with joinTable handlerOptions:' . "\n"
+            . '  - For `Assets(kinds: image)` — pick the `<something>_id` column from `childCols` that semantically matches an image (logo_id, image_id, photo_id, picture_id, etc.):' . "\n"
+            . '    "handler": "relation", "sourceColumn": "id",' . "\n"
+            . '    "handlerOptions": {"joinTable": "<childTable>", "joinLocalColumn": "<backRef>", "joinForeignColumn": "<the_id_col>", "stateSource": "media", "stateKeyPrefix": "kuma_media:"}' . "\n"
+            . '  - For `Entries(from: <section>)` — pick the `<something>_id` column from `childCols` that semantically matches the target section:' . "\n"
+            . '    "handler": "relation", "sourceColumn": "id",' . "\n"
+            . '    "handlerOptions": {"joinTable": "<childTable>", "joinLocalColumn": "<backRef>", "joinForeignColumn": "<the_id_col>", "stateSource": "<section_handle>"}' . "\n"
+            . '  CRITICAL — `joinForeignColumn` MUST end with `_id`. It is the FK to the target asset/entry. Never pick `weight`/`position`/`sequence`/`text`/scalar columns — those are payload, not FKs. If childCols has no `_id` column, DROP the relation mapping (operator must hand-curate).' . "\n"
+            . '  Use `joinOrderBy` (set to a `weight`/`position`/`sequence` column when present) to preserve ordering — this is OPTIONAL and DIFFERENT from `joinForeignColumn`.' . "\n"
+            . '  Worked example (ClientsPagePart → clientLogosBlock with logos:Assets(kinds: image) and OneToMany clientItems → ClientItem; childTable=lameco_websitebundle_client_item; backRef=clients_pp_id; childCols=logo_id|weight|text|link|link_new_window):' . "\n"
+            . '    {"sourceColumn": "id", "targetField": "logos", "handler": "relation", "handlerOptions": {"joinTable": "lameco_websitebundle_client_item", "joinLocalColumn": "clients_pp_id", "joinForeignColumn": "logo_id", "joinOrderBy": "weight", "stateSource": "media", "stateKeyPrefix": "kuma_media:"}, "confidence": "high", "rationale": "..."}' . "\n"
             . '- Do not output prose outside the JSON object.';
 
         $partLines = [];
@@ -1801,10 +1892,36 @@ final class LlmClassifier extends Component
                 $allowedFields,
             ));
 
+            // Phase 8.7 / D-29+D-30 — render OneToMany / ManyToMany relations
+            // available on this page-part so the LLM can propose relation
+            // handler invocations with the right joinTable opts.
+            $relations = $pagePartRelations[$ppFqcn] ?? [];
+            $relationsHint = '';
+            if ($relations !== []) {
+                $bits = [];
+                foreach ($relations as $r) {
+                    if (!is_array($r)) { continue; }
+                    $childCols = (array) ($r['childColumns'] ?? []);
+                    $bits[] = sprintf(
+                        '%s:%s(target: %s, childTable: %s, backRef: %s, childCols: %s)',
+                        (string) ($r['property'] ?? '?'),
+                        (string) ($r['type'] ?? '?'),
+                        (string) ($r['targetFqcn'] ?? '?'),
+                        (string) ($r['childTable'] ?? '?'),
+                        (string) ($r['backRefColumn'] ?? '?'),
+                        $childCols !== [] ? implode('|', array_map('strval', $childCols)) : '?',
+                    );
+                }
+                if ($bits !== []) {
+                    $relationsHint = ', relations=[' . implode('; ', $bits) . ']';
+                }
+            }
+
             $partLines[] = sprintf(
                 '- pagePartClass=%s, parentPageClass=%s, context=%s, targetMatrixField=%s, targetBlockType=%s'
                 . ', sourceColumns=[%s]'
-                . ', allowedBlockFields=[%s]',
+                . ', allowedBlockFields=[%s]'
+                . '%s',
                 $ppFqcn,
                 (string) ($row['parentPageClass'] ?? '?'),
                 (string) ($row['context'] ?? '?'),
@@ -1812,6 +1929,7 @@ final class LlmClassifier extends Component
                 $blockType,
                 $sourceColsHint,
                 $allowedFieldsHint,
+                $relationsHint,
             );
         }
 
