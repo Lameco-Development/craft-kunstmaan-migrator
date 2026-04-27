@@ -28,4 +28,5 @@ final class KunstmaanCoreTables
     public const MEDIA             = 'kuma_media';
     public const SEO               = 'kuma_seo';
     public const REDIRECTS         = 'kuma_redirects';
+    public const EXT_TRANSLATIONS  = 'ext_translations';  // Phase 8 / D-08 — Gedmo Translatable; NOT kuma_-prefixed (generic Doctrine extension).
 }
