@@ -111,12 +111,71 @@ class ExtractService extends Component
     }
 
     /**
+     * Pre-count the total node rows that `run()` will iterate, given the same mapping +
+     * filters. One COUNT(*) per accepted node-class table, summed. Cheap (sub-second
+     * across a few dozen tables) and used by MigrateController to size the progress bar.
+     *
+     * @param  array<string, mixed> $mapping parsed mapping.yaml
+     * @param  MigrationFilters     $filters Phase 2 / D-10 filter spec
+     * @return int                          total node rows (or 0 if legacyDb missing)
+     */
+    public function precount(array $mapping, MigrationFilters $filters): int
+    {
+        if ($this->legacyDb === null) {
+            return 0;
+        }
+        $nodeClasses = (array) ($mapping['nodeClasses'] ?? []);
+        $entityAllow = $filters->entities;
+        $total = 0;
+        foreach ($nodeClasses as $fqcn => $spec) {
+            if (!is_string($fqcn) || !is_array($spec)) {
+                continue;
+            }
+            if (($spec['action'] ?? null) === 'SKIP') {
+                continue;
+            }
+            if ($entityAllow !== []) {
+                $basename = $fqcn;
+                $lastSlash = strrpos($fqcn, '\\');
+                if ($lastSlash !== false) {
+                    $basename = substr($fqcn, $lastSlash + 1);
+                }
+                if (!in_array($basename, $entityAllow, true)) {
+                    continue;
+                }
+            }
+            $sourceTable = (string) ($spec['sourceTable'] ?? '');
+            if ($sourceTable === '' && $this->detailTableResolver !== null) {
+                try {
+                    $sourceTable = $this->detailTableResolver->resolve($fqcn);
+                } catch (Throwable) {
+                    continue;
+                }
+            }
+            if ($sourceTable === '' || !preg_match('/^[a-zA-Z0-9_]+$/', $sourceTable)) {
+                continue;
+            }
+            try {
+                $total += (int) $this->legacyDb->queryScalar('SELECT COUNT(*) FROM `' . $sourceTable . '`');
+            } catch (Throwable) {
+                // Pre-count is best-effort; a failed count just means the bar is approximate.
+            }
+        }
+        return $total;
+    }
+
+    /**
      * @param  array<string, mixed> $mapping parsed mapping.yaml
      * @param  MigrationFilters     $filters Phase 2 / D-10 filter spec (entities/locales/since) — FILT-02
      * @param  array<string, mixed> $options {sites?: list<string>, onlyNodeClass?: string|null, limit?: int|null}
+     * @param  (callable(int $done, int $total, string $fqcn): void)|null $onProgress
+     *         Optional progress callback fired after each node row is written. `$done` is
+     *         the running count, `$total` is `precount()`'s answer (or 0 if precount was
+     *         skipped), `$fqcn` is the node class currently being processed. Null skips
+     *         emission entirely (preserves the test path's silent behaviour).
      * @return iterable<string, mixed> report — {nodeClasses: int, nodesExtracted: int, skipped: int, warnings: list<string>}
      */
-    public function run(array $mapping, MigrationFilters $filters, array $options = []): iterable
+    public function run(array $mapping, MigrationFilters $filters, array $options = [], ?callable $onProgress = null): iterable
     {
         if ($this->legacyDb === null) {
             throw new \RuntimeException('ExtractService: legacyDb not injected');
@@ -136,6 +195,11 @@ class ExtractService extends Component
             'skipped'       => 0,
             'warnings'      => [],
         ];
+
+        // Pre-count for the progress callback when one is wired. Cheap (one COUNT(*)
+        // per included node-class table). Skipped when no callback is registered to
+        // keep the no-progress path zero-overhead.
+        $precountTotal = $onProgress !== null ? $this->precount($mapping, $filters) : 0;
 
         $nodeClasses = $mapping['nodeClasses'] ?? [];
         if (!is_array($nodeClasses)) {
@@ -311,6 +375,10 @@ class ExtractService extends Component
 
                 $report['nodesExtracted']++;
                 $extracted++;
+
+                if ($onProgress !== null) {
+                    $onProgress($report['nodesExtracted'], $precountTotal, $fqcn);
+                }
             }
         }
 

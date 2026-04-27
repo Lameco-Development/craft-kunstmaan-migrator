@@ -192,13 +192,16 @@ class MigrateController extends Controller
         );
 
         // Step 3: extract (writes storage/migration/extracted/<fqcn-slug>/<node-id>.json).
+        $extractProgress = $this->makeExtractProgress();
         try {
-            $extractReport = $plugin->extractService->run($mapping, $filters);
+            $extractReport = $plugin->extractService->run($mapping, $filters, [], $extractProgress);
             $extractCounts = is_array($extractReport) ? $extractReport : iterator_to_array($extractReport);
         } catch (Throwable $e) {
+            $this->endProgressIfStarted();
             $this->stderr("  FAIL extract: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
+        $this->endProgressIfStarted();
         $extractedNodes = (int) ($extractCounts['nodesExtracted'] ?? 0);
         $this->stdout(
             "  OK   extract complete ({$extractedNodes} nodes → {$storageDir}/extracted/)\n",
@@ -211,9 +214,12 @@ class MigrateController extends Controller
         // verbatim v1 contract takes a file path, not a tuple — Plan 03-12 SUMMARY).
         $transformedDir = $storageDir . '/transformed/entries';
         $transformedCount = 0;
+        // Use the just-completed extract count as the transform denominator — extract and
+        // transform are 1:1 at the input level (locale fan-out happens in transform's output).
+        $transformProgress = $this->makeTransformProgress($extractedNodes);
         try {
             $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters) as $payload) {
+            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, [], $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
                     continue; // sentinel — counters available via the Transform run report
                 }
@@ -238,9 +244,11 @@ class MigrateController extends Controller
                 $transformedCount++;
             }
         } catch (Throwable $e) {
+            $this->endProgressIfStarted();
             $this->stderr("  FAIL transform: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
+        $this->endProgressIfStarted();
         $this->stdout(
             "  OK   transform complete ({$transformedCount} payloads → {$transformedDir})\n",
             Console::FG_GREEN,
@@ -280,8 +288,10 @@ class MigrateController extends Controller
 
         // Step 6: finalize (CKEditor token resolution pass).
         if ($this->live) {
+            $finalizeProgress = $this->makeFinalizeProgress();
             try {
-                $finalizeCounts = $plugin->finalizeWalker->walk($filters);
+                $finalizeCounts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
+                $this->endProgressIfStarted();
                 $this->stdout(sprintf(
                     "  OK   finalize complete (processed=%d rewritten=%d unresolvable=%d)\n",
                     (int) $finalizeCounts['processed'],
@@ -292,6 +302,7 @@ class MigrateController extends Controller
                 $report->incr('finalize.rewritten', (int) $finalizeCounts['rewritten']);
                 $report->incr('finalize.unresolvable', (int) $finalizeCounts['unresolvable']);
             } catch (Throwable $e) {
+                $this->endProgressIfStarted();
                 $this->stderr("  FAIL finalize: {$e->getMessage()}\n", Console::FG_RED);
                 return ExitCode::UNSPECIFIED_ERROR;
             }
@@ -525,13 +536,16 @@ class MigrateController extends Controller
             return ExitCode::CONFIG;
         }
 
+        $extractProgress = $this->makeExtractProgress();
         try {
-            $extractReport = $plugin->extractService->run($mapping, $filters);
+            $extractReport = $plugin->extractService->run($mapping, $filters, [], $extractProgress);
             $extractCounts = is_array($extractReport) ? $extractReport : iterator_to_array($extractReport);
         } catch (Throwable $e) {
+            $this->endProgressIfStarted();
             $this->stderr("  FAIL extract: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
+        $this->endProgressIfStarted();
         $this->stdout(sprintf(
             "  OK   extract complete (nodeClasses=%d nodes=%d skipped=%d warnings=%d)\n",
             (int) ($extractCounts['nodeClasses'] ?? 0),
@@ -569,9 +583,12 @@ class MigrateController extends Controller
 
         $transformedDir = $storageDir . '/transformed/entries';
         $count = 0;
+        // For standalone transform we don't have a fresh extract precount handy; count
+        // extracted/<fqcn>/*.json files on disk as the denominator. Cheap glob.
+        $transformProgress = $this->makeTransformProgress($this->countExtractedFiles($storageDir));
         try {
             $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters) as $payload) {
+            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, [], $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
                     continue;
                 }
@@ -595,9 +612,11 @@ class MigrateController extends Controller
                 $count++;
             }
         } catch (Throwable $e) {
+            $this->endProgressIfStarted();
             $this->stderr("  FAIL transform: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
+        $this->endProgressIfStarted();
 
         $this->stdout(
             "  OK   transform complete ({$count} payloads → {$transformedDir})\n",
@@ -694,12 +713,15 @@ class MigrateController extends Controller
             return ExitCode::OK;
         }
 
+        $finalizeProgress = $this->makeFinalizeProgress();
         try {
-            $counts = $plugin->finalizeWalker->walk($filters);
+            $counts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
         } catch (Throwable $e) {
+            $this->endProgressIfStarted();
             $this->stderr("  FAIL finalize: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
+        $this->endProgressIfStarted();
         $this->stdout(sprintf(
             "  OK   finalize complete (processed=%d rewritten=%d unresolvable=%d)\n",
             (int) $counts['processed'],
@@ -1703,5 +1725,109 @@ class MigrateController extends Controller
     private static function cliBypassRetourWarnLine(): string
     {
         return 'Redirect migration skipped via --no-retour (CLI override).';
+    }
+
+    // =====================================================================
+    // Progress-bar helpers (Yii\helpers\Console — same pattern as
+    // AssetMigrationService::ingestReferenced). Each maker returns a closure
+    // suited to a specific service's callback signature, lazy-starting the bar
+    // on the first invocation so callers don't need to know the total upfront.
+    // The shared $this->progressStarted flag lets endProgressIfStarted() be
+    // called from both success and exception paths without double-ending.
+    // =====================================================================
+
+    /** Set true when Console::startProgress has been called and not yet ended. */
+    private bool $progressStarted = false;
+
+    /**
+     * Build the per-row callback for ExtractService. Lazy-starts the bar on the
+     * first row so a job that immediately filters everything out emits no bar at all.
+     */
+    private function makeExtractProgress(): callable
+    {
+        return function (int $done, int $total, string $fqcn): void {
+            if (!$this->progressStarted) {
+                Console::startProgress(0, max(1, $total), '  ... extract ');
+                $this->progressStarted = true;
+            }
+            $denom = max($total, $done);
+            Console::updateProgress(
+                $done,
+                $denom,
+                sprintf('  ... extract [%d/%d %s] ', $done, $denom, $this->shortFqcn($fqcn)),
+            );
+        };
+    }
+
+    /**
+     * Build the per-row callback for TransformService. Total is supplied by the
+     * caller (typically the just-finished extract count or a count of files in
+     * extracted/<fqcn>/*.json) — TransformService itself only knows the running
+     * input count.
+     */
+    private function makeTransformProgress(int $total): callable
+    {
+        return function (int $done, string $fqcn) use ($total): void {
+            if (!$this->progressStarted) {
+                Console::startProgress(0, max(1, $total), '  ... transform ');
+                $this->progressStarted = true;
+            }
+            $denom = max($total, $done);
+            Console::updateProgress(
+                $done,
+                $denom,
+                sprintf('  ... transform [%d/%d %s] ', $done, $denom, $this->shortFqcn($fqcn)),
+            );
+        };
+    }
+
+    /**
+     * Build the per-entry callback for FinalizeWalker. Walker pre-counts via
+     * $query->count() so the total is known on the first invocation.
+     */
+    private function makeFinalizeProgress(): callable
+    {
+        return function (int $done, int $total): void {
+            if (!$this->progressStarted) {
+                Console::startProgress(0, max(1, $total), '  ... finalize ');
+                $this->progressStarted = true;
+            }
+            Console::updateProgress(
+                $done,
+                max($total, $done),
+                sprintf('  ... finalize [%d/%d] ', $done, max($total, $done)),
+            );
+        };
+    }
+
+    /** Idempotent end-of-progress; safe to call after success or exception paths. */
+    private function endProgressIfStarted(): void
+    {
+        if ($this->progressStarted) {
+            Console::endProgress();
+            $this->progressStarted = false;
+        }
+    }
+
+    /** Truncate FQCN to last 2 namespace segments for compact progress prefixes. */
+    private function shortFqcn(string $fqcn): string
+    {
+        $parts = explode('\\', trim($fqcn, '\\'));
+        $tail = array_slice($parts, -2);
+        return implode('\\', $tail);
+    }
+
+    /** Cheap glob-based count of extracted/<fqcn>/*.json — used as transform denominator. */
+    private function countExtractedFiles(string $storageDir): int
+    {
+        $root = $storageDir . '/extracted';
+        if (!is_dir($root)) {
+            return 0;
+        }
+        $count = 0;
+        foreach (glob($root . '/*', GLOB_ONLYDIR) ?: [] as $dir) {
+            $count += count(glob($dir . '/*.json') ?: []);
+        }
+        return $count;
     }
 }

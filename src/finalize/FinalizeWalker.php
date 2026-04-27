@@ -41,9 +41,13 @@ final class FinalizeWalker extends Component
      * changed; unresolvable = fields that emitted at least one <!-- MIGRATION:UNRESOLVED ... -->
      * comment after rewriting.
      *
+     * @param  (callable(int $done, int $total): void)|null $onProgress
+     *         Optional progress callback fired once per entry walked. `$total` is the
+     *         pre-counted (entry, site) pair count from `$query->count()`. Null skips
+     *         emission (test-path silent behaviour).
      * @return array{processed: int, rewritten: int, unresolvable: int}
      */
-    public function walk(MigrationFilters $filters): array
+    public function walk(MigrationFilters $filters, ?callable $onProgress = null): array
     {
         if ($this->rewriter === null) {
             throw new \RuntimeException(
@@ -66,6 +70,11 @@ final class FinalizeWalker extends Component
         if (!empty($filters->entities)) {
             $query->type($filters->entities);
         }
+
+        // Pre-count for the progress callback. Skipped when no callback is wired so
+        // the no-progress path stays a single COUNT query lighter.
+        $progressTotal = $onProgress !== null ? (int) $query->count() : 0;
+        $progressDone = 0;
 
         foreach ($query->each(50) as $entry) {
             /** @var Entry $entry */
@@ -112,22 +121,25 @@ final class FinalizeWalker extends Component
                 $rewritten++;
             }
 
-            if (!$entryDirty) {
-                continue;
+            if ($entryDirty) {
+                // propagate=false discipline: per-site save only — propagation already happened
+                // during the load pass (EntryMigrationService).
+                $ok = Craft::$app->elements->saveElement($entry, true, false);
+                if (!$ok) {
+                    $errors = $entry->getFirstErrors();
+                    $first = is_array($errors) && !empty($errors) ? (string) reset($errors) : '(no validation error)';
+                    throw new \RuntimeException(sprintf(
+                        'FinalizeWalker: saveElement failed for entry id=%d siteId=%d: %s',
+                        (int) $entry->id,
+                        (int) $entry->siteId,
+                        $first,
+                    ));
+                }
             }
 
-            // propagate=false discipline: per-site save only — propagation already happened
-            // during the load pass (EntryMigrationService).
-            $ok = Craft::$app->elements->saveElement($entry, true, false);
-            if (!$ok) {
-                $errors = $entry->getFirstErrors();
-                $first = is_array($errors) && !empty($errors) ? (string) reset($errors) : '(no validation error)';
-                throw new \RuntimeException(sprintf(
-                    'FinalizeWalker: saveElement failed for entry id=%d siteId=%d: %s',
-                    (int) $entry->id,
-                    (int) $entry->siteId,
-                    $first,
-                ));
+            $progressDone++;
+            if ($onProgress !== null) {
+                $onProgress($progressDone, $progressTotal);
             }
         }
 

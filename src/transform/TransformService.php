@@ -61,9 +61,14 @@ class TransformService extends Component
      * @param  array<string, mixed> $mapping parsed mapping.yaml
      * @param  MigrationFilters     $filters Phase 2 / D-10 filter spec (entities + locales + since)
      * @param  array<string, mixed> $options {onlyNodeClass?: string|null, limit?: int|null}
+     * @param  (callable(int $done, string $fqcn): void)|null $onProgress
+     *         Optional progress callback fired after each extracted row is consumed.
+     *         `$done` is the running input-row count; total is unknown (the input is a
+     *         streaming iterable). Caller typically pairs this with the upstream
+     *         ExtractService precount as the denominator.
      * @return iterable<array<string, mixed>> transform output payloads, one per extracted row
      */
-    public function run(iterable $extracted, array $mapping, MigrationFilters $filters, array $options = []): iterable
+    public function run(iterable $extracted, array $mapping, MigrationFilters $filters, array $options = [], ?callable $onProgress = null): iterable
     {
         if ($this->handlerRegistry === null) {
             throw new RuntimeException('TransformService: handlerRegistry not injected');
@@ -94,6 +99,7 @@ class TransformService extends Component
         $localesFilter = $filters->locales;
 
         // CONTEXT D-48 in-process pipeline reshape — extracted rows arrive via iterable instead of disk artifacts.
+        $consumed = 0;
         foreach ($extracted as $extractedRow) {
             if ($limit !== null && $processed >= $limit) {
                 break;
@@ -105,6 +111,10 @@ class TransformService extends Component
             $fqcn = (string) ($extractedRow['fqcn'] ?? '');
             if ($fqcn === '') {
                 continue;
+            }
+            $consumed++;
+            if ($onProgress !== null) {
+                $onProgress($consumed, $fqcn);
             }
             if ($onlyFqcn !== null && $fqcn !== $onlyFqcn) {
                 continue;
