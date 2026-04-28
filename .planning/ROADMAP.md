@@ -359,7 +359,7 @@ Plans:
 **Plans:** 9 plans
 
 Plans:
-- `09-01-PLAN.md` — workflow safety: merge preservation and compiled-block preflight.
+- [x] `09-01-PLAN.md` — workflow safety: merge preservation and compiled-block preflight. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-01-SUMMARY.md`.
 - [x] `09-02-PLAN.md` — source-domain filter core. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-02-SUMMARY.md`.
 - `09-02B-PLAN.md` — Craft query translation from compiled mapping.
 - `09-02C-PLAN.md` — cross-stage filter handoff and Page-owned sidecar closure.
