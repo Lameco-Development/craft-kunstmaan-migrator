@@ -53,9 +53,10 @@ use RuntimeException;
  * defeating the TST-02 regression-signal goal entirely.
  *
  * When the snapshot is absent (the on-ship state, before the operator runs
- * the capture workflow), the data provider also yields nothing — the test
- * reports as risky / no-tests-found, which is non-fatal under the current
- * phpunit.xml.dist (failOnRisky not set).
+ * the capture workflow), the default test run skips the sentinel fixture so
+ * contributors can run the suite without private rehearsal evidence. Release
+ * mode is different: set `RELEASE_REHEARSAL=1` and an empty corpus fails
+ * loudly with "Release rehearsal fixture corpus is empty".
  */
 final class TransformCharacterizationTest extends TestCase
 {
@@ -70,7 +71,8 @@ final class TransformCharacterizationTest extends TestCase
         sort($matches);
         if ($matches === []) {
             // PHPUnit 11 errors on empty data providers. Yield a sentinel so
-            // the on-ship empty-corpus state stays non-fatal (skipped, not failed).
+            // the on-ship empty-corpus state stays non-fatal outside release
+            // mode, while RELEASE_REHEARSAL=1 fails loudly in the test body.
             yield '__no_fixtures__' => ['', ''];
             return;
         }
@@ -87,6 +89,12 @@ final class TransformCharacterizationTest extends TestCase
     public function testTransformRowMatchesGolden(string $inputPath, string $goldenPath): void
     {
         if ($inputPath === '' && $goldenPath === '') {
+            if (getenv('RELEASE_REHEARSAL') === '1') {
+                self::fail(
+                    'Release rehearsal fixture corpus is empty; run tools/capture-transform-fixtures.php '
+                    . 'against the CQM rehearsal target and commit non-empty input/golden fixture pairs.',
+                );
+            }
             self::markTestSkipped('No transform fixtures present (run tools/capture-transform-fixtures.php to populate).');
         }
         $rawJson = file_get_contents($inputPath);

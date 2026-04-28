@@ -153,7 +153,20 @@ composer test
 ```
 
 CI runs `composer validate --strict` + `composer install` + `composer test` on
-PHP 8.3 / ubuntu-latest on every push and pull request.
+PHP 8.3 / ubuntu-latest on every push and pull request. The scratch-Craft smoke
+job proves the plugin installs and its CLI command loads; if migration runtime
+configuration is absent in that scratch site, the expected doctor failure is
+treated as configuration evidence rather than a successful rehearsal.
+
+Before tagging v1.0, run the transform characterization suite in release mode:
+
+```bash
+RELEASE_REHEARSAL=1 vendor/bin/phpunit tests/integration/transform/TransformCharacterizationTest.php --testdox
+```
+
+That mode fails loudly when the private CQM fixture corpus is empty. Normal
+developer runs skip the empty-corpus sentinel so contributors do not need
+private rehearsal data for unrelated changes.
 
 ## License
 

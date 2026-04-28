@@ -12,6 +12,9 @@ Manual + mechanical: every step has a pass/fail script behind it; no automated `
 2. [ ] **`composer test`** green (Unit + Integration suites).
    _Pass criterion:_ exit 0; trailing `OK (N tests, M assertions)` line.
 
+2a. [ ] **Transform characterization release guard green with real fixtures.**
+   _Pass criterion:_ `RELEASE_REHEARSAL=1 vendor/bin/phpunit tests/integration/transform/TransformCharacterizationTest.php --testdox` exits 0 against a non-empty CQM input/golden corpus. An empty corpus must fail loudly and blocks tagging.
+
 3. [ ] **`composer test-coverage`** green (per-module 70% line-coverage gate on every TST-01 module).
    _Pass criterion:_ exit 0; per-module table reports `OK` on every line; final line reports the gate as passed (`tools/check-coverage.php` exit 0 — no module under threshold).
    _Driver requirement:_ pcov OR xdebug installed locally (operator side); CI uses pcov via `shivammathur/setup-php`.
