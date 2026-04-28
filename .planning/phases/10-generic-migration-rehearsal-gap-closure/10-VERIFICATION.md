@@ -1,210 +1,205 @@
 ---
 phase: 10-generic-migration-rehearsal-gap-closure
-verified: 2026-04-28T17:14:30Z
-status: gaps_found
-score: 18/21 must-haves verified
+verified: 2026-04-28T17:46:48Z
+status: human_needed
+score: 20/21 must-haves verified
 overrides_applied: 0
-gaps:
-  - truth: "Missing taxonomy locale values use default-language values and are visibly reported."
-    status: failed
-    reason: "The empty ext_translations fallback iterates mapping.sites keys as Craft site handles, but compiled mapping convention is legacy locale => Craft site handle. For mappings such as ['nl' => 'default', 'en' => 'enUs'], fallback saves are skipped for non-primary sites and translated taxonomy values can remain incomplete without the intended fallback/report rows."
-    artifacts:
-      - path: "src/load/TaxonomyMigrationService.php"
-        issue: "The empty-translation fallback uses foreach ($sites as $siteHandle => $_siteCfg) and getSiteByHandle((string) $siteHandle), resolving legacy locale keys instead of Craft handles."
-      - path: "tests/integration/load/TaxonomyMigrationTest.php"
-        issue: "No regression test covers compiled-shape mapping.sites such as ['nl' => 'default', 'en' => 'enUs']."
-    missing:
-      - "Resolve the Craft handle from mapping.sites value, preserving array-shaped compatibility: siteHandle = is_array($siteCfg) ? ($siteCfg['siteHandle'] ?? $legacyLocale) : $siteCfg."
-      - "Add regression coverage for compiled-shape mapping.sites where locale keys differ from Craft handles."
-  - truth: "Page-owned taxonomy/relation handler failures are operator-visible and cannot silently lose relation content."
-    status: failed
-    reason: "Transform handler exceptions, including taxonomy lazy resolver failures, are caught into TransformService's local __report sentinel, but MigrateController discards that sentinel. A live migration can therefore omit a relation field after a resolver/handler exception while the main REPORT.md remains clean."
-    artifacts:
-      - path: "src/transform/TransformService.php"
-        issue: "Handler exceptions are caught and appended only to local $report['warnings']; the report is yielded as a __report sentinel."
-      - path: "src/console/MigrateController.php"
-        issue: "Payloads with __report are skipped without merging warnings/counters into MigrationReport."
-    missing:
-      - "Merge __report warnings into the main MigrationReport in MigrateController."
-      - "Add regression test proving transform handler warnings appear in REPORT.md."
-      - "Consider making live relation/taxonomy handler failures blocking to prevent saving pages with missing relations."
-  - truth: "Restored-backup CQM rerun instructions are executable against the current CLI."
-    status: partial
-    reason: "The runbook documents php craft kunstmaan-migrator/migrate --dry-run, but MigrateController exposes default dry-run behavior through absence of --live; no dry-run option is registered. The 10-04 summary confirms the proof used the actual supported default migrate command."
-    artifacts:
-      - path: ".planning/rehearsal/v1.0/cqm/README.md"
-        issue: "Runbook lists php craft kunstmaan-migrator/migrate --dry-run."
-      - path: "src/console/MigrateController.php"
-        issue: "options() registers live/confirm/preloadAssets/force/filter options, and comments/behavior show default dry-run; no dry-run option exists."
-    missing:
-      - "Replace runbook dry-run command with php craft kunstmaan-migrator/migrate."
-      - "Optionally document that dry-run is the default and --live is the write mode."
+re_verification:
+  previous_status: gaps_found
+  previous_score: 18/21
+  gaps_closed:
+    - "Taxonomy locale fallback now resolves Craft site handles from mapping.sites values, preserves array-shaped compatibility, checks localized save failures, and reports fallback site+locale honestly."
+    - "Transform __report sentinel warnings now merge into MigrationReport/REPORT.md; live relation/taxonomy handler failures block before load; standalone staged live load refuses known-bad transformed artifacts via transform-block marker; dry-run remains visible/non-failing."
+    - "CQM runbook now uses supported default dry-run command php craft kunstmaan-migrator/migrate and documents --live as write mode; unsupported --dry-run command is absent from the runbook."
+  gaps_remaining: []
+  regressions: []
+human_verification:
+  - test: "Release-owner review of Page-rooted coverage warning/unsupported classifications"
+    expected: "Every warning/unsupported Page-rooted coverage row is either explicitly accepted for v1.0 release or reclassified/fixed before tagging."
+    why_human: "The repository contains summary/count evidence, but product acceptance of visible warning/unsupported CQM coverage rows depends on release-owner intent and external rehearsal artifacts."
 ---
 
 # Phase 10: Generic Migration Rehearsal Gap Closure Verification Report
 
 **Phase Goal:** Convert the CQM release-rehearsal findings into generic migration hardening so a clean rerun can complete without the three known entry failures and without silent loss of page-owned relations or content.
-**Verified:** 2026-04-28T17:14:30Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+
+**Verified:** 2026-04-28T17:46:48Z  
+**Status:** human_needed  
+**Re-verification:** Yes — after gap closure plan `10-05` plus review fixes/recheck
 
 ## Verification Context
 
-- Previous verification checked: no existing `10-VERIFICATION.md` found.
-- Required files read: all Phase 10 plans, summaries, context/research/pattern/review files, ROADMAP, REQUIREMENTS, STATE, and `CLAUDE.md`.
-- `composer test` spot-check run during verification: exited `0`.
-- `gsd-sdk` was not available in this repository environment, so roadmap/plan must-haves were extracted directly from checked-in planning files.
+- Previous verification checked: `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-VERIFICATION.md` had `status: gaps_found`, `score: 18/21`, with three structured gaps.
+- Gap closure artifacts reviewed:
+  - `10-05-PLAN.md`
+  - `10-05-SUMMARY.md`
+  - `10-05-REVIEW.md`
+  - `10-05-REVIEW-FIX.md`
+  - `10-05-REVIEW-RECHECK.md`
+- Relevant planning context reviewed:
+  - `.planning/PROJECT.md`
+  - `.planning/REQUIREMENTS.md`
+  - `.planning/ROADMAP.md`
+  - `.planning/STATE.md`
+  - `10-CONTEXT.md`
+  - `10-RESEARCH.md`
+  - `10-PATTERNS.md`
+  - `10-PLAN.md`
+  - `10-01-SUMMARY.md` through `10-04-SUMMARY.md`
+  - `10-SUMMARY.md`
+  - `10-REVIEW.md`
+- Relevant code/docs/tests inspected:
+  - `src/load/TaxonomyMigrationService.php`
+  - `tests/integration/load/TaxonomyMigrationTest.php`
+  - `src/console/MigrateController.php`
+  - `tests/unit/console/MigrateControllerFailureExitTest.php`
+  - `.planning/rehearsal/v1.0/cqm/README.md`
+- Project skills: no `.github/skills/` or `.agents/skills/` `SKILL.md` files found.
+- Branch confirmed: `gsd/phase-9-migration-hardening-page-rooted-introspection`.
+- Working tree note: only unrelated untracked `.claude/` content was present.
 
 ## Goal Achievement
 
+### Observable Truths
+
 | # | Truth | Status | Evidence |
 |---|---|---|---|
-| 1 | ContactPage-style Matrix payloads with required block titles save generically without losing block field content. | VERIFIED | `EntryMigrationService::stripSourcePartRefs()` synthesizes deterministic titles when native `title` is missing and tests cover deterministic title and preserved fields. |
-| 2 | TextPage-style sparse-locale payloads save to Craft without blank primary-site title/slug failures and keep site enablement/source truth truthful. | VERIFIED | `primarySiteDataForSave()` borrows best available payload/title/slug only for primary save without mutating `perSite`; tests assert borrowed title/slug, original `perSite` unchanged, fallback warning/counter, and zero failures. |
-| 3 | VacancyFormPage-style invalid section/entry-type mappings are blocked or routed before load. | VERIFIED | `CraftTargetIntrospector::validateWithSeverity()` classifies missing section, section/type incompatibility, and missing entry types as fatal; compile and migrate preflight block fatal mappings. |
-| 4 | Advisory target warnings remain warning-only when they cannot cause live load failure. | VERIFIED | Missing fields/adapters remain warnings, not fatal, and compile prints warnings separately from fatal validation. |
-| 5 | PageBuilder handles propagate only when the parent entry type owns the target Matrix field. | VERIFIED | `MappingCompiler` checks parent Matrix ownership before propagation and tests cover valid/invalid propagation. |
-| 6 | Invalid PageBuilder ownership is blocked or explicitly reported with source-preserving fallback. | VERIFIED | Invalid ownership with flat fallback emits warning and preserves `flatPagePartContent`; without fallback emits operator-review warning. |
-| 7 | Matrix/sparse fallback usage is visible in operator reports or logs. | VERIFIED | `recordFallback()` writes report warning + `fallback.*` counter and Craft warning; `MigrateController::renderFallbacksSection()` renders fallback counts/warnings. |
-| 8 | Successful fallbacks do not increment failure counts. | VERIFIED | Fallback tests assert `failed` remains zero. |
-| 9 | A page with a non-empty taxonomy FK creates/reuses the referenced Craft taxonomy entry during page migration. | VERIFIED WITH CAVEAT | Normal lazy resolver path is implemented and tested. Exception visibility gap is tracked separately. |
-| 10 | Default taxonomy migration is referenced-only. | VERIFIED | `Settings::$includeUnreferencedTaxonomies = false`; `MigrateController` computes referenced-only unless CLI/settings opt in. |
-| 11 | Unreferenced taxonomy rows migrate only when explicit CLI/settings path is enabled. | VERIFIED | `migrateAll()` runs only when `$includeUnreferencedTaxonomies` is true or through explicit sub-action. |
-| 12 | Missing taxonomy locale values use default-language values and are visibly reported. | FAILED | Fallback/reporting exists for some branches, but the empty-translation branch resolves mapping keys as Craft site handles. Compiled-shape maps like `['nl' => 'default', 'en' => 'enUs']` can skip non-primary fallback saves. |
-| 13 | Dry-run creates no Craft entries and no state rows for lazy taxonomy creation. | VERIFIED | `resolveReferenced()` returns before Craft/state writes in dry-run and reports `taxonomy.wouldCreate`/`taxonomy.wouldLink`; tests assert state `record()` is not called. |
-| 14 | Verify output compares Craft baseline/current drift separately from migration-created/source-parity counts. | VERIFIED | `VerifyController` keeps baseline as Craft drift, reports migration-created state counts separately, and only runs source parity when expected source counts exist. |
-| 15 | Report labels make compared count domains explicit. | VERIFIED | Domain constants exist in `CountGateService` and are rendered by `VerifyController`. |
-| 16 | Verify no longer reports false failures caused by mismatched baseline semantics. | VERIFIED | Craft drift is informational and tests assert overall pass despite drift gate false. |
-| 17 | Regression tests cover the known generic failure categories without proprietary source content. | VERIFIED | Tests cover fallback, preflight, PageBuilder, taxonomy, and verify; full `composer test` exited `0`. |
-| 18 | Restored-backup CQM full workflow reaches zero entry failures and zero stage failures. | VERIFIED | `10-SUMMARY.md` records restored backup path, workflow, `REPORT.md` failed `0`, `Total failed: 0`, `_No per-entry failures._`, and verify domain labels. |
-| 19 | Page-owned referenced surfaces are migrated or classified as explicitly dropped/out-of-scope without counting as entry/stage failures. | HUMAN / PARTIAL | `10-SUMMARY.md` records zero failures and visible `out_of_scope`, `dropped`, `unsupported`, and `warning` rows. Dropped/out_of_scope rows are acceptable classified rows; `warning`/`unsupported` rows require release-owner acceptance or follow-up classification before tagging. |
-| 20 | No production code contains new CQM-specific page IDs, block handles, or class-name conditionals. | VERIFIED WITH NOTES | No new executable CQM-only Phase 10 production branch found. Matches are comments, historical examples, generic Kunstmaan class names, or tests. |
-| 21 | Restored-backup rerun instructions include restore, full rerun, and inspection gates and are executable. | PARTIAL | Runbook includes restore path and inspection gates, but documents unsupported `migrate --dry-run`; current CLI dry-run is default and exposes `--live`, not `--dry-run`. |
+| 1 | ContactPage-style Matrix payloads with required block titles save generically without losing block field content. | VERIFIED | Previously verified. `EntryMigrationService` fallback behavior and tests remain in place; no 10-05 regression found. |
+| 2 | TextPage-style sparse-locale payloads save to Craft without blank primary-site title/slug failures and keep site enablement/source truth truthful. | VERIFIED | Previously verified. Sparse-locale fallback was not regressed by 10-05 changes. |
+| 3 | VacancyFormPage-style invalid section/entry-type mappings are blocked or routed before load. | VERIFIED | Previously verified. `MigrateControllerFailureExitTest::testPreflightCompiledMappingBlocksLoadFatalTargetValidation()` still passes in targeted suite. |
+| 4 | Advisory target warnings remain warning-only when they cannot cause live load failure. | VERIFIED | Previously verified; compile/preflight fatal handling remains scoped to load-fatal mismatches. |
+| 5 | PageBuilder handles propagate only when the parent entry type owns the target Matrix field. | VERIFIED | Previously verified; no changes regressed `MappingCompiler` ownership behavior. |
+| 6 | Invalid PageBuilder ownership is blocked or explicitly reported with source-preserving fallback. | VERIFIED | Previously verified; no 10-05 changes to this path. |
+| 7 | Matrix/sparse fallback usage is visible in operator reports or logs. | VERIFIED | Previously verified; report fallback rendering remains. |
+| 8 | Successful fallbacks do not increment failure counts. | VERIFIED | Previously verified; targeted and full tests reported in 10-05 artifacts remain green. |
+| 9 | A page with a non-empty taxonomy FK creates/reuses the referenced Craft taxonomy entry during page migration. | VERIFIED | Normal resolver path was previously verified. The prior caveat around swallowed handler/resolver exceptions is now closed: transform handler warnings are merged into the main `MigrationReport`, and live relation/taxonomy transform failures block before load. |
+| 10 | Default taxonomy migration is referenced-only. | VERIFIED | Previously verified: `MigrateController` computes referenced-only unless CLI/settings opt in. |
+| 11 | Unreferenced taxonomy rows migrate only when explicit CLI/settings path is enabled. | VERIFIED | Previously verified: `includeUnreferencedTaxonomies` controls full pre-load taxonomy import. |
+| 12 | Missing taxonomy locale values use default-language values and are visibly reported. | VERIFIED | Closed by 10-05. `TaxonomyMigrationService::siteHandleFromMappingSite()` resolves compiled scalar values such as `['nl' => 'default', 'en' => 'enUs']`, preserves array-shaped compatibility, and fallback warnings include both `site=<Craft handle>` and `locale=<legacy locale>`. Review fix also checks localized `saveElement()` results before reporting fallback success. |
+| 13 | Dry-run creates no Craft entries and no state rows for lazy taxonomy creation. | VERIFIED | Previously verified; resolver dry-run tests remain in `TaxonomyMigrationTest`. |
+| 14 | Verify output compares Craft baseline/current drift separately from migration-created/source-parity counts. | VERIFIED | Previously verified; `10-SUMMARY.md` records restored rehearsal verify labels. |
+| 15 | Report labels make compared count domains explicit. | VERIFIED | Previously verified; `10-SUMMARY.md` records `Craft baseline/current drift`, `Migration-created state counts`, and `Source/transformed parity`. |
+| 16 | Verify no longer reports false failures caused by mismatched baseline semantics. | VERIFIED | Previously verified; restored CQM proof reached zero failures with source parity honestly marked unavailable where no source-derived expected artifact exists. |
+| 17 | Regression tests cover the known generic failure categories without proprietary source content. | VERIFIED | Targeted tests for 10-05 passed during this verification; `10-05-SUMMARY.md` and `10-05-REVIEW-FIX.md` also record full `composer test` passing. Tests use generic helper seams and source scans, not proprietary content values. |
+| 18 | Restored-backup CQM full workflow reaches zero entry failures and zero stage failures. | VERIFIED | `10-SUMMARY.md` records restored backup path and workflow with `REPORT.md` evidence: `failed 0`, `Total failed: 0`, `_No per-entry failures._`. User explicitly directed that full restored CQM rehearsal need not be rerun unless absolutely necessary. |
+| 19 | Page-owned referenced surfaces are migrated or classified as explicitly dropped/out-of-scope without counting as entry/stage failures. | HUMAN NEEDED | Automated code-level silent-loss gap is closed: relation/taxonomy transform handler failures are now visible/blocking in live flows, and staged live load refuses known-bad transformed artifacts. However, `10-SUMMARY.md` records visible `warning` and `unsupported` Page-rooted coverage rows requiring release-owner acceptance before tagging. |
+| 20 | No production code contains new CQM-specific page IDs, block handles, or class-name conditionals. | VERIFIED | 10-05 changes are generic: taxonomy mapping shape helper, transform sentinel/marker handling, and runbook docs. No CQM-specific production conditionals found in reviewed 10-05 files. |
+| 21 | Restored-backup rerun instructions include restore, full rerun, and inspection gates and are executable. | VERIFIED | Closed by 10-05. `.planning/rehearsal/v1.0/cqm/README.md` now uses `php craft kunstmaan-migrator/migrate` for default dry-run and `php craft kunstmaan-migrator/migrate --live` for write mode; unsupported `kunstmaan-migrator/migrate --dry-run` is absent from the runbook. |
 
-**Score:** 18/21 truths verified
+**Score:** 20/21 automated truths verified; 1 release-owner human verification item remains.
+
+## Previous Gaps Re-evaluated
+
+| Previous Gap | Status | Evidence |
+|---|---|---|
+| Taxonomy locale fallback must resolve Craft site handles from mapping values such as `['nl' => 'default', 'en' => 'enUs']`, preserve array-shaped compatibility, save localized fallback honestly, and visibly report fallback site+locale. | CLOSED | `TaxonomyMigrationService.php` lines 542-583 iterate `$legacyLocale => $siteCfg`, call `siteHandleFromMappingSite()`, resolve Craft site by mapped handle, check localized `saveElement()`, and only then increment/report fallback. Helper at lines 671-686 handles scalar values, array `siteHandle`, legacy-locale fallback, null/unsupported shapes. Failure helper at lines 688-710 includes taxonomy slug, legacy id, site, locale, and element errors. Tests at `TaxonomyMigrationTest.php` lines 281-331 cover compiled values, array compatibility, and error-message context. |
+| Transform `__report` sentinel warnings must reach main `MigrationReport`/`REPORT.md`; live relation/taxonomy transform handler failures must block before load; standalone staged live load must not consume known-bad transformed artifacts; dry-run must remain visible/non-failing. | CLOSED | `MigrateController::mergeTransformReportSentinel()` lines 1874-1887 prefixes warnings with `Transform:` and increments `transform.warning`. Blocking detection at lines 1889-1895 covers relation/taxonomy handler failures and `TaxonomyMigrationService` failures. Full flow writes marker and blocks live before taxonomy/load/finalize/SEO/Retour at lines 313-321. Standalone transform writes marker and blocks live at lines 781-789. `actionLoad()` reads marker at lines 848-864, records failure and returns non-zero in live mode, while dry-run only warns. Tests at `MigrateControllerFailureExitTest.php` lines 143-231 cover sentinel merge, dry-run non-failure, live synthetic failure, marker stability, and staged live-load check. |
+| CQM runbook must use supported default dry-run command `php craft kunstmaan-migrator/migrate` and document `--live` as write mode, with no unsupported `--dry-run` command. | CLOSED | README lines 13-24 list restored workflow with `php craft kunstmaan-migrator/migrate` followed by `php craft kunstmaan-migrator/migrate --live`. README line 26 explicitly states dry-run is the default mode and `--live` is write mode. Verification grep found no `kunstmaan-migrator/migrate --dry-run` in the README. |
 
 ## Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |---|---|---|---|
-| `src/compile/CraftTargetIntrospector.php` | Load-fatal target validation classification | VERIFIED | `validateWithSeverity()` returns fatal and warnings; section/type mismatch fatal. |
-| `src/console/CompileController.php` | Compile command fatal validation output and non-zero exit | VERIFIED | Prints fatal validation separately and exits `ExitCode::CONFIG`. |
-| `src/console/MigrateController.php` | Live migrate preflight, taxonomy flag wiring, report rendering, verify/runbook wiring | PARTIAL | Fatal preflight and taxonomy mode are wired. Gap: transform `__report` sentinel warnings are discarded; runbook dry-run mismatch is external doc issue. |
-| `src/compile/MappingCompiler.php` | PageBuilder ownership validation | VERIFIED | Validates parent ownership before `pageBuilderHandle` propagation; preserves flat fallback/report. |
-| `src/load/EntryMigrationService.php` | Matrix title fallback and sparse-locale primary fallback | VERIFIED | Substantive implementation and tests; fallback reporting wired via `MigrationReport`. |
-| `src/load/MigrationReport.php` | Fallback/report surface | VERIFIED | Counts/warnings used by fallback renderer. |
-| `src/load/TaxonomyMigrationService.php` | Shared taxonomy find/create resolver with locale fallback | PARTIAL | Resolver exists and is wired; mapping site-handle bug blocks full generic locale fallback truth. |
-| `src/fields/handlers/RelationHandler.php` | Delegation from taxonomy-backed relation misses | PARTIAL | Delegates correctly in normal path and reports unresolved null results, but thrown handler/resolver failures can be swallowed upstream. |
-| `src/fields/ResolverContext.php` | Optional resolver dependency transport | VERIFIED | Carries taxonomy resolver, dry-run flag, and `MigrationReport`. |
-| `src/models/Settings.php` | Persistent default for explicit full taxonomy import | VERIFIED | `includeUnreferencedTaxonomies=false`. |
-| `src/verify/BaselineCounterService.php` | Craft baseline/current drift count capture | VERIFIED | Required service exists and is consumed by `VerifyController`. |
-| `src/verify/CountGateService.php` | Domain-aware count comparison | VERIFIED | Domain constants and non-blocking flat count compare exist. |
-| `src/console/VerifyController.php` | Domain-labeled verify report rendering | VERIFIED | Renders Craft drift, migration-created state counts, and source parity separately. |
-| `.planning/rehearsal/v1.0/cqm/README.md` | Restored-backup rehearsal runbook and closing proof gates | PARTIAL | Restore path and gates exist; dry-run command is not executable against current CLI. |
+| `src/load/TaxonomyMigrationService.php` | Taxonomy locale fallback resolves Craft handles from mapping values; localized fallback saves are honest; warnings show site+locale. | VERIFIED | `applyGedmoTranslations()` uses `$legacyLocale => $siteCfg`, `siteHandleFromMappingSite()`, checks save result, and reports `site=%s locale=%s`. Both empty-translation and Gedmo overlay branches check localized `saveElement()` and throw on failure. |
+| `tests/integration/load/TaxonomyMigrationTest.php` | Regression coverage for compiled mapping shape, array compatibility, and localized save-failure reporting. | VERIFIED | Targeted test run passed: 5 tests, 5 assertions, 1 known incomplete Craft-bootstrap fallback test, PHPUnit no-coverage warning. Tests include compiled scalar `['nl' => 'default', 'en' => 'enUs']`, array `siteHandle`, legacy-locale fallback, and error-message context. |
+| `src/console/MigrateController.php` | Merge transform sentinel warnings into main report; block live relation/taxonomy handler failures before load; protect staged live load from known-bad transformed artifacts. | VERIFIED | `mergeTransformReportSentinel()`, `recordBlockingTransformFailure()`, and transform-block marker helpers are present and wired in full transform, standalone transform, and standalone load paths. |
+| `tests/unit/console/MigrateControllerFailureExitTest.php` | Regression coverage for sentinel merge, dry-run visibility/non-failure, live blocking, and staged load marker behavior. | VERIFIED | Targeted test run passed: 7 tests, 32 assertions, one existing deprecation, PHPUnit no-coverage warning. |
+| `.planning/rehearsal/v1.0/cqm/README.md` | Supported restored-backup runbook commands and inspection gates. | VERIFIED | Default dry-run command and `--live` write command are documented. Unsupported `migrate --dry-run` command is absent from the runbook. |
+| `10-05-REVIEW-FIX.md` / `10-05-REVIEW-RECHECK.md` | Review findings fixed and rechecked. | VERIFIED | Fix report records W-01 and W-02 fixed; recheck reports `PASS. No Critical or Warning findings remain`. Code inspection corroborates both fixes. |
 
 ## Key Link Verification
 
 | From | To | Via | Status | Details |
 |---|---|---|---|---|
-| `CompileController.php` | `CraftTargetIntrospector.php` | fatal validation result classification | WIRED | `validateWithSeverity()` called before compile finishes; fatal exits CONFIG. |
-| `MigrateController.php` | `CraftTargetIntrospector.php` | compiled mapping preflight blocks load-fatal targets | WIRED | `preflightCompiledMapping()` validates target schema and returns fatal messages. |
-| `MappingCompiler.php` | Craft target ownership data | pageBuilderHandle propagation checks parent field ownership | WIRED | `parentOwnsMatrixField()` called before propagation. |
-| `EntryMigrationService.php` | `MigrationReport` / Craft logs | visible fallback reporting | WIRED | `recordFallback()` writes report warning + fallback counter and Craft warning. |
-| `RelationHandler.php` | `TaxonomyMigrationService.php` | taxonomy-backed non-empty FK state miss delegates to resolver | WIRED | `resolveTaxonomyMiss()` calls `resolveReferenced()`. |
-| `MigrateController.php` | `TaxonomyMigrationService.php` | `--include-unreferenced-taxonomies` controls full import path | WIRED | Full import runs only under CLI/settings opt-in. |
-| `TransformService.php` | `MigrateController.php` | transform sentinel warning merge | NOT WIRED | `TransformService` yields `__report`; `MigrateController` skips it without merging warnings. |
-| `VerifyController.php` | `CountGateService.php` | domain-specific count inputs | WIRED | `VerifyController` passes explicit domain labels and blocking flags. |
-| `.planning/rehearsal/v1.0/cqm/README.md` | current CLI | closing proof commands | PARTIAL | README includes current restore/verify gates but one command uses unsupported `--dry-run`. |
+| `TaxonomyMigrationService::applyGedmoTranslations()` | Craft site handles from `mapping.sites` values | `siteHandleFromMappingSite((string) $legacyLocale, $siteCfg)` | WIRED | Compiled scalar mapping values now drive `getSiteByHandle($siteHandle)`, while `$legacyLocale` remains available for reporting. |
+| `TaxonomyMigrationService::applyGedmoTranslations()` | Localized Craft save truthfulness | `if (!Craft::$app->elements->saveElement(...)) throw RuntimeException(...)` | WIRED | Both empty-translation fallback branch and Gedmo overlay branch check save result before fallback success counters/warnings. |
+| `TaxonomyMigrationService` | Operator-visible fallback reporting | `MigrationReport::warn('fallback: taxonomy locale values ... site=... locale=...')` | WIRED | Warning includes resolved Craft site handle and legacy locale. |
+| `TransformService` sentinel payload | `MigrationReport` / `REPORT.md` | `MigrateController::mergeTransformReportSentinel()` | WIRED | Sentinel `warnings` are prefixed with `Transform:` and merged into the run report with `transform.warning` count. |
+| `MigrateController::actionIndex()` | Live pre-load block | `$hasBlockingTransformRelationFailure` -> marker + `recordBlockingTransformFailure()` + `writeReport()` + `reportExitCode()` | WIRED | Full live flow blocks immediately after transform and before taxonomy/load/finalize/SEO/Retour when relation/taxonomy transform warnings are blocking. |
+| `MigrateController::actionTransform()` | Staged transform block marker | `writeTransformBlockMarker($storageDir, $report)` | WIRED | Standalone transform persists `transform-block.json` whenever relation/taxonomy transform warnings are blocking. |
+| `MigrateController::actionLoad()` | Staged live load refusal | `readTransformBlockMarker()` -> live failure / dry-run warning | WIRED | Live load records warning/failure and exits non-zero; dry-run remains visible and non-failing. |
+| CQM README | Current CLI surface | `php craft kunstmaan-migrator/migrate` and `php craft kunstmaan-migrator/migrate --live` | WIRED | Runbook commands match `MigrateController` options: `--live` exists; `--dry-run` is not registered. |
 
-## Data-Flow Trace
+## Data-Flow Trace (Level 4)
 
 | Artifact | Data Variable | Source | Produces Real Data | Status |
 |---|---|---|---|---|
-| `EntryMigrationService.php` | Matrix block `title` | `normalizeMatrixPayload()` -> `stripSourcePartRefs()` before `setFieldValues()` | Yes | FLOWING |
-| `EntryMigrationService.php` | Primary-site title/slug fallback | `primarySiteDataForSave()` picks best available source locale payload before primary save | Yes | FLOWING |
-| `TaxonomyMigrationService.php` | Referenced taxonomy Craft ID | `resolveReferenced()` checks migration state, loads legacy row, upserts live, records state | Yes in normal live path | FLOWING with locale-fallback caveat |
-| `RelationHandler.php` | Relation IDs | State lookup first; taxonomy-backed miss delegates to resolver | Yes in normal path | HOLLOW ERROR PATH — thrown resolver/handler exceptions can be discarded upstream |
-| `VerifyController.php` | Count domains | BaselineCounterService + CountGateService + source parity artifact detection | Yes | FLOWING |
+| `TaxonomyMigrationService.php` | `$siteHandle` for localized taxonomy fallback | `mapping['sites']` values via `siteHandleFromMappingSite()` | Yes | FLOWING — scalar compiled values become Craft handles; array-shaped mappings still work via `siteHandle` or legacy-locale fallback. |
+| `TaxonomyMigrationService.php` | Fallback success warning/count | Localized `Entry::find()->siteId(...)` + successful `saveElement()` | Yes | FLOWING — report increments and warnings occur only after localized save succeeds. |
+| `MigrateController.php` | Transform warnings in main report | `payload['__report']['warnings']` | Yes | FLOWING — warnings are merged into `MigrationReport::warnings` with `Transform:` prefix and `transform.warning` counter. |
+| `MigrateController.php` | Live block decision | `isBlockingTransformRelationWarning()` over merged transform warnings | Yes | FLOWING — relation/taxonomy/TaxonomyMigrationService warning patterns set blocking boolean. |
+| `MigrateController.php` | Staged transform-block marker | Blocking transform warning set + `writeTransformBlockMarker()` JSON payload | Yes | FLOWING — standalone and full transform write marker; load reads marker before processing transformed files. |
+| `README.md` runbook commands | Operator command text | Checked-in runbook | Yes | FLOWING — restored workflow uses supported commands only. |
 
 ## Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |---|---|---|---|
-| Full repository tests pass | `composer test` | Exited `0` during verification; user also reported `composer test` exited `0` after review report commit. | PASS |
-| Required artifacts exist and are substantive | `wc -l ...` over Phase 10 artifacts | All required artifacts exist; major production files range 50-2402 LOC; runbook 97 LOC. | PASS |
-| Transform sentinel warnings reach main report | Code trace `TransformService::__report` + `MigrateController` sentinel handling | `MigrateController` skips sentinel without merge. | FAIL |
-| Taxonomy locale fallback handles compiled mapping shape | Code trace in `TaxonomyMigrationService` | Empty translations branch uses mapping keys as Craft handles. | FAIL |
+| Taxonomy gap-closure targeted tests pass | `vendor/bin/phpunit tests/integration/load/TaxonomyMigrationTest.php --filter 'Compiled|Locale|Fallback|MappingSite|SiteHandle|Save' --testdox` | Exit 0. Output: 5 tests, 5 assertions, 1 known incomplete Craft-bootstrap fallback test, PHPUnit no-coverage warning. | PASS |
+| Transform/report/marker targeted tests pass | `vendor/bin/phpunit tests/unit/console/MigrateControllerFailureExitTest.php --filter 'Transform|Sentinel|Handler|Relation|Taxonomy|Marker|Load' --testdox` | Exit 0. Output: 7 tests, 32 assertions, one existing deprecation, PHPUnit no-coverage warning. | PASS |
+| Modified production files lint | `php -l src/load/TaxonomyMigrationService.php && php -l src/console/MigrateController.php` | No syntax errors detected in both files. | PASS |
+| CQM README has no unsupported dry-run command | `grep -n "kunstmaan-migrator/migrate --dry-run" .planning/rehearsal/v1.0/cqm/README.md` | No matches. | PASS |
+| CQM README documents supported commands | `grep -n "php craft kunstmaan-migrator/migrate" .planning/rehearsal/v1.0/cqm/README.md` | Lines 20, 21, and 26 show default migrate and `--live` write mode. | PASS |
+| Full repository test evidence adequate | Reviewed `10-05-SUMMARY.md`, `10-05-REVIEW-FIX.md`, `10-05-REVIEW-RECHECK.md` | `10-05-SUMMARY.md` records full `composer test`: 491 tests, 1638 assertions, exit 0. Review-fix records `composer test` exit 0 after W-01/W-02 fixes. Recheck records targeted suites passing. Full restored CQM rerun was not required per user instruction. | PASS |
 
 ## Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |---|---|---|---|---|
-| PH10-01 | `10-02-PLAN.md` / ROADMAP | Generic Matrix-block title fallback before Craft save, without CQM hardcoding | SATISFIED | Entry migration implementation and tests. |
-| PH10-02 | `10-02-PLAN.md` / ROADMAP | Sparse-locale primary save fallback preserving locale truth | SATISFIED | Entry migration implementation and tests. |
-| PH10-03 | `10-01-PLAN.md` / ROADMAP | Compile/load guard for section + entry-type compatibility | SATISFIED | Target introspector, compile controller, migrate preflight. |
-| PH10-04 | `10-03-PLAN.md` / ROADMAP | Taxonomy-dependent relation resolution | PARTIAL | Normal lazy resolver path is implemented and tested, but handler/resolver exceptions can be hidden and relation data omitted. |
-| PH10-05 | `10-01-PLAN.md` / ROADMAP | PageBuilder Matrix ownership validation and flat fallback preservation | SATISFIED | Mapping compiler implementation and tests. |
-| PH10-06 | `10-04-PLAN.md` / ROADMAP | Verify count semantics distinguish domains | SATISFIED | Verify controller/count gate implementation and tests. |
-| PH10-07 | `10-01/02/03-PLAN.md` / ROADMAP | Regression tests cover known failures generically | SATISFIED | Phase 10 tests cover fallback, preflight, PageBuilder, taxonomy, and verify; full `composer test` exited `0`. |
-| PH10-08 | `10-04-PLAN.md` / ROADMAP | Rehearsal restore/rerun instructions and inspection gates | PARTIAL | Restore path and inspection gates exist, and proof summary records zero failures. README still contains unsupported `migrate --dry-run` command. |
+| PH10-01 | `10-02-PLAN.md` / ROADMAP | Generic Matrix-block title fallback before Craft save, without CQM hardcoding. | SATISFIED | Previously verified; no regression in 10-05. |
+| PH10-02 | `10-02-PLAN.md` / ROADMAP | Sparse-locale primary save fallback preserving locale truth. | SATISFIED | Previously verified; no regression in 10-05. |
+| PH10-03 | `10-01-PLAN.md` / ROADMAP | Compile/load guard for section + entry-type compatibility. | SATISFIED | Preflight target validation test still passes. |
+| PH10-04 | `10-03-PLAN.md` / `10-05-PLAN.md` / ROADMAP | Taxonomy-dependent relation resolution and no silent relation/taxonomy handler loss. | SATISFIED | Normal lazy resolver path exists; 10-05 closes handler-exception visibility/blocking by merging `__report` warnings, blocking live full flow, and refusing staged live load with marker. |
+| PH10-05 | `10-01-PLAN.md` / ROADMAP | PageBuilder Matrix ownership validation and flat fallback preservation. | SATISFIED | Previously verified; no regression. |
+| PH10-06 | `10-04-PLAN.md` / ROADMAP | Verify count semantics distinguish domains. | SATISFIED | Previously verified; restored proof summary records domain labels. |
+| PH10-07 | `10-01/02/03/05-PLAN.md` / ROADMAP | Regression tests cover known failures generically. | SATISFIED | Targeted tests pass; `composer test` pass recorded after 10-05 fixes. |
+| PH10-08 | `10-04-PLAN.md` / `10-05-PLAN.md` / ROADMAP | Rehearsal restore/rerun instructions and inspection gates. | SATISFIED WITH HUMAN RELEASE REVIEW | Runbook commands are executable against current CLI; inspection gates remain. Release-owner still needs to accept or resolve visible `warning`/`unsupported` Page-rooted coverage rows before tagging. |
 
-No PH10 entries were found in `.planning/REQUIREMENTS.md`; PH10 requirements are declared in ROADMAP and Phase 10 plan frontmatter.
+No additional PH10 entries were found in `.planning/REQUIREMENTS.md`; Phase 10 requirement IDs are declared in ROADMAP and Phase 10 planning artifacts.
 
 ## Anti-Patterns Found
 
-| File | Pattern | Severity | Impact |
+| File | Line | Pattern | Severity | Impact |
+|---|---:|---|---|---|
+| `src/load/TaxonomyMigrationService.php` | 98, 109, 129, 140, 737 | `return null` | Info | Legitimate resolver miss / dry-run / no mapping branches; not stubs. |
+| `src/console/MigrateController.php` | 1029, 1357, 2207, 2269, 2297, 2324 | `placeholder` in comments/report rendering | Info | Report-section placeholder copy for empty sync/RCA/skipped-stage sections; not user-facing implementation stubs. |
+| `src/console/MigrateController.php` | 1443, 1448, 2372 | `return []` | Info | Empty arrays for helper/default paths; not hollow data rendered as success. |
+| `src/console/MigrateController.php` | 1487, 1953 | `return null` | Info | Missing marker / no-result helper returns; expected control flow. |
+
+No blocker anti-patterns remain in the 10-05 modified code/docs. The previous blocker patterns — taxonomy site-handle mismatch and discarded transform report sentinel — are fixed.
+
+## Review Finding Disposition
+
+| Review Artifact | Finding | Status | Verification |
 |---|---|---|---|
-| `src/load/TaxonomyMigrationService.php` | Site-handle mapping bug | Blocker | Compiled mapping locale keys can be mistaken for Craft handles, skipping non-primary taxonomy locale fallback saves. |
-| `src/transform/TransformService.php` + `src/console/MigrateController.php` | Discarded error/warning channel | Blocker | Handler failures can be swallowed and relation values omitted without appearing in the main migration report. |
-| `.planning/rehearsal/v1.0/cqm/README.md` | Unsupported CLI option in runbook | Warning / Gap | Clean rerun instructions are not fully executable as written. |
+| `10-05-REVIEW.md` | W-01: Localized taxonomy fallback save failures are ignored after reporting fallback success. | FIXED | `TaxonomyMigrationService` checks `saveElement()` in both localized branches and throws contextual `RuntimeException` before counters/warnings. `TaxonomyMigrationTest` covers the failure-message context. |
+| `10-05-REVIEW.md` | W-02: Standalone `migrate/load --live` can bypass a prior transform relation/taxonomy block. | FIXED | `MigrateController` clears marker at fresh transform start, writes `transform-block.json` on blocking warnings, and makes live load refuse marker while dry-run warns. `MigrateControllerFailureExitTest` source-scan/reflective tests cover marker behavior. |
+| `10-05-REVIEW-RECHECK.md` | Re-review result | PASS | Recheck states: `PASS. No Critical or Warning findings remain for the requested re-review scope.` Code inspection corroborates this. |
+| `10-05-REVIEW.md` | S-01/S-02 suggestions | NON-BLOCKING | Suggestions remain test-depth improvements, not Critical/Warning blockers. The code paths are still adequate for Phase 10 verification given targeted tests plus prior restored CQM proof. |
 
-## Human Verification Required / Release-Owner Decision
+## Human Verification Required
 
-These do not override the code gaps above, but they remain release-gate decisions:
+### 1. Release-owner review of Page-rooted `warning` / `unsupported` classifications
 
-### 1. Page-rooted coverage `warning` / `unsupported` classifications
+**Test:** Review the latest external CQM `PAGE-ROOTED-COVERAGE.md` and any related `REPORT.md` rows classified as `warning` or `unsupported`.
 
-**Test:** Review the external CQM `PAGE-ROOTED-COVERAGE.md` rows classified as `warning` or `unsupported`.
-**Expected:** Each row is either accepted by the release owner with documented rationale or reclassified/fixed before tagging v1.0.
-**Why human:** The repository summary records counts (`warning`: 439, `unsupported`: 84), but whether those rows are acceptable release omissions depends on product/release-owner intent and external CQM artifacts not committed to this repo.
+**Expected:** Each row is either explicitly accepted by the release owner with rationale, or reclassified/fixed before tagging v1.0.
 
-### 2. External restored CQM artifacts
-
-**Test:** Re-open the latest external `~/Sites/cqm-craft-website/storage/migration/REPORT.md`, `VERIFY-*.md`, and `PAGE-ROOTED-COVERAGE.md`.
-**Expected:** Zero entry failures, zero stage failures, domain-labeled verify output, no unaccepted warning/unsupported page-rooted rows.
-**Why human:** The repository contains summary evidence, not the external migration artifacts themselves.
-
-## Advisory Code Review Warning Disposition
-
-### WR-01: Taxonomy fallback site-handle mapping
-
-**Disposition:** Verification gap.
-**Rationale:** This directly affects the must-have "Missing taxonomy locale values use default-language values and are visibly reported." The code uses legacy locale keys as Craft site handles in the empty-translation fallback branch. For generic Lameco sites where locale keys differ from Craft site handles, fallback values can be skipped silently.
-
-### WR-02: Transform sentinel warning merge
-
-**Disposition:** Verification gap.
-**Rationale:** This directly affects the Phase 10 goal "without silent loss of page-owned relations or content." Relation/taxonomy handler failures can be caught, stored only in a local sentinel report, then discarded by `MigrateController`, allowing missing relation values without operator-visible report evidence.
-
-### PAGE-ROOTED-COVERAGE warning/unsupported rows
-
-**Disposition:** Human release-owner decision, not a code-level automated verification pass.
-**Rationale:** The rows are visible rather than silent; however, Phase 10's strictest gate says warning/unsupported rows require explicit release acceptance or follow-up classification before tagging. Automated verification cannot decide product acceptance.
+**Why human:** Automated repository verification can confirm that omissions are visible and that code no longer silently drops relation/taxonomy failures. It cannot decide whether visible `warning` / `unsupported` product coverage classifications are acceptable for release.
 
 ## Gaps Summary
 
-Phase 10 implemented the main generic hardening work: Matrix native-title fallback, sparse-locale primary fallback, fatal target validation, PageBuilder ownership gating, lazy taxonomy resolver, referenced-only taxonomy default, explicit full taxonomy import path, verify count-domain separation, and restored CQM proof evidence with zero entry/stage failures.
+No implementation gaps remain from the previous `10-VERIFICATION.md`.
 
-However, the phase goal is not fully achieved because two verified code paths still permit generic silent or semi-silent content loss:
+All three prior verifier gaps are closed:
 
-1. Taxonomy locale fallback can skip non-primary site saves when compiled mapping locale keys differ from Craft handles.
-2. Transform handler failures can be discarded before reaching the main migration report, including taxonomy resolver failures that affect page-owned relations.
+1. Taxonomy locale fallback now resolves Craft handles from compiled `mapping.sites` values, preserves array-shaped compatibility, checks localized save failures, and reports resolved site plus legacy locale.
+2. Transform sentinel warnings now reach the main migration report, live relation/taxonomy handler failures block before load, staged live load refuses known-bad transform artifacts, and dry-run remains visible/non-failing.
+3. The CQM runbook no longer documents unsupported `migrate --dry-run`; it uses default `migrate` for dry-run and `migrate --live` for write mode.
 
-Additionally, the restored CQM runbook contains an unsupported dry-run command and should be corrected to match the actual CLI surface.
-
-Until these are fixed or explicitly overridden, Phase 10 remains `gaps_found`.
+The remaining `human_needed` status is limited to release-owner acceptance or remediation of visible Page-rooted `warning` / `unsupported` classifications before v1.0 tagging. Automated code/test/doc verification is otherwise complete.
 
 ---
 
-_Verified: 2026-04-28T17:14:30Z_
+_Verified: 2026-04-28T17:46:48Z_  
 _Verifier: the agent (gsd-verifier)_

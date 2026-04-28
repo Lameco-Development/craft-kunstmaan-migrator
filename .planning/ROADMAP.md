@@ -407,7 +407,7 @@ Plans:
 - [x] `10-04-PLAN.md` — verify count-domain semantics, restored-backup CQM runbook, and closing proof. Completed 2026-04-28 (`10-04-SUMMARY.md`; restored CQM `REPORT.md` reached zero failures).
 - [x] `10-05-PLAN.md` — verification gap closure for taxonomy fallback site-handle mapping, transform sentinel report merge/live blocking, and supported CQM dry-run command docs. Completed 2026-04-28 (`10-05-SUMMARY.md`).
 
-**Verification:** `10-VERIFICATION.md` recorded `gaps_found` (18/21 must-haves verified) before Plan 10-05. Plan 10-05 closes those gaps with code/test/doc evidence: taxonomy locale fallback resolves Craft handles from mapping values, transform sentinel warnings reach `MigrationReport`/`REPORT.md` with live relation/taxonomy failures blocking before load, and the CQM runbook uses the supported default dry-run `migrate` command.
+**Verification:** `10-VERIFICATION.md` now records `human_needed` (20/21 automated must-haves verified). Plan 10-05 and review fixes close the previous implementation gaps with code/test/doc evidence: taxonomy locale fallback resolves Craft handles from mapping values and checks localized save failures, transform sentinel warnings reach `MigrationReport`/`REPORT.md` with relation/taxonomy failures blocking full and staged live load before persistence, and the CQM runbook uses the supported default dry-run `migrate` command. The only remaining item is release-owner acceptance or remediation of visible Page-rooted `warning` / `unsupported` coverage classifications before tagging.
 
 ---
 
