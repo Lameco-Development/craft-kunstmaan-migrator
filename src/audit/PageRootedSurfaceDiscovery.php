@@ -52,7 +52,7 @@ final class PageRootedSurfaceDiscovery extends Component
             foreach ($this->relationRows($pageFqcn, $targetSection, $targetEntryType, $relationMetadata[$pageFqcn] ?? []) as $row) {
                 $rows[] = $row;
             }
-            foreach ($this->taxonomyAndDataProviderRows($pageFqcn, $targetSection, $targetEntryType, $mapping) as $row) {
+            foreach ($this->taxonomyAndDataProviderRows($pageFqcn, $targetSection, $targetEntryType, $mapping, (array) ($relationMetadata[$pageFqcn] ?? []), (array) ($pageStructure[$pageFqcn] ?? [])) as $row) {
                 $rows[] = $row;
             }
             foreach ($this->serviceRows($pageFqcn, $targetSection, $targetEntryType, $serviceMetadata) as $row) {
@@ -155,11 +155,14 @@ final class PageRootedSurfaceDiscovery extends Component
                 continue;
             }
             $status = (string) ($proposal['status'] ?? '');
-            if (!in_array($status, ['accepted', 'dropped'], true)) {
+            if (!in_array($status, ['accepted', 'dropped', 'needs-review', 'proposed'], true)) {
                 continue;
             }
             $identifier = $sourceTable . '.' . (string) ($proposal['column'] ?? '');
-            $category = $status === 'accepted' ? self::CATEGORY_MIGRATED : self::CATEGORY_DROPPED;
+            $hasTarget = (string) ($proposal['targetHandle'] ?? '') !== '' && (string) ($proposal['handler'] ?? '') !== '';
+            $category = $status === 'dropped'
+                ? self::CATEGORY_DROPPED
+                : ($status === 'accepted' && $hasTarget ? self::CATEGORY_MIGRATED : self::CATEGORY_WARNING);
             if ($status === 'accepted' && $this->containsSourceIdentifier($rows, $identifier)) {
                 continue;
             }
@@ -168,7 +171,7 @@ final class PageRootedSurfaceDiscovery extends Component
                 'property' => (string) ($proposal['column'] ?? ''),
                 'fieldHandle' => (string) ($proposal['targetHandle'] ?? ''),
                 'handler' => (string) ($proposal['handler'] ?? ''),
-                'reason' => (string) ($proposal['rationale'] ?? ''),
+                'reason' => $hasTarget ? (string) ($proposal['rationale'] ?? '') : 'Evidence-backed source column is not mapped to a Craft field; operator must map it, drop it, or mark it out_of_scope explicitly.',
                 'targetSection' => $targetSection,
                 'targetEntryType' => $targetEntryType,
             ]);
@@ -248,7 +251,7 @@ final class PageRootedSurfaceDiscovery extends Component
                 'targetEntryType' => $targetEntryType,
             ]);
         }
-        if (!$this->hasSurfaceType($rows, 'implicit_content')) {
+        if (!$this->hasSurfaceType($rows, 'implicit_content') && $this->hasImplicitContentEvidence($pageStructure[$pageFqcn] ?? [])) {
             $rows[] = $this->row($pageFqcn, 'implicit_content', self::CATEGORY_WARNING, 'ExtractService::buildImplicitContentPageParts', $sourceTable . '.__implicit_content__', [
                 'sourceTable' => $sourceTable,
                 'targetSection' => $targetSection,
@@ -292,22 +295,11 @@ final class PageRootedSurfaceDiscovery extends Component
             ]);
         }
 
-        foreach (['many_to_one', 'many_to_many', 'one_to_many'] as $missingType) {
-            if (isset($seen[$missingType])) {
-                continue;
-            }
-            $rows[] = $this->row($pageFqcn, $missingType, self::CATEGORY_UNSUPPORTED, 'Doctrine relation metadata', $missingType . ':not-discovered', [
-                'targetSection' => $targetSection,
-                'targetEntryType' => $targetEntryType,
-                'reason' => 'No relation metadata provided for this relation shape.',
-            ]);
-        }
-
         return $rows;
     }
 
     /** @return list<array<string, mixed>> */
-    private function taxonomyAndDataProviderRows(string $pageFqcn, string $targetSection, string $targetEntryType, array $mapping): array
+    private function taxonomyAndDataProviderRows(string $pageFqcn, string $targetSection, string $targetEntryType, array $mapping, array $relations = [], array $structure = []): array
     {
         $rows = [];
         foreach (['taxonomy' => 'taxonomies', 'dataProvider' => 'dataProviders'] as $kind => $block) {
@@ -317,6 +309,9 @@ final class PageRootedSurfaceDiscovery extends Component
                 }
                 $fqcn = (string) ($proposal['fqcn'] ?? '');
                 if ($fqcn === '') {
+                    continue;
+                }
+                if (!$this->proposalHasPageOwnedEvidence($proposal, $pageFqcn, $relations, $structure, $mapping)) {
                     continue;
                 }
                 $status = (string) ($proposal['status'] ?? '');
@@ -331,13 +326,6 @@ final class PageRootedSurfaceDiscovery extends Component
                 ]);
             }
         }
-        if ($rows === []) {
-            $rows[] = $this->row($pageFqcn, 'taxonomy_dataprovider', self::CATEGORY_OUT_OF_SCOPE, 'compiled taxonomies/dataProviders', 'taxonomy_dataprovider:not-configured', [
-                'targetSection' => $targetSection,
-                'targetEntryType' => $targetEntryType,
-                'reason' => 'No page-owned taxonomy or dataProvider mapping configured.',
-            ]);
-        }
         return $rows;
     }
 
@@ -345,10 +333,18 @@ final class PageRootedSurfaceDiscovery extends Component
     private function serviceRows(string $pageFqcn, string $targetSection, string $targetEntryType, array $serviceMetadata): array
     {
         $rows = [];
-        $rows = array_merge($rows, $this->metadataRows($pageFqcn, 'asset', 'AssetMigrationService referenced-id collector', $serviceMetadata['assets'] ?? [], self::CATEGORY_MIGRATED, self::CATEGORY_WARNING, $targetSection, $targetEntryType));
-        $rows = array_merge($rows, $this->metadataRows($pageFqcn, 'seo', 'SeoMigrationService source lookup/adapters', $serviceMetadata['seo'] ?? [], self::CATEGORY_MIGRATED, self::CATEGORY_OUT_OF_SCOPE, $targetSection, $targetEntryType));
-        $rows = array_merge($rows, $this->metadataRows($pageFqcn, 'redirect', 'RedirectMigrationService source lookup/adapters', $serviceMetadata['redirects'] ?? [], self::CATEGORY_MIGRATED, self::CATEGORY_OUT_OF_SCOPE, $targetSection, $targetEntryType));
-        $rows = array_merge($rows, $this->metadataRows($pageFqcn, 'ckeditor_ref', 'CkeditorRewriterService token/media reference scanner', $serviceMetadata['ckeditorRefs'] ?? [], self::CATEGORY_MIGRATED, self::CATEGORY_WARNING, $targetSection, $targetEntryType));
+        if (array_key_exists('assets', $serviceMetadata)) {
+            $rows = array_merge($rows, $this->metadataRows($pageFqcn, 'asset', 'AssetMigrationService referenced-id collector', $serviceMetadata['assets'], self::CATEGORY_MIGRATED, self::CATEGORY_OUT_OF_SCOPE, $targetSection, $targetEntryType));
+        }
+        if (array_key_exists('seo', $serviceMetadata)) {
+            $rows = array_merge($rows, $this->metadataRows($pageFqcn, 'seo', 'SeoMigrationService source lookup/adapters', $serviceMetadata['seo'], self::CATEGORY_MIGRATED, self::CATEGORY_OUT_OF_SCOPE, $targetSection, $targetEntryType));
+        }
+        if (array_key_exists('redirects', $serviceMetadata)) {
+            $rows = array_merge($rows, $this->metadataRows($pageFqcn, 'redirect', 'RedirectMigrationService source lookup/adapters', $serviceMetadata['redirects'], self::CATEGORY_MIGRATED, self::CATEGORY_OUT_OF_SCOPE, $targetSection, $targetEntryType));
+        }
+        if (array_key_exists('ckeditorRefs', $serviceMetadata)) {
+            $rows = array_merge($rows, $this->metadataRows($pageFqcn, 'ckeditor_ref', 'CkeditorRewriterService token/media reference scanner', $serviceMetadata['ckeditorRefs'], self::CATEGORY_MIGRATED, self::CATEGORY_OUT_OF_SCOPE, $targetSection, $targetEntryType));
+        }
         return $rows;
     }
 
@@ -426,6 +422,51 @@ final class PageRootedSurfaceDiscovery extends Component
     {
         foreach ($rows as $row) {
             if ((string) ($row['surfaceType'] ?? '') === $surfaceType) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @param array<string, mixed> $structure */
+    private function hasImplicitContentEvidence(array $structure): bool
+    {
+        foreach (['contexts', 'pageParts', 'implicitContent'] as $key) {
+            if (!empty($structure[$key])) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @param array<string, mixed> $proposal */
+    private function proposalHasPageOwnedEvidence(array $proposal, string $pageFqcn, array $relations, array $structure, array $mapping): bool
+    {
+        $fqcn = (string) ($proposal['fqcn'] ?? '');
+        foreach ($relations as $relation) {
+            if (!is_array($relation)) {
+                continue;
+            }
+            if ((string) ($relation['targetEntity'] ?? '') === $fqcn) {
+                return true;
+            }
+        }
+        $nodeSpec = (array) (($mapping['nodeClasses'] ?? [])[$pageFqcn] ?? []);
+        foreach ((array) ($nodeSpec['fields'] ?? []) as $field) {
+            if (!is_array($field)) {
+                continue;
+            }
+            $encoded = json_encode($field);
+            if (is_string($encoded) && $fqcn !== '' && str_contains($encoded, $fqcn)) {
+                return true;
+            }
+        }
+        $encodedStructure = json_encode($structure);
+        if (is_string($encodedStructure) && $fqcn !== '' && str_contains($encodedStructure, $fqcn)) {
+            return true;
+        }
+        foreach (['pageFqcn', 'parentPageFqcn', 'parentPageClass', 'ownerPageFqcn'] as $key) {
+            if ((string) ($proposal[$key] ?? '') === $pageFqcn || (string) ($proposal[$key] ?? '') === $this->shortName($pageFqcn)) {
                 return true;
             }
         }

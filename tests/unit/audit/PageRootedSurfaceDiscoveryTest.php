@@ -90,10 +90,101 @@ final class PageRootedSurfaceDiscoveryTest extends TestCase
             $byType[$row['surfaceType']][] = $row;
         }
 
-        self::assertSame('warning', $byType['asset'][0]['categoryHint']);
-        self::assertSame('out_of_scope', $byType['seo'][0]['categoryHint']);
-        self::assertSame('out_of_scope', $byType['redirect'][0]['categoryHint']);
-        self::assertSame('warning', $byType['ckeditor_ref'][0]['categoryHint']);
+        self::assertArrayNotHasKey('asset', $byType);
+        self::assertArrayNotHasKey('ckeditor_ref', $byType);
+        self::assertArrayNotHasKey('many_to_one', $byType);
+        self::assertArrayNotHasKey('many_to_many', $byType);
+        self::assertArrayNotHasKey('one_to_many', $byType);
+        self::assertArrayNotHasKey('seo', $byType);
+        self::assertArrayNotHasKey('redirect', $byType);
+    }
+
+    public function testFkAndAssetColumnsWithEmptyMappingRemainEvidenceBackedWarnings(): void
+    {
+        $mapping = [
+            'nodeClasses' => [
+                'App\\Entity\\GenericPage' => [
+                    'sourceTable' => 'generic_pages',
+                    'section' => 'generic',
+                    'entryType' => 'genericPage',
+                    'fields' => [],
+                ],
+            ],
+            'proposals' => [
+                [
+                    'kind' => 'nodeClass',
+                    'fqcn' => 'App\\Entity\\GenericPage',
+                    'sourceTable' => 'generic_pages',
+                    'targetSection' => 'generic',
+                    'targetEntryType' => 'genericPage',
+                    'status' => 'accepted',
+                ],
+                [
+                    'kind' => 'column',
+                    'table' => 'generic_pages',
+                    'column' => 'employee_id',
+                    'targetEntryType' => 'genericPage',
+                    'targetHandle' => '',
+                    'handler' => '',
+                    'status' => 'accepted',
+                    'rationale' => 'FK relation evidence from source detail row.',
+                ],
+                [
+                    'kind' => 'column',
+                    'table' => 'generic_pages',
+                    'column' => 'image_id',
+                    'targetEntryType' => 'genericPage',
+                    'targetHandle' => '',
+                    'handler' => '',
+                    'status' => 'accepted',
+                    'rationale' => 'FK asset evidence from source detail row.',
+                ],
+            ],
+        ];
+
+        $rows = (new PageRootedSurfaceDiscovery())->discover($mapping, ['App\\Entity\\GenericPage' => ['tableName' => 'generic_pages']]);
+        $byId = array_column($rows, null, 'sourceIdentifier');
+
+        self::assertSame('warning', $byId['generic_pages.employee_id']['categoryHint']);
+        self::assertSame('warning', $byId['generic_pages.image_id']['categoryHint']);
+        self::assertStringContainsString('Evidence-backed source column is not mapped', $byId['generic_pages.employee_id']['reason']);
+    }
+
+    public function testTaxonomyAndDataProviderRowsRequirePageOwnedEvidence(): void
+    {
+        $mapping = $this->mapping();
+        $mapping['nodeClasses']['App\\Entity\\OtherPage'] = [
+            'sourceTable' => 'other_pages',
+            'section' => 'others',
+            'fields' => [],
+        ];
+        $mapping['proposals'][] = [
+            'kind' => 'nodeClass',
+            'fqcn' => 'App\\Entity\\OtherPage',
+            'sourceTable' => 'other_pages',
+            'targetSection' => 'others',
+            'targetEntryType' => 'otherPage',
+            'status' => 'accepted',
+        ];
+
+        $rows = (new PageRootedSurfaceDiscovery())->discover(
+            $mapping,
+            $this->pageStructure() + ['App\\Entity\\OtherPage' => ['tableName' => 'other_pages']],
+            [
+                'App\\Entity\\ArticlePage' => [
+                    ['type' => 'ManyToOne', 'property' => 'category', 'targetEntity' => 'App\\Entity\\Category'],
+                ],
+            ],
+        );
+
+        $taxonomyRows = array_values(array_filter(
+            $rows,
+            static fn(array $row): bool => ($row['surfaceType'] ?? '') === 'taxonomy_dataprovider',
+        ));
+
+        self::assertCount(1, $taxonomyRows);
+        self::assertSame('App\\Entity\\ArticlePage', $taxonomyRows[0]['pageFqcn']);
+        self::assertSame('App\\Entity\\Category', $taxonomyRows[0]['sourceIdentifier']);
     }
 
     /** @return array<string, mixed> */

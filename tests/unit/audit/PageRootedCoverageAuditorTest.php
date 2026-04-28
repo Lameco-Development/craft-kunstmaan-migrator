@@ -42,7 +42,7 @@ final class PageRootedCoverageAuditorTest extends TestCase
         self::assertSame('unsupported', $byIdentifier['many_to_many|categories']['category']);
         self::assertStringContainsString('missing stateSource', $byIdentifier['many_to_many|categories']['reason']);
         self::assertSame('out_of_scope', $byIdentifier['seo|seo:not-discovered']['category']);
-        self::assertSame('warning', $byIdentifier['ckeditor_ref|ckeditor_ref:not-discovered']['category']);
+        self::assertSame('out_of_scope', $byIdentifier['ckeditor_ref|ckeditor_ref:not-discovered']['category']);
     }
 
     public function testAcceptedAndDroppedMappingRowsDriveCoverageWhenDiscoveryHasWarnings(): void
@@ -121,7 +121,7 @@ final class PageRootedCoverageAuditorTest extends TestCase
             [
                 'pageFqcn' => 'App\\Entity\\ArticlePage',
                 'surfaceType' => 'ckeditor_ref',
-                'categoryHint' => 'warning',
+                'categoryHint' => 'out_of_scope',
                 'sourceIdentifier' => 'ckeditor_ref:not-discovered',
                 'sourceService' => 'CkeditorRewriterService token/media reference scanner',
                 'reason' => 'No structural discovery input provided for this surface.',
