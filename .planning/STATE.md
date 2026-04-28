@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 10 planned
-stopped_at: "Phase 10 planned in `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-PLAN.md` with four executable dependent plans. Ready for `/gsd-execute-phase 10`."
-last_updated: "2026-04-28T14:48:00.000Z"
+status: Phase 10 in progress
+stopped_at: "Phase 10 Plan 10-01 completed; next plan is `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-02-PLAN.md`."
+last_updated: "2026-04-28T15:58:06.000Z"
 progress:
   total_phases: 10
   completed_phases: 9
   total_plans: 89
-  completed_plans: 85
-  percent: 96
+  completed_plans: 86
+  percent: 97
 ---
 
 # State
@@ -21,7 +21,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped. The plugin should stay as generic as practical across Lameco Kunstmaan websites (for example CQM, Simac, and Enreach), with project-specific differences surfaced as mapping/operator decisions rather than hardcoded plugin assumptions wherever possible.
 
-**Current focus:** Phase 10 is planned and ready for execution. Plan index: `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-PLAN.md`; executable plans: `10-01-PLAN.md` through `10-04-PLAN.md`. Locked execution gates: page-rooted lazy taxonomy find/create by default, opt-in full unreferenced taxonomy import, default-language fallback for missing taxonomy locale values, fallback usage visible in logs/reports, zero entry failures and zero stage failures for the clean rerun, complete Page-rooted accounting, and restored-backup full CQM rehearsal as the closing gate.
+**Current focus:** Phase 10 is in progress. Plan 10-01 is complete (`.planning/phases/10-generic-migration-rehearsal-gap-closure/10-01-SUMMARY.md`): compile/live preflight now blocks load-fatal section + entry-type target mismatches, PageBuilder Matrix ownership is validated before `pageBuilderHandle` propagation, and synthetic structural transform fixtures cover the rehearsal gap shapes. Next plan: `10-02-PLAN.md` for Matrix native-title fallback, sparse-locale primary-save fallback, and visible fallback reporting. Locked execution gates remain: page-rooted lazy taxonomy find/create by default, opt-in full unreferenced taxonomy import, default-language fallback for missing taxonomy locale values, fallback usage visible in logs/reports, zero entry failures and zero stage failures for the clean rerun, complete Page-rooted accounting, and restored-backup full CQM rehearsal as the closing gate.
 
 ## Milestone
 
@@ -40,7 +40,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 10: Generic Migration Rehearsal Gap Closure — planned, ready for execution.** Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`. Context: `10-CONTEXT.md`; research: `10-RESEARCH.md`; patterns: `10-PATTERNS.md`; plan index: `10-PLAN.md`; executable plans: `10-01-PLAN.md`, `10-02-PLAN.md`, `10-03-PLAN.md`, `10-04-PLAN.md`. Driver: the Phase 9 CQM staging rehearsal migrated most content but failed 3 entries and surfaced missing taxonomy-backed relations plus verify-count semantic drift. Next step: `/gsd-execute-phase 10`.
+**Phase 10: Generic Migration Rehearsal Gap Closure — in progress.** Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`. Context: `10-CONTEXT.md`; research: `10-RESEARCH.md`; patterns: `10-PATTERNS.md`; plan index: `10-PLAN.md`; completed executable plan: `10-01-PLAN.md`; remaining executable plans: `10-02-PLAN.md`, `10-03-PLAN.md`, `10-04-PLAN.md`. Driver: the Phase 9 CQM staging rehearsal migrated most content but failed 3 entries and surfaced missing taxonomy-backed relations plus verify-count semantic drift. Next step: execute `10-02-PLAN.md`.
 
 ## Historical Phase Notes
 
@@ -70,6 +70,7 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 - 2026-04-28: Phase 10 (Generic Migration Rehearsal Gap Closure) appended to the v1.0 milestone on branch `gsd/phase-9-migration-hardening-page-rooted-introspection`. Driver: first live CQM staging rehearsal mostly succeeded but exposed generic release blockers that should not be solved as CQM-only mapping hacks: required Matrix blocks need native title fallback, sparse-locale nodes need safe primary-site save behavior, compile must prevent section/entry-type incompatibilities such as `contentPages/formContentBlock`, taxonomy state must exist before relation resolution or relations must be deferred, pageBuilderHandle propagation must respect entry-type field ownership, and verify count semantics must distinguish source parity from pre-migration Craft baselines. Existing partial CQM DB remains preserved for inspection; future clean rerun should restore the pre-live backup first.
 - 2026-04-28: Phase 10 planned as four dependent execution plans after research, pattern mapping, and GSD plan-checker revision loop. Plan set: `10-01` compile/preflight safety + PageBuilder ownership; `10-02` load fallback hardening; `10-03` page-rooted taxonomy resolver; `10-04` verify semantics + restored-backup rehearsal. Checker PASS after strict zero entry/stage failure wording, must-have tracing, task-level verify/done criteria, resolved research questions, and hard Page-rooted closure gate were added.
+- 2026-04-28: Phase 10 Plan 10-01 completed. Shipped severity-classified Craft target validation, compile CONFIG exit for load-fatal section/entry-type states, live migrate/load preflight against stale fatal compiled mappings, PageBuilder Matrix ownership validation before propagation, flat fallback preservation/visibility for invalid ownership, and synthetic transform characterization for missing Matrix title, sparse locale, invalid target, and taxonomy-before-state shapes. Commits: fc7ceaa, be3cd0b, 80dd9e8, c91cce2. Verification: targeted PHPUnit suites all exited 0; no new CQM-specific fixture names remained in the diff.
 - 2026-04-28: Phase 9 (Migration Workflow Hardening & Page-rooted Introspection Audit) appended to the v1.0 milestone on branch `gsd/phase-9-migration-hardening-page-rooted-introspection`. Driver: post-audit review found release-blocking workflow and fidelity risks (canonical workflow missing compile, analyze reruns can erase compiled mapping blocks, filter semantics drift across stages, CKEditor unresolved-marker escaping, migrate failure exit semantics, empty transform fixtures, stale CI/docs). User added a mandatory critical audit of Kunstmaan/Craft introspection with Kunstmaan Page as the entry point and Craft Entry as the result: page-owned relations, assets, pageparts, taxonomies/dataProviders/leaf entities, SEO/redirect sidecars, and CKEditor references must be migrated, visibly dropped, or explicitly scoped out. Follow-up clarification: the plugin must remain generic across Lameco Kunstmaan websites, not just the installed CQM Craft rehearsal target (`~/Sites/cqm-craft-website`); Phase 9 should check for CQM-only assumptions against other Kunstmaan sites such as `~/Sites/simac-website` and `~/Sites/enreach-website`, while accepting that Kunstmaan → Craft automation will never be 100%.
 - 2026-04-28: Phase 9 context gathered in `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-CONTEXT.md`. Autonomous/yolo defaults selected all hardening gray areas because the user asked to start and was unavailable for interactive prompts. Locked decisions: CQM remains the integration target but Simac/Enreach source shapes are sampled for genericity; Page-rooted coverage must classify every surface as migrated/dropped/out-of-scope; `compile` becomes explicit canonical workflow and `migrate` refuses missing compiled blocks; mapping merge preserves top-level blocks; `--entities` means source entities and translates to Craft handles only where needed; per-entry load continues but returns non-zero if anything failed; CKEditor unresolved marker source is comment-safe encoded; `--preload-assets` becomes referenced-only; finding-driven tests and fixture/rehearsal checks are required.
 - 2026-04-27: Phase 8 (Taxonomies & AI Proposer Coverage) appended to v1.0 milestone. Driver: post-Phase-7 coverage survey identified three gaps between Kunstmaan content surface and v2 mapper coverage — taxonomies (v1's TaxonomyMigrationService never ported, 443 LOC), dataProviders proposer (TransformService consumes mapping.dataProviders[] but compile/analyze never proposes), and page-builder layout proposer (headerBlock/bodyWrapBlock/bodyColumn honored but never proposed). User intent: v1.0 is not "useful as a plugin" without these. Phases 6 + 7 happened informally outside the roadmap (post-Phase-5 close); Phase 8 returns to formal GSD workflow.

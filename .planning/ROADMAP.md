@@ -401,7 +401,7 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] `10-01-PLAN.md` — compile/preflight safety, PageBuilder ownership validation, and structural fixtures.
+- [x] `10-01-PLAN.md` — compile/preflight safety, PageBuilder ownership validation, and structural fixtures. Completed 2026-04-28 (`10-01-SUMMARY.md`).
 - [ ] `10-02-PLAN.md` — Matrix native-title fallback, sparse-locale primary-save fallback, and visible fallback reporting.
 - [ ] `10-03-PLAN.md` — page-rooted taxonomy lazy resolver, referenced-only default, and explicit full-taxonomy import path.
 - [ ] `10-04-PLAN.md` — verify count-domain semantics, restored-backup CQM runbook, and closing proof.
