@@ -131,6 +131,15 @@ class TransformService extends Component
             if ($onProgress !== null) {
                 $onProgress($consumed, $fqcn);
             }
+            if (($extractedRow['kind'] ?? '') === 'promotedTarget') {
+                $payload = $this->transformPromotedTarget($extractedRow, $mapping, $siteMap, $localesFilter, $dryRun, $migrationReport, $report);
+                if ($payload !== null) {
+                    $report['nodesTransformed']++;
+                    $processed++;
+                    yield $payload;
+                }
+                continue;
+            }
             if ($onlyFqcn !== null && $fqcn !== $onlyFqcn) {
                 continue;
             }
@@ -216,6 +225,81 @@ class TransformService extends Component
         // without an explicit second return channel. Marked with a `__report` key.
         // CONTEXT D-48 in-process pipeline reshape — was returned as the run() return value in v1.
         yield ['__report' => $report];
+    }
+
+    /**
+     * @param array<string, mixed> $extractedRow
+     * @param array<string, mixed> $mapping
+     * @param array<string, int> $siteMap
+     * @param list<string> $localesFilter
+     * @param array<string, mixed> $report
+     * @return array<string, mixed>|null
+     */
+    private function transformPromotedTarget(
+        array $extractedRow,
+        array $mapping,
+        array $siteMap,
+        array $localesFilter,
+        bool $dryRun,
+        ?MigrationReport $migrationReport,
+        array &$report,
+    ): ?array {
+        $spec = (array) ($extractedRow['promotedTarget'] ?? []);
+        $stateSource = (string) ($spec['stateSource'] ?? $extractedRow['stateSource'] ?? '');
+        $stateKey = (string) ($extractedRow['stateKey'] ?? $extractedRow['ref_id'] ?? '');
+        if ($stateSource === '' || $stateKey === '') {
+            $report['warnings'][] = 'promoted target skipped: missing stateSource/stateKey';
+            return null;
+        }
+
+        $perSiteOut = [];
+        foreach ((array) ($extractedRow['perSite'] ?? []) as $locale => $siteData) {
+            $locale = (string) $locale;
+            if ($localesFilter !== [] && !in_array($locale, $localesFilter, true)) {
+                continue;
+            }
+
+            $siteHandle = (string) ($mapping['sites'][$locale] ?? 'default');
+            $siteId = $siteMap[$locale] ?? 1;
+            $ctx = $this->buildContext($siteId, $siteHandle, $siteMap, $dryRun, $migrationReport);
+            $nodeSpec = [
+                'fields' => is_array($spec['fields'] ?? null) ? $spec['fields'] : [],
+            ];
+            $fieldValues = $this->transformFields(
+                (string) ($extractedRow['fqcn'] ?? ''),
+                (array) $siteData,
+                $nodeSpec,
+                $mapping,
+                $ctx,
+                $report,
+            );
+
+            $perSiteOut[$siteHandle] = [
+                'siteId' => $siteId,
+                'locale' => $locale,
+                'online' => (bool) ($siteData['online'] ?? true),
+                'title' => (string) ($siteData['title'] ?? ''),
+                'slug' => (string) ($siteData['slug'] ?? ''),
+                'fieldValues' => $fieldValues,
+            ];
+        }
+
+        return [
+            'kind' => 'promotedTarget',
+            'promotedTarget' => true,
+            'kunstmaanSourceId' => $stateSource . ':' . $stateKey,
+            'section' => (string) ($spec['targetSection'] ?? ''),
+            'entryType' => (string) ($spec['targetEntryType'] ?? ''),
+            'kuma_node_id' => (int) $stateKey,
+            'kuma_parent_id' => null,
+            'refIdsByLocale' => (array) ($extractedRow['refIdsByLocale'] ?? []),
+            'perSite' => $perSiteOut,
+            'stateSource' => $stateSource,
+            'stateKey' => $stateKey,
+            'sourceRef' => (string) ($spec['sourceRef'] ?? ''),
+            'targetRef' => (string) ($spec['targetRef'] ?? ''),
+            'relationIntent' => (string) ($spec['relationIntent'] ?? ''),
+        ];
     }
 
     /**
@@ -657,7 +741,7 @@ class TransformService extends Component
      * Resolves a fieldSpec's `target:` shorthand to `handlerOptions.stateSource`,
      * consulting mapping.yaml to translate a Craft entryType handle (e.g.
      * `teamMember`) into the FQCN-slug the state table is keyed by (e.g.
-     * `App_Entity_Pages_EmployeePage`). Accepts a pre-resolved FQCN-slug as-is.
+     * `App_Entity_Pages_TeamPage`). Accepts a pre-resolved FQCN-slug as-is.
      *
      * Without this, every relation mapping using the semantic form
      * `target: teamMember` silently no-ops because RelationHandler requires

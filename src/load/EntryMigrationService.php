@@ -249,8 +249,7 @@ class EntryMigrationService extends Component
 
         // Inject the kunstmaanSourceId custom-field value on each per-site
         // payload BEFORE applyPerSiteData runs. Every migrated entry carries
-        // its legacy origin id as "<stateSource>:<stateKey>" (e.g.
-        // "App_Entity_Pages_NewsPage:34") — same format as the state-table
+        // its legacy origin id as "<stateSource>:<stateKey>" — same format as the state-table
         // row key, so the field joinably maps to {{%kunstmaanmigrator_state}}.
         //
         // This is set programmatically (not declared in mapping.yaml under
@@ -390,6 +389,24 @@ class EntryMigrationService extends Component
         // Return the primary-site Entry instance
         // ------------------------------------------------------------------ 9
         return $entry;
+    }
+
+    /**
+     * Save a promoted/shared relation target through the same idempotent
+     * stateSource/stateKey state-row path as owner entries.
+     *
+     * @param array<string, array<string, mixed>> $perSite
+     */
+    public function savePromotedTargetForSites(
+        int $sectionId,
+        int $typeId,
+        string $stateSource,
+        string|int $stateKey,
+        array $perSite,
+        bool $force = false,
+        ?MigrationReport $report = null,
+    ): Entry {
+        return $this->saveEntryForSites($sectionId, $typeId, $stateSource, $stateKey, $perSite, $force, $report);
     }
 
     // --------------------------------------------------------------------------

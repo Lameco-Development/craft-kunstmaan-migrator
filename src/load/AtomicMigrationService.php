@@ -90,6 +90,8 @@ class AtomicMigrationService extends Component
         $sourceId = (int) $nodeIdStr;
         $perSite = (array) ($transformed['perSite'] ?? []);
         $overwrite = $opts->force;
+        $isPromotedTarget = ($transformed['kind'] ?? '') === 'promotedTarget'
+            || (bool) ($transformed['promotedTarget'] ?? false);
 
         $module = Plugin::getInstance();
         if ($module === null) {
@@ -147,16 +149,27 @@ class AtomicMigrationService extends Component
             $opts,
             $refIdsByLocale,
             $report,
+            $isPromotedTarget,
         ): void {
-            $entry = $module->entryMigrationService->saveEntryForSites(
-                $section->id,
-                $entryType->id,
-                $sourceStream,
-                $sourceId,
-                $perSite,
-                $overwrite,
-                $report,
-            );
+            $entry = $isPromotedTarget
+                ? $module->entryMigrationService->savePromotedTargetForSites(
+                    $section->id,
+                    $entryType->id,
+                    $sourceStream,
+                    $sourceId,
+                    $perSite,
+                    $overwrite,
+                    $report,
+                )
+                : $module->entryMigrationService->saveEntryForSites(
+                    $section->id,
+                    $entryType->id,
+                    $sourceStream,
+                    $sourceId,
+                    $perSite,
+                    $overwrite,
+                    $report,
+                );
 
             // Merge refIdsByLocale into the state row's meta so the SEO
             // migrator (Phase 4) and any re-runs can resolve per-locale ref_ids

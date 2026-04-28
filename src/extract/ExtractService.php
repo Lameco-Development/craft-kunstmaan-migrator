@@ -202,6 +202,7 @@ class ExtractService extends Component
         $report = [
             'nodeClasses'   => 0,
             'nodesExtracted' => 0,
+            'promotedTargets' => 0,
             'skipped'       => 0,
             'warnings'      => [],
         ];
@@ -389,7 +390,155 @@ class ExtractService extends Component
             }
         }
 
+        $this->extractPromotedTargets($mapping, $outRoot, $report, $limit);
+
         return $report;
+    }
+
+    /**
+     * Extract promoted/shared relation targets as standalone source records.
+     *
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $report
+     */
+    private function extractPromotedTargets(array $mapping, string $outRoot, array &$report, ?int $limit): void
+    {
+        $targets = (array) ($mapping['promotedTargets'] ?? []);
+        if ($targets === []) {
+            return;
+        }
+
+        foreach ($targets as $key => $spec) {
+            if (!is_array($spec)) {
+                continue;
+            }
+            $stateSource = (string) ($spec['stateSource'] ?? $key);
+            $sourceFqcn = $this->sourceFqcnFromRef((string) ($spec['sourceRef'] ?? ''));
+            if ($stateSource === '' || $sourceFqcn === '') {
+                $report['warnings'][] = 'promoted target skipped: missing stateSource/sourceRef';
+                continue;
+            }
+
+            $sourceTable = (string) ($spec['sourceTable'] ?? '');
+            if ($sourceTable === '' && $this->entityParser !== null) {
+                $sourceTable = (string) ($this->entityParser->getByFqcn($sourceFqcn)?->tableName ?? '');
+            }
+            if ($sourceTable === '' && $this->detailTableResolver !== null) {
+                try {
+                    $sourceTable = $this->detailTableResolver->resolve($sourceFqcn);
+                } catch (Throwable $e) {
+                    $report['warnings'][] = "Cannot resolve promoted target table for {$sourceFqcn}: " . $e->getMessage();
+                    continue;
+                }
+            }
+            if ($sourceTable === '' || !preg_match('/^[a-zA-Z0-9_]+$/', $sourceTable)) {
+                $report['warnings'][] = "promoted target {$stateSource} skipped: invalid sourceTable";
+                continue;
+            }
+
+            $outDir = $outRoot . '/promoted_' . $this->fqcnSlug($stateSource);
+            if (!is_dir($outDir) && !@mkdir($outDir, 0775, true) && !is_dir($outDir)) {
+                throw new \RuntimeException("ExtractService: cannot create output dir {$outDir}");
+            }
+
+            $extracted = 0;
+            foreach ($this->legacyDb->streamQuery("SELECT * FROM `{$sourceTable}` ORDER BY id") as $row) {
+                if ($limit !== null && $extracted >= $limit) {
+                    break;
+                }
+                if (!is_array($row)) {
+                    continue;
+                }
+                $id = (int) ($row['id'] ?? 0);
+                if ($id <= 0) {
+                    continue;
+                }
+                $detail = $this->decodeSerializedColumns($row);
+                $perSite = $this->promotedPerSite($sourceFqcn, $id, $detail, (array) ($mapping['sites'] ?? []));
+                $payload = [
+                    'kind' => 'promotedTarget',
+                    'promotedTarget' => $spec,
+                    'kunstmaanSourceId' => $stateSource . ':' . $id,
+                    'fqcn' => $sourceFqcn,
+                    'stateSource' => $stateSource,
+                    'stateKey' => $id,
+                    'kuma_node_id' => $id,
+                    'kuma_parent_id' => null,
+                    'ref_id' => $id,
+                    'refIdsByLocale' => array_fill_keys(array_keys($perSite), $id),
+                    'sourceTable' => $sourceTable,
+                    'perSite' => $perSite,
+                ];
+
+                $outFile = $outDir . '/' . $id . '.json';
+                $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                if ($json === false || file_put_contents($outFile, $json) === false) {
+                    $report['warnings'][] = "promoted target write failed for {$stateSource}:{$id}";
+                    continue;
+                }
+
+                $report['promotedTargets']++;
+                $report['nodesExtracted']++;
+                $extracted++;
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $detail @param array<string, string> $sites */
+    private function promotedPerSite(string $sourceFqcn, int $id, array $detail, array $sites): array
+    {
+        $locales = array_keys($sites);
+        if ($locales === []) {
+            $locales = ['default'];
+        }
+        $translations = $this->legacyDb->extTranslationsFor($sourceFqcn, $id);
+        $out = [];
+        foreach ($locales as $locale) {
+            $locale = (string) $locale;
+            $localized = $detail;
+            foreach ((array) ($translations[$locale] ?? []) as $field => $content) {
+                $localized[(string) $field] = $content;
+            }
+            $title = $this->promotedTitle($localized, $id);
+            $out[$locale] = [
+                'online' => true,
+                'title' => $title,
+                'slug' => $this->slugifyText($title),
+                'url' => '',
+                'refId' => $id,
+                'detail' => $localized,
+                'pageParts' => [],
+            ];
+        }
+        return $out;
+    }
+
+    /** @param array<string, mixed> $detail */
+    private function promotedTitle(array $detail, int $id): string
+    {
+        foreach (['title', 'name', 'label'] as $key) {
+            $value = trim((string) ($detail[$key] ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+        return 'Legacy item ' . $id;
+    }
+
+    private function slugifyText(string $value): string
+    {
+        $slug = strtolower(trim(preg_replace('/[^A-Za-z0-9]+/', '-', $value) ?? '', '-'));
+        return $slug !== '' ? $slug : 'legacy-item';
+    }
+
+    private function sourceFqcnFromRef(string $sourceRef): string
+    {
+        foreach (['kunstmaan.entity:', 'kunstmaan.page:'] as $prefix) {
+            if (str_starts_with($sourceRef, $prefix)) {
+                return substr($sourceRef, strlen($prefix));
+            }
+        }
+        return '';
     }
 
     /**
@@ -843,7 +992,7 @@ class ExtractService extends Component
 
     /**
      * Produce a filesystem-safe slug from an FQCN.
-     *   "App\Entity\Pages\NewsPage" -> "App_Entity_Pages_NewsPage"
+     *   "App\Entity\Pages\SomePage" -> "App_Entity_Pages_SomePage"
      */
     private function fqcnSlug(string $fqcn): string
     {

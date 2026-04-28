@@ -602,8 +602,7 @@ class MigrateController extends Controller
     }
 
     /**
-     * Sub-action: migrate Doctrine standalone taxonomy entities (NewsCategory,
-     * CaseStudyCategory, Employee-style standalone tables) into Craft entries.
+     * Sub-action: migrate Doctrine standalone taxonomy/classifier entities into Craft entries.
      *
      * Phase 8 / D-03 / TAX-08: standalone resume / debug entry point. The
      * actionIndex bolt-on already runs taxonomies BEFORE pages on every full
@@ -1721,9 +1720,27 @@ class MigrateController extends Controller
         if ($filters->entities === []) {
             return true;
         }
+        if ($this->isPromotedTargetPayloadFile($jsonPath)) {
+            return true;
+        }
 
         $fqcn = str_replace('_', '\\', basename(dirname($jsonPath)));
         return $filters->allows($fqcn);
+    }
+
+    private function isPromotedTargetPayloadFile(string $jsonPath): bool
+    {
+        $raw = file_get_contents($jsonPath);
+        if ($raw === false) {
+            return false;
+        }
+        $payload = json_decode($raw, true);
+        return is_array($payload)
+            && (
+                ($payload['kind'] ?? '') === 'promotedTarget'
+                || (bool) ($payload['promotedTarget'] ?? false)
+            )
+            && (string) ($payload['stateSource'] ?? '') !== '';
     }
 
     /**
@@ -1805,6 +1822,13 @@ class MigrateController extends Controller
             }
             $files[] = $f;
         }
+        usort($files, fn(string $a, string $b): int => [
+            $this->isPromotedTargetPayloadFile($a) ? 0 : 1,
+            $a,
+        ] <=> [
+            $this->isPromotedTargetPayloadFile($b) ? 0 : 1,
+            $b,
+        ]);
         $total = count($files);
         if ($total === 0) {
             $this->stdout("  WARN no transformed payloads to load\n", Console::FG_YELLOW);
