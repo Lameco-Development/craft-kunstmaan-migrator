@@ -44,12 +44,12 @@ final class RelationHandlerTaxonomyResolverTest extends TestCase
         $resolver = $this->createMock(TaxonomyMigrationService::class);
         $resolver->expects($this->once())
             ->method('resolveReferenced')
-            ->with('App\\Entity\\CaseCategory', 42)
+            ->with('App\\Entity\\TopicTaxonomy', 42)
             ->willReturn(9001);
 
         $result = (new RelationHandler())->resolve(42, $this->ctx($state, $resolver), [
-            'stateSource' => 'App_Entity_CaseCategory',
-            'taxonomySource' => 'App\\Entity\\CaseCategory',
+            'stateSource' => 'App_Entity_TopicTaxonomy',
+            'taxonomySource' => 'App\\Entity\\TopicTaxonomy',
         ]);
 
         self::assertSame([9001], $result);
@@ -76,8 +76,8 @@ final class RelationHandlerTaxonomyResolverTest extends TestCase
         $resolver->expects($this->never())->method('resolveReferenced');
 
         $result = (new RelationHandler())->resolve('', $this->ctx(taxonomyResolver: $resolver), [
-            'stateSource' => 'App_Entity_CaseCategory',
-            'taxonomySource' => 'App\\Entity\\CaseCategory',
+            'stateSource' => 'App_Entity_TopicTaxonomy',
+            'taxonomySource' => 'App\\Entity\\TopicTaxonomy',
         ]);
 
         self::assertSame([], $result);
@@ -93,8 +93,8 @@ final class RelationHandlerTaxonomyResolverTest extends TestCase
 
         $report = new MigrationReport();
         $result = (new RelationHandler())->resolve(12, $this->ctx($state, $resolver, $report, true), [
-            'stateSource' => 'App_Entity_CaseCategory',
-            'taxonomySource' => 'App\\Entity\\CaseCategory',
+            'stateSource' => 'App_Entity_TopicTaxonomy',
+            'taxonomySource' => 'App\\Entity\\TopicTaxonomy',
         ]);
 
         self::assertSame([], $result);

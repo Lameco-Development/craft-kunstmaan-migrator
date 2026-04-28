@@ -283,10 +283,10 @@ final class TaxonomyMigrationTest extends TestCase
         $mappingFile = $this->createStub(MappingFile::class);
         $mappingFile->method('load')->willReturn([
             'taxonomies' => [
-                'App\\Entity\\CaseCategory' => [
-                    'sourceTable' => 'case_categories',
-                    'targetSection' => 'caseCategories',
-                    'targetEntryType' => 'caseCategory',
+                'App\\Entity\\TopicTaxonomy' => [
+                    'sourceTable' => 'topic_taxonomies',
+                    'targetSection' => 'topicTaxonomies',
+                    'targetEntryType' => 'topicTaxonomy',
                     'fields' => ['name' => 'title'],
                 ],
             ],
@@ -298,7 +298,7 @@ final class TaxonomyMigrationTest extends TestCase
         $stateService = $this->createMock(MigrationStateService::class);
         $stateService->expects($this->once())
             ->method('getTargetId')
-            ->with('App_Entity_CaseCategory', '42', null)
+            ->with('App_Entity_TopicTaxonomy', '42', null)
             ->willReturn(1234);
         $stateService->expects($this->never())->method('record');
 
@@ -308,7 +308,7 @@ final class TaxonomyMigrationTest extends TestCase
         $svc->legacyDb = $legacyDb;
         $svc->migrationState = $stateService;
 
-        $result = $svc->resolveReferenced('App\\Entity\\CaseCategory', 42, new MigrationOptions(dryRun: false), $report);
+        $result = $svc->resolveReferenced('App\\Entity\\TopicTaxonomy', 42, new MigrationOptions(dryRun: false), $report);
 
         $this->assertSame(1234, $result);
         $this->assertSame(1, (int) ($report->counts['taxonomy.linkedExisting'] ?? 0));
@@ -319,10 +319,10 @@ final class TaxonomyMigrationTest extends TestCase
         $mappingFile = $this->createStub(MappingFile::class);
         $mappingFile->method('load')->willReturn([
             'taxonomies' => [
-                'App\\Entity\\CaseCategory' => [
-                    'sourceTable' => 'case_categories',
-                    'targetSection' => 'caseCategories',
-                    'targetEntryType' => 'caseCategory',
+                'App\\Entity\\TopicTaxonomy' => [
+                    'sourceTable' => 'topic_taxonomies',
+                    'targetSection' => 'topicTaxonomies',
+                    'targetEntryType' => 'topicTaxonomy',
                     'fields' => ['name' => 'title'],
                 ],
             ],
@@ -331,7 +331,7 @@ final class TaxonomyMigrationTest extends TestCase
         $legacyDb = $this->createMock(LegacyDbService::class);
         $legacyDb->expects($this->once())
             ->method('queryOne')
-            ->with('SELECT * FROM case_categories WHERE id = :id LIMIT 1', [':id' => 42])
+            ->with('SELECT * FROM topic_taxonomies WHERE id = :id LIMIT 1', [':id' => 42])
             ->willReturn(['id' => 42, 'name' => 'Generic taxonomy']);
 
         $stateService = $this->createMock(MigrationStateService::class);
@@ -344,7 +344,7 @@ final class TaxonomyMigrationTest extends TestCase
         $svc->legacyDb = $legacyDb;
         $svc->migrationState = $stateService;
 
-        $result = $svc->resolveReferenced('App_Entity_CaseCategory', 42, new MigrationOptions(dryRun: true), $report);
+        $result = $svc->resolveReferenced('App_Entity_TopicTaxonomy', 42, new MigrationOptions(dryRun: true), $report);
 
         $this->assertNull($result);
         $this->assertSame(1, (int) ($report->counts['taxonomy.wouldCreate'] ?? 0));
@@ -357,10 +357,10 @@ final class TaxonomyMigrationTest extends TestCase
         $mappingFile = $this->createStub(MappingFile::class);
         $mappingFile->method('load')->willReturn([
             'taxonomies' => [
-                'App\\Entity\\CaseCategory' => [
-                    'sourceTable' => 'case_categories',
-                    'targetSection' => 'caseCategories',
-                    'targetEntryType' => 'caseCategory',
+                'App\\Entity\\TopicTaxonomy' => [
+                    'sourceTable' => 'topic_taxonomies',
+                    'targetSection' => 'topicTaxonomies',
+                    'targetEntryType' => 'topicTaxonomy',
                     'fields' => ['name' => 'title'],
                 ],
             ],
@@ -378,7 +378,7 @@ final class TaxonomyMigrationTest extends TestCase
         $svc->legacyDb = $legacyDb;
         $svc->migrationState = $stateService;
 
-        $result = $svc->resolveReferenced('App\\Entity\\CaseCategory', 404, new MigrationOptions(dryRun: true), $report);
+        $result = $svc->resolveReferenced('App\\Entity\\TopicTaxonomy', 404, new MigrationOptions(dryRun: true), $report);
 
         $this->assertNull($result);
         $this->assertStringContainsString('source row not found', implode("\n", $report->warnings));
