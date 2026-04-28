@@ -17,11 +17,13 @@ php craft kunstmaan-migrator/doctor
 php craft kunstmaan-migrator/analyze
 php craft kunstmaan-migrator/map
 php craft kunstmaan-migrator/compile
-php craft kunstmaan-migrator/migrate --dry-run
+php craft kunstmaan-migrator/migrate
 php craft kunstmaan-migrator/migrate --live
 php craft kunstmaan-migrator/verify
 php tools/audit-source-shapes.php ~/Sites/cqm-website
 ```
+
+Dry-run is the default `php craft kunstmaan-migrator/migrate` mode; `php craft kunstmaan-migrator/migrate --live` is the write mode.
 
 Strict acceptance bar:
 
