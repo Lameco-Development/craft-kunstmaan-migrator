@@ -396,12 +396,15 @@ Plans:
 5. Compiler validation prevents pageBuilder fields from being written to entry types that do not own them; flat content fallback remains available for no-Matrix entry types.
 6. Verify output no longer reports false count failures caused by mismatched baseline semantics.
 7. PHPUnit covers the new generic behaviors without requiring proprietary source content.
-8. A clean CQM rehearsal rerun after restoring the pre-live backup reaches zero entry failures or records only explicit, justified out-of-scope items.
+8. A clean CQM rehearsal rerun after restoring the pre-live backup reaches zero entry failures and zero stage failures. Explicit accepted out-of-scope/dropped page-owned surfaces may appear only as classified report/coverage rows and must not increment entry or stage failure counts.
 
-**Plans:** Not planned yet.
+**Plans:** 4 plans
 
 Plans:
-- [ ] _Run `/gsd-plan-phase 10`._
+- [ ] `10-01-PLAN.md` — compile/preflight safety, PageBuilder ownership validation, and structural fixtures.
+- [ ] `10-02-PLAN.md` — Matrix native-title fallback, sparse-locale primary-save fallback, and visible fallback reporting.
+- [ ] `10-03-PLAN.md` — page-rooted taxonomy lazy resolver, referenced-only default, and explicit full-taxonomy import path.
+- [ ] `10-04-PLAN.md` — verify count-domain semantics, restored-backup CQM runbook, and closing proof.
 
 ---
 

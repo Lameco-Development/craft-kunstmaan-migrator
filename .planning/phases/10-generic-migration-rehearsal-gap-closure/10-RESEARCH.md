@@ -249,12 +249,12 @@ Final Phase 10 proof should:
 
 Focused entity reruns are useful during implementation but do not replace the restored-backup full workflow closing gate.
 
-## Open Questions for Planner
+## Open Questions (RESOLVED)
 
-1. Should lazy taxonomy resolution run during transform, load, or through a deferred token? Recommendation: avoid hidden Craft/state writes during transform; prefer a load-safe resolver seam unless existing handler architecture makes a tiny transform-time seam clearly safer.
-2. What exact dry-run behavior should lazy taxonomy creation use? Recommendation: no writes; report would-create terms and would-link counts.
-3. How should source-parity expected counts be derived? Recommendation: use transformed payload/state-table counts for migration-created domains; keep Craft baseline for drift checks only.
-4. Which target validation warnings are fatal? Recommendation: fail load-fatal categories, keep advisory categories as visible warnings.
+1. **Lazy taxonomy resolution seam:** Resolved to use a load-safe resolver seam owned by `TaxonomyMigrationService`. `RelationHandler` delegates only on taxonomy-backed non-empty state misses; it does not create taxonomy entries directly.
+2. **Dry-run behavior:** Resolved to perform no Craft writes and no migration-state writes. Dry-run reports would-create/would-link taxonomy counts instead of pretending persisted targets exist.
+3. **Source-parity expected counts:** Resolved to split verify domains into Craft baseline/current drift, migration-created state counts, and source/transformed parity where source-derived expected counts exist.
+4. **Fatal target validation:** Resolved to treat section + entry-type incompatibility as load-fatal. Advisory-only validation messages remain warnings when they cannot cause live load failure.
 
 ## Sources
 
