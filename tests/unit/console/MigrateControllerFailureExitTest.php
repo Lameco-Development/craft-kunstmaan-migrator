@@ -75,4 +75,44 @@ final class MigrateControllerFailureExitTest extends TestCase
         self::assertStringContainsString('Migrate: FAIL', $source);
         self::assertStringContainsString('writeReport($storageDir, $report', $source);
     }
+
+    public function testPreflightCompiledMappingBlocksLoadFatalTargetValidation(): void
+    {
+        $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod(MigrateController::class, 'preflightCompiledMapping');
+
+        $mapping = [
+            'nodeClasses' => [
+                'App\\Entity\\VacancyFormPage' => [
+                    'sourceTable' => 'vacancy_form_pages',
+                    'section' => 'formContentBlock',
+                    'fields' => [],
+                ],
+            ],
+            'sections' => [
+                'formContentBlock' => [
+                    'section' => 'contentPages',
+                    'entryType' => 'formContentBlock',
+                ],
+            ],
+            'sites' => ['nl' => 'default'],
+        ];
+        $schema = [
+            'sections' => [
+                'contentPages' => ['entryTypes' => ['contentPage']],
+            ],
+            'entryTypes' => [
+                'contentPage' => ['fields' => []],
+                'formContentBlock' => ['fields' => []],
+            ],
+        ];
+
+        $result = $method->invoke($controller, $mapping, $schema);
+
+        self::assertSame([], $result['missing']);
+        self::assertNotSame([], $result['fatal']);
+        self::assertStringContainsString('contentPages', implode("\n", $result['messages']));
+        self::assertStringContainsString('formContentBlock', implode("\n", $result['messages']));
+        self::assertStringContainsString('Load-fatal target validation', implode("\n", $result['messages']));
+    }
 }

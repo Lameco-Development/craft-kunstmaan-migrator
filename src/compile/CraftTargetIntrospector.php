@@ -21,6 +21,18 @@ final class CraftTargetIntrospector extends Component
      */
     public function validate(array $compiled, array $schema): array
     {
+        $result = $this->validateWithSeverity($compiled, $schema);
+        return array_values(array_unique(array_merge($result['fatal'], $result['warnings'])));
+    }
+
+    /**
+     * @param array<string, mixed> $compiled
+     * @param array<string, mixed> $schema
+     * @return array{fatal: list<string>, warnings: list<string>}
+     */
+    public function validateWithSeverity(array $compiled, array $schema): array
+    {
+        $fatal = [];
         $warnings = [];
         $sections = (array) ($schema['sections'] ?? []);
         $entryTypes = (array) ($schema['entryTypes'] ?? []);
@@ -32,12 +44,12 @@ final class CraftTargetIntrospector extends Component
             $sectionHandle = (string) ($sectionSpec['section'] ?? $sectionKey);
             $entryType = (string) ($sectionSpec['entryType'] ?? $sectionKey);
             if ($sectionHandle === '' || !isset($sections[$sectionHandle])) {
-                $warnings[] = sprintf('Craft target section `%s` for entryType `%s` does not exist.', $sectionHandle !== '' ? $sectionHandle : '∅', $entryType);
+                $fatal[] = sprintf('Craft target section `%s` for entryType `%s` does not exist.', $sectionHandle !== '' ? $sectionHandle : '∅', $entryType);
                 continue;
             }
             $allowedEntryTypes = (array) ($sections[$sectionHandle]['entryTypes'] ?? []);
             if ($entryType !== '' && $allowedEntryTypes !== [] && !in_array($entryType, $allowedEntryTypes, true)) {
-                $warnings[] = sprintf('Craft target section `%s` does not allow entryType `%s` (allowed: %s).', $sectionHandle, $entryType, implode(', ', $allowedEntryTypes));
+                $fatal[] = sprintf('Craft target section `%s` does not allow entryType `%s` (allowed: %s).', $sectionHandle, $entryType, implode(', ', $allowedEntryTypes));
             }
         }
 
@@ -48,7 +60,7 @@ final class CraftTargetIntrospector extends Component
             $sectionKey = (string) ($nodeSpec['section'] ?? '');
             $entryType = (string) ($compiled['sections'][$sectionKey]['entryType'] ?? $sectionKey);
             if ($entryType === '' || !isset($entryTypes[$entryType])) {
-                $warnings[] = sprintf('%s targets missing Craft entryType `%s`.', (string) $fqcn, $entryType !== '' ? $entryType : '∅');
+                $fatal[] = sprintf('%s targets missing Craft entryType `%s`.', (string) $fqcn, $entryType !== '' ? $entryType : '∅');
                 continue;
             }
             $fields = (array) ($entryTypes[$entryType]['fields'] ?? []);
@@ -72,8 +84,12 @@ final class CraftTargetIntrospector extends Component
         $this->validateOptionalAdapter($warnings, 'SEOmatic', 'seomatic', $compiled, $schema);
         $this->validateOptionalAdapter($warnings, 'Retour', 'retour', $compiled, $schema);
 
+        sort($fatal);
         sort($warnings);
-        return array_values(array_unique($warnings));
+        return [
+            'fatal' => array_values(array_unique($fatal)),
+            'warnings' => array_values(array_unique($warnings)),
+        ];
     }
 
     /**

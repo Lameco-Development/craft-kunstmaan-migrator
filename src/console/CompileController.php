@@ -322,9 +322,15 @@ class CompileController extends Controller
             $this->stdout("  WARN {$w}\n", Console::FG_YELLOW);
         }
 
-        $targetWarnings = $plugin->craftTargetIntrospector->validate($compiled, $this->craftTargetSchema($plugin));
-        foreach ($targetWarnings as $w) {
+        $targetValidation = $plugin->craftTargetIntrospector->validateWithSeverity($compiled, $this->craftTargetSchema($plugin));
+        foreach ($targetValidation['fatal'] as $w) {
+            $this->stderr("  FAIL target validation: {$w}\n", Console::FG_RED);
+        }
+        foreach ($targetValidation['warnings'] as $w) {
             $this->stdout("  WARN target validation: {$w}\n", Console::FG_YELLOW);
+        }
+        if ($targetValidation['fatal'] !== []) {
+            return ExitCode::CONFIG;
         }
 
         // 6. Dry-run early exit.

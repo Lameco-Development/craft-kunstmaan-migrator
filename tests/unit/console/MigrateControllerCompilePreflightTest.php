@@ -18,14 +18,14 @@ use ReflectionMethod;
 final class MigrateControllerCompilePreflightTest extends TestCase
 {
     /**
-     * @return array{missing: list<string>, messages: list<string>}
+     * @return array{missing: list<string>, fatal: list<string>, messages: list<string>}
      */
     private function preflight(array $mapping): array
     {
         $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
         $method = new ReflectionMethod(MigrateController::class, 'preflightCompiledMapping');
 
-        /** @var array{missing: list<string>, messages: list<string>} $result */
+        /** @var array{missing: list<string>, fatal: list<string>, messages: list<string>} $result */
         $result = $method->invoke($controller, $mapping);
         return $result;
     }
@@ -78,7 +78,7 @@ final class MigrateControllerCompilePreflightTest extends TestCase
             ],
         ];
 
-        self::assertSame(['missing' => [], 'messages' => []], $this->preflight($mapping));
+        self::assertSame(['missing' => [], 'fatal' => [], 'messages' => []], $this->preflight($mapping));
     }
 
     public function testMigrateIndexAndLoadCallCompiledMappingPreflight(): void
@@ -92,7 +92,7 @@ final class MigrateControllerCompilePreflightTest extends TestCase
             substr_count($source, 'preflightCompiledMapping('),
             'Helper plus actionIndex() and actionLoad() call sites must be present.',
         );
-        self::assertStringContainsString('FAIL compiled mapping incomplete', $source);
+        self::assertStringContainsString('FAIL compiled mapping preflight blocked migrate --live', $source);
         self::assertStringContainsString('./craft kunstmaan-migrator/compile', $source);
     }
 }

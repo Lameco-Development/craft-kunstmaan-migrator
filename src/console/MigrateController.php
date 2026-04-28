@@ -219,10 +219,10 @@ class MigrateController extends Controller
             "  OK   mapping loaded (" . count($mapping['proposals'] ?? []) . " rows) → {$mappingPath}\n",
             Console::FG_GREEN,
         );
-        $compiledPreflight = $this->preflightCompiledMapping($mapping);
-        if ($compiledPreflight['missing'] !== []) {
+        $compiledPreflight = $this->preflightCompiledMapping($mapping, $this->migrateTargetSchema($plugin));
+        if ($compiledPreflight['missing'] !== [] || $compiledPreflight['fatal'] !== []) {
             $this->stderr(
-                "  FAIL compiled mapping incomplete — missing: " . implode(', ', $compiledPreflight['missing']) . "\n",
+                "  FAIL compiled mapping preflight blocked migrate --live\n",
                 Console::FG_RED,
             );
             foreach ($compiledPreflight['messages'] as $message) {
@@ -775,10 +775,10 @@ class MigrateController extends Controller
         if ($mapping === null) {
             return ExitCode::CONFIG;
         }
-        $compiledPreflight = $this->preflightCompiledMapping($mapping);
-        if ($compiledPreflight['missing'] !== []) {
+        $compiledPreflight = $this->preflightCompiledMapping($mapping, $this->migrateTargetSchema($plugin));
+        if ($compiledPreflight['missing'] !== [] || $compiledPreflight['fatal'] !== []) {
             $this->stderr(
-                "  FAIL compiled mapping incomplete — missing: " . implode(', ', $compiledPreflight['missing']) . "\n",
+                "  FAIL compiled mapping preflight blocked migrate --live\n",
                 Console::FG_RED,
             );
             foreach ($compiledPreflight['messages'] as $message) {
@@ -1436,9 +1436,9 @@ class MigrateController extends Controller
      * runtime surface will be used.
      *
      * @param array<string, mixed> $mapping
-     * @return array{missing: list<string>, messages: list<string>}
+     * @return array{missing: list<string>, fatal: list<string>, messages: list<string>}
      */
-    private function preflightCompiledMapping(array $mapping): array
+    private function preflightCompiledMapping(array $mapping, ?array $targetSchema = null): array
     {
         $missing = [];
         foreach (['nodeClasses', 'sections', 'sites'] as $block) {
@@ -1469,16 +1469,30 @@ class MigrateController extends Controller
             }
         }
 
-        if ($missing === []) {
-            return ['missing' => [], 'messages' => []];
+        $fatal = [];
+        if ($targetSchema !== null && $this->mappingBlockPresent($mapping, 'sections')) {
+            $validation = (new \lameco\kunstmaanmigrator\compile\CraftTargetIntrospector())
+                ->validateWithSeverity($mapping, $targetSchema);
+            $fatal = $validation['fatal'];
+        }
+
+        if ($missing === [] && $fatal === []) {
+            return ['missing' => [], 'fatal' => [], 'messages' => []];
+        }
+
+        $messages = [];
+        if ($missing !== []) {
+            $messages[] = 'Run `./craft kunstmaan-migrator/compile` after analyze/map so mapping.yaml contains compiled runtime blocks.';
+            $messages[] = 'Missing compiled block(s): ' . implode(', ', $missing);
+        }
+        foreach ($fatal as $message) {
+            $messages[] = 'Load-fatal target validation: ' . $message;
         }
 
         return [
             'missing' => $missing,
-            'messages' => [
-                'Run `./craft kunstmaan-migrator/compile` after analyze/map so mapping.yaml contains compiled runtime blocks.',
-                'Missing compiled block(s): ' . implode(', ', $missing),
-            ],
+            'fatal' => $fatal,
+            'messages' => $messages,
         ];
     }
 
@@ -1490,6 +1504,54 @@ class MigrateController extends Controller
         return isset($mapping[$block])
             && is_array($mapping[$block])
             && $mapping[$block] !== [];
+    }
+
+    /**
+     * Build the schema facade consumed by CraftTargetIntrospector during live
+     * migrate preflight. This mirrors CompileController's target schema but is
+     * local to migrate so stale hand-edited compiled mappings are blocked even
+     * when operators skip a fresh compile.
+     *
+     * @return array<string, mixed>
+     */
+    private function migrateTargetSchema(Plugin $plugin): array
+    {
+        $sections = [];
+        foreach ($plugin->craftKnowledgeBase->sectionToEntryTypes() as $handle => $entryTypes) {
+            $sections[(string) $handle] = ['entryTypes' => $entryTypes];
+        }
+
+        $entryTypes = [];
+        foreach ($plugin->craftKnowledgeBase->buildFieldIndex() as $entryType => $fields) {
+            $fieldMap = [];
+            foreach ((array) $fields as $field) {
+                if (!is_array($field)) { continue; }
+                $handle = (string) ($field['handle'] ?? '');
+                if ($handle === '' || str_contains($handle, '.')) { continue; }
+                $fieldMap[$handle] = ['type' => strtolower((string) ($field['classification'] ?? $field['type'] ?? 'plain'))];
+            }
+            $entryTypes[(string) $entryType] = ['fields' => $fieldMap];
+        }
+
+        $volumes = [];
+        try {
+            foreach (Craft::$app->volumes->getAllVolumes() as $volume) {
+                $handle = (string) $volume->handle;
+                if ($handle !== '') { $volumes[] = $handle; }
+            }
+        } catch (Throwable) {
+            $volumes = [];
+        }
+
+        return [
+            'sections' => $sections,
+            'entryTypes' => $entryTypes,
+            'volumes' => array_values(array_unique($volumes)),
+            'plugins' => [
+                'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
+                'retour' => Craft::$app->plugins->getPlugin('retour') !== null,
+            ],
+        ];
     }
 
     /**

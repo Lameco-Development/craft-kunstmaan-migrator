@@ -16,16 +16,32 @@ final class CraftTargetIntrospectorTest extends TestCase
         self::assertSame([], $warnings);
     }
 
-    public function testMissingSectionAndEntryTypeCompatibilityAreReported(): void
+    public function testMissingSectionAndEntryTypeCompatibilityAreLoadFatal(): void
     {
         $compiled = $this->compiled();
         $compiled['sections']['articlePage']['section'] = 'missingSection';
 
-        $warnings = (new CraftTargetIntrospector())->validate($compiled, $this->schema());
+        $result = (new CraftTargetIntrospector())->validateWithSeverity($compiled, $this->schema());
 
-        $joined = implode("\n", $warnings);
+        $joined = implode("\n", $result['fatal']);
         self::assertStringContainsString('missingSection', $joined);
         self::assertStringContainsString('articlePage', $joined);
+    }
+
+    public function testDisallowedSectionEntryTypePairIsLoadFatal(): void
+    {
+        $compiled = $this->compiled();
+        $compiled['sections']['articlePage'] = [
+            'section' => 'articles',
+            'entryType' => 'newsPage',
+        ];
+
+        $result = (new CraftTargetIntrospector())->validateWithSeverity($compiled, $this->schema());
+
+        $joined = implode("\n", $result['fatal']);
+        self::assertStringContainsString('articles', $joined);
+        self::assertStringContainsString('newsPage', $joined);
+        self::assertStringContainsString('does not allow entryType', $joined);
     }
 
     public function testMissingFieldAndMatrixBlockFieldAreReported(): void
