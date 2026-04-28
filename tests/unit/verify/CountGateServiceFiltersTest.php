@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\verify;
 
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
-use lameco\kunstmaanmigrator\console\VerifyController;
-use lameco\kunstmaanmigrator\finalize\FinalizeWalker;
 use lameco\kunstmaanmigrator\verify\CountGateService;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -96,7 +94,7 @@ final class CountGateServiceFiltersTest extends TestCase
 
     public function testVerifyControllerLoadsCompiledMappingForEntityFilterTranslation(): void
     {
-        $source = (string) file_get_contents((new ReflectionClass(VerifyController::class))->getFileName());
+        $source = (string) file_get_contents(__DIR__ . '/../../../src/console/VerifyController.php');
 
         self::assertStringContainsString('MappingFilterTranslator', $source);
         self::assertStringContainsString('loadTranslatedScopeForEntityFilters', $source);
@@ -107,7 +105,7 @@ final class CountGateServiceFiltersTest extends TestCase
 
     public function testFinalizeWalkerUsesTranslatedCraftScopeForEntryQueries(): void
     {
-        $source = (string) file_get_contents((new ReflectionClass(FinalizeWalker::class))->getFileName());
+        $source = (string) file_get_contents(__DIR__ . '/../../../src/finalize/FinalizeWalker.php');
 
         self::assertStringContainsString('MappingFilterTranslator', $source);
         self::assertStringContainsString('loadTranslatedScopeForEntityFilters', $source);
