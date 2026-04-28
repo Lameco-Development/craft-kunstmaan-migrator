@@ -433,6 +433,47 @@ class AnalyzeController extends Controller
             }
         }
 
+        // Phase 8.7 / F1 — page-wins auto-folding for ManyToOne 1:1 wrapping
+        // pairs. After the entity-level LLM has proposed targetEntryType for
+        // each page (and BEFORE the column-level LLM consumes residuals), walk
+        // the parser's relation index and emit synthetic `_rel:<prop>.<col>`
+        // residual rows for project-defined ManyToOne targets that name-match
+        // the page (`EmployeePage`→`Employee`). These flow through the same
+        // LLM path as native columns and surface on the page's nodeClass
+        // fields[] at compile time — see emitPageWrapSyntheticColumns() for
+        // the full design rationale and feedback_pages_lead.md for the
+        // governing rule. Symmetric gating: name-match drives BOTH emit AND
+        // the wrapped-entity drop a few steps below. Folded FQCNs are tracked
+        // so step 7.7's taxonomy proposals can be force-dropped with
+        // reason: superseded-by-page.
+        $pageTableToEntryType = [];
+        foreach ($nodeClassProposals as $ncp) {
+            if (!is_array($ncp)) { continue; }
+            $tbl = (string) ($ncp['sourceTable'] ?? '');
+            $et  = (string) ($ncp['targetEntryType'] ?? '');
+            if ($tbl !== '' && $et !== '') {
+                // First-write wins (chunked LLM never returns the same FQCN
+                // twice, but defensive against re-entry).
+                $pageTableToEntryType[$tbl] ??= $et;
+            }
+        }
+        $entityIndexForFold = Plugin::getInstance()->doctrineEntityParser->getAll();
+        [$pageWrapSyntheticRows, $pageWrapFoldedFqcns] = self::emitPageWrapSyntheticColumns(
+            $scopedPageStructure,
+            $entityIndexForFold,
+            (array) ($schemaDump['columns'] ?? []),
+            $pageTableToEntryType,
+        );
+        if ($pageWrapSyntheticRows !== []) {
+            $residual = array_merge($residual, $pageWrapSyntheticRows);
+            $this->stdout(
+                "  OK   page-wrap fold (F1) injected " . count($pageWrapSyntheticRows)
+                . " synthetic _rel: column rows across " . count($pageWrapFoldedFqcns)
+                . " wrapped target entit" . (count($pageWrapFoldedFqcns) === 1 ? 'y' : 'ies') . "\n",
+                Console::FG_GREEN,
+            );
+        }
+
         // Backfill column violations' targetEntryType from accepted-tier nodeClass
         // proposals (high confidence → status will be `accepted`; medium/low → won't
         // be applied here but the operator can promote via map). This bridges the
@@ -767,6 +808,41 @@ class AnalyzeController extends Controller
             } catch (Throwable $e) {
                 $this->stderr("  FAIL non-page-entity LLM: {$e->getMessage()}\n", Console::FG_RED);
                 return ExitCode::UNSPECIFIED_ERROR;
+            }
+        }
+
+        // Phase 8.7 / F1 — force-drop the taxonomy proposal for entities folded
+        // into a parent page by the page-wrap pass above. The page is now the
+        // canonical Craft entry; the wrapped entity contributes via `_rel:`
+        // embedding only (saved memory: feedback_pages_lead.md). Identity-tuple
+        // skip-existing in MappingFile::merge means an operator-accepted prior
+        // decision survives this override on re-run — only fresh proposals get
+        // the dropped status. Runs unconditionally so `--no-ai` runs (which
+        // produce no taxonomyProposals) are a structural no-op.
+        if ($pageWrapFoldedFqcns !== [] && $taxonomyProposals !== []) {
+            $foldedSet = array_flip($pageWrapFoldedFqcns);
+            $forcedDrops = 0;
+            foreach ($taxonomyProposals as &$tp) {
+                if (!is_array($tp)) { continue; }
+                $fqcn = (string) ($tp['fqcn'] ?? '');
+                if ($fqcn === '' || !isset($foldedSet[$fqcn])) { continue; }
+                if (((string) ($tp['status'] ?? '')) === 'dropped') {
+                    // Already dropped (LLM marked it SUPPORTING); leave the
+                    // existing reason rather than clobbering it.
+                    continue;
+                }
+                $tp['status']    = 'dropped';
+                $tp['reason']    = 'superseded-by-page';
+                $tp['rationale'] = 'F1 page-wrap fold: columns now flow to the wrapping Page via _rel: embedding.';
+                $forcedDrops++;
+            }
+            unset($tp);
+            if ($forcedDrops > 0) {
+                $this->stdout(
+                    "  OK   page-wrap fold (F1) marked {$forcedDrops} wrapped-entity taxonom"
+                    . ($forcedDrops === 1 ? 'y' : 'ies') . " status: dropped (superseded-by-page)\n",
+                    Console::FG_GREEN,
+                );
             }
         }
 
@@ -1326,6 +1402,164 @@ class AnalyzeController extends Controller
     private function buildCraftFieldIndex(): array
     {
         return Plugin::getInstance()->craftKnowledgeBase->buildFieldIndex();
+    }
+
+    /**
+     * Phase 8.7 / F1 — page-wins auto-folding for ManyToOne 1:1 wrapping pairs.
+     *
+     * For each scoped page FQCN, walks its parsed Doctrine ManyToOne
+     * relations. When a relation's target is a project-defined entity AND
+     * the name-match heuristic fires (`<X>Page` strips to `<X>` matching the
+     * target's basename — e.g. EmployeePage→Employee), emits one synthetic
+     * residual column row per non-id, non-FK column on the target. Source
+     * column is shaped as `_rel:<property>.<column>` so the existing column
+     * LLM (LlmClassifier::buildBatchPrompt: 2219) recognises it as an FK-
+     * embedded column and the existing compile pipeline writes it to
+     * `nodeClasses[<pageFqcn>].fields[<targetHandle>] = {handler, source: '_rel:...'}`
+     * transparently.
+     *
+     * Returns `[syntheticRows, foldedTargetFqcns]`. The folded set is
+     * consumed downstream to force `status: dropped, reason: superseded-
+     * by-page` on the wrapped entity's taxonomy proposal — the canonical
+     * entry is the page; the wrapped entity contributes via `_rel:` only
+     * (governed by the saved `feedback_pages_lead.md` rule).
+     *
+     * Symmetric gating: name-match drives BOTH emission and drop. Page→
+     * taxonomy ManyToOne FKs (e.g. CaseStudyPage→CaseStudyCategory) DO NOT
+     * trigger this because `CaseStudyPage` strips to `CaseStudy`, not
+     * `CaseStudyCategory`. Non-conventional 1:1 wraps fall through and the
+     * operator hand-curates `_rel:<prop>.<col>` rows the way they do today.
+     *
+     * Runs unconditionally — deterministic structural walk, no AI calls.
+     * Static + value-object inputs so the path is unit-testable without a
+     * Craft + DB harness.
+     *
+     * @param  array<string, array<string, mixed>>                              $scopedPageStructure  pageStructure scoped by --entities
+     * @param  array<string, \lameco\kunstmaanmigrator\source\DoctrineEntityInfo> $entityIndex  parser->getAll() — FQCN-keyed
+     * @param  array<string, list<array<string, mixed>>>                        $columnsByTable  schemaDump.columns — table → list of {column, fillRate, sqlType, samples}
+     * @param  array<string, string>                                            $pageTableToEntryType  page table → targetEntryType (from nodeClass proposals, all confidence tiers)
+     * @return array{0: list<array<string, mixed>>, 1: list<string>}  [syntheticRows, foldedTargetFqcns]
+     */
+    public static function emitPageWrapSyntheticColumns(
+        array $scopedPageStructure,
+        array $entityIndex,
+        array $columnsByTable,
+        array $pageTableToEntryType,
+    ): array {
+        $syntheticRows = [];
+        $foldedFqcns = [];
+        $seenSyntheticKey = []; // dedupe within this run when two pages wrap the same target
+
+        foreach ($scopedPageStructure as $pageFqcn => $pageRecord) {
+            if (!is_string($pageFqcn) || !is_array($pageRecord)) {
+                continue;
+            }
+            $pageTable = (string) ($pageRecord['tableName'] ?? '');
+            if ($pageTable === '') {
+                continue;
+            }
+            $pageInfo = $entityIndex[$pageFqcn] ?? null;
+            if ($pageInfo === null) {
+                continue;
+            }
+            $pageBase = self::basenameForFqcn($pageFqcn);
+            // F1 name-match anchor: strip a trailing `Page` segment from the
+            // page basename — that's the conventional Kunstmaan wrap shape.
+            // Without the suffix the page isn't conventionally a wrapper.
+            if (!str_ends_with($pageBase, 'Page')) {
+                continue;
+            }
+            $strippedPageBase = substr($pageBase, 0, -strlen('Page'));
+            if ($strippedPageBase === '') {
+                continue;
+            }
+
+            foreach ($pageInfo->relations as $rel) {
+                if ($rel->relationType !== 'ManyToOne') {
+                    continue;
+                }
+                $targetFqcn = (string) $rel->targetEntity;
+                if ($targetFqcn === '') {
+                    continue;
+                }
+                $targetInfo = $entityIndex[$targetFqcn] ?? null;
+                if ($targetInfo === null) {
+                    // Vendor / Kunstmaan-core entity — parser didn't see it.
+                    // Skip; vendor entities don't carry page-relevant content.
+                    continue;
+                }
+                $targetBase = self::basenameForFqcn($targetFqcn);
+                // Symmetric name-match — only fold when stripped page basename
+                // equals target basename (EmployeePage→Employee yes;
+                // CaseStudyPage→CaseStudyCategory no).
+                if ($targetBase !== $strippedPageBase) {
+                    continue;
+                }
+
+                $targetTable = $targetInfo->tableName;
+                $relatedColumns = (array) ($columnsByTable[$targetTable] ?? []);
+                // Build a quick lookup of FK column names on the target so we
+                // skip them — they're structural FK plumbing, not content.
+                $fkColsOnTarget = [];
+                foreach ($targetInfo->relations as $tRel) {
+                    if ($tRel->fkColumn !== null && $tRel->fkColumn !== '') {
+                        $fkColsOnTarget[$tRel->fkColumn] = true;
+                    }
+                }
+
+                $emittedAtLeastOne = false;
+                foreach ($relatedColumns as $c) {
+                    if (!is_array($c)) {
+                        continue;
+                    }
+                    $colName = (string) ($c['column'] ?? '');
+                    if ($colName === '' || $colName === 'id') {
+                        continue;
+                    }
+                    if (isset($fkColsOnTarget[$colName])) {
+                        continue;
+                    }
+                    $relColumn = '_rel:' . $rel->propertyName . '.' . $colName;
+                    $key = $pageTable . '|' . $relColumn;
+                    if (isset($seenSyntheticKey[$key])) {
+                        continue;
+                    }
+                    $seenSyntheticKey[$key] = true;
+
+                    $syntheticRows[] = [
+                        'table'           => $pageTable,
+                        'column'          => $relColumn,
+                        // Fill from nodeClass proposals (any confidence tier);
+                        // the downstream backfill block at lines 441-469 only
+                        // promotes from high-confidence rows, so we set this
+                        // here directly so synthetic rows carry the entry-type
+                        // context the LLM needs to pick a targetHandle.
+                        'targetEntryType' => (string) ($pageTableToEntryType[$pageTable] ?? ''),
+                        'fillRate'        => (float) ($c['fillRate'] ?? 0),
+                        'sqlType'         => (string) ($c['sqlType'] ?? ''),
+                        'samples'         => (array) ($c['samples'] ?? []),
+                    ];
+                    $emittedAtLeastOne = true;
+                }
+
+                if ($emittedAtLeastOne) {
+                    $foldedFqcns[$targetFqcn] = true;
+                }
+            }
+        }
+
+        return [$syntheticRows, array_keys($foldedFqcns)];
+    }
+
+    /**
+     * Phase 8.7 / F1 — basename helper that does NOT require the class to be
+     * autoloadable (parser entities are read from source files; many won't
+     * be on the include path during analyze).
+     */
+    private static function basenameForFqcn(string $fqcn): string
+    {
+        $tail = strrchr($fqcn, '\\');
+        return $tail !== false ? substr($tail, 1) : $fqcn;
     }
 
     /**
