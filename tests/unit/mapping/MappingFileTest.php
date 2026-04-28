@@ -102,6 +102,68 @@ final class MappingFileTest extends TestCase
         self::assertSame('body', $merged['proposals'][0]['targetHandle']);
     }
 
+    public function testMergePreservesCompiledAndUnknownTopLevelBlocks(): void
+    {
+        $mf = new MappingFile();
+        $existingRow = [
+            'kind' => 'column',
+            'table' => 'kuma_news_page',
+            'column' => 'body',
+            'targetEntryType' => 'newsArticle',
+            'targetHandle' => 'body',
+            'handler' => 'ckeditor',
+            'status' => 'accepted',
+            'rationale' => 'operator-selected',
+        ];
+        $compiledBlocks = [
+            'nodeClasses' => [
+                'App\\Entity\\Pages\\NewsPage' => [
+                    'sourceTable' => 'kuma_news_page',
+                    'section' => 'news',
+                    'fields' => ['body' => ['source' => 'body', 'handler' => 'ckeditor']],
+                ],
+            ],
+            'sections' => [
+                'newsArticle' => ['entryType' => 'newsArticle', 'section' => 'news'],
+            ],
+            'sites' => ['nl' => 'default'],
+            'pageParts' => [
+                'HeaderPagePart' => ['targetBlockType' => 'header'],
+            ],
+            'taxonomies' => [
+                'App\\Entity\\NewsCategory' => ['sourceTable' => 'news_categories'],
+            ],
+            'dataProviders' => [
+                'App\\Provider\\HomeProvider' => ['target' => 'home'],
+            ],
+            '_compileReport' => ['warnings' => ['operator must review header block']],
+            '_auditTrail' => ['lastCompile' => '2026-04-28T00:00:00Z'],
+        ];
+        $existing = $compiledBlocks + ['proposals' => [$existingRow]];
+
+        $incomingDuplicate = $existingRow;
+        $incomingDuplicate['targetHandle'] = 'bodyRichText';
+        $incomingDuplicate['rationale'] = 'fresh analyze proposal';
+        $incomingNew = [
+            'kind' => 'column',
+            'table' => 'kuma_news_page',
+            'column' => 'subtitle',
+            'targetEntryType' => 'newsArticle',
+            'targetHandle' => 'subtitle',
+            'handler' => 'plain',
+            'status' => 'proposed',
+        ];
+
+        $merged = $mf->merge($existing, [$incomingDuplicate, $incomingNew]);
+
+        foreach ($compiledBlocks as $key => $expected) {
+            self::assertSame($expected, $merged[$key] ?? null, "{$key} top-level block must survive merge verbatim.");
+        }
+        self::assertCount(2, $merged['proposals']);
+        self::assertSame($existingRow, $merged['proposals'][0], 'Existing proposal row must win on identity collision.');
+        self::assertSame($incomingNew, $merged['proposals'][1], 'Unseen incoming proposal rows must append normally.');
+    }
+
     public function testMergeAppendsNewTuples(): void
     {
         $mf = new MappingFile();
