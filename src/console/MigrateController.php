@@ -353,7 +353,13 @@ class MigrateController extends Controller
                 $report->incr('finalize.unresolvable', (int) $finalizeCounts['unresolvable']);
             } catch (Throwable $e) {
                 $this->endProgressIfStarted();
-                $this->stderr("  FAIL finalize: {$e->getMessage()}\n", Console::FG_RED);
+                $this->stderr(sprintf(
+                    "  FAIL finalize: %s %s @ %s:%d\n",
+                    $e::class,
+                    $e->getMessage() !== '' ? $e->getMessage() : '(no message)',
+                    $e->getFile(),
+                    $e->getLine(),
+                ), Console::FG_RED);
                 return ExitCode::UNSPECIFIED_ERROR;
             }
         } else {
@@ -839,7 +845,13 @@ class MigrateController extends Controller
             $counts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
         } catch (Throwable $e) {
             $this->endProgressIfStarted();
-            $this->stderr("  FAIL finalize: {$e->getMessage()}\n", Console::FG_RED);
+            $this->stderr(sprintf(
+                "  FAIL finalize: %s %s @ %s:%d\n",
+                $e::class,
+                $e->getMessage() !== '' ? $e->getMessage() : '(no message)',
+                $e->getFile(),
+                $e->getLine(),
+            ), Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
         $this->endProgressIfStarted();
@@ -1444,11 +1456,16 @@ class MigrateController extends Controller
             if ($entityAllow !== []) {
                 // Path is `transformed/entries/<fqcnSlug>/<nodeId>.json` — the
                 // FQCN slug is the parent dir name (e.g. `App_Entity_Pages_HomePage`).
-                // Last underscore-segment is the simple class name we filter against.
+                // Match operator-supplied --entities against BOTH the simple
+                // basename AND the reconstructed FQCN — mirrors TransformService's
+                // accept-either rule (TransformService:135-141). Without this,
+                // operators passing `--entities=App\Entity\Pages\CaseStudyPage`
+                // got transform output but zero load (empty-result).
                 $fqcnSlug = basename(dirname($f));
                 $parts = explode('_', $fqcnSlug);
                 $basename = (string) end($parts);
-                if (!in_array($basename, $entityAllow, true)) {
+                $fqcn = str_replace('_', '\\', $fqcnSlug);
+                if (!in_array($basename, $entityAllow, true) && !in_array($fqcn, $entityAllow, true)) {
                     continue;
                 }
             }
