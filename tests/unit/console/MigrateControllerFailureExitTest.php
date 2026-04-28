@@ -192,4 +192,41 @@ final class MigrateControllerFailureExitTest extends TestCase
         self::assertSame('TransformService', $report->failures[0]['handler']);
         self::assertStringContainsString('Transform:', $report->failures[0]['message']);
     }
+
+    public function testTransformBlockMarkerPathAndLoadFailureMessageAreStable(): void
+    {
+        $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
+        $pathMethod = new ReflectionMethod(MigrateController::class, 'transformBlockMarkerPath');
+        $messageMethod = new ReflectionMethod(MigrateController::class, 'transformBlockMarkerLoadFailureMessage');
+
+        $path = $pathMethod->invoke($controller, '/var/craft/storage/migration');
+        $message = $messageMethod->invoke($controller, ['path' => $path]);
+
+        self::assertSame('/var/craft/storage/migration/transform-block.json', $path);
+        self::assertStringContainsString('prior transform relation/taxonomy failure marker blocks live load', $message);
+        self::assertStringContainsString($path, $message);
+        self::assertStringContainsString('re-run migrate/transform', $message);
+    }
+
+    public function testTransformMarkerIsClearedPersistedAndCheckedBeforeLiveLoad(): void
+    {
+        $source = (string) file_get_contents(
+            (new ReflectionClass(MigrateController::class))->getFileName(),
+        );
+
+        self::assertGreaterThanOrEqual(
+            2,
+            substr_count($source, 'clearTransformBlockMarker($storageDir)'),
+            'Both full actionIndex() and standalone actionTransform() must clear stale markers before fresh transform output.',
+        );
+        self::assertGreaterThanOrEqual(
+            2,
+            substr_count($source, 'writeTransformBlockMarker($storageDir, $report)'),
+            'Both transform flows must persist a marker when relation/taxonomy transform warnings are blocking.',
+        );
+        self::assertStringContainsString('readTransformBlockMarker($storageDir)', $source);
+        self::assertStringContainsString('prior transform relation/taxonomy failure marker blocks live load', $source);
+        self::assertStringContainsString('recordFailure(', $source);
+        self::assertStringContainsString('DRY RUN — would load entries', $source);
+    }
 }

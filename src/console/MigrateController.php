@@ -43,6 +43,8 @@ class MigrateController extends Controller
 {
     use NeverProductionTrait;
 
+    private const TRANSFORM_BLOCK_MARKER = 'transform-block.json';
+
     /** Apply writes to Craft. Default false = dry-run. */
     public bool $live = false;
 
@@ -263,6 +265,7 @@ class MigrateController extends Controller
         // verbatim v1 contract takes a file path, not a tuple — Plan 03-12 SUMMARY).
         $transformedDir = $storageDir . '/transformed/entries';
         $transformedCount = 0;
+        $this->clearTransformBlockMarker($storageDir);
         // Use the just-completed extract count as the transform denominator — extract and
         // transform are 1:1 at the input level (locale fan-out happens in transform's output).
         $transformProgress = $this->makeTransformProgress($extractedNodes);
@@ -306,6 +309,10 @@ class MigrateController extends Controller
             "  OK   transform complete ({$transformedCount} payloads → {$transformedDir})\n",
             Console::FG_GREEN,
         );
+
+        if ($hasBlockingTransformRelationFailure) {
+            $this->writeTransformBlockMarker($storageDir, $report);
+        }
 
         if ($this->live && $hasBlockingTransformRelationFailure) {
             $this->recordBlockingTransformFailure($report);
@@ -732,6 +739,7 @@ class MigrateController extends Controller
         $count = 0;
         $report = new MigrationReport();
         $hasBlockingTransformRelationFailure = false;
+        $this->clearTransformBlockMarker($storageDir);
         // For standalone transform we don't have a fresh extract precount handy; count
         // extracted/<fqcn>/*.json files on disk as the denominator. Cheap glob.
         $transformProgress = $this->makeTransformProgress($this->countExtractedFiles($storageDir));
@@ -769,6 +777,10 @@ class MigrateController extends Controller
             return ExitCode::UNSPECIFIED_ERROR;
         }
         $this->endProgressIfStarted();
+
+        if ($hasBlockingTransformRelationFailure) {
+            $this->writeTransformBlockMarker($storageDir, $report);
+        }
 
         if ($this->live && $hasBlockingTransformRelationFailure) {
             $this->recordBlockingTransformFailure($report);
@@ -831,6 +843,24 @@ class MigrateController extends Controller
                 Console::FG_RED,
             );
             return ExitCode::CONFIG;
+        }
+
+        $transformBlockMarker = $this->readTransformBlockMarker($storageDir);
+        if ($transformBlockMarker !== null) {
+            $message = $this->transformBlockMarkerLoadFailureMessage($transformBlockMarker);
+            if ($this->live) {
+                $report->warn($message);
+                $report->recordFailure(
+                    'transform',
+                    'transform',
+                    'TransformService',
+                    new \RuntimeException($message),
+                );
+                $this->stderr("  FAIL {$message}\n", Console::FG_RED);
+                $this->writeReport($storageDir, $report, $filters);
+                return $this->reportExitCode($report);
+            }
+            $this->stdout("  WARN {$message}\n", Console::FG_YELLOW);
         }
 
         if (!$this->live) {
@@ -1873,6 +1903,74 @@ class MigrateController extends Controller
             new \RuntimeException(
                 'TransformService relation/taxonomy handler failure blocked live load; inspect Transform: warnings in REPORT.md.',
             ),
+        );
+    }
+
+    private function transformBlockMarkerPath(string $storageDir): string
+    {
+        return rtrim($storageDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . self::TRANSFORM_BLOCK_MARKER;
+    }
+
+    private function clearTransformBlockMarker(string $storageDir): void
+    {
+        $path = $this->transformBlockMarkerPath($storageDir);
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+
+    private function writeTransformBlockMarker(string $storageDir, MigrationReport $report): void
+    {
+        $path = $this->transformBlockMarkerPath($storageDir);
+        $dir = dirname($path);
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            $report->warn("Could not create transform block marker directory: {$dir}");
+            return;
+        }
+
+        $payload = [
+            'blocked' => true,
+            'createdAt' => gmdate('c'),
+            'reason' => 'TransformService relation/taxonomy handler failure blocked live load.',
+            'warnings' => array_values(array_filter(
+                $report->warnings,
+                fn (string $warning): bool => $this->isBlockingTransformRelationWarning($warning),
+            )),
+        ];
+        $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($json === false || file_put_contents($path, $json . "\n") === false) {
+            $report->warn("Could not write transform block marker: {$path}");
+        }
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function readTransformBlockMarker(string $storageDir): ?array
+    {
+        $path = $this->transformBlockMarkerPath($storageDir);
+        if (!is_file($path)) {
+            return null;
+        }
+        $raw = file_get_contents($path);
+        if ($raw === false || trim($raw) === '') {
+            return ['path' => $path];
+        }
+        $decoded = json_decode($raw, true);
+        return is_array($decoded)
+            ? ['path' => $path] + $decoded
+            : ['path' => $path];
+    }
+
+    /**
+     * @param array<string, mixed> $marker
+     */
+    private function transformBlockMarkerLoadFailureMessage(array $marker): string
+    {
+        $path = (string) ($marker['path'] ?? self::TRANSFORM_BLOCK_MARKER);
+        return sprintf(
+            'prior transform relation/taxonomy failure marker blocks live load (%s); re-run migrate/transform after fixing transform warnings.',
+            $path,
         );
     }
 
