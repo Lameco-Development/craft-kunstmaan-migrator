@@ -38,7 +38,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 4. `CRAFT_ENVIRONMENT=production` causes any legacy-reading command to refuse with a clear error message.
 5. `composer test` (`phpunit`) runs and is green; CI workflow runs the same on every push.
 
-**Plans:** 5 plans
+**Plans:** 6 plans
 
 Plans:
 - [x] 01-01-composer-scaffold-PLAN.md — composer.json + Plugin.php stub + NeverProductionTrait (FND-01) — completed 2026-04-25
@@ -398,7 +398,7 @@ Plans:
 7. PHPUnit covers the new generic behaviors without requiring proprietary source content.
 8. A clean CQM rehearsal rerun after restoring the pre-live backup reaches zero entry failures and zero stage failures. Explicit accepted out-of-scope/dropped page-owned surfaces may appear only as classified report/coverage rows and must not increment entry or stage failure counts.
 
-**Plans:** 5 plans
+**Plans:** 6 plans
 
 Plans:
 - [x] `10-01-PLAN.md` — compile/preflight safety, PageBuilder ownership validation, and structural fixtures. Completed 2026-04-28 (`10-01-SUMMARY.md`).
@@ -406,8 +406,9 @@ Plans:
 - [x] `10-03-PLAN.md` — page-rooted taxonomy lazy resolver, referenced-only default, and explicit full-taxonomy import path. Completed 2026-04-28 (`10-03-SUMMARY.md`).
 - [x] `10-04-PLAN.md` — verify count-domain semantics, restored-backup CQM runbook, and closing proof. Completed 2026-04-28 (`10-04-SUMMARY.md`; restored CQM `REPORT.md` reached zero failures).
 - [x] `10-05-PLAN.md` — verification gap closure for taxonomy fallback site-handle mapping, transform sentinel report merge/live blocking, and supported CQM dry-run command docs. Completed 2026-04-28 (`10-05-SUMMARY.md`).
+- [x] `10-06-PLAN.md` — release blocker closure for unresolved CKEditor finalize diagnostics, live finalize blocking, evidence-based Page-rooted coverage, and FK/asset relation-shape actionability. Completed 2026-04-28 (`10-06-SUMMARY.md`).
 
-**Verification:** `10-VERIFICATION.md` now records `human_needed` (20/21 automated must-haves verified). Plan 10-05 and review fixes close the previous implementation gaps with code/test/doc evidence: taxonomy locale fallback resolves Craft handles from mapping values and checks localized save failures, transform sentinel warnings reach `MigrationReport`/`REPORT.md` with relation/taxonomy failures blocking full and staged live load before persistence, and the CQM runbook uses the supported default dry-run `migrate` command. The only remaining item is release-owner acceptance or remediation of visible Page-rooted `warning` / `unsupported` coverage classifications before tagging.
+**Verification:** `10-VERIFICATION.md` recorded `human_needed` after 10-05; Plan 10-06 closes the release-owner blocker class in code by making unresolved finalize tokens blocking with diagnostics and making Page-rooted warning/unsupported rows evidence-based rather than synthetic no-input placeholders. External CQM artifacts still require regeneration/review before tagging; evidence-backed warning/unsupported rows remain release-owner decisions, not hidden passes.
 
 ---
 
