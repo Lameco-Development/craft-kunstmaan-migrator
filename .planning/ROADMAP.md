@@ -398,15 +398,16 @@ Plans:
 7. PHPUnit covers the new generic behaviors without requiring proprietary source content.
 8. A clean CQM rehearsal rerun after restoring the pre-live backup reaches zero entry failures and zero stage failures. Explicit accepted out-of-scope/dropped page-owned surfaces may appear only as classified report/coverage rows and must not increment entry or stage failure counts.
 
-**Plans:** 4 plans
+**Plans:** 5 plans
 
 Plans:
 - [x] `10-01-PLAN.md` — compile/preflight safety, PageBuilder ownership validation, and structural fixtures. Completed 2026-04-28 (`10-01-SUMMARY.md`).
 - [x] `10-02-PLAN.md` — Matrix native-title fallback, sparse-locale primary-save fallback, and visible fallback reporting. Completed 2026-04-28 (`10-02-SUMMARY.md`).
 - [x] `10-03-PLAN.md` — page-rooted taxonomy lazy resolver, referenced-only default, and explicit full-taxonomy import path. Completed 2026-04-28 (`10-03-SUMMARY.md`).
 - [x] `10-04-PLAN.md` — verify count-domain semantics, restored-backup CQM runbook, and closing proof. Completed 2026-04-28 (`10-04-SUMMARY.md`; restored CQM `REPORT.md` reached zero failures).
+- [x] `10-05-PLAN.md` — verification gap closure for taxonomy fallback site-handle mapping, transform sentinel report merge/live blocking, and supported CQM dry-run command docs. Completed 2026-04-28 (`10-05-SUMMARY.md`).
 
-**Verification:** `10-VERIFICATION.md` status is `gaps_found` (18/21 must-haves verified). Gap closure needed for taxonomy locale fallback site-handle mapping, transform sentinel warning/report merge, and the unsupported dry-run command in the CQM runbook.
+**Verification:** `10-VERIFICATION.md` recorded `gaps_found` (18/21 must-haves verified) before Plan 10-05. Plan 10-05 closes those gaps with code/test/doc evidence: taxonomy locale fallback resolves Craft handles from mapping values, transform sentinel warnings reach `MigrationReport`/`REPORT.md` with live relation/taxonomy failures blocking before load, and the CQM runbook uses the supported default dry-run `migrate` command.
 
 ---
 
