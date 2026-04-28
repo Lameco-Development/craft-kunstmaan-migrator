@@ -12,6 +12,7 @@ use lameco\kunstmaanmigrator\filter\MappingFilterTranslator;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\verify\CountGateService;
 use Throwable;
 use yii\console\ExitCode;
 
@@ -125,6 +126,7 @@ class VerifyController extends Controller
             'tolerance'        => $tolerance,
             'urlDiffThreshold' => $threshold,
             'countGate'        => [],
+            'countDomains'     => [],
             'urlGate'          => [],
             'pass'             => true,
         ];
@@ -135,7 +137,6 @@ class VerifyController extends Controller
         $this->stdout("\n[1/2] Count-match gate (tolerance: " . ($tolerance * 100) . "%)\n", Console::FG_CYAN);
 
         $baselinePath = $this->baseline ?? Craft::$app->path->getStoragePath() . '/migration/baseline.json';
-        $expectedCounts = null;
         if (!is_file($baselinePath)) {
             // D-58: missing-baseline semantic — WARN + flip overall pass.
             $this->stdout("  WARN no-baseline (run verify capture-baseline first): {$baselinePath}\n", Console::FG_YELLOW);
@@ -153,37 +154,80 @@ class VerifyController extends Controller
                 ];
                 $report['pass'] = false;
             } else {
-                $expectedCounts = $this->baselineToExpectedCounts($baselineDecoded);
-                $countResult = $plugin->countGateService->run($expectedCounts, (float) $tolerance, $filters, $translatedScope);
-                $report['countGate'] = $countResult['gates'];
-                if (!$countResult['pass']) {
-                    $report['pass'] = false;
-                }
+                // Phase 10: keep count domains explicit. A pre-migration Craft
+                // baseline is only a Craft baseline/current drift reference; it
+                // is not converted into source migration expectations.
+                $currentSnapshot = $plugin->baselineCounterService->capture($filters, $translatedScope);
+                $craftDrift = $plugin->countGateService->compareFlatCounts(
+                    CountGateService::flattenCraftSnapshotCounts($baselineDecoded),
+                    CountGateService::flattenCraftSnapshotCounts($currentSnapshot),
+                    (float) $tolerance,
+                    CountGateService::DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT,
+                    false,
+                );
+                $report['countDomains']['craft-baseline-current-drift'] = [
+                    'label' => CountGateService::DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT,
+                    'blocking' => false,
+                    'gates' => $craftDrift['gates'],
+                ];
+                $this->renderCountDomainToConsole(
+                    CountGateService::DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT,
+                    $craftDrift['gates'],
+                    false,
+                );
 
-                foreach ($countResult['gates'] as $key => $g) {
-                    if (!is_array($g)) {
-                        continue;
-                    }
-                    if (($g['skip'] ?? false) === true) {
-                        $note = (string) ($g['note'] ?? 'skipped');
-                        $this->stdout("  SKIP {$key}: {$note}\n", Console::FG_YELLOW);
-                        continue;
-                    }
-                    $note = $g['note'] ?? null;
-                    if ($note !== null && !isset($g['expected'])) {
-                        $this->stdout("  SKIP {$key}: {$note}\n", Console::FG_YELLOW);
-                        continue;
-                    }
-                    $pass = (bool) ($g['pass'] ?? false);
-                    $this->stdout(sprintf(
-                        "  %s %s: %d/%d (Delta=%.3f%%)\n",
-                        $pass ? 'PASS' : 'FAIL',
-                        $key,
-                        (int) ($g['actual'] ?? 0),
-                        (int) ($g['expected'] ?? 0),
-                        (float) ($g['delta'] ?? 0.0) * 100,
-                    ), $pass ? Console::FG_GREEN : Console::FG_RED);
+                $stateCounts = $plugin->countGateService->migrationCreatedStateCounts();
+                $stateGates = [];
+                foreach ($stateCounts as $key => $actual) {
+                    $stateGates[$key] = [
+                        'domain' => CountGateService::DOMAIN_MIGRATION_CREATED_STATE_COUNTS,
+                        'actual' => $actual,
+                        'blocking' => false,
+                        'note' => 'reported from kunstmaanmigrator_state; no pre-migration baseline comparison',
+                    ];
                 }
+                $report['countDomains']['migration-created-state-counts'] = [
+                    'label' => CountGateService::DOMAIN_MIGRATION_CREATED_STATE_COUNTS,
+                    'blocking' => false,
+                    'gates' => $stateGates,
+                ];
+                $this->renderCountDomainToConsole(
+                    CountGateService::DOMAIN_MIGRATION_CREATED_STATE_COUNTS,
+                    $stateGates,
+                    false,
+                );
+
+                $sourceExpectedCounts = $this->sourceParityExpectedCounts($baselineDecoded);
+                if ($sourceExpectedCounts === []) {
+                    $sourceGates = [
+                        'source-parity:unavailable' => [
+                            'domain' => CountGateService::DOMAIN_SOURCE_TRANSFORMED_PARITY,
+                            'skip' => true,
+                            'note' => 'no source-derived expected counts found in baseline/source artifact',
+                            'blocking' => false,
+                        ],
+                    ];
+                    $sourcePass = true;
+                } else {
+                    $sourceResult = $plugin->countGateService->run($sourceExpectedCounts, (float) $tolerance, $filters, $translatedScope);
+                    $sourceGates = $sourceResult['gates'];
+                    $sourcePass = (bool) $sourceResult['pass'];
+                    if (!$sourcePass) {
+                        $report['pass'] = false;
+                    }
+                }
+                $report['countDomains']['source-transformed-parity'] = [
+                    'label' => CountGateService::DOMAIN_SOURCE_TRANSFORMED_PARITY,
+                    'blocking' => true,
+                    'gates' => $sourceGates,
+                    'pass' => $sourcePass,
+                ];
+                $report['countGate'] = $sourceGates;
+                $this->renderCountDomainToConsole(
+                    CountGateService::DOMAIN_SOURCE_TRANSFORMED_PARITY,
+                    $sourceGates,
+                    true,
+                );
             }
         }
 
@@ -192,10 +236,20 @@ class VerifyController extends Controller
         if (!isset($report['countGate']['plugins:seomatic'])) {
             $this->stdout("  SKIP seomatic (plugin not installed or not in baseline)\n", Console::FG_YELLOW);
             $report['countGate']['plugins:seomatic'] = ['skip' => true, 'note' => 'seomatic plugin not installed or not in baseline'];
+            if (isset($report['countDomains']['source-transformed-parity']['gates'])
+                && is_array($report['countDomains']['source-transformed-parity']['gates'])
+            ) {
+                $report['countDomains']['source-transformed-parity']['gates']['plugins:seomatic'] = $report['countGate']['plugins:seomatic'];
+            }
         }
         if (!isset($report['countGate']['plugins:retour'])) {
             $this->stdout("  SKIP retour (plugin not installed or not in baseline)\n", Console::FG_YELLOW);
             $report['countGate']['plugins:retour'] = ['skip' => true, 'note' => 'retour plugin not installed or not in baseline'];
+            if (isset($report['countDomains']['source-transformed-parity']['gates'])
+                && is_array($report['countDomains']['source-transformed-parity']['gates'])
+            ) {
+                $report['countDomains']['source-transformed-parity']['gates']['plugins:retour'] = $report['countGate']['plugins:retour'];
+            }
         }
 
         // ---------------------------------------------------------------
@@ -437,59 +491,63 @@ class VerifyController extends Controller
     }
 
     /**
-     * Translate BaselineCounterService's `counts-v1` shape to CountGateService's
-     * `expectedCounts` shape.
-     *
-     * BaselineCounterService output (D-59):
-     *   ['format' => 'counts-v1', 'sections' => ['<handle>' => ['totalCount' => N, ...]],
-     *    'assets' => ['totalCount' => N], 'taxonomies' => ['<handle>' => ['totalCount' => N]],
-     *    'retour' => ['totalCount' => N], 'seomatic' => ['totalCount' => N]]
-     *
-     * CountGateService input:
-     *   ['sections' => ['<handle>' => N, ...], 'assets' => ['<label>' => N, ...],
-     *    'plugins' => ['seomatic' => N, 'retour' => N], 'taxonomies' => ['<handle>' => N, ...]]
+     * Source/transformed parity expectations are optional and must come from a
+     * source-derived artifact shape. They are never inferred from Craft baseline
+     * counts, because that mixes domains and caused false failures in Phase 10.
      *
      * @param array<string, mixed> $baseline
      * @return array<string, mixed>
      */
-    private function baselineToExpectedCounts(array $baseline): array
+    private function sourceParityExpectedCounts(array $baseline): array
     {
-        $sections = [];
-        foreach ((array) ($baseline['sections'] ?? []) as $handle => $row) {
-            if (is_array($row)) {
-                $sections[(string) $handle] = (int) ($row['totalCount'] ?? 0);
+        foreach (['sourceExpectedCounts', 'sourceParityExpectedCounts', 'expectedMigrationCounts'] as $key) {
+            $candidate = $baseline[$key] ?? null;
+            if (is_array($candidate) && $candidate !== []) {
+                return $candidate;
             }
         }
 
-        $assets = [];
-        $assetTotal = (int) (($baseline['assets'] ?? [])['totalCount'] ?? 0);
-        if ($assetTotal > 0) {
-            $assets['migrated'] = $assetTotal;
-        }
+        return [];
+    }
 
-        $plugins = [];
-        $seomaticTotal = (int) (($baseline['seomatic'] ?? [])['totalCount'] ?? 0);
-        if ($seomaticTotal > 0) {
-            $plugins['seomatic'] = $seomaticTotal;
-        }
-        $retourTotal = (int) (($baseline['retour'] ?? [])['totalCount'] ?? 0);
-        if ($retourTotal > 0) {
-            $plugins['retour'] = $retourTotal;
-        }
+    /**
+     * @param array<string, array<string, mixed>> $gates
+     */
+    private function renderCountDomainToConsole(string $label, array $gates, bool $blocking): void
+    {
+        $suffix = $blocking ? 'blocking' : 'informational';
+        $this->stdout("  Domain: {$label} ({$suffix})\n", Console::FG_CYAN);
 
-        $taxonomies = [];
-        foreach ((array) ($baseline['taxonomies'] ?? []) as $handle => $row) {
-            if (is_array($row)) {
-                $taxonomies[(string) $handle] = (int) ($row['totalCount'] ?? 0);
+        foreach ($gates as $key => $g) {
+            if (!is_array($g)) {
+                continue;
             }
+            if (($g['skip'] ?? false) === true) {
+                $note = (string) ($g['note'] ?? 'skipped');
+                $this->stdout("    SKIP {$key}: {$note}\n", Console::FG_YELLOW);
+                continue;
+            }
+            if (!isset($g['expected'])) {
+                $note = (string) ($g['note'] ?? 'actual count only');
+                $this->stdout(sprintf(
+                    "    INFO %s: actual=%d (%s)\n",
+                    $key,
+                    (int) ($g['actual'] ?? 0),
+                    $note,
+                ), Console::FG_YELLOW);
+                continue;
+            }
+            $pass = (bool) ($g['pass'] ?? false);
+            $status = $blocking ? ($pass ? 'PASS' : 'FAIL') : ($pass ? 'MATCH' : 'DRIFT');
+            $this->stdout(sprintf(
+                "    %s %s: %d/%d (Delta=%.3f%%)\n",
+                $status,
+                $key,
+                (int) ($g['actual'] ?? 0),
+                (int) ($g['expected'] ?? 0),
+                (float) ($g['delta'] ?? 0.0) * 100,
+            ), $pass ? Console::FG_GREEN : Console::FG_YELLOW);
         }
-
-        return [
-            'sections'   => $sections,
-            'assets'     => $assets,
-            'plugins'    => $plugins,
-            'taxonomies' => $taxonomies,
-        ];
     }
 
     /**
@@ -507,27 +565,52 @@ class VerifyController extends Controller
         $lines[] = '';
         $lines[] = 'Overall: ' . (($report['pass'] ?? false) ? '**PASS**' : '**FAIL**');
         $lines[] = '';
-        $lines[] = '## Count gate (tolerance: ' . ((float) ($report['tolerance'] ?? 0) * 100) . '%)';
+        $lines[] = '## Count domains (tolerance: ' . ((float) ($report['tolerance'] ?? 0) * 100) . '%)';
         $lines[] = '';
-        $lines[] = '| Key | Expected | Actual | Delta | Status |';
-        $lines[] = '|-----|----------|--------|-------|--------|';
-        foreach ((array) ($report['countGate'] ?? []) as $key => $row) {
-            if (!is_array($row)) {
+        $countDomains = (array) ($report['countDomains'] ?? []);
+        if ($countDomains === []) {
+            $countDomains = [
+                'legacy-count-gate' => [
+                    'label' => 'Legacy count gate',
+                    'blocking' => true,
+                    'gates' => (array) ($report['countGate'] ?? []),
+                ],
+            ];
+        }
+        foreach ($countDomains as $domain) {
+            if (!is_array($domain)) {
                 continue;
             }
-            if (($row['skip'] ?? false) === true) {
-                $note = (string) ($row['note'] ?? 'skipped');
-                $lines[] = "| `{$key}` | - | - | - | SKIP ({$note}) |";
-                continue;
+            $label = (string) ($domain['label'] ?? 'Count domain');
+            $blocking = (bool) ($domain['blocking'] ?? true);
+            $lines[] = '### ' . $label . ($blocking ? ' (blocking)' : ' (informational)');
+            $lines[] = '';
+            $lines[] = '| Key | Expected | Actual | Delta | Status |';
+            $lines[] = '|-----|----------|--------|-------|--------|';
+            foreach ((array) ($domain['gates'] ?? []) as $key => $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                if (($row['skip'] ?? false) === true) {
+                    $note = (string) ($row['note'] ?? 'skipped');
+                    $lines[] = "| `{$key}` | - | - | - | SKIP ({$note}) |";
+                    continue;
+                }
+                $expected = $row['expected'] ?? '-';
+                $actual   = $row['actual']   ?? '-';
+                $delta    = isset($row['delta']) ? sprintf('%.3f%%', (float) $row['delta'] * 100) : '-';
+                if (!isset($row['expected'])) {
+                    $status = 'INFO (' . (string) ($row['note'] ?? 'actual count only') . ')';
+                } elseif ($blocking) {
+                    $status = ((bool) ($row['pass'] ?? false)) ? 'PASS' : 'FAIL';
+                } else {
+                    $status = ((bool) ($row['pass'] ?? false)) ? 'MATCH' : 'DRIFT';
+                }
+                $lines[] = "| `{$key}` | {$expected} | {$actual} | {$delta} | {$status} |";
             }
-            $expected = $row['expected'] ?? '-';
-            $actual   = $row['actual']   ?? '-';
-            $delta    = isset($row['delta']) ? sprintf('%.3f%%', (float) $row['delta'] * 100) : '-';
-            $status   = isset($row['pass']) ? (((bool) $row['pass']) ? 'PASS' : 'FAIL') : '-';
-            $lines[] = "| `{$key}` | {$expected} | {$actual} | {$delta} | {$status} |";
+            $lines[] = '';
         }
 
-        $lines[] = '';
         $lines[] = '## URL gate (threshold: ' . ((float) ($report['urlDiffThreshold'] ?? 0) * 100) . '%)';
         $lines[] = '';
         $lines[] = '| URL | Status | Diff ratio |';

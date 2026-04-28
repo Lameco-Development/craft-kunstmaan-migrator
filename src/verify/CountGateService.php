@@ -41,6 +41,10 @@ use yii\base\Component;
  */
 class CountGateService extends Component
 {
+    public const DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT = 'Craft baseline/current drift';
+    public const DOMAIN_MIGRATION_CREATED_STATE_COUNTS = 'Migration-created state counts';
+    public const DOMAIN_SOURCE_TRANSFORMED_PARITY = 'Source/transformed parity';
+
     /**
      * @param array<string, mixed> $expectedCounts
      * @return array{pass: bool, gates: array<string, array<string, mixed>>}
@@ -198,6 +202,136 @@ class CountGateService extends Component
         }
 
         return ['pass' => $overallPass, 'gates' => $gates];
+    }
+
+    /**
+     * Compare two already-like-for-like flat count maps.
+     *
+     * This is intentionally domain-agnostic: callers choose whether the domain
+     * is blocking. Phase 10 uses it for Craft baseline/current drift where the
+     * same Craft-count snapshot shape is compared over time, not converted into
+     * migration source expectations.
+     *
+     * @param array<string, int> $expected
+     * @param array<string, int> $actual
+     * @return array{pass: bool, gates: array<string, array<string, mixed>>}
+     */
+    public function compareFlatCounts(array $expected, array $actual, float $tolerance, string $domain, bool $blocking = true): array
+    {
+        $keys = array_values(array_unique(array_merge(array_keys($expected), array_keys($actual))));
+        sort($keys);
+
+        $gates = [];
+        $overallPass = true;
+        foreach ($keys as $key) {
+            $expectedCount = (int) ($expected[$key] ?? 0);
+            $actualCount = (int) ($actual[$key] ?? 0);
+            $delta = $expectedCount > 0 ? abs($actualCount - $expectedCount) / $expectedCount : ($actualCount === 0 ? 0.0 : 1.0);
+            $pass = $delta <= $tolerance;
+            if ($blocking && !$pass) {
+                $overallPass = false;
+            }
+
+            $gates[$key] = [
+                'domain' => $domain,
+                'expected' => $expectedCount,
+                'actual' => $actualCount,
+                'delta' => $delta,
+                'pass' => $pass,
+                'blocking' => $blocking,
+            ];
+        }
+
+        return ['pass' => $overallPass, 'gates' => $gates];
+    }
+
+    /**
+     * Flatten BaselineCounterService's counts-v1 snapshot into an explicit
+     * Craft-count domain. Section totals and per-site counts stay separate so
+     * verify compares like-for-like rows instead of mixing `site('*')` totals
+     * with canonical primary-site migration expectations.
+     *
+     * @param array<string, mixed> $snapshot
+     * @return array<string, int>
+     */
+    public static function flattenCraftSnapshotCounts(array $snapshot): array
+    {
+        $out = [];
+
+        foreach ((array) ($snapshot['sections'] ?? []) as $handle => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $section = (string) $handle;
+            $out['craft.sections.' . $section . '.total'] = (int) ($row['totalCount'] ?? 0);
+            foreach ((array) ($row['countsBySite'] ?? []) as $siteHandle => $count) {
+                $out['craft.sections.' . $section . '.site.' . (string) $siteHandle] = (int) $count;
+            }
+        }
+
+        $out['craft.assets.total'] = (int) (($snapshot['assets'] ?? [])['totalCount'] ?? 0);
+        foreach ((array) ($snapshot['taxonomies'] ?? []) as $handle => $row) {
+            if (is_array($row)) {
+                $out['craft.taxonomies.' . (string) $handle . '.total'] = (int) ($row['totalCount'] ?? 0);
+            }
+        }
+        $out['craft.plugins.retour.total'] = (int) (($snapshot['retour'] ?? [])['totalCount'] ?? 0);
+        $out['craft.plugins.seomatic.total'] = (int) (($snapshot['seomatic'] ?? [])['totalCount'] ?? 0);
+
+        ksort($out);
+        return $out;
+    }
+
+    /**
+     * Current migration-created counts from the plugin state table.
+     *
+     * These are reported as their own domain. They are not compared against a
+     * pre-migration Craft baseline because that would mix domains.
+     *
+     * @return array<string, int>
+     */
+    public function migrationCreatedStateCounts(): array
+    {
+        $out = [
+            'migration.state.rows.total' => 0,
+            'migration.created.entries' => 0,
+            'migration.created.assets' => 0,
+            'migration.created.redirects' => 0,
+            'migration.created.seo' => 0,
+        ];
+
+        try {
+            $out['migration.state.rows.total'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->count();
+
+            $out['migration.created.entries'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['targetType' => 'entry'])
+                ->andWhere(['not in', 'source', ['media', 'redirect', 'seo_meta']])
+                ->count();
+
+            $out['migration.created.assets'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['source' => 'media', 'targetType' => 'asset'])
+                ->count();
+
+            $out['migration.created.redirects'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['source' => 'redirect'])
+                ->count();
+
+            $out['migration.created.seo'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['source' => 'seo_meta'])
+                ->count();
+        } catch (Throwable) {
+            foreach ($out as $key => $_) {
+                $out[$key] = -1;
+            }
+        }
+
+        return $out;
     }
 
     /**

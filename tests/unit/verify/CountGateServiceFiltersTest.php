@@ -100,7 +100,11 @@ final class CountGateServiceFiltersTest extends TestCase
         self::assertStringContainsString('loadTranslatedScopeForEntityFilters', $source);
         self::assertStringContainsString('mappingFile->load', $source);
         self::assertStringContainsString('unmappedSourceEntities', $source);
-        self::assertStringContainsString('countGateService->run($expectedCounts, (float) $tolerance, $filters, $translatedScope)', $source);
+        self::assertStringContainsString('sourceParityExpectedCounts', $source);
+        self::assertStringContainsString('countGateService->run($sourceExpectedCounts, (float) $tolerance, $filters, $translatedScope)', $source);
+        self::assertStringContainsString('DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT', $source);
+        self::assertStringContainsString('DOMAIN_MIGRATION_CREATED_STATE_COUNTS', $source);
+        self::assertStringContainsString('DOMAIN_SOURCE_TRANSFORMED_PARITY', $source);
     }
 
     public function testFinalizeWalkerUsesTranslatedCraftScopeForEntryQueries(): void
