@@ -46,6 +46,16 @@ final class CkeditorRewriterServiceTest extends TestCase
         return $rm->invoke($svc, ...$args);
     }
 
+    private function decodeMarkerSource(string $out): string
+    {
+        self::assertMatchesRegularExpression('/<!-- MIGRATION:UNRESOLVED sourceB64=([A-Za-z0-9_-]+) -->/', $out);
+        preg_match('/<!-- MIGRATION:UNRESOLVED sourceB64=([A-Za-z0-9_-]+) -->/', $out, $matches);
+        $encoded = $matches[1];
+        $padded = str_pad(strtr($encoded, '-_', '+/'), strlen($encoded) + ((4 - strlen($encoded) % 4) % 4), '=', STR_PAD_RIGHT);
+
+        return (string) base64_decode($padded, true);
+    }
+
     public function testEmptyHtmlReturnsEmptyString(): void
     {
         $svc = $this->service();
@@ -87,9 +97,30 @@ final class CkeditorRewriterServiceTest extends TestCase
 
         self::assertStringContainsString('/uploads/media/missing.jpg', $out);
         self::assertStringContainsString(
-            '<!-- MIGRATION:UNRESOLVED source=/uploads/media/missing.jpg -->',
+            '<!-- MIGRATION:UNRESOLVED sourceB64=L3VwbG9hZHMvbWVkaWEvbWlzc2luZy5qcGc -->',
             $out,
         );
+        self::assertSame('/uploads/media/missing.jpg', $this->decodeMarkerSource($out));
+    }
+
+    public function testUnresolvedMarkerEncodesMaliciousLegacyUrlCommentPayload(): void
+    {
+        $svc = $this->service();
+        $svc->seedUrlIdCache([]);
+
+        $url = '/uploads/media/missing--> <script data-x=&quot;quote&quot;>.jpg';
+        $html = '<img src="' . $url . '" alt="x">';
+        $out = $svc->rewrite($html, 1);
+
+        self::assertStringContainsString('src="' . $url . '"', $out);
+        self::assertStringContainsString('<!-- MIGRATION:UNRESOLVED sourceB64=', $out);
+        self::assertSame($url, $this->decodeMarkerSource($out));
+
+        preg_match('/<!-- MIGRATION:UNRESOLVED sourceB64=([A-Za-z0-9_-]+) -->/', $out, $matches);
+        self::assertMatchesRegularExpression('/^[A-Za-z0-9_-]+$/', $matches[1]);
+        self::assertStringNotContainsString('-->', $matches[1]);
+        self::assertStringNotContainsString('<script', $matches[1]);
+        self::assertStringNotContainsString('&quot;', $matches[1]);
     }
 
     public function testRewritesKumaMediaPlaceholderToAssetRefToken(): void
@@ -126,9 +157,10 @@ final class CkeditorRewriterServiceTest extends TestCase
         // Literal preserved (so REPORT.md grep can find it) + marker comment.
         self::assertStringContainsString('[M999]', $out);
         self::assertStringContainsString(
-            '<!-- MIGRATION:UNRESOLVED source=kuma_media:999 -->',
+            '<!-- MIGRATION:UNRESOLVED sourceB64=a3VtYV9tZWRpYTo5OTk -->',
             $out,
         );
+        self::assertSame('kuma_media:999', $this->decodeMarkerSource($out));
     }
 
     public function testRewritesNodeTranslationPlaceholderToEntryRefToken(): void
@@ -153,9 +185,10 @@ final class CkeditorRewriterServiceTest extends TestCase
 
         self::assertStringContainsString('[NT404]', $out);
         self::assertStringContainsString(
-            '<!-- MIGRATION:UNRESOLVED source=kuma_node_translation:404 -->',
+            '<!-- MIGRATION:UNRESOLVED sourceB64=a3VtYV9ub2RlX3RyYW5zbGF0aW9uOjQwNA -->',
             $out,
         );
+        self::assertSame('kuma_node_translation:404', $this->decodeMarkerSource($out));
     }
 
     public function testRewritesInternalEntryLinksWhenMapProvided(): void
@@ -292,7 +325,8 @@ final class CkeditorRewriterServiceTest extends TestCase
         $out = $svc->rewrite($html, 1);
 
         self::assertStringContainsString('[M88]', $out);
-        self::assertStringContainsString('MIGRATION:UNRESOLVED source=kuma_media:88', $out);
+        self::assertStringContainsString('MIGRATION:UNRESOLVED sourceB64=a3VtYV9tZWRpYTo4OA', $out);
+        self::assertSame('kuma_media:88', $this->decodeMarkerSource($out));
     }
 
     public function testWithoutKumaPlaceholdersTheRewriteIsAFastNoOp(): void
