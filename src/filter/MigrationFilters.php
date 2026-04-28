@@ -93,24 +93,22 @@ final class MigrationFilters
         $reachable = [];
         $stack = [];
         foreach ($this->entities as $fqcn) {
-            if (!isset($reachable[$fqcn])) {
-                $reachable[$fqcn] = true;
+            if ($this->addIdentity($reachable, $fqcn)) {
                 $stack[] = $fqcn;
             }
         }
 
         foreach ($this->relationGraph as $source => $_targets) {
-            if ($this->identityInSet((string) $source, $reachable) && !isset($reachable[$source])) {
-                $reachable[$source] = true;
-                $stack[] = (string) $source;
+            $source = (string) $source;
+            if ($this->identityInSet($source, $reachable) && $this->addIdentity($reachable, $source)) {
+                $stack[] = $source;
             }
         }
 
         while ($stack !== []) {
             $cur = array_pop($stack);
             foreach ($this->relationGraph[$cur] ?? [] as $rel) {
-                if (!isset($reachable[$rel])) {
-                    $reachable[$rel] = true;
+                if ($this->addIdentity($reachable, $rel)) {
                     $stack[] = $rel;
                 }
             }
@@ -133,6 +131,25 @@ final class MigrationFilters
         $basename = $this->sourceBasename($fqcn);
 
         return $basename !== $fqcn && isset($set[$basename]);
+    }
+
+    /**
+     * @param array<string, true> $set
+     */
+    private function addIdentity(array &$set, string $fqcn): bool
+    {
+        if (isset($set[$fqcn])) {
+            return false;
+        }
+
+        $set[$fqcn] = true;
+
+        $basename = $this->sourceBasename($fqcn);
+        if ($basename !== $fqcn) {
+            $set[$basename] = true;
+        }
+
+        return true;
     }
 
     private function sourceBasename(string $fqcn): string

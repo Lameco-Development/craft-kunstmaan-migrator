@@ -26,6 +26,7 @@ final class FilterFactory extends Component
         // Phase 4.1 / D-26 — CLI override flags. Default false preserves Phase 2/3/4 callers.
         bool $noSeo = false,
         bool $noRetour = false,
+        array $relationGraph = [],
     ): MigrationFilters {
         $settings = Plugin::getInstance()->getSettings();
 
@@ -49,6 +50,7 @@ final class FilterFactory extends Component
             since:    $since,
             noSeo:    $noSeo,
             noRetour: $noRetour,
+            relationGraph: $relationGraph,
         );
     }
 

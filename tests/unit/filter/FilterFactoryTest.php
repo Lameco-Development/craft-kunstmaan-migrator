@@ -36,9 +36,9 @@ final class FilterFactoryTest extends TestCase
         $rc = new ReflectionClass(FilterFactory::class);
         self::assertTrue($rc->hasMethod('fromCli'));
         $m = new ReflectionMethod(FilterFactory::class, 'fromCli');
-        self::assertCount(5, $m->getParameters(), 'fromCli takes 5 args: entitiesArg, localesArg, sinceArg, noSeo, noRetour.');
+        self::assertCount(6, $m->getParameters(), 'fromCli takes 6 args: entitiesArg, localesArg, sinceArg, noSeo, noRetour, relationGraph.');
         $names = array_map(static fn(ReflectionParameter $p): string => $p->getName(), $m->getParameters());
-        self::assertSame(['entitiesArg', 'localesArg', 'sinceArg', 'noSeo', 'noRetour'], $names);
+        self::assertSame(['entitiesArg', 'localesArg', 'sinceArg', 'noSeo', 'noRetour', 'relationGraph'], $names);
         self::assertSame(
             MigrationFilters::class,
             (string) $m->getReturnType(),
@@ -76,6 +76,7 @@ final class FilterFactoryTest extends TestCase
         self::assertStringContainsString('defaultLocales', $source);
         self::assertStringContainsString('defaultSince', $source);
         self::assertStringContainsString('Plugin::getInstance()->getSettings()', $source);
+        self::assertStringContainsString('relationGraph: $relationGraph', $source);
     }
 
     public function testReturnsNewMigrationFilters(): void
