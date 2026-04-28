@@ -24,7 +24,6 @@ final class MigrateControllerCompilePreflightTest extends TestCase
     {
         $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
         $method = new ReflectionMethod(MigrateController::class, 'preflightCompiledMapping');
-        $method->setAccessible(true);
 
         /** @var array{missing: list<string>, messages: list<string>} $result */
         $result = $method->invoke($controller, $mapping);
