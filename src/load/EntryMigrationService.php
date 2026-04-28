@@ -140,7 +140,27 @@ class EntryMigrationService extends Component
             );
         }
 
-        $primarySite = $sites[0];
+        // Phase 8.7 — pick Craft's actual primary site from the configured set,
+        // not array-position 0. Previously $sites[0] depended on the operator's
+        // ordering of mapping.yaml's `sites:` block — when that block ordered
+        // `en: en` before `nl: default` (e.g. after an analyze run rewrote it),
+        // the loader treated EN as primary and called applyPerSiteData with
+        // an empty payload (the transform only populates perSite[<primary>] for
+        // online translations). Result: every page failed with "Title cannot be
+        // blank." Selecting by Craft's `primary` flag is order-agnostic.
+        $primarySite = null;
+        foreach ($sites as $s) {
+            if ($s->primary) {
+                $primarySite = $s;
+                break;
+            }
+        }
+        if ($primarySite === null) {
+            // None of the configured handles resolved to Craft's primary site —
+            // fall back to first-resolved (legacy behavior). Operator setup is
+            // unusual; leave it loud-but-running rather than throwing.
+            $primarySite = $sites[0];
+        }
 
         // ------------------------------------------------------------------ 1
         // Look up existing entry via state table
