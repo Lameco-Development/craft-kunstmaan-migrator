@@ -41,6 +41,32 @@ final class DetailTableResolver extends Component
     /** @var array<string, string> FQCN → table override (from config/kunstmaan-migrator.php overrides.detailTableOverrides) */
     public array $overrides = [];
 
+    /**
+     * Phase 8.7 / D-36 — Kunstmaan vendor page-part FQCN → core kuma_* table.
+     *
+     * The fallback prefix scan (tier 3) walks `allTables()` and matches any
+     * table ending with `_<snake>s|_<snake>|_<snake>es`. Vendor classes like
+     * `Kunstmaan\PagePartBundle\Entity\TextPagePart` SHOULD resolve via that
+     * route to `kuma_text_page_parts`, but in practice the suffix derivation
+     * misses Kunstmaan's pluralization quirks (`SingleLineText` → snake
+     * `single_line_text`, plural `_single_line_texts` doesn't exist as a
+     * suffix because the table is `kuma_single_line_text_page_parts`). Hard-
+     * coding the canonical Kunstmaan core page-part tables removes the
+     * silent-skip behavior in `ExtractService::loadPageParts`, which was
+     * dropping every TextPagePart instance attached to EmployeePage / etc.
+     * Operator-supplied $overrides still wins (line 73-75).
+     *
+     * @var array<string, string>
+     */
+    private const KUNSTMAAN_VENDOR_DEFAULTS = [
+        'Kunstmaan\\PagePartBundle\\Entity\\TextPagePart'             => 'kuma_text_page_parts',
+        'Kunstmaan\\FormBundle\\Entity\\PageParts\\SingleLineTextPagePart' => 'kuma_single_line_text_page_parts',
+        'Kunstmaan\\FormBundle\\Entity\\PageParts\\MultiLineTextPagePart'  => 'kuma_multi_line_text_page_parts',
+        'Kunstmaan\\PagePartBundle\\Entity\\HeaderPagePart'           => 'kuma_header_page_parts',
+        'Kunstmaan\\PagePartBundle\\Entity\\LinkPagePart'             => 'kuma_link_page_parts',
+        'Kunstmaan\\PagePartBundle\\Entity\\RawHTMLPagePart'          => 'kuma_raw_htmlpage_parts',
+    ];
+
     /** Configurable legacy-table prefix; defaults to the Kunstmaan convention. */
     public string $legacyTablePrefix = 'lameco_websitebundle_';
 
@@ -72,6 +98,12 @@ final class DetailTableResolver extends Component
         // 1. Overrides win outright — operator escape hatch.
         if (isset($this->overrides[$fqcn])) {
             return $this->resolveCache[$fqcn] = (string) $this->overrides[$fqcn];
+        }
+
+        // 1b. Kunstmaan vendor page-part defaults (Phase 8.7 / D-36). Operator
+        // overrides above still win; this only fires when no override is set.
+        if (isset(self::KUNSTMAAN_VENDOR_DEFAULTS[$fqcn])) {
+            return $this->resolveCache[$fqcn] = self::KUNSTMAAN_VENDOR_DEFAULTS[$fqcn];
         }
 
         // 2. Doctrine entity parser — source code is the authoritative table name.

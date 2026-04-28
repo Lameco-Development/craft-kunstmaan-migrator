@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\finalize;
 
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
+use lameco\kunstmaanmigrator\Plugin;
 use Craft;
 use craft\elements\Entry;
+use Throwable;
 use yii\base\Component;
 
 /**
@@ -66,9 +68,20 @@ final class FinalizeWalker extends Component
         // saves each per-site entry as its own unit of work.
         $query = Entry::find()->siteId('*');
 
-        // Optional entity-type scope from the filter spec.
+        // Optional entity-type scope from the filter spec. Phase 8.7 / D-37 —
+        // translate operator-supplied $filters->entities (Doctrine FQCN OR
+        // simple-name basename, e.g. "EmployeePage" or
+        // "App\Entity\Pages\EmployeePage") into Craft entry-type handles
+        // (e.g. "teamMember") via the compiled mapping.yaml lookup. Without
+        // this, Entry::find()->type() gets a source-side name that doesn't
+        // match any Craft entry-type and aborts with QueryAbortedException.
         if (!empty($filters->entities)) {
-            $query->type($filters->entities);
+            $craftHandles = $this->translateToCraftEntryTypes($filters->entities);
+            if ($craftHandles !== []) {
+                $query->type($craftHandles);
+            }
+            // If no source entity translates to a real Craft entry-type, walk
+            // everything (over-walk is safer than narrow-then-abort).
         }
 
         // Pre-count for the progress callback. Skipped when no callback is wired so
@@ -148,5 +161,63 @@ final class FinalizeWalker extends Component
             'rewritten' => $rewritten,
             'unresolvable' => $unresolvable,
         ];
+    }
+
+    /**
+     * Phase 8.7 / D-37 — translate operator-supplied source-side entity names
+     * (Doctrine FQCN or simple-name basename) into Craft entry-type handles via
+     * the compiled `mapping.yaml` `nodeClasses` + `sections` lookup tables.
+     *
+     * Example: `EmployeePage` (basename) or `App\Entity\Pages\EmployeePage` (FQCN)
+     *   → resolves through `nodeClasses[<fqcn>].section` (the lookup key) →
+     *   `sections[<lookupKey>].entryType` (the actual Craft entry-type handle,
+     *   e.g. `teamMember`).
+     *
+     * Returns an empty array when the mapping can't be loaded OR when none of
+     * the supplied entities match. Caller treats `[]` as "no scoping" (walk
+     * everything) rather than "scope to nothing" so finalize doesn't abort
+     * silently on a translation miss.
+     *
+     * @param  list<string> $sourceEntities
+     * @return list<string>
+     */
+    private function translateToCraftEntryTypes(array $sourceEntities): array
+    {
+        if ($sourceEntities === []) {
+            return [];
+        }
+        try {
+            $plugin = Plugin::getInstance();
+            $mappingPath = $plugin->mappingFile->resolvePath();
+            $mapping = $plugin->mappingFile->load($mappingPath);
+        } catch (Throwable) {
+            return [];
+        }
+        $nodeClasses = (array) ($mapping['nodeClasses'] ?? []);
+        $sections    = (array) ($mapping['sections']    ?? []);
+
+        $out = [];
+        foreach ($sourceEntities as $entity) {
+            $entity = (string) $entity;
+            foreach ($nodeClasses as $fqcn => $nc) {
+                $fqcn = (string) $fqcn;
+                $shortName = (string) substr($fqcn, (int) strrpos($fqcn, '\\') + 1);
+                if ($entity !== $fqcn && $entity !== $shortName) {
+                    continue;
+                }
+                // nodeClass.section is the LOOKUP KEY into sections[] (an
+                // entryType handle). sections[<key>].entryType is what
+                // Entry::find()->type() expects.
+                $lookupKey = (string) ($nc['section'] ?? '');
+                if ($lookupKey === '') {
+                    continue;
+                }
+                $entryType = (string) ($sections[$lookupKey]['entryType'] ?? '');
+                if ($entryType !== '') {
+                    $out[] = $entryType;
+                }
+            }
+        }
+        return array_values(array_unique($out));
     }
 }
