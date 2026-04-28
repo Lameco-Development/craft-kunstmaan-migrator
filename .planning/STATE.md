@@ -2,13 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 10 added
-stopped_at: "Phase 10 added for generic migration rehearsal gap closure after the first CQM staging run exposed generic blockers: Matrix required titles, sparse-locale primary saves, invalid section/entry-type routing, taxonomy-before-transform relation resolution, pageBuilder ownership validation, and verify count semantics."
-stopped_at_prior: "Phase 8 / Plan 12 (Plugin DI + MigrateController bolt-on/sub-action — TAX-08) shipped 2026-04-27 in 4 atomic commits (25c745c RED 1, f466d5f GREEN 1, 79a6927 RED 2, 8c24cb3 GREEN 2). Two tasks both followed RED → GREEN TDD: Task 1 wired TaxonomyMigrationService into Plugin DI (use import + @property-read TaxonomyMigrationService docblock at line 105 + 'taxonomyMigrationService' => TaxonomyMigrationService::class config() slot at line 169 + init() DI fanout legacyDb/migrationState/mappingFile at lines 330-332); Task 2 inserted the Step 4.5 actionIndex bolt-on (line 282, BEFORE Step 5 load — D-03 taxonomies migrate before pages so RelationHandler FK→entryId lookups succeed) + actionTaxonomies sub-action (lines 553-625, NeverProductionTrait gate FIRST per D-20, mirrors actionRetour shape). D-04 + D-12 three-flag cap preserved (--live / --confirm / --force only — no opt-out flag for the taxonomies stage; grep -cE "noTaxonomies|--no-taxonomies" returns 0). Two test files: PluginBootstrapTest extended with testPluginDeclaresTaxonomyMigrationServiceWiring (4 sub-assertions); new tests/Unit/console/MigrateControllerTaxonomiesWiringTest (5 tests, 10 assertions covering migrateAll-twice + actionTaxonomies-public + Stage-line-twice + no-opt-out-flag + enforceNeverProduction-FIRST). composer test exits 0: 370 tests / 1030 assertions, all passing. Three deviations documented: (1) Rule 3 — `composer phpstan` script is not defined in the project's composer.json (no PHPStan installed), substituted `php -l` + `composer test` for verification; out of scope to add PHPStan. (2) Rule 1 — original actionTaxonomies docblock contained literal `--no-taxonomies` substring as self-documentation, broke the plan's `! grep -E '--no-taxonomies'` invariant; reworded to `NO opt-out flag for the taxonomies stage`. (3) Plan template referenced non-existent `MigrationOptions::fromCli` helper; used the actionRetour-mirroring direct-ctor shape (`new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false)`). TAX-08 mark-complete in REQUIREMENTS.md skipped — TAX-08 is referenced by ROADMAP.md Plan 08-12 row but is NOT yet codified as a checklist item in REQUIREMENTS.md; Plan 08-17 owns DOC-01/DOC-02 codification work and will tick it then. Phase 8 progress now 13/15 plans complete; remaining open: Plan 08-15 (TaxonomyMigrationTest integration — TAX-10) and Plan 08-17 (RECONCILIATION + CHANGELOG known-omissions + REQUIREMENTS codification — DOC-01, DOC-02). (Prior session: Phase 4 closed 2026-04-26 with Plan 12 growing the test corpus 60 → 83 tests / 137 → 210 assertions across 7 new test files + the phase-level RECONCILIATION.md aggregate; canonical record in `.planning/phases/04-adapters-verify-settings/`.)"
-last_updated: "2026-04-28T13:56:46Z"
+status: Phase 10 context gathered
+stopped_at: "Phase 10 context gathered in `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-CONTEXT.md`. Ready for `/gsd-plan-phase 10`."
+last_updated: "2026-04-28T14:18:43.757Z"
 progress:
   total_phases: 10
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 85
   completed_plans: 85
   percent: 100
@@ -22,7 +21,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped. The plugin should stay as generic as practical across Lameco Kunstmaan websites (for example CQM, Simac, and Enreach), with project-specific differences surfaced as mapping/operator decisions rather than hardcoded plugin assumptions wherever possible.
 
-**Current focus:** Phase 10 has been added to close the generic migration rehearsal gaps found during the first CQM staging run. Scope: generic Matrix block title fallback, sparse-locale primary save fallback, section/entry-type compatibility guard or fallback, taxonomy-dependent relation resolution ordering, pageBuilder Matrix ownership validation, verify count semantics, regression coverage, and a clean restore/rerun rehearsal path. Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`.
+**Current focus:** Phase 10 context is gathered and ready for planning. Locked decisions: page-rooted lazy taxonomy find/create by default, opt-in full unreferenced taxonomy import, default-language fallback for missing taxonomy locale values, fallback usage visible in logs/reports, zero entry/stage failures for the clean rerun, complete Page-rooted accounting, and restored-backup full CQM rehearsal as the closing gate. Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`.
 
 ## Milestone
 
@@ -41,7 +40,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 10: Generic Migration Rehearsal Gap Closure — added, not planned.** Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`. Driver: the Phase 9 CQM staging rehearsal migrated most content but failed 3 entries and surfaced missing taxonomy-backed relations plus verify-count semantic drift. Next step: `/gsd-plan-phase 10`.
+**Phase 10: Generic Migration Rehearsal Gap Closure — context gathered, not planned.** Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`. Context: `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-CONTEXT.md`. Driver: the Phase 9 CQM staging rehearsal migrated most content but failed 3 entries and surfaced missing taxonomy-backed relations plus verify-count semantic drift. Next step: `/gsd-plan-phase 10`.
 
 ## Historical Phase Notes
 
