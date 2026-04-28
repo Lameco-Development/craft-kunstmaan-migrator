@@ -1721,21 +1721,32 @@ final class LlmClassifier extends Component
             }
 
             // Merge the proposed fields into the row. Preserve any prior
-            // operator-set fields (skip-existing per-source).
-            $existing = (array) ($row['fields'] ?? []);
-            $existingSources = [];
-            foreach ($existing as $ef) {
-                if (is_array($ef)) {
-                    $s = (string) ($ef['sourceProperty'] ?? '');
-                    if ($s !== '') { $existingSources[$s] = true; }
-                }
+            // operator-set fields (skip-existing per-source). An entry counts
+            // as "operator-set" only when BOTH sourceProperty AND targetHandle
+            // are non-empty — Phase 8.7 / D-33: the implicit-content emitter
+            // pre-populates fields[] with stubs `{sourceProperty:content,
+            // targetHandle:'', handler:''}` so proposePagePartBlocks can render
+            // the source-column list in the prompt. Those stubs are NOT
+            // operator decisions and must not block the LLM's targetHandle
+            // proposals from landing. Drop them; let the LLM-proposed entries
+            // replace them.
+            $existingMerged = [];
+            $seenSources = [];
+            foreach ((array) ($row['fields'] ?? []) as $ef) {
+                if (!is_array($ef)) { continue; }
+                $s = (string) ($ef['sourceProperty'] ?? '');
+                $th = (string) ($ef['targetHandle'] ?? '');
+                if ($s === '' || $th === '') { continue; }
+                $existingMerged[] = $ef;
+                $seenSources[$s] = true;
             }
             foreach ($fieldsOut as $fo) {
-                if (!isset($existingSources[$fo['sourceProperty']])) {
-                    $existing[] = $fo;
+                if (!isset($seenSources[$fo['sourceProperty']])) {
+                    $existingMerged[] = $fo;
+                    $seenSources[$fo['sourceProperty']] = true;
                 }
             }
-            $out[] = array_merge($row, ['fields' => array_values($existing)]);
+            $out[] = array_merge($row, ['fields' => array_values($existingMerged)]);
         }
         return $out;
     }
