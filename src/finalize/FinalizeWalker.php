@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\finalize;
 
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
+use lameco\kunstmaanmigrator\filter\MappingFilterTranslator;
 use lameco\kunstmaanmigrator\Plugin;
 use Craft;
 use craft\elements\Entry;
-use Throwable;
 use yii\base\Component;
 
 /**
@@ -68,20 +68,15 @@ final class FinalizeWalker extends Component
         // saves each per-site entry as its own unit of work.
         $query = Entry::find()->siteId('*');
 
-        // Optional entity-type scope from the filter spec. Phase 8.7 / D-37 —
-        // translate operator-supplied $filters->entities (Doctrine FQCN OR
-        // simple-name basename, e.g. "EmployeePage" or
-        // "App\Entity\Pages\EmployeePage") into Craft entry-type handles
-        // (e.g. "teamMember") via the compiled mapping.yaml lookup. Without
-        // this, Entry::find()->type() gets a source-side name that doesn't
-        // match any Craft entry-type and aborts with QueryAbortedException.
-        if (!empty($filters->entities)) {
-            $craftHandles = $this->translateToCraftEntryTypes($filters->entities);
-            if ($craftHandles !== []) {
-                $query->type($craftHandles);
-            }
-            // If no source entity translates to a real Craft entry-type, walk
-            // everything (over-walk is safer than narrow-then-abort).
+        // Optional Craft scope from source-domain entity filters. D-17/09-02B:
+        // translate Kunstmaan FQCN/basename filters through compiled mapping
+        // before touching Craft query surfaces.
+        $translatedScope = $this->loadTranslatedScopeForEntityFilters($filters);
+        if ($translatedScope['sectionHandles'] !== []) {
+            $query->section($translatedScope['sectionHandles']);
+        }
+        if ($translatedScope['entryTypeHandles'] !== []) {
+            $query->type($translatedScope['entryTypeHandles']);
         }
 
         // Pre-count for the progress callback. Skipped when no callback is wired so
@@ -164,60 +159,46 @@ final class FinalizeWalker extends Component
     }
 
     /**
-     * Phase 8.7 / D-37 — translate operator-supplied source-side entity names
-     * (Doctrine FQCN or simple-name basename) into Craft entry-type handles via
-     * the compiled `mapping.yaml` `nodeClasses` + `sections` lookup tables.
-     *
-     * Example: `EmployeePage` (basename) or `App\Entity\Pages\EmployeePage` (FQCN)
-     *   → resolves through `nodeClasses[<fqcn>].section` (the lookup key) →
-     *   `sections[<lookupKey>].entryType` (the actual Craft entry-type handle,
-     *   e.g. `teamMember`).
-     *
-     * Returns an empty array when the mapping can't be loaded OR when none of
-     * the supplied entities match. Caller treats `[]` as "no scoping" (walk
-     * everything) rather than "scope to nothing" so finalize doesn't abort
-     * silently on a translation miss.
-     *
-     * @param  list<string> $sourceEntities
-     * @return list<string>
+     * @return array{
+     *   sectionHandles: list<string>,
+     *   entryTypeHandles: list<string>,
+     *   unmappedSourceEntities: list<string>
+     * }
      */
-    private function translateToCraftEntryTypes(array $sourceEntities): array
+    private function loadTranslatedScopeForEntityFilters(MigrationFilters $filters): array
     {
-        if ($sourceEntities === []) {
-            return [];
+        if ($filters->entities === []) {
+            return [
+                'sectionHandles' => [],
+                'entryTypeHandles' => [],
+                'unmappedSourceEntities' => [],
+            ];
         }
-        try {
-            $plugin = Plugin::getInstance();
-            $mappingPath = $plugin->mappingFile->resolvePath();
-            $mapping = $plugin->mappingFile->load($mappingPath);
-        } catch (Throwable) {
-            return [];
-        }
-        $nodeClasses = (array) ($mapping['nodeClasses'] ?? []);
-        $sections    = (array) ($mapping['sections']    ?? []);
 
-        $out = [];
-        foreach ($sourceEntities as $entity) {
-            $entity = (string) $entity;
-            foreach ($nodeClasses as $fqcn => $nc) {
-                $fqcn = (string) $fqcn;
-                $shortName = (string) substr($fqcn, (int) strrpos($fqcn, '\\') + 1);
-                if ($entity !== $fqcn && $entity !== $shortName) {
-                    continue;
-                }
-                // nodeClass.section is the LOOKUP KEY into sections[] (an
-                // entryType handle). sections[<key>].entryType is what
-                // Entry::find()->type() expects.
-                $lookupKey = (string) ($nc['section'] ?? '');
-                if ($lookupKey === '') {
-                    continue;
-                }
-                $entryType = (string) ($sections[$lookupKey]['entryType'] ?? '');
-                if ($entryType !== '') {
-                    $out[] = $entryType;
-                }
-            }
+        $plugin = Plugin::getInstance();
+        $mappingPath = $plugin->mappingFile->resolvePath();
+        if (!is_file($mappingPath)) {
+            throw new \RuntimeException(
+                'Entity filters require compiled mapping for finalize. Run `./craft kunstmaan-migrator/compile` first.',
+            );
         }
-        return array_values(array_unique($out));
+
+        $compiledMapping = $plugin->mappingFile->load($mappingPath);
+        if ((array) ($compiledMapping['nodeClasses'] ?? []) === [] || (array) ($compiledMapping['sections'] ?? []) === []) {
+            throw new \RuntimeException(
+                'Entity filters require compiled mapping nodeClasses/sections for finalize. Run `./craft kunstmaan-migrator/compile` first.',
+            );
+        }
+
+        $translatedScope = (new MappingFilterTranslator())->translate($compiledMapping, $filters);
+        if ($translatedScope['unmappedSourceEntities'] !== []) {
+            throw new \RuntimeException(
+                'Entity filters are not present in compiled mapping: '
+                . implode(', ', $translatedScope['unmappedSourceEntities'])
+                . '. Run `./craft kunstmaan-migrator/analyze` and `./craft kunstmaan-migrator/compile`, or adjust --entities.',
+            );
+        }
+
+        return $translatedScope;
     }
 }

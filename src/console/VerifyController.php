@@ -7,6 +7,8 @@ namespace lameco\kunstmaanmigrator\console;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
+use lameco\kunstmaanmigrator\filter\MappingFilterTranslator;
+use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use Throwable;
@@ -107,6 +109,12 @@ class VerifyController extends Controller
         // is now filter-aware — see CountGateService::isSectionFilteredOut + locale→siteId
         // scoping).
         $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        try {
+            $translatedScope = $this->loadTranslatedScopeForEntityFilters($filters, $plugin);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::CONFIG;
+        }
 
         $tolerance = $this->countTolerance ?? $plugin->getSettings()->verifyCountTolerance ?? 0.01;
         $threshold = $this->urlDiffThreshold ?? $plugin->getSettings()->verifyUrlDiffThreshold ?? 0.05;
@@ -145,7 +153,7 @@ class VerifyController extends Controller
                 $report['pass'] = false;
             } else {
                 $expectedCounts = $this->baselineToExpectedCounts($baselineDecoded);
-                $countResult = $plugin->countGateService->run($expectedCounts, (float) $tolerance, $filters);
+                $countResult = $plugin->countGateService->run($expectedCounts, (float) $tolerance, $filters, $translatedScope);
                 $report['countGate'] = $countResult['gates'];
                 if (!$countResult['pass']) {
                     $report['pass'] = false;
@@ -271,6 +279,53 @@ class VerifyController extends Controller
         $this->stdout("\nReport: {$reportPath}\n", $report['pass'] ? Console::FG_GREEN : Console::FG_RED);
 
         return $report['pass'] ? ExitCode::OK : ExitCode::UNSPECIFIED_ERROR;
+    }
+
+    /**
+     * Load compiled mapping exactly once when source entity filters need a
+     * Craft-query scope. Missing or unmapped compiled metadata is actionable
+     * operator failure; guessing would reintroduce D-17 cross-domain compares.
+     *
+     * @return array{
+     *   sectionHandles: list<string>,
+     *   entryTypeHandles: list<string>,
+     *   unmappedSourceEntities: list<string>
+     * }
+     */
+    private function loadTranslatedScopeForEntityFilters(MigrationFilters $filters, Plugin $plugin): array
+    {
+        if ($filters->entities === []) {
+            return [
+                'sectionHandles' => [],
+                'entryTypeHandles' => [],
+                'unmappedSourceEntities' => [],
+            ];
+        }
+
+        $mappingPath = $plugin->mappingFile->resolvePath();
+        if (!is_file($mappingPath)) {
+            throw new \RuntimeException(
+                'Entity filters require compiled mapping for verify. Run `./craft kunstmaan-migrator/compile` first.',
+            );
+        }
+
+        $compiledMapping = $plugin->mappingFile->load($mappingPath);
+        if ((array) ($compiledMapping['nodeClasses'] ?? []) === [] || (array) ($compiledMapping['sections'] ?? []) === []) {
+            throw new \RuntimeException(
+                'Entity filters require compiled mapping nodeClasses/sections for verify. Run `./craft kunstmaan-migrator/compile` first.',
+            );
+        }
+
+        $translatedScope = (new MappingFilterTranslator())->translate($compiledMapping, $filters);
+        if ($translatedScope['unmappedSourceEntities'] !== []) {
+            throw new \RuntimeException(
+                'Entity filters are not present in compiled mapping: '
+                . implode(', ', $translatedScope['unmappedSourceEntities'])
+                . '. Run `./craft kunstmaan-migrator/analyze` and `./craft kunstmaan-migrator/compile`, or adjust --entities.',
+            );
+        }
+
+        return $translatedScope;
     }
 
     /**

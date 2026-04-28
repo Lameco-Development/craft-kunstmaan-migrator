@@ -45,7 +45,7 @@ class CountGateService extends Component
      * @param array<string, mixed> $expectedCounts
      * @return array{pass: bool, gates: array<string, array<string, mixed>>}
      */
-    public function run(array $expectedCounts, float $tolerance, ?MigrationFilters $filters = null): array
+    public function run(array $expectedCounts, float $tolerance, ?MigrationFilters $filters = null, ?array $translatedScope = null): array
     {
         $expectedSections   = (array) ($expectedCounts['sections']   ?? []);
         $expectedAssets     = (array) ($expectedCounts['assets']     ?? []);
@@ -55,6 +55,16 @@ class CountGateService extends Component
         $gates = [];
         $overallPass = true;
 
+        $unmappedSourceEntities = (array) ($translatedScope['unmappedSourceEntities'] ?? []);
+        if ($unmappedSourceEntities !== []) {
+            $gates['filters:unmappedSourceEntities'] = [
+                'pass' => false,
+                'note' => 'unmapped source entity filters: ' . implode(', ', array_map('strval', $unmappedSourceEntities)),
+                'unmappedSourceEntities' => array_values(array_map('strval', $unmappedSourceEntities)),
+            ];
+            $overallPass = false;
+        }
+
         // Phase 4.1 / VER-04 — filter-scoped siteIds for locale-restricted runs.
         // Empty array = no scoping (Phase 4 behavior preserved).
         $scopeSiteIds = $this->resolveScopeSiteIds($filters);
@@ -63,7 +73,7 @@ class CountGateService extends Component
         foreach ($expectedSections as $sectionHandle => $expected) {
             // Phase 4.1 / D-28 — filter-aware gate evaluation. Sections excluded
             // by an entities allow-list get a SKIPPED row, not a 0/expected fail.
-            if (self::isSectionFilteredOut($sectionHandle, $filters)) {
+            if (self::isSectionFilteredOut($sectionHandle, $filters, $translatedScope)) {
                 $gates[$sectionHandle] = ['skip' => true, 'note' => 'filtered out (entities allow-list)'];
                 continue;
             }
@@ -201,7 +211,7 @@ class CountGateService extends Component
      * @internal Public-static for direct unit tests without Reflection;
      *           mirrors LocalePreflight::compareEnvDefaultLocaleToLocaleMap.
      */
-    public static function isSectionFilteredOut(string $sectionHandle, ?MigrationFilters $filters): bool
+    public static function isSectionFilteredOut(string $sectionHandle, ?MigrationFilters $filters, ?array $translatedScope = null): bool
     {
         if ($filters === null) {
             return false;
@@ -209,7 +219,17 @@ class CountGateService extends Component
         if ($filters->entities === []) {
             return false;
         }
-        return !in_array($sectionHandle, $filters->entities, true);
+
+        // D-17 / 09-02B: never compare source-domain entity filters directly to
+        // Craft section handles. When callers have not supplied a translated
+        // Craft scope, preserve BC by leaving the section unfiltered.
+        if ($translatedScope === null) {
+            return false;
+        }
+
+        $sectionHandles = array_values(array_map('strval', (array) ($translatedScope['sectionHandles'] ?? [])));
+
+        return !in_array($sectionHandle, $sectionHandles, true);
     }
 
     /**
