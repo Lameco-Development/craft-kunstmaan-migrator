@@ -266,11 +266,15 @@ class MigrateController extends Controller
         // Use the just-completed extract count as the transform denominator — extract and
         // transform are 1:1 at the input level (locale fan-out happens in transform's output).
         $transformProgress = $this->makeTransformProgress($extractedNodes);
+        $hasBlockingTransformRelationFailure = false;
         try {
             $extractedStream = $this->streamExtracted($storageDir);
             foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions($report), $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
-                    continue; // sentinel — counters available via the Transform run report
+                    $hasBlockingTransformRelationFailure =
+                        $this->mergeTransformReportSentinel($payload, $report)
+                        || $hasBlockingTransformRelationFailure;
+                    continue;
                 }
                 $fqcn = (string) ($payload['stateSource'] ?? '');
                 $nodeId = (int) ($payload['kuma_node_id'] ?? 0);
@@ -302,6 +306,12 @@ class MigrateController extends Controller
             "  OK   transform complete ({$transformedCount} payloads → {$transformedDir})\n",
             Console::FG_GREEN,
         );
+
+        if ($this->live && $hasBlockingTransformRelationFailure) {
+            $this->recordBlockingTransformFailure($report);
+            $this->writeReport($storageDir, $report, $filters, $tRunStart);
+            return $this->reportExitCode($report);
+        }
 
         // FH-03: --preload-assets ingests the full referenced asset set in one batch
         // before the per-entry loop. Default JIT materialises inside migrateOneEntry().
@@ -720,13 +730,18 @@ class MigrateController extends Controller
 
         $transformedDir = $storageDir . '/transformed/entries';
         $count = 0;
+        $report = new MigrationReport();
+        $hasBlockingTransformRelationFailure = false;
         // For standalone transform we don't have a fresh extract precount handy; count
         // extracted/<fqcn>/*.json files on disk as the denominator. Cheap glob.
         $transformProgress = $this->makeTransformProgress($this->countExtractedFiles($storageDir));
         try {
             $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions(), $transformProgress) as $payload) {
+            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions($report), $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
+                    $hasBlockingTransformRelationFailure =
+                        $this->mergeTransformReportSentinel($payload, $report)
+                        || $hasBlockingTransformRelationFailure;
                     continue;
                 }
                 $fqcn = (string) ($payload['stateSource'] ?? '');
@@ -754,6 +769,15 @@ class MigrateController extends Controller
             return ExitCode::UNSPECIFIED_ERROR;
         }
         $this->endProgressIfStarted();
+
+        if ($this->live && $hasBlockingTransformRelationFailure) {
+            $this->recordBlockingTransformFailure($report);
+            $this->writeReport($storageDir, $report, $filters);
+            return $this->reportExitCode($report);
+        }
+        if ($report->warnings !== [] || $report->hasFailures()) {
+            $this->writeReport($storageDir, $report, $filters);
+        }
 
         $this->stdout(
             "  OK   transform complete ({$count} payloads → {$transformedDir})\n",
@@ -1804,6 +1828,52 @@ class MigrateController extends Controller
 
         $this->stdout("\nMigrate: PASS\n", Console::FG_GREEN);
         return ExitCode::OK;
+    }
+
+    /**
+     * Merge TransformService's local sentinel report into the main MigrationReport.
+     *
+     * Decision: dry-run keeps relation/taxonomy handler failures as visible
+     * warnings so operators can inspect the blast radius without writes. Live
+     * mode treats relation/taxonomy handler failures as blocking before load,
+     * because preserving page-owned relation fidelity is more important than
+     * saving entries with omitted relation fields.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function mergeTransformReportSentinel(array $payload, MigrationReport $report): bool
+    {
+        $hasBlockingRelationOrTaxonomyFailure = false;
+        $warnings = (array) ($payload['__report']['warnings'] ?? []);
+        foreach ($warnings as $warning) {
+            $mergedWarning = 'Transform: ' . (string) $warning;
+            $report->warn($mergedWarning);
+            $report->incr('transform.warning');
+            if ($this->isBlockingTransformRelationWarning($mergedWarning)) {
+                $hasBlockingRelationOrTaxonomyFailure = true;
+            }
+        }
+        return $hasBlockingRelationOrTaxonomyFailure;
+    }
+
+    private function isBlockingTransformRelationWarning(string $warning): bool
+    {
+        return str_contains($warning, "Handler 'relation' failed")
+            || str_contains($warning, "Handler 'taxonomy' failed")
+            || str_contains($warning, 'TaxonomyMigrationService')
+            || (str_contains($warning, 'Handler ') && stripos($warning, 'taxonomy') !== false);
+    }
+
+    private function recordBlockingTransformFailure(MigrationReport $report): void
+    {
+        $report->recordFailure(
+            'transform',
+            'transform',
+            'TransformService',
+            new \RuntimeException(
+                'TransformService relation/taxonomy handler failure blocked live load; inspect Transform: warnings in REPORT.md.',
+            ),
+        );
     }
 
     /**
