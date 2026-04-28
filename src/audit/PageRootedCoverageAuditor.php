@@ -181,7 +181,10 @@ final class PageRootedCoverageAuditor extends Component
             $kind = (string) ($row['kind'] ?? 'column');
             $identifier = null;
             if ($kind === 'column') {
-                if ((string) ($row['targetHandle'] ?? '') === '' && ((string) ($row['status'] ?? '')) === 'accepted') {
+                if ($status === 'accepted' && (
+                    (string) ($row['targetHandle'] ?? '') === ''
+                    || (string) ($row['handler'] ?? '') === ''
+                )) {
                     continue;
                 }
                 $identifier = (string) ($row['table'] ?? '') . '.' . (string) ($row['column'] ?? '');

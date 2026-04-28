@@ -47,6 +47,16 @@ final class PageRootedCoverageAuditorTest extends TestCase
 
     public function testAcceptedAndDroppedMappingRowsDriveCoverageWhenDiscoveryHasWarnings(): void
     {
+        $mapping = $this->mapping();
+        $mapping['proposals'][] = [
+            'kind' => 'column',
+            'table' => 'article_pages',
+            'column' => 'employee_id',
+            'targetHandle' => 'employee',
+            'handler' => '',
+            'status' => 'accepted',
+        ];
+
         $rows = (new PageRootedCoverageAuditor())->audit(
             [
                 [
@@ -67,14 +77,24 @@ final class PageRootedCoverageAuditorTest extends TestCase
                     'sourceTable' => 'article_pages',
                     'property' => 'legacyTeaser',
                 ],
+                [
+                    'pageFqcn' => 'App\\Entity\\ArticlePage',
+                    'surfaceType' => 'direct_field',
+                    'categoryHint' => 'warning',
+                    'sourceIdentifier' => 'article_pages.employee_id',
+                    'sourceService' => 'mapping proposals',
+                    'sourceTable' => 'article_pages',
+                    'property' => 'employee_id',
+                ],
             ],
-            $this->mapping(),
+            $mapping,
             $this->pageStructure(),
         );
 
         $categories = array_column($rows, 'category', 'sourceIdentifier');
         self::assertSame('migrated', $categories['article_pages.title']);
         self::assertSame('dropped', $categories['article_pages.legacyTeaser']);
+        self::assertSame('warning', $categories['article_pages.employee_id']);
     }
 
     /** @return list<array<string, mixed>> */
