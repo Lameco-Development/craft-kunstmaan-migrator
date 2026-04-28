@@ -456,12 +456,23 @@ final class MappingCompiler extends Component
                 // can't look up the migrated category at runtime → empty
                 // relation field on every CaseStudyPage.
                 if ($compiled['handler'] === 'relation' && !isset($r['handlerOptions'])) {
-                    $opts = $this->relationOptionsForFkColumn($fqcn, $compiled['source']);
-                    if ($opts !== null) {
-                        $compiled['handlerOptions'] = $opts;
+                    $relationClosure = $this->relationOptionsForCompiledRow($fqcn, $r, $compiled['source']);
+                    if ($relationClosure['warning'] !== null) {
+                        $warnings[] = $relationClosure['warning'];
+                    }
+                    if ($relationClosure['options'] !== null) {
+                        $compiled['handlerOptions'] = $relationClosure['options'];
+                    }
+                    if ($relationClosure['source'] !== null) {
+                        $compiled['source'] = $relationClosure['source'];
                     }
                 } elseif (isset($r['handlerOptions']) && is_array($r['handlerOptions']) && $r['handlerOptions'] !== []) {
                     $compiled['handlerOptions'] = $r['handlerOptions'];
+                }
+                $validationWarning = $this->validateCompiledFieldSpec($fqcn, $r, $compiled);
+                if ($validationWarning !== null) {
+                    $warnings[] = $validationWarning;
+                    continue;
                 }
                 $fields[$targetHandle] = $compiled;
             }
@@ -1260,6 +1271,186 @@ final class MappingCompiler extends Component
             return ['stateSource' => $stateSource];
         }
         return null;
+    }
+
+    /**
+     * Derive relation handler options for accepted page-owned relation rows.
+     *
+     * Supports two deterministic metadata shapes emitted by analysis/curation:
+     * - ManyToMany: relation.joinTable + joinLocalColumn + joinForeignColumn.
+     * - OneToMany: relation.targetTable + backRefColumn; foreign ids are the
+     *   child table's primary `id` values.
+     *
+     * Falls back to the existing ManyToOne FK helper for direct FK columns.
+     *
+     * @param array<string, mixed> $row
+     * @return array{options: ?array<string, mixed>, source: ?string, warning: ?string}
+     */
+    private function relationOptionsForCompiledRow(string $owningFqcn, array $row, string $sourceCol): array
+    {
+        $relation = $row['relation'] ?? null;
+        if (is_array($relation) && $relation !== []) {
+            $type = (string) ($relation['relationType'] ?? $relation['type'] ?? '');
+            $property = (string) ($relation['relationProperty'] ?? $relation['property'] ?? '?');
+            $targetFqcn = (string) ($relation['targetFqcn'] ?? $relation['targetEntity'] ?? '');
+            $targetTable = (string) ($relation['targetTable'] ?? '');
+            $stateSource = $this->stateSourceForTargetFqcn($targetFqcn);
+
+            if ($type === 'ManyToMany') {
+                $joinTable = (string) ($relation['joinTable'] ?? '');
+                $joinLocalColumn = (string) ($relation['joinLocalColumn'] ?? $relation['backRefColumn'] ?? '');
+                $joinForeignColumn = (string) ($relation['joinForeignColumn'] ?? '');
+                $missing = [];
+                foreach ([
+                    'targetFqcn' => $targetFqcn,
+                    'joinTable' => $joinTable,
+                    'joinLocalColumn' => $joinLocalColumn,
+                    'joinForeignColumn' => $joinForeignColumn,
+                ] as $key => $value) {
+                    if ($value === '') {
+                        $missing[] = $key;
+                    }
+                }
+                if ($missing !== []) {
+                    return [
+                        'options' => null,
+                        'source' => null,
+                        'warning' => sprintf(
+                            'unsupported relation %s::%s (%s → %s table=%s) for targetHandle=%s: missing %s',
+                            $owningFqcn,
+                            $property,
+                            $type,
+                            $targetFqcn !== '' ? $targetFqcn : '∅',
+                            $targetTable !== '' ? $targetTable : '∅',
+                            (string) ($row['targetHandle'] ?? '?'),
+                            implode(', ', $missing),
+                        ),
+                    ];
+                }
+                return [
+                    'options' => [
+                        'stateSource' => $stateSource,
+                        'joinTable' => $joinTable,
+                        'joinLocalColumn' => $joinLocalColumn,
+                        'joinForeignColumn' => $joinForeignColumn,
+                    ],
+                    'source' => 'id',
+                    'warning' => null,
+                ];
+            }
+
+            if ($type === 'OneToMany') {
+                $backRefColumn = (string) ($relation['backRefColumn'] ?? $relation['joinLocalColumn'] ?? '');
+                $missing = [];
+                foreach ([
+                    'targetFqcn' => $targetFqcn,
+                    'targetTable' => $targetTable,
+                    'backRefColumn' => $backRefColumn,
+                ] as $key => $value) {
+                    if ($value === '') {
+                        $missing[] = $key;
+                    }
+                }
+                if ($missing !== []) {
+                    return [
+                        'options' => null,
+                        'source' => null,
+                        'warning' => sprintf(
+                            'unsupported relation %s::%s (%s → %s table=%s) for targetHandle=%s: missing %s',
+                            $owningFqcn,
+                            $property,
+                            $type,
+                            $targetFqcn !== '' ? $targetFqcn : '∅',
+                            $targetTable !== '' ? $targetTable : '∅',
+                            (string) ($row['targetHandle'] ?? '?'),
+                            implode(', ', $missing),
+                        ),
+                    ];
+                }
+                return [
+                    'options' => [
+                        'stateSource' => $stateSource,
+                        'joinTable' => $targetTable,
+                        'joinLocalColumn' => $backRefColumn,
+                        'joinForeignColumn' => (string) ($relation['joinForeignColumn'] ?? 'id'),
+                    ],
+                    'source' => 'id',
+                    'warning' => null,
+                ];
+            }
+        }
+
+        $opts = $this->relationOptionsForFkColumn($owningFqcn, $sourceCol);
+        return ['options' => $opts, 'source' => null, 'warning' => null];
+    }
+
+    private function stateSourceForTargetFqcn(string $targetFqcn): string
+    {
+        return str_replace('\\', '_', trim($targetFqcn, '\\'));
+    }
+
+    /**
+     * Validate handler/source/target combinations that are known to produce
+     * silent empty runtime output.
+     *
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $compiled
+     */
+    private function validateCompiledFieldSpec(string $fqcn, array $row, array $compiled): ?string
+    {
+        $handler = (string) ($compiled['handler'] ?? '');
+        $source = (string) ($compiled['source'] ?? '');
+        $targetHandle = (string) ($row['targetHandle'] ?? '?');
+        $sqlType = strtolower((string) ($row['sqlType'] ?? $row['sourceType'] ?? ''));
+
+        if ($handler === 'matrix') {
+            $hasMatrixOptions = isset($compiled['handlerOptions']) && is_array($compiled['handlerOptions']) && $compiled['handlerOptions'] !== [];
+            $looksScalar = $sqlType === ''
+                || str_contains($sqlType, 'char')
+                || str_contains($sqlType, 'text')
+                || str_contains($sqlType, 'int')
+                || str_contains($sqlType, 'date');
+            if ($looksScalar && !$hasMatrixOptions) {
+                return $this->fieldWarning($fqcn, $source, $targetHandle, $handler, 'matrix handler cannot materialize scalar source without handlerOptions/block metadata');
+            }
+        }
+
+        if ($handler === 'dropdown') {
+            $options = $row['options'] ?? $row['allowedValues'] ?? $row['enumValues'] ?? $compiled['handlerOptions']['options'] ?? null;
+            if (!is_array($options) || $options === []) {
+                return $this->fieldWarning($fqcn, $source, $targetHandle, $handler, 'dropdown handler requires target options metadata before arbitrary text can be accepted');
+            }
+        }
+
+        if ($handler === 'relation') {
+            $opts = isset($compiled['handlerOptions']) && is_array($compiled['handlerOptions'])
+                ? $compiled['handlerOptions']
+                : [];
+            $hasDirect = isset($opts['stateSource']) && (string) $opts['stateSource'] !== '';
+            $hasJoin = isset($opts['joinTable'])
+                && (string) $opts['joinTable'] !== ''
+                && isset($opts['joinLocalColumn'])
+                && (string) $opts['joinLocalColumn'] !== ''
+                && isset($opts['joinForeignColumn'])
+                && (string) $opts['joinForeignColumn'] !== '';
+            if (!$hasDirect || (isset($opts['joinTable']) && !$hasJoin)) {
+                return $this->fieldWarning($fqcn, $source, $targetHandle, $handler, 'relation handler requires stateSource and complete joinTable options or a derivable ManyToOne FK');
+            }
+        }
+
+        return null;
+    }
+
+    private function fieldWarning(string $fqcn, string $source, string $targetHandle, string $handler, string $reason): string
+    {
+        return sprintf(
+            '%s: source=%s targetHandle=%s handler=%s skipped — %s',
+            $fqcn,
+            $source !== '' ? $source : '∅',
+            $targetHandle !== '' ? $targetHandle : '∅',
+            $handler !== '' ? $handler : '∅',
+            $reason,
+        );
     }
 
     /**

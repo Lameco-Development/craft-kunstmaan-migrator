@@ -320,6 +320,11 @@ class CompileController extends Controller
             $this->stdout("  WARN {$w}\n", Console::FG_YELLOW);
         }
 
+        $targetWarnings = $plugin->craftTargetIntrospector->validate($compiled, $this->craftTargetSchema($plugin));
+        foreach ($targetWarnings as $w) {
+            $this->stdout("  WARN target validation: {$w}\n", Console::FG_YELLOW);
+        }
+
         // 6. Dry-run early exit.
         if ($this->dryRun) {
             $this->stdout("  WARN dry-run — mapping.yaml NOT written. Drop --dry-run to persist.\n", Console::FG_YELLOW);
@@ -386,6 +391,51 @@ class CompileController extends Controller
             }
         }
         return array_values(array_unique($out));
+    }
+
+    /**
+     * Build the schema facade consumed by CraftTargetIntrospector.
+     *
+     * @return array<string, mixed>
+     */
+    private function craftTargetSchema(Plugin $plugin): array
+    {
+        $sections = [];
+        foreach ($plugin->craftKnowledgeBase->sectionToEntryTypes() as $handle => $entryTypes) {
+            $sections[$handle] = ['entryTypes' => $entryTypes];
+        }
+
+        $entryTypes = [];
+        foreach ($plugin->craftKnowledgeBase->buildFieldIndex() as $entryType => $fields) {
+            $fieldMap = [];
+            foreach ((array) $fields as $field) {
+                if (!is_array($field)) { continue; }
+                $handle = (string) ($field['handle'] ?? '');
+                if ($handle === '' || str_contains($handle, '.')) { continue; }
+                $fieldMap[$handle] = ['type' => strtolower((string) ($field['classification'] ?? $field['type'] ?? 'plain'))];
+            }
+            $entryTypes[(string) $entryType] = ['fields' => $fieldMap];
+        }
+
+        $volumes = [];
+        try {
+            foreach (Craft::$app->volumes->getAllVolumes() as $volume) {
+                $handle = (string) $volume->handle;
+                if ($handle !== '') { $volumes[] = $handle; }
+            }
+        } catch (Throwable) {
+            $volumes = [];
+        }
+
+        return [
+            'sections' => $sections,
+            'entryTypes' => $entryTypes,
+            'volumes' => array_values(array_unique($volumes)),
+            'plugins' => [
+                'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
+                'retour' => Craft::$app->plugins->getPlugin('retour') !== null,
+            ],
+        ];
     }
 
     /**
