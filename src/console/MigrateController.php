@@ -396,6 +396,7 @@ class MigrateController extends Controller
                 $report->incr('finalize.processed', (int) $finalizeCounts['processed']);
                 $report->incr('finalize.rewritten', (int) $finalizeCounts['rewritten']);
                 $report->incr('finalize.unresolvable', (int) $finalizeCounts['unresolvable']);
+                $this->recordFinalizeUnresolvedGate($report, $finalizeCounts);
             } catch (Throwable $e) {
                 $this->endProgressIfStarted();
                 $this->stderr(sprintf(
@@ -924,6 +925,8 @@ class MigrateController extends Controller
             return ExitCode::OK;
         }
 
+        $report = new MigrationReport();
+        $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $finalizeProgress = $this->makeFinalizeProgress();
         try {
             $counts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
@@ -945,8 +948,15 @@ class MigrateController extends Controller
             (int) $counts['rewritten'],
             (int) $counts['unresolvable'],
         ), Console::FG_GREEN);
+        $report->incr('finalize.processed', (int) $counts['processed']);
+        $report->incr('finalize.rewritten', (int) $counts['rewritten']);
+        $report->incr('finalize.unresolvable', (int) $counts['unresolvable']);
+        $this->recordFinalizeUnresolvedGate($report, $counts);
+        if ($report->warnings !== [] || $report->hasFailures() || $report->finalizeUnresolvedDiagnostics !== []) {
+            $this->writeReport($storageDir, $report, $filters);
+        }
 
-        return ExitCode::OK;
+        return $this->reportExitCode($report);
     }
 
     /**
@@ -1906,6 +1916,25 @@ class MigrateController extends Controller
         );
     }
 
+    /** @param array<string, mixed> $finalizeCounts */
+    private function recordFinalizeUnresolvedGate(MigrationReport $report, array $finalizeCounts): void
+    {
+        $count = (int) ($finalizeCounts['unresolvable'] ?? 0);
+        foreach ((array) ($finalizeCounts['unresolvedDiagnostics'] ?? []) as $row) {
+            if (is_array($row)) {
+                $report->finalizeUnresolvedDiagnostics[] = $row;
+            }
+        }
+        if ($count <= 0) {
+            return;
+        }
+        $message = 'FAIL finalize unresolved: finalize.unresolvable=' . $count
+            . ' live finalize left unresolved CKEditor references; release is blocked until resolved or explicitly classified outside Page-rooted release scope.';
+        $report->warn($message);
+        $report->recordFailure('finalize', 'finalize', 'FinalizeWalker', new \RuntimeException($message));
+        $this->stderr("  {$message}\n", Console::FG_RED);
+    }
+
     private function transformBlockMarkerPath(string $storageDir): string
     {
         return rtrim($storageDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . self::TRANSFORM_BLOCK_MARKER;
@@ -2229,6 +2258,10 @@ class MigrateController extends Controller
             $lines[] = $fl;
         }
 
+        foreach (self::renderFinalizeUnresolvedDiagnosticsSection($report->finalizeUnresolvedDiagnostics) as $dl) {
+            $lines[] = $dl;
+        }
+
         // 4. Warnings (existing).
         if ($report->warnings !== []) {
             $lines[] = "## Warnings";
@@ -2347,6 +2380,42 @@ class MigrateController extends Controller
         }
         $out[] = '';
         return $out;
+    }
+
+    /** @param list<array<string, mixed>> $diagnostics @return list<string> */
+    public static function renderFinalizeUnresolvedDiagnosticsSection(array $diagnostics): array
+    {
+        if ($diagnostics === []) {
+            return [];
+        }
+        $out = [];
+        $out[] = '## Finalize unresolved diagnostics';
+        $out[] = '';
+        $out[] = '| token_family | legacy_id | token | site_id | entry_id | field | reason |';
+        $out[] = '|--------------|----------:|-------|--------:|---------:|-------|--------|';
+        foreach (array_slice($diagnostics, 0, 100) as $row) {
+            $out[] = sprintf(
+                '| %s | %d | `%s` | %d | %d | `%s` | %s |',
+                self::reportCell((string) ($row['tokenFamily'] ?? '')),
+                (int) ($row['legacyId'] ?? 0),
+                self::reportCell((string) ($row['token'] ?? '')),
+                (int) ($row['siteId'] ?? 0),
+                (int) ($row['entryId'] ?? 0),
+                self::reportCell((string) ($row['fieldHandle'] ?? '')),
+                self::reportCell((string) ($row['reason'] ?? '')),
+            );
+        }
+        if (count($diagnostics) > 100) {
+            $out[] = '';
+            $out[] = sprintf('_Showing 100 of %d diagnostics._', count($diagnostics));
+        }
+        $out[] = '';
+        return $out;
+    }
+
+    private static function reportCell(string $value): string
+    {
+        return str_replace('|', '\\|', $value);
     }
 
     public static function renderFallbacksSection(MigrationReport $report): array

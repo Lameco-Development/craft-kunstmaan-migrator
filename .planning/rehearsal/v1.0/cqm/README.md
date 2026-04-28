@@ -41,15 +41,30 @@ Strict acceptance bar:
 5. The closing proof fails if any page-owned referenced content surface is
    unclassified, silently omitted, unresolved without an accepted reason, or
    warning/unsupported without explicit release acceptance.
+6. `storage/migration/REPORT.md` must show `finalize.unresolvable | 0`.
+   Nonzero unresolved finalize diagnostics block release until the token source
+   is fixed or explicitly accepted outside Page-rooted release scope by the
+   release owner.
+7. Transformed/saved CKEditor artifacts must not retain `MIGRATION:UNRESOLVED`,
+   unresolved `[NT<id>]`, `%5BNT...%5D`, `[M<id>]`, or `%5BM...%5D` tokens where
+   a target entry/asset exists.
 
 Recommended inspection commands after the full workflow:
 
 ```bash
 grep -n "failed\|Failures\|entry failures\|stage failures" storage/migration/REPORT.md
+grep -n "finalize.unresolvable" storage/migration/REPORT.md
+grep -RIn "MIGRATION:UNRESOLVED\|\[NT[0-9]\+\]\|\[M[0-9]\+\]" storage/migration/transformed storage/migration/REPORT.md
 grep -n "fallback\|Matrix title\|sparse locale\|taxonomy locale\|taxonomyMode" storage/migration/REPORT.md
-grep -n "Page-rooted\|unsupported\|warning\|out_of_scope\|dropped" storage/migration/PAGE-ROOTED-COVERAGE.md storage/migration/REPORT.md
+grep -n "Page-rooted coverage\|unsupported\|warning\|out_of_scope\|dropped" storage/migration/PAGE-ROOTED-COVERAGE.md storage/migration/REPORT.md
 grep -n "baseline/current\|migration-created\|source parity\|domain" storage/migration/VERIFY-*.md
 ```
+
+Page-rooted coverage release gate: zero `warning` or `unsupported` rows unless
+each row has real page-owned structural evidence and an explicit release-owner
+disposition. Scanner absence/no metadata rows are informational and must not
+block unless page-owned structural evidence exists. Intentional `out_of_scope`
+and `dropped` rows remain acceptable when documented.
 
 The source-shape audit is structural only: keep counts, class names, table
 names, relation types, metadata presence, and risk flags; do not copy source
@@ -83,8 +98,9 @@ Exit 0 = all gates pass:
    source/transformed parity is blocking only when source-derived expected
    counts are available.
 2. Zero entry failures and zero stage failures in REPORT.md.
-3. Zero unresolved CKEditor tokens — no `[NT<id>]` / `[M<id>]` / `asset:<n>` in
-   REPORT.md unless allow-listed.
+3. Zero unresolved CKEditor tokens — `REPORT.md` contains
+   `finalize.unresolvable | 0`, no finalize diagnostics, and no `[NT<id>]` /
+   `[M<id>]` / `asset:<n>` in REPORT.md unless allow-listed.
 4. All assets RCA-tagged — every row in REPORT.md `## Asset RCA` has a
    non-empty reason.
 5. Page-rooted coverage has no unclassified, silently omitted, unsupported, or

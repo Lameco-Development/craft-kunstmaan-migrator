@@ -193,6 +193,72 @@ final class MigrateControllerFailureExitTest extends TestCase
         self::assertStringContainsString('Transform:', $report->failures[0]['message']);
     }
 
+    public function testFinalizeUnresolvedGateRecordsBlockingFailureAndDiagnostics(): void
+    {
+        $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
+        $recordMethod = new ReflectionMethod(MigrateController::class, 'recordFinalizeUnresolvedGate');
+        $exitMethod = new ReflectionMethod(MigrateController::class, 'reportExitCode');
+        $report = new MigrationReport();
+
+        $recordMethod->invoke($controller, $report, [
+            'unresolvable' => 2,
+            'unresolvedDiagnostics' => [
+                [
+                    'tokenFamily' => 'nt',
+                    'legacyId' => 80,
+                    'token' => '[NT80]',
+                    'siteId' => 1,
+                    'entryId' => 123,
+                    'fieldHandle' => 'body',
+                    'reason' => 'no matching Craft entry id',
+                ],
+            ],
+        ]);
+
+        self::assertTrue($report->hasFailures());
+        self::assertSame(ExitCode::UNSPECIFIED_ERROR, $exitMethod->invoke($controller, $report));
+        self::assertStringContainsString('finalize.unresolvable=2', $report->warnings[0]);
+        self::assertSame('FinalizeWalker', $report->failures[0]['handler']);
+        self::assertSame('nt', $report->finalizeUnresolvedDiagnostics[0]['tokenFamily']);
+    }
+
+    public function testFinalizeUnresolvedDiagnosticsReportSectionIsBoundedAndStructural(): void
+    {
+        $rows = [];
+        for ($i = 1; $i <= 101; $i++) {
+            $rows[] = [
+                'tokenFamily' => 'media',
+                'legacyId' => $i,
+                'token' => '[M' . $i . ']',
+                'siteId' => 1,
+                'entryId' => 100 + $i,
+                'fieldHandle' => 'body',
+                'reason' => 'no matching Craft asset id',
+                'body' => '<p>PRIVATE</p>',
+                'sample' => 'PRIVATE',
+            ];
+        }
+
+        $rendered = implode("\n", MigrateController::renderFinalizeUnresolvedDiagnosticsSection($rows));
+
+        self::assertStringContainsString('## Finalize unresolved diagnostics', $rendered);
+        self::assertStringContainsString('| media | 1 | `[M1]` | 1 | 101 | `body` | no matching Craft asset id |', $rendered);
+        self::assertStringContainsString('Showing 100 of 101 diagnostics', $rendered);
+        self::assertStringNotContainsString('PRIVATE', $rendered);
+    }
+
+    public function testZeroFinalizeUnresolvedDoesNotRecordBlockingFailure(): void
+    {
+        $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
+        $recordMethod = new ReflectionMethod(MigrateController::class, 'recordFinalizeUnresolvedGate');
+        $report = new MigrationReport();
+
+        $recordMethod->invoke($controller, $report, ['unresolvable' => 0, 'unresolvedDiagnostics' => []]);
+
+        self::assertFalse($report->hasFailures());
+        self::assertSame([], $report->warnings);
+    }
+
     public function testTransformBlockMarkerPathAndLoadFailureMessageAreStable(): void
     {
         $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();

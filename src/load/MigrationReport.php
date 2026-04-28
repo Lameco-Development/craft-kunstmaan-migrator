@@ -49,6 +49,16 @@ final class MigrationReport
     public array $assetRcaRows = [];
 
     /**
+     * Structural diagnostics for unresolved CKEditor finalize tokens.
+     *
+     * Rows are intentionally limited to ids/handles/reasons. They must never
+     * contain CKEditor bodies, samples, or rendered HTML.
+     *
+     * @var list<array<string, mixed>>
+     */
+    public array $finalizeUnresolvedDiagnostics = [];
+
+    /**
      * Increment a named bucket by `$by` (default 1). Idempotent: a missing
      * bucket initialises to 0 then accumulates.
      */
