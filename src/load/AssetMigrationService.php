@@ -22,8 +22,8 @@ use yii\base\Component;
  *    single asset on demand. Called from AssetHandler (state-lookup miss path)
  *    and AtomicMigrationService::ingestAndResolveAssets via the `asset:N`
  *    deferred-token list.
- *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, MigrationFilters)
- *    pre-walks every referenced kuma_media id before the entries loop.
+     *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, MigrationFilters, list<int>)
+     *    pre-walks the in-scope referenced kuma_media ids before the entries loop.
  *    Repurposed from v1's batch-by-default; v2 makes it opt-in only (called
  *    when MigrateController parses --preload-assets).
  *
@@ -50,10 +50,10 @@ use yii\base\Component;
  *
  * Reshape from v1 (~/Sites/craft-kunstmaan-migrator/src/bridge/load/AssetMigrationService.php):
  *  - Namespace flatten: bridge\load → load.
- *  - Drop the v1 asset-scan import — page-driven JIT default per FH-03; assets
- *    discover via the deferred-token resolver per-entry. ingestReferenced()
- *    queries kuma_media directly via LegacyDbService when --preload-assets
- *    is set.
+     *  - Drop the v1 asset-scan import — page-driven JIT default per FH-03; assets
+     *    discover via the deferred-token resolver per-entry. ingestReferenced()
+     *    accepts the current in-scope referenced id set; it never scans all
+     *    kuma_media rows.
  *  - Drop the v1 batch-job import — queue out of scope per PROJECT.md (D-46);
  *    synchronous loop replaces queue.push.
  *  - Drop the v1 serialized-decoder import — replaced with `?object $serializedDecoder`
@@ -157,7 +157,11 @@ class AssetMigrationService extends Component
      * Plan 03-13 will reinstate the MigrationReport VO; Plan 03-14 re-wires
      * consumers.
      */
-    public function ingestReferenced(MigrationOptions $opts, MigrationFilters $filters): void
+    /**
+     * @param list<int> $referencedIds in-scope kuma_media ids collected from
+     *                                 transformed/extracted payload references
+     */
+    public function ingestReferenced(MigrationOptions $opts, MigrationFilters $filters, array $referencedIds = []): void
     {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
@@ -171,28 +175,14 @@ class AssetMigrationService extends Component
             return;
         }
 
-        // Phase 2 / D-10 filter piping per FILT-02.
-        // v1 pre-scan service dropped intentionally — page-driven JIT default per FH-03.
-        // Replacement: query kuma_media directly via LegacyDbService. When --preload-assets
-        // is set, the operator opts into a full pre-walk; locale scoping is best-effort
-        // (kuma_media has no direct locale FK — locale narrowing happens at the entry
-        // discovery layer in v2). The $filters argument is threaded for future use
-        // (e.g. --since on kuma_media.created_at).
-        $sql = 'SELECT id FROM kuma_media';
-        $params = [];
-        if ($filters->since !== null && $filters->since !== '') {
-            $sql .= ' WHERE created_at >= :since';
-            $params[':since'] = $filters->since;
-        }
-
-        try {
-            $rows = $this->legacyDb->queryAll($sql, $params);
-        } catch (Throwable $e) {
-            Craft::warning("Asset preload lookup failed: {$e->getMessage()}", __METHOD__);
-            return;
-        }
-
-        $ids = array_map(static fn (array $r): int => (int) $r['id'], $rows);
+        // Phase 9 / D-20: --preload-assets must stay page-driven. The current
+        // payload set already embodies --entities and --since scoping, so this
+        // method accepts that referenced-id set and explicitly avoids the old
+        // full-table `SELECT id FROM kuma_media` prewalk. Empty referenced set
+        // means there is nothing to preload; JIT resolution still handles any
+        // asset token encountered during load.
+        unset($filters);
+        $ids = self::normalizeReferencedIds($referencedIds);
         $total = count($ids);
 
         if ($opts->verbosity > 0) {
@@ -300,6 +290,24 @@ class AssetMigrationService extends Component
         if (!$opts->dryRun && $opts->verbosity > 0) {
             Console::endProgress();
         }
+    }
+
+    /**
+     * @param list<int> $ids
+     * @return list<int>
+     */
+    private static function normalizeReferencedIds(array $ids): array
+    {
+        $out = [];
+        foreach ($ids as $id) {
+            $id = (int) $id;
+            if ($id > 0) {
+                $out[$id] = true;
+            }
+        }
+        $normalized = array_keys($out);
+        sort($normalized, SORT_NUMERIC);
+        return array_map('intval', $normalized);
     }
 
     /**

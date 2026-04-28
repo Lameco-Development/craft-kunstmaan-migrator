@@ -334,7 +334,8 @@ class MigrateController extends Controller
         } else {
             if ($this->preloadAssets) {
                 try {
-                    $plugin->assetMigrationService->ingestReferenced($opts, $filters);
+                    $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir);
+                    $plugin->assetMigrationService->ingestReferenced($opts, $filters, $referencedAssetIds);
                     $this->stdout("  OK   --preload-assets batch complete\n", Console::FG_GREEN);
                 } catch (Throwable $e) {
                     $this->stderr("  FAIL --preload-assets: {$e->getMessage()}\n", Console::FG_RED);
@@ -830,7 +831,8 @@ class MigrateController extends Controller
 
         if ($this->preloadAssets) {
             try {
-                $plugin->assetMigrationService->ingestReferenced($opts, $filters);
+                $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir);
+                $plugin->assetMigrationService->ingestReferenced($opts, $filters, $referencedAssetIds);
                 $this->stdout("  OK   --preload-assets batch complete\n", Console::FG_GREEN);
             } catch (Throwable $e) {
                 $this->stderr("  FAIL --preload-assets: {$e->getMessage()}\n", Console::FG_RED);
@@ -1522,6 +1524,88 @@ class MigrateController extends Controller
                 yield $file;
             }
         }
+    }
+
+    /**
+     * Phase 9 / D-20: collect the referenced kuma_media ids from the current
+     * in-scope transformed payload tree. This keeps --preload-assets aligned
+     * with the page-rooted load set instead of walking the full legacy media
+     * table. CKEditor [M123] tokens and deferred asset:123 tokens are both
+     * preserved by transform/load and are safe preload inputs.
+     *
+     * @return list<int>
+     */
+    private function collectReferencedAssetIdsFromPayloadDirectory(string $transformedDir): array
+    {
+        $ids = [];
+        foreach ($this->iterateTransformedFiles($transformedDir) as $jsonPath) {
+            $raw = file_get_contents($jsonPath);
+            if ($raw === false) {
+                continue;
+            }
+            $payload = json_decode($raw, true);
+            if (!is_array($payload)) {
+                continue;
+            }
+            foreach (self::collectReferencedAssetIdsFromPayload($payload) as $id) {
+                $ids[$id] = true;
+            }
+        }
+
+        $out = array_keys($ids);
+        sort($out, SORT_NUMERIC);
+        return array_map('intval', $out);
+    }
+
+    /**
+     * Pure recursive collector for in-payload media references.
+     *
+     * @param array<string, mixed> $payload
+     * @return list<int>
+     */
+    private static function collectReferencedAssetIdsFromPayload(array $payload): array
+    {
+        $ids = [];
+        $explicitKeys = [
+            'referencedAssetIds' => true,
+            'referencedMediaIds' => true,
+            'assetIds' => true,
+            'mediaIds' => true,
+        ];
+
+        $walk = static function (mixed $value, bool $allowBareIds = false) use (&$walk, &$ids, $explicitKeys): void {
+            if (is_int($value) && $allowBareIds && $value > 0) {
+                $ids[$value] = true;
+                return;
+            }
+            if (is_string($value)) {
+                if ($allowBareIds && ctype_digit($value) && (int) $value > 0) {
+                    $ids[(int) $value] = true;
+                }
+                if (preg_match_all('/\basset:(\d+)\b/', $value, $assetMatches)) {
+                    foreach ($assetMatches[1] as $id) {
+                        $ids[(int) $id] = true;
+                    }
+                }
+                if (preg_match_all('/\[M(\d+)\]/', $value, $mediaMatches)) {
+                    foreach ($mediaMatches[1] as $id) {
+                        $ids[(int) $id] = true;
+                    }
+                }
+                return;
+            }
+            if (!is_array($value)) {
+                return;
+            }
+            foreach ($value as $key => $child) {
+                $walk($child, $allowBareIds || (is_string($key) && isset($explicitKeys[$key])));
+            }
+        };
+
+        $walk($payload);
+        $out = array_keys($ids);
+        sort($out, SORT_NUMERIC);
+        return array_map('intval', $out);
     }
 
     /**
