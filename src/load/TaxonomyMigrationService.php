@@ -563,6 +563,16 @@ class TaxonomyMigrationService extends Component
                 if ($canonicalFieldValues !== []) {
                     $localized->setFieldValues($canonicalFieldValues);
                 }
+                // propagateChanges=false: only update this one site.
+                if (!Craft::$app->elements->saveElement($localized, true, false)) {
+                    throw new RuntimeException($this->localizedTaxonomySaveFailureMessage(
+                        $this->fqcnToSlug($fqcn),
+                        $legacyId,
+                        $siteHandle,
+                        (string) $legacyLocale,
+                        $localized,
+                    ));
+                }
                 $report->incr('fallback.taxonomy_locale');
                 $report->warn(sprintf(
                     'fallback: taxonomy locale values for %s id=%d site=%s locale=%s use default-language values',
@@ -571,8 +581,6 @@ class TaxonomyMigrationService extends Component
                     $siteHandle,
                     (string) $legacyLocale,
                 ));
-                // propagateChanges=false: only update this one site.
-                Craft::$app->elements->saveElement($localized, true, false);
             }
             return;
         }
@@ -637,18 +645,26 @@ class TaxonomyMigrationService extends Component
             if ($translatedFields !== []) {
                 $localized->setFieldValues($translatedFields);
             }
+            // propagateChanges=false: only update this one site.
+            if (!Craft::$app->elements->saveElement($localized, true, false)) {
+                throw new RuntimeException($this->localizedTaxonomySaveFailureMessage(
+                    $this->fqcnToSlug($fqcn),
+                    $legacyId,
+                    (string) $site->handle,
+                    $locale,
+                    $localized,
+                ));
+            }
             if ($usedFallback) {
                 $report->incr('fallback.taxonomy_locale');
                 $report->warn(sprintf(
-                    'fallback: taxonomy locale values for %s id=%d locale=%s use default-language values',
+                    'fallback: taxonomy locale values for %s id=%d site=%s locale=%s use default-language values',
                     $this->fqcnToSlug($fqcn),
                     $legacyId,
+                    (string) $site->handle,
                     $locale,
                 ));
             }
-
-            // propagateChanges=false: only update this one site.
-            Craft::$app->elements->saveElement($localized, true, false);
         }
     }
 
@@ -667,6 +683,30 @@ class TaxonomyMigrationService extends Component
         }
 
         return '';
+    }
+
+    private function localizedTaxonomySaveFailureMessage(
+        string $taxonomySlug,
+        int $legacyId,
+        string $siteHandle,
+        string $legacyLocale,
+        object $element,
+    ): string {
+        $errorSummary = [];
+        if (method_exists($element, 'getErrorSummary')) {
+            $summary = $element->getErrorSummary(true);
+            $errorSummary = is_array($summary) ? array_map('strval', $summary) : [(string) $summary];
+        }
+        $errors = $errorSummary === [] ? 'no element errors reported' : implode('; ', $errorSummary);
+
+        return sprintf(
+            'localized taxonomy saveElement failed for %s id=%d site=%s locale=%s: %s',
+            $taxonomySlug,
+            $legacyId,
+            $siteHandle,
+            $legacyLocale,
+            $errors,
+        );
     }
 
     /**

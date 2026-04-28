@@ -305,6 +305,32 @@ final class TaxonomyMigrationTest extends TestCase
         self::assertSame('en', $method->invoke($svc, 'en', ['language' => 'en-US']));
     }
 
+    public function testLocalizedTaxonomySaveFailureMessageIncludesOperatorContextAndErrors(): void
+    {
+        $method = new \ReflectionMethod(TaxonomyMigrationService::class, 'localizedTaxonomySaveFailureMessage');
+        $svc = new TaxonomyMigrationService();
+        $element = new class {
+            public function getErrorSummary(bool $showAllErrors): array
+            {
+                return $showAllErrors ? ['Title cannot be blank.', 'Slug is invalid.'] : [];
+            }
+        };
+
+        $message = $method->invoke(
+            $svc,
+            'App_Entity_NewsCategory',
+            42,
+            'enUs',
+            'en',
+            $element,
+        );
+
+        self::assertSame(
+            'localized taxonomy saveElement failed for App_Entity_NewsCategory id=42 site=enUs locale=en: Title cannot be blank.; Slug is invalid.',
+            $message,
+        );
+    }
+
     public function testLazyResolverReusesExistingStateRowWithoutCraftLookup(): void
     {
         $mappingFile = $this->createStub(MappingFile::class);
