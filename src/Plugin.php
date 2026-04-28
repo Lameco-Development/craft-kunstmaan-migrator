@@ -10,7 +10,7 @@ use craft\base\Plugin as BasePlugin;
 use lameco\kunstmaanmigrator\analyze\HeuristicProposer;
 use lameco\kunstmaanmigrator\analyze\LlmClassifier;
 use lameco\kunstmaanmigrator\analyze\ReportBuilder;
-use lameco\kunstmaanmigrator\analyze\SchemaDumper;
+use lameco\kunstmaanmigrator\analyze\KunstmaanSchemaDumper;
 use lameco\kunstmaanmigrator\audit\PageRootedCoverageAuditor;
 use lameco\kunstmaanmigrator\audit\PageRootedSurfaceDiscovery;
 use lameco\kunstmaanmigrator\compile\MappingCompiler;
@@ -45,8 +45,10 @@ use lameco\kunstmaanmigrator\models\Settings;
 use lameco\kunstmaanmigrator\source\BodyScanColumnFinder;
 use lameco\kunstmaanmigrator\source\DetailTableResolver;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
-use lameco\kunstmaanmigrator\source\KnowledgeBase;
+use lameco\kunstmaanmigrator\source\KunstmaanKnowledgeBase;
 use lameco\kunstmaanmigrator\source\KunstmaanEnvReader;
+use lameco\kunstmaanmigrator\source\CraftEntryWalker;
+use lameco\kunstmaanmigrator\source\KunstmaanPageWalker;
 use lameco\kunstmaanmigrator\source\KunstmaanPageStructureScanner;
 use lameco\kunstmaanmigrator\source\KunstmaanSourcePathResolver;
 use lameco\kunstmaanmigrator\source\KunstmaanSourceScanner;
@@ -69,7 +71,7 @@ use yii\db\Connection;
  * @property-read FilterFactory $filterFactory
  * @property-read LocalePreflight $localePreflight
  * @property-read MappingFile $mappingFile
- * @property-read SchemaDumper $schemaDumper
+ * @property-read KunstmaanSchemaDumper $kunstmaanSchemaDumper
  * @property-read HeuristicProposer $heuristicProposer
  * @property-read LlmClassifier $llmClassifier
  * @property-read ReportBuilder $reportBuilder
@@ -85,8 +87,10 @@ use yii\db\Connection;
  * @property-read DetailTableResolver $detailTableResolver
  * @property-read BodyScanColumnFinder $bodyScanColumnFinder
  * @property-read MediaFkScanner $mediaFkScanner
- * @property-read KnowledgeBase $knowledgeBase
+ * @property-read KunstmaanKnowledgeBase $kunstmaanKnowledgeBase
  * @property-read CraftKnowledgeBase $craftKnowledgeBase
+ * @property-read KunstmaanPageWalker $kunstmaanPageWalker
+ * @property-read CraftEntryWalker $craftEntryWalker
  * @property-read KunstmaanPageStructureScanner $kunstmaanPageStructureScanner
  * @property-read KunstmaanSourceScanner $kunstmaanSourceScanner
  * @property-read BlockAvailabilityValidator $blockAvailabilityValidator
@@ -133,7 +137,7 @@ class Plugin extends BasePlugin
                 'filterFactory'     => FilterFactory::class,      // Phase 2 (Plan 01) — D-10 Settings+CLI merge
                 'localePreflight'   => LocalePreflight::class,    // Phase 2 (Plan 01) — LOC-01 detect + LOC-02 ensure
                 'mappingFile'       => MappingFile::class,        // Phase 2 (Plan 02) — D-01/D-04/D-07 status-on-row IO
-                'schemaDumper'      => SchemaDumper::class,       // Phase 2 (Plan 03) — legacy MySQL → schema-dump array
+                'kunstmaanSchemaDumper'      => KunstmaanSchemaDumper::class,       // Phase 2 (Plan 03) — legacy MySQL → kunstmaan-schema array
                 'heuristicProposer' => HeuristicProposer::class,  // Phase 2 (Plan 03) — 9 deterministic heuristics
                 'llmClassifier'     => LlmClassifier::class,      // Phase 2 (Plan 03) — Anthropic Haiku batch caller
                 'reportBuilder'     => ReportBuilder::class,      // Phase 2 (Plan 03) — D-17 paste-ready locales block
@@ -149,8 +153,10 @@ class Plugin extends BasePlugin
                 'detailTableResolver'           => DetailTableResolver::class,          // Phase 02.1 (Plan 02) — 4-tier FQCN→table
                 'bodyScanColumnFinder'          => BodyScanColumnFinder::class,         // Phase 02.1 (Plan 03) — body-col discovery
                 'mediaFkScanner'                => MediaFkScanner::class,               // Phase 02.1 (Plan 03) — kuma_media FK discovery
-                'knowledgeBase'                 => KnowledgeBase::class,                // Phase 02.1 (Plan 03) — D-42 step 8 KB markdown
+                'kunstmaanKnowledgeBase'                 => KunstmaanKnowledgeBase::class,                // Phase 02.1 (Plan 03) — D-42 step 8 KB markdown
                 'craftKnowledgeBase'            => CraftKnowledgeBase::class,           // Phase 6 — target Craft schema renderer for LLM prompts
+                'kunstmaanPageWalker'           => KunstmaanPageWalker::class,          // Phase 11 — source graph walker
+                'craftEntryWalker'              => CraftEntryWalker::class,             // Phase 11 — target graph walker
                 'kunstmaanPageStructureScanner' => KunstmaanPageStructureScanner::class, // Phase 02.1 (Plan 04) — D-40 right side
                 'kunstmaanSourceScanner'        => KunstmaanSourceScanner::class,        // Phase 02.1 (Plan 05) — D-40 left side orchestrator
                 'blockAvailabilityValidator'    => BlockAvailabilityValidator::class,    // Phase 02.1 (Plan 08) — D-36 fourth finding kind
@@ -254,14 +260,21 @@ class Plugin extends BasePlugin
             }
         }
 
-        // KnowledgeBase needs legacyDb for renderPagesMarkdown / renderPagePartsMarkdown
+        // KunstmaanKnowledgeBase needs legacyDb for renderPagesMarkdown / renderPagePartsMarkdown
         // (used by AnalyzeController's LLM classifier step). Without this wire the LLM
         // pass throws LogicException at first KB render.
-        $this->knowledgeBase->legacyDb     = $this->legacyDbService;
-        $this->knowledgeBase->entityParser = $this->doctrineEntityParser;
+        $this->kunstmaanKnowledgeBase->legacyDb     = $this->legacyDbService;
+        $this->kunstmaanKnowledgeBase->entityParser = $this->doctrineEntityParser;
 
         $this->kunstmaanPageStructureScanner->pathResolver  = $this->kunstmaanSourcePathResolver;
         $this->kunstmaanPageStructureScanner->tableResolver = $this->detailTableResolver;
+
+        $this->kunstmaanPageWalker->pathResolver = $this->kunstmaanSourcePathResolver;
+        $this->kunstmaanPageWalker->entityParser = $this->doctrineEntityParser;
+        $this->kunstmaanPageWalker->sourceScanner = $this->kunstmaanSourceScanner;
+        $this->kunstmaanPageWalker->pageStructureScanner = $this->kunstmaanPageStructureScanner;
+        $this->kunstmaanPageWalker->kunstmaanSchemaDumper = $this->kunstmaanSchemaDumper;
+        $this->craftEntryWalker->craftKnowledgeBase = $this->craftKnowledgeBase;
 
         // MappingAuditor's block-availability check (D-36) is inert when the
         // validator stays null. Wire it so the audit step actually fires.

@@ -10,12 +10,14 @@ use craft\helpers\Console;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\source\CraftGraphContract;
+use lameco\kunstmaanmigrator\source\KunstmaanGraphContract;
 use Symfony\Component\Yaml\Yaml;
 use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Analyze — single-action orchestration of the source-introspection + schema-dump +
+ * Analyze — single-action orchestration of the source-introspection + schema dumps +
  * heuristic + LLM proposal pipeline + report rendering. Collapses v1's 9-sub-action
  * AnalyzeController (2138 LOC) to one entrypoint per CONTEXT.md operator workflow.
  *
@@ -27,7 +29,7 @@ use yii\console\ExitCode;
  *   4.   KunstmaanPageStructureScanner::scan → page-structure FQCN map (D-40 right)
  *   4.5  Page-part proposal emitter — pageStructure → mapping rows (D-35, locked here per advisor)
  *   5.   pageStructure.json write (storageDir/pageStructure.json — atomic JSON)
- *   6.   SchemaDumper::dump (consumes scan['tables']) → schema-dump.json
+ *   6.   KunstmaanSchemaDumper::dump (consumes scan['tables']) → kunstmaan-schema.json
  *   7.   HeuristicProposer::autoMatch with heuristic 1.5 entity context (D-44)
  *   8.   LlmClassifier::batchPropose — KB markdown via v1-shaped adapter (B2 fix)
  *   9.   MappingFile::merge with skip-existing semantics (D-04 + D-34 kind-prefixed tuple)
@@ -203,7 +205,7 @@ class AnalyzeController extends Controller
             Console::FG_GREEN,
         );
 
-        // Step 5: pageStructure.json write (atomic JSON; sibling of schema-dump.json).
+        // Step 5: pageStructure.json write (atomic JSON; sibling of kunstmaan-schema.json).
         $pageStructurePath = $storageDir . '/pageStructure.json';
         if (!$plugin->mappingFile->writeAtomicJson($pageStructurePath, $pageStructure)) {
             $this->stderr("  FAIL could not write {$pageStructurePath}\n", Console::FG_RED);
@@ -242,21 +244,78 @@ class AnalyzeController extends Controller
             );
         }
 
-        // Step 6: schema dump (consumes Phase 02.1 source-scanner table list).
+        // Step 6: graph-shaped schema artifacts. Persist both source and target
+        // structures so mapping decisions can be audited from files, not just
+        // prompt inputs. The legacy source dump remains in-memory for the older
+        // heuristic/implicit-content stages until those are fully graph-native.
         try {
-            $schemaDump = $plugin->schemaDumper->dump($filters, (array) ($sourceScan['tables'] ?? []));
+            $schemaDump = $plugin->kunstmaanSchemaDumper->dump(
+                $filters,
+                (array) ($sourceScan['tables'] ?? []),
+                (array) ($sourceScan['entities'] ?? []),
+            );
         } catch (Throwable $e) {
             $this->stderr("  FAIL schema dump: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
         $tableCount = count($schemaDump['tables'] ?? []);
         $colCount   = array_sum(array_map('count', $schemaDump['columns'] ?? []));
-        $schemaPath = $storageDir . '/schema-dump.json';
-        if (!$plugin->mappingFile->writeAtomicJson($schemaPath, $schemaDump)) {
+        $this->stdout("  OK   source sample dump built ({$tableCount} tables, {$colCount} columns)\n", Console::FG_GREEN);
+
+        $mappingPath = $plugin->mappingFile->resolvePath();
+        $existing = $plugin->mappingFile->load($mappingPath);
+
+        try {
+            $plugin->kunstmaanPageWalker->sourceScanSnapshot = $sourceScan;
+            $plugin->kunstmaanPageWalker->pageStructureSnapshot = $pageStructure;
+            $plugin->kunstmaanPageWalker->sourceSchemaSnapshot = $schemaDump;
+            $kunstmaanGraph = $plugin->kunstmaanPageWalker->walk($filters->entities);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL Kunstmaan graph walk: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        if (($kunstmaanGraph[KunstmaanGraphContract::KEY_GRAPH_VERSION] ?? null) !== KunstmaanGraphContract::GRAPH_VERSION) {
+            $this->stderr("  FAIL Kunstmaan graph missing graphVersion\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $schemaPath = $storageDir . '/kunstmaan-schema.json';
+        if (!$plugin->mappingFile->writeAtomicJson($schemaPath, $kunstmaanGraph)) {
             $this->stderr("  FAIL could not write {$schemaPath}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
-        $this->stdout("  OK   schema dumped ({$tableCount} tables, {$colCount} columns) → {$schemaPath}\n", Console::FG_GREEN);
+        $this->stdout(
+            "  OK   Kunstmaan graph written ("
+            . count((array) ($kunstmaanGraph[KunstmaanGraphContract::KEY_ROOTS] ?? [])) . " roots, "
+            . count((array) ($kunstmaanGraph[KunstmaanGraphContract::KEY_ENTITIES] ?? [])) . " entities) → {$schemaPath}\n",
+            Console::FG_GREEN,
+        );
+
+        try {
+            $craftTargetSchema = $plugin->craftKnowledgeBase->dumpTargetSchema();
+            $plugin->craftEntryWalker->targetSchemaSnapshot = $craftTargetSchema;
+            $craftGraph = $plugin->craftEntryWalker->walk($this->candidateEntryTypeHandles(
+                $existing,
+                $plugin->craftKnowledgeBase->entryTypeHandles(),
+            ));
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL Craft graph walk: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        if (($craftGraph[CraftGraphContract::KEY_GRAPH_VERSION] ?? null) !== CraftGraphContract::GRAPH_VERSION) {
+            $this->stderr("  FAIL Craft graph missing graphVersion\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $craftSchemaPath = $storageDir . '/craft-schema.json';
+        if (!$plugin->mappingFile->writeAtomicJson($craftSchemaPath, $craftGraph)) {
+            $this->stderr("  FAIL could not write {$craftSchemaPath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $craftEntryTypeCount = count((array) ($craftGraph[CraftGraphContract::KEY_ENTRY_TYPES] ?? []));
+        $craftFieldCount = count((array) ($craftGraph[CraftGraphContract::KEY_FIELDS] ?? []));
+        $this->stdout(
+            "  OK   Craft graph written ({$craftEntryTypeCount} entry types, {$craftFieldCount} fields) → {$craftSchemaPath}\n",
+            Console::FG_GREEN,
+        );
 
         // Step 6.5 (Phase 7): synthetic page-part emitter for content-only pages.
         // Detects Page FQCNs that have NO real page-parts AND DO have content-like
@@ -332,20 +391,18 @@ class AnalyzeController extends Controller
         // Step 7: heuristic proposals.
         // HeuristicProposer::autoMatch returns [matched, residual]. The schema dump
         // alone does not carry violation rows; v1's coverage step transforms
-        // schema-dump → violations. Phase 2 / Plan 03 ships only the orchestration
+        // Kunstmaan schema dump → violations. Phase 2 / Plan 03 ships only the orchestration
         // primitives — Plan 05 (CoverageAuditor) wires the schema → violations
         // transform and feeds it here. Until then, autoMatch sees an empty input
         // and returns ([], []) — heuristics produce zero proposals on a fresh run.
         $violations = $this->buildViolationsFromSchema($schemaDump);
         $craftFieldIndex = $this->buildCraftFieldIndex();
 
-        // Phase 02.1 / D-44: wire heuristic 1.5 entity context. Load the existing
-        // mapping.yaml HERE (early — same payload is reused at the merge step) so
-        // accepted column rows can resolve table → targetEntryType for the entity-
-        // aware match. On a fresh run with no mapping.yaml, acceptedRows is empty
-        // and heuristic 1.5 falls through silently (heuristics 3-9 fire as before).
-        $mappingPath = $plugin->mappingFile->resolvePath();
-        $existing = $plugin->mappingFile->load($mappingPath);
+        // Phase 02.1 / D-44: wire heuristic 1.5 entity context. Reuse the
+        // existing mapping.yaml loaded for Craft graph scoping above so accepted
+        // column rows can resolve table → targetEntryType for the entity-aware
+        // match. On a fresh run with no mapping.yaml, acceptedRows is empty and
+        // heuristic 1.5 falls through silently (heuristics 3-9 fire as before).
         $plugin->heuristicProposer->entityIndex = (array) ($sourceScan['entities'] ?? []);
         $plugin->heuristicProposer->acceptedRows = array_values(array_filter(
             $existing['proposals'] ?? [],
@@ -401,8 +458,8 @@ class AnalyzeController extends Controller
                 $preLlmProposals = array_merge($heuristicProposals, $pagePartProposals);
                 $kbAdapterEarly  = self::buildKbMappingAdapter($preLlmProposals);
                 $nowEarly        = new \DateTimeImmutable();
-                $kbPagesEarly    = $plugin->knowledgeBase->renderPagesMarkdown($kbAdapterEarly, $nowEarly);
-                $kbPagePartsEarly = $plugin->knowledgeBase->renderPagePartsMarkdown($kbAdapterEarly, $nowEarly);
+                $kbPagesEarly    = $plugin->kunstmaanKnowledgeBase->renderPagesMarkdown($kbAdapterEarly, $nowEarly);
+                $kbPagePartsEarly = $plugin->kunstmaanKnowledgeBase->renderPagePartsMarkdown($kbAdapterEarly, $nowEarly);
                 $kbLegacyMd = $kbPagesEarly . "\n\n" . $kbPagePartsEarly;
                 $this->stdout(
                     "  ... entity-level LLM batching " . count($scopedPageStructure) . " page entities (chunks of 8) against "
@@ -767,7 +824,7 @@ class AnalyzeController extends Controller
                     // Build the taxonomy-flavoured KB markdown (renderTaxonomiesMarkdown
                     // mirrors renderPagesMarkdown / renderPagePartsMarkdown shape; mapping
                     // is null because no taxonomy rows exist yet).
-                    $kbTaxonomiesMd = $plugin->knowledgeBase->renderTaxonomiesMarkdown(null, new \DateTimeImmutable());
+                    $kbTaxonomiesMd = $plugin->kunstmaanKnowledgeBase->renderTaxonomiesMarkdown(null, new \DateTimeImmutable());
                     // Combine the legacy KB markdown built in step 7.5 (Pages + PageParts)
                     // with the new taxonomy markdown so the LLM has the full source picture.
                     $kbLegacyForTaxonomies = $kbLegacyMd === ''
@@ -1103,7 +1160,7 @@ class AnalyzeController extends Controller
         // Step 8: LLM batch proposals for residuals (skip when --no-ai or key missing).
         // Phase 02.1 (B2 fix): KB markdown placeholders replaced with rendered Pages +
         // PageParts markdown — but only via a v1-shaped MAPPING ADAPTER built from v2's
-        // flat proposals[] array. KnowledgeBase::renderPagesMarkdown / renderPagePartsMarkdown
+        // flat proposals[] array. KunstmaanKnowledgeBase::renderPagesMarkdown / renderPagePartsMarkdown
         // read v1's nested keys ($mapping['pageParts'] / ['nodeClasses'] / ['sections']);
         // without the adapter, every per-row annotation would be silently lost (placeholders
         // would be replaced but the mapping overlay would render empty).
@@ -1127,8 +1184,8 @@ class AnalyzeController extends Controller
                 $preLlmProposals = array_merge($heuristicProposals, $pagePartProposals);
                 $adapter = self::buildKbMappingAdapter($preLlmProposals);
                 $now = new \DateTimeImmutable();
-                $kbPages     = $plugin->knowledgeBase->renderPagesMarkdown($adapter, $now);
-                $kbPageParts = $plugin->knowledgeBase->renderPagePartsMarkdown($adapter, $now);
+                $kbPages     = $plugin->kunstmaanKnowledgeBase->renderPagesMarkdown($adapter, $now);
+                $kbPageParts = $plugin->kunstmaanKnowledgeBase->renderPagePartsMarkdown($adapter, $now);
                 $this->stdout(
                     "  ... LLM batching " . count($residual) . " residual columns (chunks of 10, grouped by targetEntryType)\n",
                     Console::FG_GREY,
@@ -1141,6 +1198,8 @@ class AnalyzeController extends Controller
                     $craftFieldIndex,
                     $kbPages . "\n\n" . $kbPageParts,
                     $kbCraftMd, // Phase 6: real Craft KB markdown (empty when entity step skipped)
+                    $kunstmaanGraph,
+                    $craftGraph,
                     function (int $i, int $n, string $et, int $cols, int $props, float $sec) use (&$progressStarted): void {
                         if (!$progressStarted) {
                             Console::startProgress(0, $n, '  ... LLM ');
@@ -1815,7 +1874,7 @@ class AnalyzeController extends Controller
      *
      * Walks every parsed Doctrine entity and emits one record per FQCN that
      * owns at least one ManyToOne relation. The shape mirrors the LLM-facing
-     * Relations table in `KnowledgeBase::renderPagesMarkdown` (D-20) and the
+     * Relations table in `KunstmaanKnowledgeBase::renderPagesMarkdown` (D-20) and the
      * `_rel:<prop>.<col>` keys produced by `ExtractService::joinManyToOneRelations`
      * (D-21) so operators can correlate the three artifacts.
      *
@@ -1884,9 +1943,38 @@ class AnalyzeController extends Controller
     }
 
     /**
+     * @param array<string, mixed> $mapping
+     * @param list<string> $fallbackHandles
+     * @return list<string>
+     */
+    private function candidateEntryTypeHandles(array $mapping, array $fallbackHandles): array
+    {
+        $handles = [];
+        foreach ((array) ($mapping['proposals'] ?? []) as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            foreach (['targetEntryType', 'entryType'] as $key) {
+                $handle = (string) ($row[$key] ?? '');
+                if ($handle !== '') {
+                    $handles[] = $handle;
+                }
+            }
+        }
+
+        if ($handles === []) {
+            $handles = $fallbackHandles;
+        }
+
+        sort($handles);
+
+        return array_values(array_unique($handles));
+    }
+
+    /**
      * Build a v1-shaped KB mapping adapter from v2's flat `proposals[]` array (B2 fix).
      *
-     * KnowledgeBase::renderPagesMarkdown / renderPagePartsMarkdown read v1's nested
+     * KunstmaanKnowledgeBase::renderPagesMarkdown / renderPagePartsMarkdown read v1's nested
      * mapping shape:
      *   - $mapping['pageParts']   — keyed by pagePart FQCN
      *   - $mapping['nodeClasses'] — keyed by Page entity FQCN
@@ -1903,7 +1991,7 @@ class AnalyzeController extends Controller
      *
      * 'nodeClasses' is reserved for Page entity FQCN annotations (v1 sources this
      * from a dedicated YAML key v2 doesn't ship). Leaving it empty is correct —
-     * KnowledgeBase simply renders no per-Page annotations. Future work: derive
+     * KunstmaanKnowledgeBase simply renders no per-Page annotations. Future work: derive
      * from accepted column rows whose table maps to a Page entity via heuristic 1.5.
      *
      * Public + static so the unit test (AnalyzeControllerKbAdapterTest) can call
