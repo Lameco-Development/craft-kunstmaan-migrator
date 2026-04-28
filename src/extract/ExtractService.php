@@ -70,6 +70,16 @@ class ExtractService extends Component
     public string $storagePath = '@storage/migration';
 
     /**
+     * Test/integration seam for analyze's pageStructure.json artifact.
+     *
+     * @var array<string, mixed>
+     */
+    public array $pageStructureSnapshot = [];
+
+    /** @var array<string, mixed>|null */
+    private ?array $pageStructureCache = null;
+
+    /**
      * D-08-18 — auto-detect distinct Kunstmaan locales from the legacy DB.
      *
      * Reads `SELECT DISTINCT lang FROM kuma_node_translation` so the analyze
@@ -335,7 +345,11 @@ class ExtractService extends Component
                     $detail = $sourceTable !== ''
                         ? $this->loadDetailRow($sourceTable, $perLocaleRefId, $fqcn)
                         : null;
-                    $pageParts = $this->loadPageParts($perLocaleRefId, $fqcn);
+                    $pageParts = $this->loadPageParts(
+                        $perLocaleRefId,
+                        $fqcn,
+                        $this->pagePartAllowMapFor($fqcn, $mapping),
+                    );
 
                     $perSite[$lang] = [
                         'online'     => (bool) ($t['online'] ?? false),
@@ -801,7 +815,10 @@ class ExtractService extends Component
      *
      * @return list<array<string, mixed>>
      */
-    private function loadPageParts(int $refId, string $pageClass): array
+    /**
+     * @param array<string, array<string, true>|null>|null $allowedContextClasses
+     */
+    private function loadPageParts(int $refId, string $pageClass, ?array $allowedContextClasses = null): array
     {
         $refs = $this->legacyDb->queryAll(
             'SELECT context, sequencenumber, page_part_id, page_part_entityname'
@@ -817,6 +834,16 @@ class ExtractService extends Component
             $partId = (int) ($ref['page_part_id'] ?? 0);
             if ($partFqcn === '' || $partId <= 0) {
                 continue;
+            }
+            $context = (string) ($ref['context'] ?? '');
+            if ($allowedContextClasses !== null) {
+                if (!array_key_exists($context, $allowedContextClasses)) {
+                    continue;
+                }
+                $allowedClasses = $allowedContextClasses[$context];
+                if (is_array($allowedClasses) && $allowedClasses !== [] && !isset($allowedClasses[$partFqcn])) {
+                    continue;
+                }
             }
 
             $partTable = null;
@@ -856,12 +883,78 @@ class ExtractService extends Component
                 'fqcn'          => $partFqcn,
                 'sourcePartId'  => $partId,
                 'sequence'      => (int) ($ref['sequencenumber'] ?? 0),
-                'context'       => (string) ($ref['context'] ?? ''),
+                'context'       => $context,
                 'row'           => $partRowDecoded,
             ];
         }
 
         return $out;
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @return array<string, array<string, true>|null>|null context => allowed class set; null value means context-only filtering
+     */
+    private function pagePartAllowMapFor(string $fqcn, array $mapping): ?array
+    {
+        $pageStructure = $this->loadPageStructure();
+        $record = $pageStructure[$fqcn] ?? null;
+        if (is_array($record)) {
+            $out = [];
+            foreach ((array) ($record['contexts'] ?? []) as $context) {
+                if (!is_array($context)) {
+                    continue;
+                }
+                $name = (string) ($context['name'] ?? '');
+                if ($name === '') {
+                    continue;
+                }
+                $classes = [];
+                foreach ((array) ($context['allowedPagePartClasses'] ?? []) as $allowed) {
+                    if (!is_array($allowed)) {
+                        continue;
+                    }
+                    $class = ltrim((string) ($allowed['class'] ?? ''), '\\');
+                    if ($class !== '') {
+                        $classes[$class] = true;
+                    }
+                }
+                $out[$name] = $classes !== [] ? $classes : null;
+            }
+            if ($out !== []) {
+                return $out;
+            }
+        }
+
+        $contexts = (array) ($mapping['nodeClasses'][$fqcn]['pageBuilderContexts'] ?? []);
+        $fallback = [];
+        foreach ($contexts as $context) {
+            $context = (string) $context;
+            if ($context !== '') {
+                $fallback[$context] = null;
+            }
+        }
+
+        return $fallback !== [] ? $fallback : null;
+    }
+
+    /** @return array<string, mixed> */
+    private function loadPageStructure(): array
+    {
+        if ($this->pageStructureSnapshot !== []) {
+            return $this->pageStructureSnapshot;
+        }
+        if ($this->pageStructureCache !== null) {
+            return $this->pageStructureCache;
+        }
+
+        $path = Craft::getAlias($this->storagePath) . '/pageStructure.json';
+        if (!is_file($path)) {
+            return $this->pageStructureCache = [];
+        }
+
+        $decoded = json_decode((string) file_get_contents($path), true);
+        return $this->pageStructureCache = is_array($decoded) ? $decoded : [];
     }
 
     /**
