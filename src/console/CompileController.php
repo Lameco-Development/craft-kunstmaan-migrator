@@ -149,6 +149,13 @@ class CompileController extends Controller
             // auto-resolve targetMatrixField from targetBlockType for
             // pagePart rows where the LLM populated only the block type.
             $plugin->craftKnowledgeBase->matrixFieldCatalog(),
+            // Phase 8.7 / D-39 — auto-detect map of entry-types whose field
+            // layout has no Matrix and has a flat ckeditor field. compile
+            // emits `nodeClasses[fqcn].flatPagePartContent = <handle>` so
+            // TransformService's D-38 flat-fold routes vendor page-part
+            // content (TextPagePart, etc.) into the right ckeditor field
+            // automatically — no per-project hand-curation needed.
+            $plugin->craftKnowledgeBase->flatPagePartCandidates(),
         );
         $report = $compiled['_compileReport'];
 
