@@ -367,7 +367,7 @@ Plans:
 - [x] `09-04-PLAN.md` — Page-rooted surface discovery and coverage report. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-04-SUMMARY.md`.
 - [x] `09-05-PLAN.md` — truthful migrate failure exit and referenced-only preload. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-05-SUMMARY.md`.
 - [x] `09-06-PLAN.md` — CKEditor unresolved marker hardening. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-06-SUMMARY.md`.
-- `09-07-PLAN.md` — docs, CI, release, fixture, and genericity evidence.
+- [x] `09-07-PLAN.md` — docs, CI, release, fixture, and genericity evidence. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-07-SUMMARY.md`.
 
 ---
 
