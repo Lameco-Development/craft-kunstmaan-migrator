@@ -138,6 +138,59 @@ final class MappingCompilerValidationTest extends TestCase
         self::assertStringContainsString('operator review', $warnings);
     }
 
+    public function testHeuristicBackfillDoesNotInventUnavailableCraftEntryTypes(): void
+    {
+        $compiled = (new MappingCompiler())->compile(
+            [
+                'proposals' => [
+                    [
+                        'kind' => 'nodeClass',
+                        'fqcn' => 'App\\Entity\\ArticlePage',
+                        'sourceTable' => 'article_pages',
+                        'targetSection' => 'articles',
+                        'targetEntryType' => 'articlePage',
+                        'status' => 'accepted',
+                    ],
+                    [
+                        'kind' => 'column',
+                        'table' => 'article_pages',
+                        'column' => 'title',
+                        'targetEntryType' => 'articlePage',
+                        'targetHandle' => 'title',
+                        'handler' => 'plain',
+                        'status' => 'accepted',
+                    ],
+                    [
+                        'kind' => 'column',
+                        'table' => 'unavailable_pages',
+                        'column' => 'title',
+                        'targetEntryType' => '',
+                        'targetHandle' => 'title',
+                        'handler' => 'plain',
+                        'status' => 'accepted',
+                    ],
+                ],
+            ],
+            [
+                'App\\Entity\\ArticlePage' => [
+                    'tableName' => 'article_pages',
+                    'contexts' => [['name' => 'main']],
+                ],
+                'App\\Entity\\UnavailablePage' => [
+                    'tableName' => 'unavailable_pages',
+                    'contexts' => [['name' => 'main']],
+                ],
+            ],
+            ['nl' => 'default'],
+            craftEntryTypeHandles: ['articlePage'],
+            entryTypeFlatHandles: ['articlePage' => ['title']],
+        );
+
+        self::assertArrayHasKey('articlePage', $compiled['sections']);
+        self::assertArrayNotHasKey('unavailablePage', $compiled['sections']);
+        self::assertSame(0, $compiled['_compileReport']['autoAssignedTargets']);
+    }
+
     /**
      * @param list<array<string, mixed>> $columns
      * @return array<string, mixed>

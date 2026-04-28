@@ -123,6 +123,13 @@ final class MappingCompiler extends Component
         // heuristic. The heuristic stays as a fallback for projects that
         // ran analyze with --no-ai (no nodeClass proposals were emitted).
         $tableToEntryTypeFromHeuristic = $this->buildTableToEntryTypeMap($pageStructure);
+        if ($craftEntryTypeHandles !== []) {
+            $allowedEntryTypes = array_flip(array_map('strval', $craftEntryTypeHandles));
+            $tableToEntryTypeFromHeuristic = array_filter(
+                $tableToEntryTypeFromHeuristic,
+                static fn(string $entryType): bool => isset($allowedEntryTypes[$entryType]),
+            );
+        }
         $tableToEntryType = $acceptedNodeClassByTable + $tableToEntryTypeFromHeuristic;
         [$proposals, $autoAssigned] = $this->autoAssignTargetEntryType($proposals, $tableToEntryType);
 
