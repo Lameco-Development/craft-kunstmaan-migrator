@@ -79,6 +79,112 @@ class TaxonomyMigrationService extends Component
     public ?MappingFile $mappingFile = null;
     public ?MigrationFilters $filters = null;
 
+    /**
+     * Resolve a single page-referenced taxonomy row on demand.
+     *
+     * RelationHandler calls this only after the normal state-table lookup has
+     * missed and only when handlerOptions identify the relation as taxonomy-
+     * backed. This service remains the only owner of taxonomy source reads,
+     * Craft entry upserts, locale fallback, and state recording.
+     */
+    public function resolveReferenced(
+        string $taxonomySource,
+        int|string $legacyId,
+        MigrationOptions $opts,
+        ?MigrationReport $report = null,
+    ): ?int {
+        $legacyId = (int) $legacyId;
+        if ($taxonomySource === '' || $legacyId <= 0) {
+            return null;
+        }
+
+        $mapping = $this->mappingFile->load();
+        $match = $this->findTaxonomyMapping($mapping, $taxonomySource);
+        if ($match === null) {
+            $report?->warn(sprintf(
+                'taxonomy resolver unresolved: no mapping for source=%s legacyId=%d',
+                $taxonomySource,
+                $legacyId,
+            ));
+            return null;
+        }
+
+        [$fqcn, $row] = $match;
+        $row = $this->validatedTaxonomyRow($fqcn, $row);
+        $stateSource = $this->fqcnToSlug($fqcn);
+
+        $existingCraftId = $this->migrationState->getTargetId($stateSource, (string) $legacyId, null);
+        if ($existingCraftId !== null) {
+            $report?->incr($opts->dryRun ? 'taxonomy.wouldLink' : 'taxonomy.linkedExisting');
+            return $existingCraftId;
+        }
+
+        $legacyRow = $this->loadLegacyTaxonomyRow($fqcn, (string) $row['sourceTable'], $legacyId);
+        if ($legacyRow === null) {
+            $report?->warn(sprintf(
+                'taxonomy resolver unresolved: %s id=%d source row not found',
+                $stateSource,
+                $legacyId,
+            ));
+            return null;
+        }
+
+        if ($opts->dryRun) {
+            $report?->incr('taxonomy.wouldCreate');
+            $report?->incr('taxonomy.wouldLink');
+            $report?->warn(sprintf(
+                'taxonomy resolver dry-run: would-create %s id=%d and would-link relation',
+                $stateSource,
+                $legacyId,
+            ));
+            return null;
+        }
+
+        $section = Craft::$app->getEntries()->getSectionByHandle((string) $row['targetSection']);
+        $entryType = Craft::$app->getEntries()->getEntryTypeByHandle((string) $row['targetEntryType']);
+        if ($section === null || $entryType === null) {
+            throw new RuntimeException(
+                "taxonomies[$fqcn]: section or entryType not found in Craft "
+                . "(section={$row['targetSection']} type={$row['targetEntryType']})",
+            );
+        }
+
+        $createdOrUpdatedId = null;
+        Craft::$app->db->transaction(function () use (
+            $fqcn,
+            $stateSource,
+            $legacyId,
+            $legacyRow,
+            $row,
+            $mapping,
+            $opts,
+            $report,
+            $section,
+            $entryType,
+            &$createdOrUpdatedId,
+        ): void {
+            $createdOrUpdatedId = $this->upsertOneEntry(
+                (int) $section->id,
+                (int) $entryType->id,
+                $stateSource,
+                $fqcn,
+                [],
+                $legacyId,
+                $legacyRow,
+                (array) ($row['fields'] ?? []),
+                $mapping,
+                $opts,
+                $report ?? new MigrationReport(),
+            );
+        });
+
+        if ($createdOrUpdatedId !== null) {
+            $report?->incr('taxonomy.linked');
+        }
+
+        return $createdOrUpdatedId;
+    }
+
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
         $report = new MigrationReport();
@@ -158,30 +264,14 @@ class TaxonomyMigrationService extends Component
         // D-08 reshape #4: v1 row used `section` / `entryType`; v2 compiler
         // emits `targetSection` / `targetEntryType` (mirrors the nodeClass
         // row shape — see compileTaxonomies in MappingCompiler).
-        $sectionHandle = (string) ($row['targetSection'] ?? '');
-        $entryTypeHandle = (string) ($row['targetEntryType'] ?? '');
-        $sourceTable = (string) ($row['sourceTable'] ?? '');
+        $row = $this->validatedTaxonomyRow($fqcn, $row);
+        $sectionHandle = (string) $row['targetSection'];
+        $entryTypeHandle = (string) $row['targetEntryType'];
+        $sourceTable = (string) $row['sourceTable'];
         // D-08 reshape #4: v2 fields shape is `{ legacyCol => craftHandle }`
         // (flat string→string), inverted from v1's
         // `{ craftHandle => { source: legacyCol, handler: 'plain' } }`.
         $fieldsMap = (array) ($row['fields'] ?? []);
-
-        if ($sectionHandle === '' || $entryTypeHandle === '' || $sourceTable === '') {
-            throw new RuntimeException(
-                "taxonomies[$fqcn]: missing targetSection/targetEntryType/sourceTable "
-                . "(should have been caught by MappingAuditor)",
-            );
-        }
-
-        // Defense-in-depth: validator already guards this regex, but
-        // re-check here so the service is safe to call standalone.
-        // SQL injection defense — sourceTable is interpolated raw into the
-        // SELECT below. Whitelist is verbatim from v1 (lines 159-163).
-        if (preg_match('/^[a-z0-9_]+$/', $sourceTable) !== 1) {
-            throw new RuntimeException(
-                "taxonomies[$fqcn]: sourceTable whitelist failed: $sourceTable",
-            );
-        }
 
         $section = Craft::$app->getEntries()->getSectionByHandle($sectionHandle);
         $entryType = Craft::$app->getEntries()->getEntryTypeByHandle($entryTypeHandle);
@@ -270,7 +360,7 @@ class TaxonomyMigrationService extends Component
         array $mapping,
         MigrationOptions $opts,
         MigrationReport $report,
-    ): void {
+    ): ?int {
         // Idempotency: look up existing Craft entry via state (site-agnostic).
         // siteId=null on the lookup mirrors the siteId=null on record() below.
         $existingCraftId = $this->migrationState->getTargetId($stateSource, (string) $legacyId, null);
@@ -337,8 +427,12 @@ class TaxonomyMigrationService extends Component
         }
 
         if ($opts->dryRun) {
-            $report->incr('skipped');
-            return;
+            if ($existingCraftId === null) {
+                $report->incr('taxonomy.wouldCreate');
+            } else {
+                $report->incr('taxonomy.wouldUpdate');
+            }
+            return $existingCraftId;
         }
 
         if (!Craft::$app->elements->saveElement($entry, true, true)) {
@@ -380,6 +474,7 @@ class TaxonomyMigrationService extends Component
             $mapping,
             $title,
             $fieldValues,
+            $report,
         );
 
         if ($existingCraftId === null) {
@@ -387,6 +482,8 @@ class TaxonomyMigrationService extends Component
         } else {
             $report->incr('updated');
         }
+
+        return (int) $entry->id;
     }
 
     /**
@@ -428,6 +525,7 @@ class TaxonomyMigrationService extends Component
         array $mapping,
         string $canonicalTitle,
         array $canonicalFieldValues,
+        MigrationReport $report,
     ): void {
         $allFqcns = array_merge([$fqcn], $gedmoFqcns);
         $translations = $this->legacyDb->extTranslationsFor($allFqcns, $legacyId);
@@ -461,6 +559,13 @@ class TaxonomyMigrationService extends Component
                 if ($canonicalFieldValues !== []) {
                     $localized->setFieldValues($canonicalFieldValues);
                 }
+                $report->incr('fallback.taxonomy_locale');
+                $report->warn(sprintf(
+                    'fallback: taxonomy locale values for %s id=%d site=%s use default-language values',
+                    $this->fqcnToSlug($fqcn),
+                    $legacyId,
+                    (string) $siteHandle,
+                ));
                 // propagateChanges=false: only update this one site.
                 Craft::$app->elements->saveElement($localized, true, false);
             }
@@ -507,10 +612,14 @@ class TaxonomyMigrationService extends Component
             // sites for legacy ids with no en-locale ext_translations row.
             $localized->title = $canonicalTitle;
             $translatedFields = $canonicalFieldValues;
+            $usedFallback = $localeData === [];
 
             foreach ($localeData as $sourceField => $content) {
                 $targetHandle = $sourceToTarget[$sourceField] ?? null;
                 if ($targetHandle === null || $content === '') {
+                    if ($targetHandle !== null) {
+                        $usedFallback = true;
+                    }
                     continue;
                 }
                 if ($targetHandle === 'title') {
@@ -522,6 +631,15 @@ class TaxonomyMigrationService extends Component
 
             if ($translatedFields !== []) {
                 $localized->setFieldValues($translatedFields);
+            }
+            if ($usedFallback) {
+                $report->incr('fallback.taxonomy_locale');
+                $report->warn(sprintf(
+                    'fallback: taxonomy locale values for %s id=%d locale=%s use default-language values',
+                    $this->fqcnToSlug($fqcn),
+                    $legacyId,
+                    $locale,
+                ));
             }
 
             // propagateChanges=false: only update this one site.
@@ -538,5 +656,67 @@ class TaxonomyMigrationService extends Component
     private function fqcnToSlug(string $fqcn): string
     {
         return str_replace('\\', '_', $fqcn);
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @return array{0: string, 1: array<string, mixed>}|null
+     */
+    private function findTaxonomyMapping(array $mapping, string $taxonomySource): ?array
+    {
+        foreach ((array) ($mapping['taxonomies'] ?? []) as $fqcn => $row) {
+            if (!is_string($fqcn) || !is_array($row)) {
+                continue;
+            }
+            if ($taxonomySource === $fqcn || $taxonomySource === $this->fqcnToSlug($fqcn)) {
+                return [$fqcn, $row];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function validatedTaxonomyRow(string $fqcn, array $row): array
+    {
+        $sectionHandle = (string) ($row['targetSection'] ?? '');
+        $entryTypeHandle = (string) ($row['targetEntryType'] ?? '');
+        $sourceTable = (string) ($row['sourceTable'] ?? '');
+        if ($sectionHandle === '' || $entryTypeHandle === '' || $sourceTable === '') {
+            throw new RuntimeException(
+                "taxonomies[$fqcn]: missing targetSection/targetEntryType/sourceTable "
+                . "(should have been caught by MappingAuditor)",
+            );
+        }
+
+        // Defense-in-depth: validator already guards this regex, but
+        // re-check here so the service is safe to call standalone.
+        // SQL injection defense — sourceTable is interpolated raw into SQL.
+        if (preg_match('/^[a-z0-9_]+$/', $sourceTable) !== 1) {
+            throw new RuntimeException(
+                "taxonomies[$fqcn]: sourceTable whitelist failed: $sourceTable",
+            );
+        }
+
+        return $row;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function loadLegacyTaxonomyRow(string $fqcn, string $sourceTable, int $legacyId): ?array
+    {
+        if (preg_match('/^[a-z0-9_]+$/', $sourceTable) !== 1) {
+            throw new RuntimeException(
+                "taxonomies[$fqcn]: sourceTable whitelist failed: $sourceTable",
+            );
+        }
+        $row = $this->legacyDb->queryOne(
+            sprintf('SELECT * FROM %s WHERE id = :id LIMIT 1', $sourceTable),
+            [':id' => $legacyId],
+        );
+        return is_array($row) ? $row : null;
     }
 }
