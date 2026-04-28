@@ -213,6 +213,73 @@ final class CraftKnowledgeBase extends Component
     }
 
     /**
+     * Phase 8.7 / D-39 — auto-detect entry types that should fold page-part
+     * content into a flat ckeditor field instead of a Matrix block.
+     *
+     * Returns `entryTypeHandle => flatCkeditorFieldHandle` for every entry
+     * type whose field layout has NO Matrix field AND has at least one
+     * `craft\ckeditor\Field`. Used by `MappingCompiler::compile()` to
+     * auto-emit `nodeClasses[fqcn].flatPagePartContent: <handle>` when the
+     * operator hasn't set it manually — so `teamMember` (and any future
+     * matrix-less entry type with a `ckeditorDefault`) automatically picks
+     * up TextPagePart bio content without per-project hand-curation.
+     *
+     * Tie-breaking when an entry type has multiple ckeditor fields: prefer
+     * the one named `ckeditorDefault`, then `content`, then `body`, then
+     * the first one alphabetically. Operator can always override the
+     * auto-detected value via the explicit `flatPagePartContent` key.
+     *
+     * @return array<string, string>
+     */
+    public function flatPagePartCandidates(): array
+    {
+        if (!class_exists(\craft\ckeditor\Field::class, true)) {
+            // Project doesn't have the ckeditor plugin — no candidates.
+            return [];
+        }
+        $preferred = ['ckeditorDefault', 'content', 'body'];
+        $out = [];
+        foreach (Craft::$app->entries->getAllEntryTypes() as $entryType) {
+            $handle = (string) $entryType->handle;
+            if ($handle === '') {
+                continue;
+            }
+            $layout = $entryType->getFieldLayout();
+            if ($layout === null) {
+                continue;
+            }
+            $hasMatrix = false;
+            $ckHandles = [];
+            foreach ($layout->getCustomFields() as $field) {
+                if ($field instanceof \craft\fields\Matrix) {
+                    $hasMatrix = true;
+                    break;
+                }
+                if ($field instanceof \craft\ckeditor\Field) {
+                    $ckHandles[] = (string) $field->handle;
+                }
+            }
+            if ($hasMatrix || $ckHandles === []) {
+                continue;
+            }
+            // Tie-break: preferred-name match, else alphabetical first.
+            $pick = null;
+            foreach ($preferred as $p) {
+                if (in_array($p, $ckHandles, true)) {
+                    $pick = $p;
+                    break;
+                }
+            }
+            if ($pick === null) {
+                sort($ckHandles);
+                $pick = $ckHandles[0];
+            }
+            $out[$handle] = $pick;
+        }
+        return $out;
+    }
+
+    /**
      * Returns sectionHandle → list of entry-type handles it permits.
      * EntityClassifier uses this to suggest the section a proposed entry
      * type lives in (operator-friendly downstream — `sections[X].entryType=Y`).

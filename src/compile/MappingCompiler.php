@@ -105,6 +105,7 @@ final class MappingCompiler extends Component
         ?string $defaultBlockType = null,
         array $craftEntryTypeHandles = [],
         array $matrixFieldCatalog = [],
+        array $flatPagePartCandidates = [],
     ): array {
         $proposals = (array) ($mapping['proposals'] ?? []);
 
@@ -452,6 +453,20 @@ final class MappingCompiler extends Component
                 'bodyWrapBlock'       => null,
                 'joins'               => [],
             ];
+
+            // Phase 8.7 / D-39 — auto-detect flatPagePartContent target. When
+            // the entry-type for this FQCN has no Matrix field and has at
+            // least one ckeditor field, set the flat-fold target so vendor
+            // page-parts (TextPagePart, MultiLineTextPagePart, etc.)
+            // attached to legacy pages flow into the flat field at transform
+            // time (D-38 routing). Operator hand-edits below win on
+            // `compile --overwrite` re-runs because compile preserves
+            // pageParts/nodeClasses operator overrides via skip-existing —
+            // here we only set the value if the candidate map nominates one.
+            $candidate = $flatPagePartCandidates[$sectionKey] ?? null;
+            if (is_string($candidate) && $candidate !== '') {
+                $nodeClasses[$fqcn]['flatPagePartContent'] = $candidate;
+            }
 
             $fieldsPerSection[$sectionKey] = ($fieldsPerSection[$sectionKey] ?? 0) + count($fields);
         }
