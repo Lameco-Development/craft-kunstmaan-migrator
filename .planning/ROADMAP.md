@@ -363,7 +363,7 @@ Plans:
 - [x] `09-02-PLAN.md` — source-domain filter core. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-02-SUMMARY.md`.
 - `09-02B-PLAN.md` — Craft query translation from compiled mapping.
 - `09-02C-PLAN.md` — cross-stage filter handoff and Page-owned sidecar closure.
-- `09-03-PLAN.md` — compiler validation and Craft target introspection.
+- [x] `09-03-PLAN.md` — compiler validation and Craft target introspection. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-03-SUMMARY.md`.
 - `09-04-PLAN.md` — Page-rooted surface discovery and coverage report.
 - `09-05-PLAN.md` — truthful migrate failure exit and referenced-only preload.
 - [x] `09-06-PLAN.md` — CKEditor unresolved marker hardening. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-06-SUMMARY.md`.
