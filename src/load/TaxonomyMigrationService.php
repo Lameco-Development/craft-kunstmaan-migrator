@@ -353,10 +353,12 @@ class TaxonomyMigrationService extends Component
         );
 
         // Gedmo Translatable per-site pass. After the canonical save, Craft
-        // has propagated NL values to all sites. Now overwrite individual
-        // sites where ext_translations carries a translated value. We only
-        // touch sites whose locale has rows in ext_translations — everything
-        // else keeps the propagated NL value.
+        // has propagated NL values to all sites — EXCEPT for fields with
+        // translationMethod=site (e.g. caseCategory's title). For those, the
+        // per-site copy must be done explicitly here. We pass the canonical
+        // title + fieldValues so the per-locale logic can fall back to them
+        // when a non-primary site has no ext_translations data of its own
+        // (Phase 8.7 / issue A — "default-language fallback" rule).
         //
         // D-08 reshape #3 — D-09 empty-`ext_translations` fallback inside.
         $this->applyGedmoTranslations(
@@ -366,6 +368,8 @@ class TaxonomyMigrationService extends Component
             $legacyId,
             $fieldsMap,
             $mapping,
+            $title,
+            $fieldValues,
         );
 
         if ($existingCraftId === null) {
@@ -388,9 +392,22 @@ class TaxonomyMigrationService extends Component
      * with propagateChanges=false to make the contract explicit and to align
      * with the per-site overlay branch's shape. NEW v2 behavior, not in v1.
      *
+     * Phase 8.7 / issue A — "default-language fallback" rule: site-translated
+     * Craft fields (e.g. `caseCategory`'s title with translationMethod=site)
+     * are NOT propagated by the canonical save, so the localized entry's
+     * title would otherwise default to empty — or, worse, retain stale data
+     * from a previous wrong-mapping run (the `[legacy id N]` symptom). To
+     * prevent that, every non-primary-site save in BOTH branches now seeds
+     * the localized entry with the canonical title + fieldValues, then lets
+     * any per-locale overlay override on a per-field basis. SEO writers
+     * (RetourMigrationService, the SEOmatic adapter) intentionally do NOT
+     * follow this rule — empty per-locale SEO values are operator-meaningful.
+     *
      * @param string[]              $gedmoFqcns
-     * @param array<string, string> $fieldsMap  v2 shape: `{ legacyCol => craftHandle }`.
-     * @param array<string, mixed>  $mapping    Full mapping.yaml — for sites: block lookup.
+     * @param array<string, string> $fieldsMap            v2 shape: `{ legacyCol => craftHandle }`.
+     * @param array<string, mixed>  $mapping              Full mapping.yaml — for sites: block lookup.
+     * @param string                $canonicalTitle       Title written to the primary-site entry above.
+     * @param array<string, mixed>  $canonicalFieldValues Custom-field values written to the primary-site entry above.
      */
     private function applyGedmoTranslations(
         int $craftEntryId,
@@ -399,6 +416,8 @@ class TaxonomyMigrationService extends Component
         int $legacyId,
         array $fieldsMap,
         array $mapping,
+        string $canonicalTitle,
+        array $canonicalFieldValues,
     ): void {
         $allFqcns = array_merge([$fqcn], $gedmoFqcns);
         $translations = $this->legacyDb->extTranslationsFor($allFqcns, $legacyId);
@@ -407,10 +426,11 @@ class TaxonomyMigrationService extends Component
 
         if ($translations === []) {
             // D-09 — empty ext_translations: monolingual Kunstmaan install.
-            // Re-save the source-locale row across every non-primary site in
-            // mapping.sites (primary already written by the canonical save
-            // above). propagateChanges=false on each per-site re-save mirrors
-            // the per-locale overlay branch's discipline.
+            // Re-save each non-primary site in mapping.sites with the
+            // canonical title + fieldValues. This is the default-language
+            // fallback: when no per-locale data exists at all, EN/etc. mirror
+            // NL exactly. propagateChanges=false on each per-site re-save
+            // keeps the writes scoped to one site.
             $sites = (array) ($mapping['sites'] ?? []);
             foreach ($sites as $siteHandle => $_siteCfg) {
                 $site = Craft::$app->sites->getSiteByHandle((string) $siteHandle);
@@ -426,6 +446,10 @@ class TaxonomyMigrationService extends Component
                     ->one();
                 if ($localized === null) {
                     continue;
+                }
+                $localized->title = $canonicalTitle;
+                if ($canonicalFieldValues !== []) {
+                    $localized->setFieldValues($canonicalFieldValues);
                 }
                 // propagateChanges=false: only update this one site.
                 Craft::$app->elements->saveElement($localized, true, false);
@@ -455,10 +479,6 @@ class TaxonomyMigrationService extends Component
             $locale = strtolower(explode('-', $site->language)[0]);
             $localeData = $translations[$locale] ?? [];
 
-            if ($localeData === []) {
-                continue;
-            }
-
             $localized = Entry::find()
                 ->id($craftEntryId)
                 ->siteId($site->id)
@@ -468,7 +488,16 @@ class TaxonomyMigrationService extends Component
                 continue;
             }
 
-            $translatedFields = [];
+            // Phase 8.7 / issue A — default-language fallback: seed the
+            // localized entry with canonical values BEFORE applying any
+            // per-locale overlay. Fields the legacy ext_translations row has
+            // for this locale will override; fields it lacks (or has set to
+            // empty content — `$content === ''` continue below) keep the
+            // canonical fallback. Fixes the `[legacy id N]` symptom on EN
+            // sites for legacy ids with no en-locale ext_translations row.
+            $localized->title = $canonicalTitle;
+            $translatedFields = $canonicalFieldValues;
+
             foreach ($localeData as $sourceField => $content) {
                 $targetHandle = $sourceToTarget[$sourceField] ?? null;
                 if ($targetHandle === null || $content === '') {
