@@ -351,7 +351,7 @@ Plans:
 4. Genericity is tested and documented as a first-class constraint: CQM remains the installed integration target, but the audit samples at least Simac and Enreach source shapes where available and identifies any project-specific assumptions, naming heuristics, hardcoded CQM patterns, or fields that need operator mapping rather than plugin logic.
 5. Kunstmaan Page-rooted introspection has an explicit coverage report: for each Page class, list page parts, direct fields, ManyToOne/ManyToMany/OneToMany relations, asset references, dataProviders, taxonomy references, SEO rows, redirect/URL rows, CKEditor `[M]`/`[NT]`/media URLs, and the Craft target(s) or drop reason. _(Covered by 09-04: compile writes structural `page-rooted-coverage.json` and `PAGE-ROOTED-COVERAGE.md` artifacts from pure discovery/classification services.)_
 6. The Craft target introspection is checked against compiled mapping: every accepted target entry type, Matrix field, block type, field handle, asset field, Entries field source, and SEO/Retour adapter target is valid for the receiving Craft schema.
-7. `migrate --live` still continues per-entry for diagnostics, but exits non-zero and writes a clear report when any entry/stage failed.
+7. `migrate --live` still continues per-entry for diagnostics, but exits non-zero and writes a clear report when any entry/stage failed. _(Covered by 09-05: `MigrationReport::hasFailures()` gates the final post-REPORT.md exit; `--preload-assets` is referenced-only from in-scope transformed payload IDs.)_
 8. CKEditor unresolved markers cannot break HTML comments or inject renderable markup; regression tests include malicious legacy URL/comment-breakout cases. _(Covered by 09-06: unresolved marker source details now use recoverable unpadded base64url `sourceB64` payloads; tests cover `-->`, `<script`, and quote-looking URL values.)_
 9. Transform characterization uses real fixtures or fails loudly in release/CI mode; incomplete taxonomy/leaf-entity coverage is either completed or explicitly excluded from v1.0.
 10. CI smoke, README, PROJECT, ROADMAP, and CHANGELOG match the actual release workflow, generic plugin positioning, and known limitations.
@@ -365,7 +365,7 @@ Plans:
 - `09-02C-PLAN.md` — cross-stage filter handoff and Page-owned sidecar closure.
 - [x] `09-03-PLAN.md` — compiler validation and Craft target introspection. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-03-SUMMARY.md`.
 - [x] `09-04-PLAN.md` — Page-rooted surface discovery and coverage report. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-04-SUMMARY.md`.
-- `09-05-PLAN.md` — truthful migrate failure exit and referenced-only preload.
+- [x] `09-05-PLAN.md` — truthful migrate failure exit and referenced-only preload. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-05-SUMMARY.md`.
 - [x] `09-06-PLAN.md` — CKEditor unresolved marker hardening. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-06-SUMMARY.md`.
 - `09-07-PLAN.md` — docs, CI, release, fixture, and genericity evidence.
 
