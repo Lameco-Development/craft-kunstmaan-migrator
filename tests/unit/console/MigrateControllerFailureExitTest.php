@@ -139,4 +139,57 @@ final class MigrateControllerFailureExitTest extends TestCase
         self::assertFalse($report->hasFailures());
         self::assertSame(0, $report->failureCount());
     }
+
+    public function testTransformSentinelWarningsMergeIntoMigrationReportWithPrefixAndCount(): void
+    {
+        $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod(MigrateController::class, 'mergeTransformReportSentinel');
+        $report = new MigrationReport();
+
+        $blocking = $method->invoke($controller, [
+            '__report' => [
+                'warnings' => ["Handler 'relation' failed on topicRelation: resolver failed"],
+            ],
+        ], $report);
+
+        self::assertTrue($blocking);
+        self::assertSame(1, (int) ($report->counts['transform.warning'] ?? 0));
+        self::assertSame(
+            ["Transform: Handler 'relation' failed on topicRelation: resolver failed"],
+            $report->warnings,
+        );
+    }
+
+    public function testDryRunTransformRelationHandlerWarningStaysVisibleWithoutFailure(): void
+    {
+        $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
+        $method = new ReflectionMethod(MigrateController::class, 'mergeTransformReportSentinel');
+        $report = new MigrationReport();
+
+        $blocking = $method->invoke($controller, [
+            '__report' => [
+                'warnings' => ["Handler 'relation' failed on topicRelation: TaxonomyMigrationService exploded"],
+            ],
+        ], $report);
+
+        self::assertTrue($blocking);
+        self::assertStringContainsString('Transform:', implode("\n", $report->warnings));
+        self::assertFalse($report->hasFailures(), 'Dry-run/actionIndex decides not to record live-only failure.');
+    }
+
+    public function testLiveTransformRelationHandlerFailureRecordsSyntheticTransformServiceFailure(): void
+    {
+        $controller = (new ReflectionClass(MigrateController::class))->newInstanceWithoutConstructor();
+        $recordMethod = new ReflectionMethod(MigrateController::class, 'recordBlockingTransformFailure');
+        $exitMethod = new ReflectionMethod(MigrateController::class, 'reportExitCode');
+        $report = new MigrationReport();
+
+        $recordMethod->invoke($controller, $report);
+
+        self::assertTrue($report->hasFailures());
+        self::assertSame(ExitCode::UNSPECIFIED_ERROR, $exitMethod->invoke($controller, $report));
+        self::assertSame('transform', $report->failures[0]['legacyId']);
+        self::assertSame('TransformService', $report->failures[0]['handler']);
+        self::assertStringContainsString('Transform:', $report->failures[0]['message']);
+    }
 }
