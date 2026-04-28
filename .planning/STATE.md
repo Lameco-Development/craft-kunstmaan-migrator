@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 11 executed; dual graph walkers and promoted relation target path implemented
-stopped_at: "Phase 11 execution complete. Implemented graph contracts, KunstmaanPageWalker, CraftEntryWalker, graph-shaped analyze artifacts, graph-first LLM prompt context, compile-time graph compatibility validation, promoted/shared relation target extract/transform/load support, graph-backed relation coverage reporting, and scoped CQM NewsPage/HomePage rehearsal documentation. Latest commits: d7d77ce, 6002ec4, 594194a. Composer test passed."
-last_updated: "2026-04-28T18:45:00.000Z"
+status: Phase 11 executed; scoped CQM NewsPage/HomePage dry-run proof passed
+stopped_at: "Phase 11 execution and scoped CQM proof complete. Implemented dual graph walkers, graph-shaped analyze artifacts, graph-first LLM prompt context, compile-time graph compatibility validation, promoted/shared target ETL support, and graph-backed reporting. Follow-up proof fix eb80c9e preserves graph relation metadata through mapping rows while treating unresolved relation intents as report-level warnings. CQM doctor/analyze/map/compile passed; scoped dry-run migrate passed with --no-rel-join and verified NewsPage 97 keeps raw employee_id/image FK columns, has no fake pageparts, and has no _rel:* owner detail keys. Composer test passed."
+last_updated: "2026-04-28T19:20:00.000Z"
 progress:
   total_phases: 11
   completed_phases: 10
@@ -21,7 +21,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped. The plugin should stay as generic as practical across Lameco Kunstmaan websites (for example CQM, Simac, and Enreach), with project-specific differences surfaced as mapping/operator decisions rather than hardcoded plugin assumptions wherever possible.
 
-**Current focus:** Phase 11 execution is complete. Analyze now persists graph-shaped `kunstmaan-schema.json` and `craft-schema.json` artifacts from first-class walkers. The LLM receives the graph pair as primary mapping context, compile validates graph-compatible refs/intents, promoted/shared relation targets have standalone ETL/state identity, and reporting distinguishes unresolved relation evidence from intentional drop/out_of_scope/promoted decisions. Proof scope remains deliberately narrow for rehearsal: NewsPage for relation/shared-target coverage and HomePage for pagepart/Matrix coverage. Content-only Kunstmaan pages that need policy decisions such as "wrap WYSIWYG content into a pagebuilder block" versus "map to a flat CKEditor field" are represented factually and remain explicit mapping/configuration policy rather than hidden generic behavior.
+**Current focus:** Phase 11 execution is complete and the scoped CQM NewsPage/HomePage dry-run proof has passed. Analyze now persists graph-shaped `kunstmaan-schema.json` and `craft-schema.json` artifacts from first-class walkers. The LLM receives the graph pair as primary mapping context, compile validates graph-compatible refs/intents, promoted/shared relation targets have standalone ETL/state identity, and reporting distinguishes unresolved relation evidence from intentional drop/out_of_scope/promoted decisions. The proof verified the source-faithful owner shape with `--no-rel-join`: NewsPage 97 keeps raw `employee_id`, `image_id`, and `preview_image_id`, has zero fake pageparts, and has zero `_rel:*` detail keys. Content-only Kunstmaan pages that need policy decisions such as "wrap WYSIWYG content into a pagebuilder block" versus "map to a flat CKEditor field" are represented factually and remain explicit mapping/configuration policy rather than hidden generic behavior.
 
 ## Milestone
 
@@ -41,7 +41,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 11: Dual Schema Walkers & LLM-first Mapping — executed.** Phase directory: `.planning/phases/11-relation-target-introspection-promotion/`. Context: `.planning/phases/11-relation-target-introspection-promotion/11-CONTEXT.md`. Summaries: `11-01-SUMMARY.md` through `11-07-SUMMARY.md`. The migrator now compares explicit Kunstmaan/Craft graph walks instead of growing page-local heuristics, while deterministic code validates, compiles, orders, and loads the accepted mapping. Shared targets such as Employee-style reusable entities are handled through promoted/shared target contracts, stateSource/stateKey identity, and pre-owner load ordering. Next step: run the scoped CQM NewsPage/HomePage proof from `.planning/rehearsal/v1.0/cqm/README.md`, then proceed to final verification/release gating.
+**Phase 11: Dual Schema Walkers & LLM-first Mapping — executed and proofed.** Phase directory: `.planning/phases/11-relation-target-introspection-promotion/`. Context: `.planning/phases/11-relation-target-introspection-promotion/11-CONTEXT.md`. Summaries: `11-01-SUMMARY.md` through `11-07-SUMMARY.md`. The migrator now compares explicit Kunstmaan/Craft graph walks instead of growing page-local heuristics, while deterministic code validates, compiles, orders, and loads the accepted mapping. Shared targets such as Employee-style reusable entities are handled through promoted/shared target contracts, stateSource/stateKey identity, and pre-owner load ordering. Scoped CQM proof commands completed through dry-run migrate for NewsPage/HomePage. Next step: decide whether to classify remaining relation warnings/operator mapping choices, then proceed to final verification/release gating.
 
 ## Historical Phase Notes
 
