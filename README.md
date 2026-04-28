@@ -5,10 +5,9 @@ into an existing Craft CMS site. Craft is the source of truth for schema —
 Kunstmaan content gets mapped onto Craft sections / fields / entry types as
 they already exist.
 
-> **Status:** Phase 1 (Foundation & Connectivity). Plugin scaffolds, connects
-> to a legacy MySQL DB, attaches the `kunstmaanSourceId` field, and exposes a
-> working `doctor` command. The `analyze` / `map` / `migrate` / `verify`
-> commands land in Phases 2-4. See `.planning/ROADMAP.md` for the full plan.
+> **Status:** v1.0 hardening. The canonical operator workflow is
+> `doctor -> analyze -> map -> compile -> migrate --dry-run -> migrate --live -> verify`.
+> See `.planning/ROADMAP.md` for the full plan.
 
 ## Requirements
 
@@ -56,6 +55,74 @@ ANTHROPIC_API_KEY=sk-ant-...          # required for Phase 2 analyze
 Plugin Settings (Settings → Plugins → Kunstmaan Migrator) override env vars
 when set. The Settings UI ships in Phase 4; until then, env vars are the
 canonical configuration surface.
+
+## Operator workflow
+
+Kunstmaan **Page** entities are the source root. Each accepted Page mapping
+produces a Craft **Entry** in the configured section/entry type; page-owned
+detail rows, page parts, relations, taxonomies/data providers, SEO/redirect
+sidecars, CKEditor references, and referenced assets are accounted for from
+that Page root.
+
+Run the migration in this order:
+
+```bash
+./craft kunstmaan-migrator/doctor
+./craft kunstmaan-migrator/analyze
+# Review and edit storage/migration/mapping.yaml as needed.
+./craft kunstmaan-migrator/map
+./craft kunstmaan-migrator/compile
+./craft kunstmaan-migrator/migrate --dry-run
+./craft kunstmaan-migrator/migrate --live
+./craft kunstmaan-migrator/verify
+```
+
+The `analyze` stage may call Anthropic for mapping proposals. `compile`,
+`migrate`, `finalize`, and `verify` are deterministic and do not make runtime
+AI calls. The Control Panel is not the canonical operation surface; the CLI
+workflow above is.
+
+Generic automation is intentionally partial. Project-specific mapping edits
+are expected, but silent omissions are not accepted: every page-owned source
+surface should be migrated, deliberately dropped with rationale, marked
+out-of-scope, reported as unsupported, or surfaced as a warning.
+
+### Page-rooted coverage report
+
+`compile` writes the operator review artifact at:
+
+```text
+storage/migration/PAGE-ROOTED-COVERAGE.md
+```
+
+Use this report before any live run. Its categories mean:
+
+- `migrated` — accepted mapping routes the source surface into the Craft Entry
+  or a reachable sidecar.
+- `dropped` — operator mapping deliberately excludes the surface; the reason
+  should explain why this is acceptable.
+- `out_of_scope` — the surface is outside v1.0 scope, such as FormBundle,
+  SearchBundle, MenuBundle, users/ACLs, non-public drafts, or full orphan-media
+  import.
+- `unsupported` — the scanner found a structural shape the current migrator
+  cannot safely migrate automatically; either add a mapping/handler that makes
+  it explicit or accept it as release debt.
+- `warning` — more operator review is needed, usually because source metadata
+  or target Craft mapping evidence is incomplete.
+
+A missing surface is acceptable only when its category and reason match the
+project's release intent. For example, an orphan media row that no migrated
+Entry references is expected out-of-scope in v1.0; a page-owned relation with
+no mapping is not acceptable until it is migrated, visibly dropped, or marked
+unsupported with follow-up.
+
+### Asset behavior
+
+Assets are page-driven. Default load is JIT: assets are pulled as migrated
+entries reference them. `--preload-assets` still follows the same model and
+preloads **referenced assets only** from the in-scope transformed payloads. It
+does not import every `kuma_media` row and does not import orphan media by
+default.
 
 ## Doctor
 

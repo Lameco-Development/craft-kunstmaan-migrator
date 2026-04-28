@@ -17,20 +17,30 @@ Manual + mechanical: every step has a pass/fail script behind it; no automated `
    _Driver requirement:_ pcov OR xdebug installed locally (operator side); CI uses pcov via `shivammathur/setup-php`.
 
 4. [ ] **CI smoke job green** on a recent commit (HEAD-of-main or the v1.0 release commit).
-   _Pass criterion:_ both `unit` and `smoke` jobs pass on `.github/workflows/ci.yml`. Verify via `gh run list --workflow=ci.yml --limit 1` or the GitHub UI.
+   _Pass criterion:_ both `unit` and `smoke` jobs pass on `.github/workflows/ci.yml`. The smoke job proves scratch-Craft plugin install/load and expected missing-runtime-config behavior only; it is not a successful migration rehearsal. Verify via `gh run list --workflow=ci.yml --limit 1` or the GitHub UI.
 
-5. [ ] **CQM `kunstmaan-migrator/rehearsal/check`** exits 0 against `.planning/rehearsal/v1.0/cqm/`.
+5. [ ] **CQM real workflow rehearsal complete:** `doctor -> analyze -> map -> compile -> migrate --dry-run -> migrate --live -> verify`.
+   _Pre-requisite:_ CQM is run against `~/Sites/cqm-website/` as source and the configured `~/Sites/cqm-craft-website/` Craft target.
+   _Pass criterion:_ each command exits with the expected status; `compile` writes `storage/migration/PAGE-ROOTED-COVERAGE.md`; dry-run is reviewed before live; `verify` produces the release report.
+
+6. [ ] **CQM Page-rooted coverage report reviewed.**
+   _Pass criterion:_ `storage/migration/PAGE-ROOTED-COVERAGE.md` exists and every row categorized `dropped`, `out_of_scope`, `unsupported`, or `warning` has an explicit release disposition. `migrated` rows must cover the expected Kunstmaan Page-owned surfaces. Missing surfaces are acceptable only when the report category and reason match the v1.0 scope.
+
+7. [ ] **CQM `kunstmaan-migrator/rehearsal/check`** exits 0 against `.planning/rehearsal/v1.0/cqm/`.
    _Pre-requisite:_ operator has captured CQM rehearsal artifacts (REPORT.md, VERIFY.md, baseline.json, doctor-output.txt, mapping-summary.txt) under that directory per `.planning/rehearsal/v1.0/cqm/README.md`.
    _Pass criterion:_ `./craft kunstmaan-migrator/rehearsal/check .planning/rehearsal/v1.0/cqm` exits 0 with all three gates (count tolerance, zero unresolved CKEditor tokens, full asset RCA) reporting OK on stdout.
    _This is the binding v1.0 ship gate (Phase 5 / D-19, D-23)._
 
-6. [ ] **Simac + enreach rehearsal logs captured** under `.planning/rehearsal/v1.0/{simac,enreach}/` (advisory).
-   _Pass criterion:_ both directories contain the 5 required artifact files. Failures of `rehearsal-check` against simac/enreach are advisory and do NOT block the v1.0 tag — they are Phase 5.1 / NEXT-04 inputs (Phase 5 / D-19).
+8. [ ] **Structural source-shape audit captured for CQM, Simac, and Enreach.**
+   _Pass criterion:_ run `php tools/audit-source-shapes.php ~/Sites/cqm-website ~/Sites/simac-website ~/Sites/enreach-website` (or the subset present on the release host) and store only structural findings in the release notes/checklist. Output may include counts, class names, table names, relation types, relation metadata presence, and risk flags; it must not include source method bodies, property values, secrets, SQL row data, or content samples.
 
-7. [ ] **`CHANGELOG.md` rewritten for v1.0.**
+9. [ ] **Simac + Enreach structural sample notes captured** under `.planning/rehearsal/v1.0/{simac,enreach}/` (advisory).
+   _Pass criterion:_ both directories document source-shape audit observations. Simac/Enreach Craft targets are not required for v1.0 unless separately configured by the operator; failures to run a Craft migration there do NOT block the v1.0 tag.
+
+10. [ ] **`CHANGELOG.md` rewritten for v1.0.**
    _Pass criterion:_ `## 1.0.0 — <date>` heading present at the top of the unreleased / latest entry; the `<release-date>` placeholder substituted with the actual tag date; Breaking Changes / Added / Changed / Removed / Security sections describe v2-vs-v1.x scope.
 
-8. [ ] **Tag pushed; `STATE.md` updated; milestone closed via `/gsd-complete-milestone`.**
+11. [ ] **Tag pushed; `STATE.md` updated; milestone closed via `/gsd-complete-milestone`.**
    _Pass criterion:_ `git tag v1.0.0` pushed to origin; `.planning/STATE.md` reflects "v1.0 milestone closed"; `/gsd-complete-milestone` ran.
 
 ## Composer.json `version` field — INTENTIONALLY NOT REQUIRED

@@ -8,7 +8,7 @@ This is a clean rewrite of the existing `lameco/craft-kunstmaan-migrator` (locat
 
 ## Core Value
 
-**An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped.**
+**An operator can take a Kunstmaan SQL dump plus its source checkout and a configured Craft site, walk through an AI-assisted mapping review, explicitly compile reviewed mapping into runtime blocks, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated, dropped, unsupported, or out of scope.**
 
 If everything else fails, that one workflow must work.
 
@@ -86,18 +86,40 @@ The migration is **page-driven**. Entries are the unit of work; assets, taxonomi
 
 The post-run "sync remaining media" sweep is roadmapped as `NEXT-05` for cases where stakeholders want every legacy asset, referenced or not, to land in Craft.
 
-### Operator workflow (target shape)
+### Operator workflow (canonical v1.0 shape)
+
+Canonical order: `doctor -> analyze -> map -> compile -> migrate --dry-run -> migrate --live -> verify`.
 
 ```bash
 ./craft kunstmaan-migrator/doctor
 ./craft kunstmaan-migrator/analyze            # schema dump + AI proposals into mapping.yaml
 ./craft kunstmaan-migrator/map                # interactive rubber-stamp loop (a/d/r/s/q)
-./craft kunstmaan-migrator/migrate            # dry-run by default
+./craft kunstmaan-migrator/compile            # reviewed mapping -> runtime blocks + PAGE-ROOTED-COVERAGE
+./craft kunstmaan-migrator/migrate --dry-run
 ./craft kunstmaan-migrator/migrate --live
 ./craft kunstmaan-migrator/verify             # parity gate vs captured baseline
 ```
 
-Each command accepts the filter flags (`--entities=...`, `--since=...`, `--locales=...`, `--max-per-entity=...`).
+Each workflow command accepts the v1 filter flags (`--entities=...`,
+`--since=...`, `--locales=...`).
+
+The Kunstmaan **Page** is the source root and the Craft **Entry** is the
+result. Page-owned detail fields, page parts, implicit content, relations,
+assets, taxonomy/data-provider references, SEO/redirect sidecars, and CKEditor
+tokens are accounted for from the accepted Page mappings.
+
+`compile` is not optional. It preserves operator-reviewed `mapping.yaml`
+decisions, emits the runtime `nodeClasses`/`sections`/`sites` blocks used by
+`migrate`, and writes `storage/migration/PAGE-ROOTED-COVERAGE.md`. Operators
+must review that report before `migrate --live`; acceptable rows are
+`migrated`, deliberately `dropped`, or clearly `out_of_scope`, while
+`unsupported` and `warning` rows require explicit release acceptance or further
+mapping work.
+
+The genericity contract is partial automation, not magic. The plugin should
+work across Lameco Kunstmaan source shapes by surfacing source structure and
+operator decisions. Project-specific mapping is expected; silent omissions are
+not.
 
 ## Constraints
 
