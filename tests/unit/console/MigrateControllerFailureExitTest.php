@@ -115,4 +115,28 @@ final class MigrateControllerFailureExitTest extends TestCase
         self::assertStringContainsString('formContentBlock', implode("\n", $result['messages']));
         self::assertStringContainsString('Load-fatal target validation', implode("\n", $result['messages']));
     }
+
+    public function testFallbackReportSectionRendersOperatorVisibleRowsWithoutFailures(): void
+    {
+        $report = new MigrationReport();
+        $report->incr('fallback.matrix_native_title');
+        $report->incr('fallback.sparse_locale_primary');
+        $report->warn(
+            'Matrix native-title fallback: source=App\\Entity\\GenericPage:42 site=default field=contentBuilder blockType=genericTextBlock position=1 title="Migrated genericTextBlock block 1"',
+        );
+        $report->warn(
+            'Sparse-locale primary-save fallback: source=App\\Entity\\GenericPage:43 primarySite=default fallbackSite=en borrowed=payload',
+        );
+
+        $rendered = implode("\n", MigrateController::renderFallbacksSection($report));
+
+        self::assertStringContainsString('## Fallbacks', $rendered);
+        self::assertStringContainsString('| matrix_native_title | 1 |', $rendered);
+        self::assertStringContainsString('| sparse_locale_primary | 1 |', $rendered);
+        self::assertStringContainsString('source=App\\Entity\\GenericPage:42', $rendered);
+        self::assertStringContainsString('site=default', $rendered);
+        self::assertStringContainsString('fallbackSite=en', $rendered);
+        self::assertFalse($report->hasFailures());
+        self::assertSame(0, $report->failureCount());
+    }
 }

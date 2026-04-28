@@ -2040,6 +2040,13 @@ class MigrateController extends Controller
             $lines[] = $sl;
         }
 
+        // 3b. Validation-required fallbacks (Phase 10): successful Matrix
+        // native-title and sparse-locale primary-save fallbacks must be visible
+        // to operators without inflating entry/stage failure counts.
+        foreach (self::renderFallbacksSection($report) as $fl) {
+            $lines[] = $fl;
+        }
+
         // 4. Warnings (existing).
         if ($report->warnings !== []) {
             $lines[] = "## Warnings";
@@ -2157,6 +2164,54 @@ class MigrateController extends Controller
             }
         }
         $out[] = '';
+        return $out;
+    }
+
+    public static function renderFallbacksSection(MigrationReport $report): array
+    {
+        $fallbackCounts = [];
+        foreach ($report->counts as $bucket => $count) {
+            if (str_starts_with((string) $bucket, 'fallback.')) {
+                $fallbackCounts[(string) $bucket] = (int) $count;
+            }
+        }
+
+        $fallbackWarnings = [];
+        foreach ($report->warnings as $warning) {
+            if (str_contains($warning, 'fallback:')
+                || str_contains($warning, ' fallback')
+                || str_contains($warning, 'Fallback')
+            ) {
+                $fallbackWarnings[] = $warning;
+            }
+        }
+
+        if ($fallbackCounts === [] && $fallbackWarnings === []) {
+            return [];
+        }
+
+        $out = [];
+        $out[] = '## Fallbacks';
+        $out[] = '';
+        $out[] = '| Category | Count |';
+        $out[] = '|----------|------:|';
+        foreach ($fallbackCounts as $bucket => $count) {
+            $out[] = sprintf('| %s | %d |', substr($bucket, strlen('fallback.')), $count);
+        }
+        if ($fallbackCounts === []) {
+            $out[] = '| (warning-only) | 0 |';
+        }
+        $out[] = '';
+
+        if ($fallbackWarnings !== []) {
+            $out[] = '### Fallback details';
+            $out[] = '';
+            foreach ($fallbackWarnings as $warning) {
+                $out[] = '- ' . $warning;
+            }
+            $out[] = '';
+        }
+
         return $out;
     }
 
