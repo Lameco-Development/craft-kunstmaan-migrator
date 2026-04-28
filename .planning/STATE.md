@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 10 in progress
-stopped_at: "Phase 10 Plan 10-03 completed; next plan is `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-04-PLAN.md`."
-last_updated: "2026-04-28T16:17:30.000Z"
+status: Phase 10 complete
+stopped_at: "Phase 10 Plan 10-04 completed; restored CQM proof recorded in `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-04-SUMMARY.md` and `10-SUMMARY.md`."
+last_updated: "2026-04-28T17:02:54.000Z"
 progress:
   total_phases: 10
   completed_phases: 9
   total_plans: 89
-  completed_plans: 88
-  percent: 98
+  completed_plans: 89
+  percent: 100
 ---
 
 # State
@@ -21,7 +21,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped. The plugin should stay as generic as practical across Lameco Kunstmaan websites (for example CQM, Simac, and Enreach), with project-specific differences surfaced as mapping/operator decisions rather than hardcoded plugin assumptions wherever possible.
 
-**Current focus:** Phase 10 is in progress. Plans 10-01, 10-02, and 10-03 are complete (`.planning/phases/10-generic-migration-rehearsal-gap-closure/10-01-SUMMARY.md`, `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-02-SUMMARY.md`, `.planning/phases/10-generic-migration-rehearsal-gap-closure/10-03-SUMMARY.md`): compile/live preflight now blocks load-fatal section + entry-type target mismatches, PageBuilder Matrix ownership is validated before `pageBuilderHandle` propagation, Matrix native-title fallback and sparse-locale primary-save fallback are generic and visible, page-rooted taxonomy relation misses now delegate to `TaxonomyMigrationService::resolveReferenced(...)`, default taxonomy mode is referenced-only, and full unreferenced taxonomy import requires explicit CLI/settings/sub-action opt-in. Next plan: `10-04-PLAN.md` for verify count-domain semantics, restored-backup CQM runbook, and closing proof. Locked execution gates remain: zero entry failures and zero stage failures for the clean rerun, complete Page-rooted accounting, honest verify domains, and restored-backup full CQM rehearsal as the closing gate.
+**Current focus:** Phase 10 is complete. Plans 10-01 through 10-04 are complete (`.planning/phases/10-generic-migration-rehearsal-gap-closure/10-01-SUMMARY.md`, `10-02-SUMMARY.md`, `10-03-SUMMARY.md`, `10-04-SUMMARY.md`): compile/live preflight blocks load-fatal target mismatches, PageBuilder Matrix ownership is validated, Matrix native-title and sparse-locale primary-save fallbacks are generic and visible, page-rooted taxonomy relation misses delegate to `TaxonomyMigrationService::resolveReferenced(...)`, default taxonomy mode is referenced-only, verify reports label Craft drift / migration-created state / source parity domains, and the restored CQM proof reached zero entry failures and zero stage failures. Release-owner review is still recommended for visible Page-rooted `warning` / `unsupported` coverage classifications before tagging.
 
 ## Milestone
 
@@ -40,7 +40,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 10: Generic Migration Rehearsal Gap Closure — in progress.** Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`. Context: `10-CONTEXT.md`; research: `10-RESEARCH.md`; patterns: `10-PATTERNS.md`; plan index: `10-PLAN.md`; completed executable plans: `10-01-PLAN.md`, `10-02-PLAN.md`, `10-03-PLAN.md`; remaining executable plan: `10-04-PLAN.md`. Driver: the Phase 9 CQM staging rehearsal migrated most content but failed 3 entries and surfaced missing taxonomy-backed relations plus verify-count semantic drift. Next step: execute `10-04-PLAN.md`.
+**Phase 10: Generic Migration Rehearsal Gap Closure — complete.** Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`. Context: `10-CONTEXT.md`; research: `10-RESEARCH.md`; patterns: `10-PATTERNS.md`; plan index: `10-PLAN.md`; completed executable plans: `10-01-PLAN.md`, `10-02-PLAN.md`, `10-03-PLAN.md`, `10-04-PLAN.md`. Driver: the Phase 9 CQM staging rehearsal migrated most content but failed 3 entries and surfaced missing taxonomy-backed relations plus verify-count semantic drift. Outcome: restored-backup CQM full workflow recorded zero failures, with verify count domains labeled honestly.
 
 ## Historical Phase Notes
 
