@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Phase 10 plan 10-06 complete; external CQM regeneration/release-owner verification needed
-stopped_at: "Completed 10-06: unresolved CKEditor finalize tokens now produce structural diagnostics and block live release cleanliness; Page-rooted no-input placeholders were removed while evidence-backed FK/asset/relation gaps remain actionable warnings. Next step: regenerate CQM compile/migrate artifacts and release-owner review of real warning/unsupported rows."
+status: Phase 11 planned; dual Kunstmaan/Craft walker architecture ready to execute
+stopped_at: "Phase 11 planning complete in .planning/phases/11-relation-target-introspection-promotion/. Seven verified plans cover graph contracts, KunstmaanPageWalker, CraftEntryWalker, graph-first analyze/LLM integration, compile/audit graph validation, promoted/shared target extract/transform/load support, and graph-backed reporting plus scoped NewsPage/HomePage rehearsal. Plan checker passed with 0 blockers and 0 warnings. Next step: /gsd-execute-phase 11."
 last_updated: "2026-04-28T18:15:27.000Z"
 progress:
-  total_phases: 10
+  total_phases: 11
   completed_phases: 9
-  total_plans: 89
+  total_plans: 96
   completed_plans: 89
-  percent: 100
+  percent: 93
 ---
 
 # State
@@ -21,13 +21,13 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped. The plugin should stay as generic as practical across Lameco Kunstmaan websites (for example CQM, Simac, and Enreach), with project-specific differences surfaced as mapping/operator decisions rather than hardcoded plugin assumptions wherever possible.
 
-**Current focus:** Phase 10 execution, gap closure, review fixes, and Plan 10-06 release-blocker closure are complete at the implementation level. Plans 10-01 through 10-06 are complete (`.planning/phases/10-generic-migration-rehearsal-gap-closure/10-01-SUMMARY.md`, `10-02-SUMMARY.md`, `10-03-SUMMARY.md`, `10-04-SUMMARY.md`, `10-05-SUMMARY.md`, `10-06-SUMMARY.md`): compile/live preflight blocks load-fatal target mismatches, PageBuilder Matrix ownership is validated, Matrix native-title and sparse-locale primary-save fallbacks are generic and visible, page-rooted taxonomy relation misses delegate to `TaxonomyMigrationService::resolveReferenced(...)`, default taxonomy mode is referenced-only, verify reports label Craft drift / migration-created state / source parity domains, and the restored CQM proof reached zero entry failures and zero stage failures. Plan 10-06 adds structural finalize unresolved diagnostics with live blocking semantics and makes Page-rooted coverage warning/unsupported rows evidence-based rather than synthetic scanner/relation no-input placeholders; evidence-backed FK/asset/relation gaps remain actionable warnings instead of being hidden as migrated. Current next step is external CQM compile/migrate artifact regeneration and release-owner review of any real Page-rooted `warning` / `unsupported` classifications before tagging.
+**Current focus:** Phase 11 has been planned and is ready to execute. Phase 10 implementation and review fixes are complete, and the immediate extraction-shape correction after UAT made extracted NewsPage artifacts source-faithful by keeping real pageparts only and making relation-expanded `_rel:*` helper data opt-in. Analyze now persists a consistent schema artifact pair (`kunstmaan-schema.json` and `craft-schema.json`), but Phase 11 will turn those into canonical graph outputs: a Kunstmaan Page-rooted walker from `Entity\Pages` through direct properties, assets, relations, pageparts, and pagepart relations; and a Craft Entry-rooted walker from candidate entry types through fields, Matrix blocks, nested fields, Entries/Assets targets, and constraints. Mapping should be LLM-first over the two normalized graph registries, with deterministic code focused on narrowing, validation, compile safety, load ordering, and state resolution. Proof scope is deliberately narrow: NewsPage for relation/shared-target coverage and HomePage for pagepart/Matrix coverage. Content-only Kunstmaan pages that need policy decisions such as "wrap WYSIWYG content into a pagebuilder block" versus "map to a flat CKEditor field" should be represented in the graph but handled by explicit configurable mapping policy, not hardcoded as generic behavior.
 
 ## Milestone
 
 **Active:** v1.0 — Initial release of the revisited plugin.
 
-Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal hardening slices, Phase 9, and Phase 10:
+Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal hardening slices, Phase 9, Phase 10, and Phase 11:
 
 1. Foundation & Connectivity
 2. Schema, Mapping & Filters
@@ -37,10 +37,11 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 8. Taxonomies & AI Proposer Coverage
 9. Migration Workflow Hardening & Page-rooted Introspection Audit
 10. Generic Migration Rehearsal Gap Closure
+11. Dual Schema Walkers & LLM-first Mapping
 
 ## Current Phase
 
-**Phase 10: Generic Migration Rehearsal Gap Closure — implementation complete, external CQM regeneration/release-owner verification needed.** Phase directory: `.planning/phases/10-generic-migration-rehearsal-gap-closure/`. Context: `10-CONTEXT.md`; research: `10-RESEARCH.md`; patterns: `10-PATTERNS.md`; plan index: `10-PLAN.md`; completed executable plans: `10-01-PLAN.md`, `10-02-PLAN.md`, `10-03-PLAN.md`, `10-04-PLAN.md`, `10-05-PLAN.md`, `10-06-PLAN.md`; summaries through `10-06-SUMMARY.md`; review artifacts: `10-05-REVIEW.md`, `10-05-REVIEW-FIX.md`, `10-05-REVIEW-RECHECK.md`; verification report: `10-VERIFICATION.md`. Driver: the Phase 9 CQM staging rehearsal migrated most content but failed 3 entries and surfaced missing taxonomy-backed relations plus verify-count semantic drift; release-owner follow-up also rejected unresolved finalize tokens and synthetic Page-rooted warning/unsupported rows as ship-blocking. Outcome: restored-backup CQM full workflow recorded zero failures before 10-06, verify count domains are labeled honestly, transform sentinel/live blocking gaps are closed, unresolved finalize tokens now produce bounded structural diagnostics and block live release cleanliness, and Page-rooted no-input placeholders no longer masquerade as page-owned warning/unsupported rows. The remaining item is regeneration of CQM artifacts and release-owner review/remediation of real evidence-backed warning/unsupported classifications.
+**Phase 11: Dual Schema Walkers & LLM-first Mapping — planned, ready to execute.** Phase directory: `.planning/phases/11-relation-target-introspection-promotion/`. Context: `.planning/phases/11-relation-target-introspection-promotion/11-CONTEXT.md`. Plans: `11-01-PLAN.md` through `11-07-PLAN.md`, verified by `gsd-plan-checker` with 0 blockers and 0 warnings. Driver: NewsPage row 97 confirmed the desired source-faithful shape (`employee_id`, `image_id`, `preview_image_id`, no fake pageparts) and then exposed the deeper architecture need: the migrator should compare two explicit graph walks, not grow one-off heuristics. Goal: a Kunstmaan Page-rooted walker plus a Craft Entry-rooted walker produce the primary mapping context; the LLM maps between those graphs; deterministic code validates, compiles, orders, and loads the accepted mapping. Shared targets such as `App\Entity\Employee` remain a key acceptance case. Next step: `/gsd-execute-phase 11`.
 
 ## Historical Phase Notes
 
@@ -68,6 +69,8 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 ## Roadmap Evolution
 
+- 2026-04-28: Phase 11 (Dual Schema Walkers & LLM-first Mapping) appended to the v1.0 milestone on branch `gsd/phase-9-migration-hardening-page-rooted-introspection`. Driver: NewsPage/Employee UAT clarified the original plugin goal as `dump full Kunstmaan page schema + dump full Craft entry schema + LLM cleverness = mapping`, with Page relations staying references rather than copied inline data. The deeper correction is symmetric: Kunstmaan needs a Page-rooted walker and Craft needs an Entry-rooted walker, both persisted as graph artifacts, so the LLM can propose generic mappings from structure instead of forcing the plugin to accrete fragile heuristics. Shared relation targets such as `App\Entity\Employee` remain the first proof case: `NewsPage.employee_id` and `EmployeePage.employee_id` should both resolve to the same Craft-side element through state rows when the accepted graph mapping chooses promotion.
+- 2026-04-28: Phase 11 proof scope narrowed to NewsPage + HomePage before broad rollout. NewsPage is the relation-heavy proof for direct columns, image FKs, shared Employee targets, and taxonomy/classifier-style relations. HomePage is the pagepart/Matrix-heavy proof for real pageparts, nested Matrix block mapping, assets, pagepart relations, ordering, and target Matrix ownership. Project-specific content-only page fallbacks (e.g. WYSIWYG `content` with no pageparts mapped to either a pagebuilder block or `ckeditorSimple`) are explicitly configurable policy and should not become hidden generic heuristics.
 - 2026-04-28: Phase 10 (Generic Migration Rehearsal Gap Closure) appended to the v1.0 milestone on branch `gsd/phase-9-migration-hardening-page-rooted-introspection`. Driver: first live CQM staging rehearsal mostly succeeded but exposed generic release blockers that should not be solved as CQM-only mapping hacks: required Matrix blocks need native title fallback, sparse-locale nodes need safe primary-site save behavior, compile must prevent section/entry-type incompatibilities such as `contentPages/formContentBlock`, taxonomy state must exist before relation resolution or relations must be deferred, pageBuilderHandle propagation must respect entry-type field ownership, and verify count semantics must distinguish source parity from pre-migration Craft baselines. Existing partial CQM DB remains preserved for inspection; future clean rerun should restore the pre-live backup first.
 - 2026-04-28: Phase 10 planned as four dependent execution plans after research, pattern mapping, and GSD plan-checker revision loop. Plan set: `10-01` compile/preflight safety + PageBuilder ownership; `10-02` load fallback hardening; `10-03` page-rooted taxonomy resolver; `10-04` verify semantics + restored-backup rehearsal. Checker PASS after strict zero entry/stage failure wording, must-have tracing, task-level verify/done criteria, resolved research questions, and hard Page-rooted closure gate were added.
 - 2026-04-28: Phase 10 Plan 10-01 completed. Shipped severity-classified Craft target validation, compile CONFIG exit for load-fatal section/entry-type states, live migrate/load preflight against stale fatal compiled mappings, PageBuilder Matrix ownership validation before propagation, flat fallback preservation/visibility for invalid ownership, and synthetic transform characterization for missing Matrix title, sparse locale, invalid target, and taxonomy-before-state shapes. Commits: fc7ceaa, be3cd0b, 80dd9e8, c91cce2. Verification: targeted PHPUnit suites all exited 0; no new CQM-specific fixture names remained in the diff.

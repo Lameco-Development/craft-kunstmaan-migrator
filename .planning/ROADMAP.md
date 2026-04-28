@@ -1,6 +1,6 @@
 # Roadmap
 
-10 phases. Coarse granularity. Built greenfield against the v1.x plugin as
+11 phases. Coarse granularity. Built greenfield against the v1.x plugin as
 brownfield reference. Every v1 requirement maps to exactly one phase. v2
 requirements (`NEXT-*`) are deferred to a follow-up milestone.
 
@@ -24,6 +24,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 | 08.7 | Page-rooted leaf-entity migration (embed vs promote) — first slice | (D-30) `AnalyzeController::buildPagePartFieldsContext` returns a third `pagePartRelations` map per FQCN containing OneToMany / ManyToMany Doctrine relations with target FQCN, child table name, back-ref FK column, and child columns (PK + back-ref filtered out so the LLM picks payload-only). (D-31) `LlmClassifier::proposePagePartFields` accepts the relations map; the prompt renders `relations=[<prop>:<type>(target/childTable/backRef/childCols)]` per row; the system-prompt teaches the LLM to emit `handler: relation` with `joinTable`/`joinLocalColumn`/`joinForeignColumn`/`stateSource` handlerOptions when the target field is `Entries(from: ...)` or `Assets(kinds: ...)` and the page-part has a relation whose child table contains an `_id` column matching the target shape. CRITICAL guardrail: `joinForeignColumn` must end with `_id` — `sanitiseHandlerOptions` drops the whole option set otherwise. `MappingCompiler::collapsePagePartFieldsList` preserves `handlerOptions` through the residual list-of-dicts → final assoc map collapse. Validated end-to-end against CQM HomePage: ClientsPagePart auto-proposes the exact joinTable config the operator hand-curated in 8.6, yielding 15 client logos resolved via the existing RelationHandler joinTable path. (D-29 deferred): true ManyToMany join-table auto-discovery without `#[JoinTable]` annotations — the OneToMany path covers most CQM-shaped projects (back-ref FK on the child); ManyToMany without explicit annotations still requires operator hand-curation. KNOWN GAP: full `mode: embed | promote` per-relation operator intent + topological leaf-migration ordering still future work. The current slice is "operator chooses by adding the relation handler line; LLM auto-proposes when it can"; full embed/promote with leaf entry-type creation will land when operator workflows demand it. | (codified inline) | 1 | no |
 | 9 | Migration Workflow Hardening & Page-rooted Introspection Audit | Close the release-blocking audit gaps before v1.0: make the canonical workflow impossible to run as a successful no-op, preserve compiled mapping blocks across analyze reruns, make scoped runs trustworthy, harden CKEditor unresolved markers and migration failure exits, and critically audit Kunstmaan Page-rooted introspection end-to-end. The audit treats a Kunstmaan Page as the entry point and a Craft Entry as the result: every page-owned relation, asset, page-part, taxonomy/data-provider/leaf entity, SEO/redirect sidecar, and CKEditor reference must be either migrated, intentionally dropped with a visible reason, or explicitly marked out of scope. | PH9-01..20 | 10 criteria below | no |
 | 10 | Generic Migration Rehearsal Gap Closure | Fix the generic release-rehearsal gaps surfaced by the first full CQM staging run: required Matrix block titles, sparse-locale primary saves, invalid section/entry-type routing, taxonomy-before-transform relation resolution, pageBuilder ownership validation, and verify count semantics. The fixes must remain generic across Lameco Kunstmaan sites and must be validated by a clean rerun path. | PH10-01..08 (to be refined in planning) | 8 criteria below | no |
+| 11 | Dual Schema Walkers & LLM-first Mapping | Replace ad-hoc heuristic expansion with explicit Kunstmaan and Craft graph walkers. The Kunstmaan walker starts at `Entity\Pages`, walks direct properties, assets, relations, pageparts, and pagepart relations; the Craft walker starts at candidate entry types and walks fields, Matrix blocks, nested fields, Entries/Assets targets, and validation constraints. Mapping then compares two persisted graphs (`kunstmaan-schema.json` / `craft-schema.json`) so the LLM can make generic mapping decisions before deterministic compile/load enforcement. | PH11-01..10 (to be refined in planning) | 10 criteria below | no |
 
 ### Phase 1: Foundation & Connectivity
 
@@ -412,6 +413,55 @@ Plans:
 
 ---
 
+### Phase 11: Dual Schema Walkers & LLM-first Mapping
+
+**Goal:** Build explicit, symmetric graph walkers for both sides of the migration so mapping is driven by structured introspection rather than an ever-growing pile of heuristics. The Kunstmaan walker starts at `Entity\Pages` and walks direct properties, assets, relations, pageparts, and pagepart relations. The Craft walker starts at candidate entry types and walks field layouts, Matrix block entry types, nested fields, Entries/Assets targets, allowed sources/kinds, and validation-relevant constraints. The LLM maps between those two graphs; deterministic code validates, compiles, orders, and loads the accepted mapping.
+
+**Why this phase exists:** The NewsPage rehearsal exposed a mismatch with the original goal: `dump full Kunstmaan page schema + dump full Craft entry schema + LLM cleverness = mapping`. Phase 10 corrected the immediate extracted-shape drift and analyze now persists a consistent artifact pair (`kunstmaan-schema.json` and `craft-schema.json`), but those artifacts are still assembled from separate scanners rather than produced by first-class page/entry walkers. Relation targets such as `App\Entity\Employee` are the clearest symptom: `NewsPage.employee_id` and `EmployeePage.employee_id` should map through one shared source/target graph decision, not through page-local copying or one-off heuristics.
+
+**Requirements:** PH11-01..10 to be refined during planning. Initial scope:
+1. PH11-01: Introduce a `KunstmaanPageWalker` that starts at Kunstmaan Page FQCNs and emits a canonical graph of page table, direct columns, samples, assets, Doctrine relations, pagepart contexts/classes, actual/reachable pagepart fields, and pagepart relations.
+2. PH11-02: Introduce a `CraftEntryWalker` that starts at Craft candidate entry types/sections and emits a canonical graph of native fields, custom fields, Matrix blocks, nested block fields, Entries/Assets field constraints, allowed sources/kinds, and validation-relevant requirements.
+3. PH11-03: Persist walker outputs as the canonical `kunstmaan-schema.json` and `craft-schema.json` contracts consumed by analyze/map/compile, replacing ambiguous in-memory-only target schema surfaces.
+4. PH11-04: Reduce heuristic mapping to deterministic pre/post-processing only: candidate narrowing, safety validation, and obvious exact matches. The LLM should receive the graph pair and propose mappings for ambiguous cross-system decisions.
+5. PH11-05: Relation graph classifies Page-owned relations by intent candidates (`reference`, `promote`, `embed`, `drop/out_of_scope`) using both walker graphs, without CQM-specific class/field hardcoding.
+6. PH11-06: Analyze surfaces shared target entities such as `App\Entity\Employee` with columns, relations, samples, inbound owners, and Craft-compatible target candidates for LLM/operator decisions.
+7. PH11-07: Extract writes factual JSON for promoted relation targets under their own source identity, not embedded into every owning Page; raw FK columns remain in owner extracts.
+8. PH11-08: Compile emits executable mappings for promoted relation targets plus owner relation fields with complete `stateSource`/target contracts, rejecting graph-incompatible proposals.
+9. PH11-09: Migrate orders load so promoted/shared targets are created before owners that reference them; re-runs remain idempotent through state rows.
+10. PH11-10: Coverage/reporting distinguishes true unresolved relation targets from intentionally dropped/out-of-scope relations and blocks live release on unclassified relation evidence.
+
+**Proof scope:** Phase 11 should prove the architecture against two concrete CQM page types before broadening:
+- `NewsPage` — relation-heavy proof: direct content columns, image FKs, `employee_id -> App\Entity\Employee`, taxonomy/classifier-style relations, and shared target resolution.
+- `HomePage` — pagepart/Matrix-heavy proof: real pageparts, nested Matrix block mapping, assets, pagepart relations, ordering, and target Matrix ownership.
+
+**Configurable exceptions:** Content-only Kunstmaan Pages with no real pageparts but a WYSIWYG `content`/`body`/`intro` property are a policy decision, not core graph logic. The graph should expose the source content field and the Craft target possibilities; mapping policy can then choose "wrap into pagebuilder block", "map to a flat CKEditor field such as `ckeditorSimple`", "drop/out_of_scope", or use a project-specific override. Avoid hardcoding this as a generic rule beyond safe candidate suggestions.
+
+**Success criteria (vision — refine in discuss/plan):**
+1. `kunstmaan-schema.json` is produced by a page-rooted walker and shows, for `NewsPage`, direct columns plus `employee_id -> App\Entity\Employee`, image FKs, pagepart context evidence, and reachable relation-target columns/samples.
+2. `craft-schema.json` is produced by an entry-rooted walker and shows, for `newsPage`, `caseTeamMembers`, `image`, `pageBuilderCondensed`, Matrix block fields, relation target sections, asset kinds, and field constraints needed for safe mapping.
+3. The LLM prompt consumes the two walker graphs as its primary mapping input; heuristic output is clearly secondary and never the only source of truth for ambiguous mappings.
+4. Extracted NewsPage JSON contains factual owner data (`employee_id`, asset FK ids, content columns, real pageparts only) and does not contain copied Employee columns unless an explicit debug/expansion option is enabled.
+5. A promoted/shared `App\Entity\Employee` target gets its own extracted/transformed/load artifact and state rows when the accepted mapping chooses promotion.
+6. `NewsPage` and `EmployeePage` owner mappings can both point to the promoted Employee target and resolve to the same Craft-side element.
+7. Relation targets that are better modeled as taxonomy entries can use the existing taxonomy resolver path; arbitrary entry targets use a clear promoted-entry path, not unsafe lazy create inside `RelationHandler`.
+8. Live migration refuses to proceed when a non-empty relation FK has no mapping/drop/out_of_scope decision.
+9. The implementation remains generic across CQM, Simac, Enreach, and future Lameco Kunstmaan sites.
+10. PHPUnit plus scoped CQM NewsPage and HomePage rehearsals prove both relation-heavy and page-builder-heavy flows, with any content-only page fallback handled through explicit configurable policy rather than hidden generic assumptions.
+
+**Plans:** 7 plans
+
+Plans:
+- [ ] `11-01-PLAN.md` — graph contracts/versioning and shared fixtures.
+- [ ] `11-02-PLAN.md` — `KunstmaanPageWalker` source graph.
+- [ ] `11-03-PLAN.md` — `CraftEntryWalker` target graph.
+- [ ] `11-04-PLAN.md` — analyze artifact and graph-first LLM prompt integration.
+- [ ] `11-05-PLAN.md` — compile/audit graph compatibility and relation intent validation.
+- [ ] `11-06-PLAN.md` — promoted/shared relation target extract/transform/load support.
+- [ ] `11-07-PLAN.md` — graph-backed relation reporting and scoped NewsPage/HomePage rehearsal.
+
+---
+
 ## Dependencies
 
 - Phase 2 depends on Phase 1 (needs `doctor`, state table, legacy DB connection).
@@ -421,6 +471,7 @@ Plans:
 - Phase 8 depends on Phase 3 (Load stage + Asset/SEO/Redirect migration shape) + Phase 02.1 (KnowledgeBase + DoctrineEntityParser → fed to LLM for new proposers).
 - Phase 9 depends on Phase 8 and the post-audit findings; it is the final hardening gate before v1.0 release rehearsal/tagging.
 - Phase 10 depends on Phase 9 and the first live CQM staging rehearsal findings; it is the closure gate before a clean release rehearsal can pass.
+- Phase 11 depends on Phase 10 and the NewsPage/Employee relation-shape finding; it closes the remaining generic introspection gap by replacing heuristic-led mapping with dual Kunstmaan/Craft walker graphs and LLM-first mapping before v1.0 can be treated as page-rooted complete.
 
 ## Out-of-milestone (deferred)
 
