@@ -93,13 +93,11 @@ class Settings extends Model
     public bool $proposeLayout = true;
     public bool $proposeProviders = true;
 
-    // Phase 8.5 / D-24 — Doctrine ManyToOne FK relation join gate. Defaults to
-    // true so cross-relation columns (`_rel:<prop>.<col>`) are auto-embedded by
-    // ExtractService at extract time. Flip to false to skip the join when the
-    // related table is large or the join queries dominate extract latency.
-    // CLI `--no-rel-join` overrides per-run; mirrors the Phase 4.1 / D-24
-    // `--no-seo` / `Settings::seoEnabled` pattern.
-    public bool $joinFkRelations = true;
+    // Phase 8.5 / D-24 — optional Doctrine ManyToOne FK relation expansion.
+    // Defaults false so extracted JSON stays source-faithful: raw FK columns
+    // such as `employee_id` are present, while synthetic `_rel:<prop>.<col>`
+    // helper columns are opt-in for operator/debug workflows.
+    public bool $joinFkRelations = false;
 
     // Phase 10 — full taxonomy vocabulary import is opt-in. Default false keeps
     // canonical migration page-driven/referenced-only; CLI

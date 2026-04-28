@@ -25,7 +25,7 @@ use ReflectionProperty;
  *   2. Flag is registered in options('extract') + options('index').
  *   3. Private helper `applyNoRelJoinOverride` flips
  *      `extractService->joinFkRelations` to false when the flag is set.
- *   4. Settings::joinFkRelations exists, defaults true, is in rules().
+ *   4. Settings::joinFkRelations exists, defaults false, is in rules().
  */
 final class MigrateControllerNoRelJoinFlagTest extends TestCase
 {
@@ -123,14 +123,14 @@ final class MigrateControllerNoRelJoinFlagTest extends TestCase
         );
     }
 
-    public function testSettingsJoinFkRelationsDefaultsTrueAndIsInRules(): void
+    public function testSettingsJoinFkRelationsDefaultsFalseAndIsInRules(): void
     {
         $rc = new ReflectionClass(Settings::class);
         $defaults = $rc->getDefaultProperties();
         self::assertArrayHasKey('joinFkRelations', $defaults);
-        self::assertTrue(
+        self::assertFalse(
             $defaults['joinFkRelations'],
-            'Settings::joinFkRelations defaults true so the FK join is on by default',
+            'Settings::joinFkRelations defaults false so extracted JSON remains source-faithful',
         );
 
         // Settings::init() calls App::env (Craft helper) which requires the

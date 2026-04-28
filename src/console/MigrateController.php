@@ -87,12 +87,11 @@ class MigrateController extends Controller
     public bool $noRetour = false;
 
     /**
-     * Phase 8.5 / D-24 — `--no-rel-join` per-run override. Bypasses
-     * ExtractService's Doctrine ManyToOne FK join (the helper that embeds
-     * `_rel:<prop>.<col>` keys into detail rows + page-part rows). When
-     * the related tables are large or the join queries dominate extract
-     * latency, flip this on to fall back to "FK column only" payloads.
-     * Default false → join runs (when Settings::joinFkRelations also true).
+     * Phase 8.5 / D-24 — `--no-rel-join` per-run override. Bypasses optional
+     * ExtractService Doctrine ManyToOne FK expansion (the helper that embeds
+     * `_rel:<prop>.<col>` keys into detail rows + page-part rows). The setting
+     * now defaults off so extracted JSON stays source-faithful; this flag
+     * remains as a per-run safety override for installations that opt in.
      */
     public bool $noRelJoin = false;
 
@@ -1409,8 +1408,8 @@ class MigrateController extends Controller
     /**
      * Phase 8.5 / D-24 — apply `--no-rel-join` per-run override on the
      * extract service. The flag only DISABLES (mirrors `--no-seo`); it never
-     * enables. So when `Settings::joinFkRelations` is already false, this
-     * method is a no-op even with the flag set.
+     * enables. So when `Settings::joinFkRelations` is false (the source-
+     * faithful default), this method is a no-op even with the flag set.
      *
      * Plugin::init() seeds `extractService->joinFkRelations` from Settings;
      * we only need to override here when the operator opts out per-run.

@@ -54,13 +54,12 @@ class ExtractService extends Component
     public ?DoctrineEntityParser $entityParser = null;
 
     /**
-     * Phase 8.5 / D-24 — runtime gate for `joinManyToOneRelations()`. Default
-     * true. Flipped to false by Settings::joinFkRelations or the
-     * `--no-rel-join` CLI flag (see MigrateController). When false the
-     * helper short-circuits: no relation-expanded keys are merged into detail
-     * rows; raw FK columns like `employee_id` remain available for mapping.
+     * Phase 8.5 / D-24 — runtime gate for relation-expanded helper columns.
+     * Default false keeps extracted JSON source-faithful: raw FK columns like
+     * `employee_id` remain available for mapping, without synthetic `_rel:*`
+     * payloads unless operators explicitly enable the setting.
      */
-    public bool $joinFkRelations = true;
+    public bool $joinFkRelations = false;
 
     /** B11 — injected for T-04-05-03 mitigation; every serialized blob routes through here.
      *  v2 port: typed slot replaced with `?object` — the decoder dependency is deferred to Phase 4
