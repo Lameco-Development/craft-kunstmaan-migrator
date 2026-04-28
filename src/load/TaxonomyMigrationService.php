@@ -540,8 +540,12 @@ class TaxonomyMigrationService extends Component
             // NL exactly. propagateChanges=false on each per-site re-save
             // keeps the writes scoped to one site.
             $sites = (array) ($mapping['sites'] ?? []);
-            foreach ($sites as $siteHandle => $_siteCfg) {
-                $site = Craft::$app->sites->getSiteByHandle((string) $siteHandle);
+            foreach ($sites as $legacyLocale => $siteCfg) {
+                $siteHandle = $this->siteHandleFromMappingSite((string) $legacyLocale, $siteCfg);
+                if ($siteHandle === '') {
+                    continue;
+                }
+                $site = Craft::$app->sites->getSiteByHandle($siteHandle);
                 if ($site === null) {
                     continue;
                 }
@@ -561,10 +565,11 @@ class TaxonomyMigrationService extends Component
                 }
                 $report->incr('fallback.taxonomy_locale');
                 $report->warn(sprintf(
-                    'fallback: taxonomy locale values for %s id=%d site=%s use default-language values',
+                    'fallback: taxonomy locale values for %s id=%d site=%s locale=%s use default-language values',
                     $this->fqcnToSlug($fqcn),
                     $legacyId,
-                    (string) $siteHandle,
+                    $siteHandle,
+                    (string) $legacyLocale,
                 ));
                 // propagateChanges=false: only update this one site.
                 Craft::$app->elements->saveElement($localized, true, false);
@@ -645,6 +650,23 @@ class TaxonomyMigrationService extends Component
             // propagateChanges=false: only update this one site.
             Craft::$app->elements->saveElement($localized, true, false);
         }
+    }
+
+    private function siteHandleFromMappingSite(string $legacyLocale, mixed $siteCfg): string
+    {
+        if (is_array($siteCfg)) {
+            return (string) ($siteCfg['siteHandle'] ?? $legacyLocale);
+        }
+
+        if ($siteCfg === null) {
+            return '';
+        }
+
+        if (is_scalar($siteCfg) || $siteCfg instanceof \Stringable) {
+            return (string) $siteCfg;
+        }
+
+        return '';
     }
 
     /**
