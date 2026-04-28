@@ -131,7 +131,7 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
             (new \ReflectionClass(MigrateController::class))->getFileName(),
         );
 
-        self::assertStringContainsString('collectReferencedAssetIdsFromPayloadDirectory($transformedDir)', $source);
+        self::assertStringContainsString('collectReferencedAssetIdsFromPayloadDirectory($transformedDir, $filters)', $source);
         self::assertStringContainsString('ingestReferenced($opts, $filters, $referencedAssetIds)', $source);
     }
 }
