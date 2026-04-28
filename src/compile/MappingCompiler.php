@@ -659,6 +659,13 @@ final class MappingCompiler extends Component
         ksort($dataProvidersOut);
         $warnings = array_merge($warnings, $dataProviderWarnings);
 
+        // Phase 11 / D-16: promoted/shared relation targets need their own
+        // executable identity before owner entries reference them.
+        [$promotedTargetsOut, $promotedTargetsEmitted, $promotedWarnings] =
+            $this->compilePromotedTargets($proposals, (array) ($mapping['promotedTargets'] ?? []));
+        ksort($promotedTargetsOut);
+        $warnings = array_merge($warnings, $promotedWarnings);
+
         return [
             'proposals'      => array_values($proposals),
             'nodeClasses'    => $nodeClasses,
@@ -667,6 +674,7 @@ final class MappingCompiler extends Component
             'pageParts'      => $pagePartsOut,
             'taxonomies'     => $taxonomiesOut,
             'dataProviders'  => $dataProvidersOut,
+            'promotedTargets' => $promotedTargetsOut,
             '_compileReport' => [
                 'nodeClassesEmitted'        => count($nodeClasses),
                 'sectionsEmitted'           => count($sections),
@@ -684,6 +692,7 @@ final class MappingCompiler extends Component
                 'taxonomiesEmitted'         => $taxonomiesEmitted,
                 'layoutBlocksEmitted'       => $layoutBlocksEmitted,
                 'dataProvidersEmitted'      => $dataProvidersEmitted,
+                'promotedTargetsEmitted'    => $promotedTargetsEmitted,
                 'warnings'                  => $warnings,
             ],
         ];
@@ -1293,6 +1302,76 @@ final class MappingCompiler extends Component
             ];
             $emitted++;
         }
+        return [$out, $emitted, $warnings];
+    }
+
+    /**
+     * @param list<array<string, mixed>> $proposals
+     * @param array<string, mixed> $existing
+     * @return array{0: array<string, array<string, mixed>>, 1: int, 2: list<string>}
+     */
+    private function compilePromotedTargets(array $proposals, array $existing): array
+    {
+        $out = [];
+        foreach ($existing as $key => $value) {
+            if (is_string($key) && is_array($value)) {
+                $out[$key] = $value;
+            }
+        }
+
+        $emitted = 0;
+        $warnings = [];
+        foreach ($proposals as $row) {
+            if (!is_array($row)) { continue; }
+            $kind = (string) ($row['kind'] ?? '');
+            if (!in_array($kind, ['promotedTarget', 'promotedRelationTarget'], true)) { continue; }
+            if (((string) ($row['status'] ?? '')) !== 'accepted') { continue; }
+
+            $stateSource = (string) ($row['stateSource'] ?? '');
+            $sourceRef = (string) ($row['sourceRef'] ?? '');
+            $targetRef = (string) ($row['targetRef'] ?? '');
+            $targetSection = (string) ($row['targetSection'] ?? '');
+            $targetEntryType = (string) ($row['targetEntryType'] ?? '');
+            $relationIntent = (string) ($row['relationIntent'] ?? '');
+            $key = $stateSource !== '' ? $stateSource : $sourceRef;
+
+            $missing = [];
+            foreach ([
+                'stateSource' => $stateSource,
+                'sourceRef' => $sourceRef,
+                'targetRef' => $targetRef,
+                'targetSection' => $targetSection,
+                'targetEntryType' => $targetEntryType,
+                'relationIntent' => $relationIntent,
+            ] as $field => $value) {
+                if ($value === '') {
+                    $missing[] = $field;
+                }
+            }
+            if ($missing !== []) {
+                $warnings[] = sprintf(
+                    'promoted relation target %s skipped: missing %s',
+                    $sourceRef !== '' ? $sourceRef : '?',
+                    implode(', ', $missing),
+                );
+                continue;
+            }
+            if (isset($out[$key])) {
+                continue;
+            }
+
+            $out[$key] = [
+                'stateSource' => $stateSource,
+                'sourceRef' => $sourceRef,
+                'targetRef' => $targetRef,
+                'targetSection' => $targetSection,
+                'targetEntryType' => $targetEntryType,
+                'relationIntent' => $relationIntent,
+                'fields' => is_array($row['fields'] ?? null) ? $row['fields'] : [],
+            ];
+            $emitted++;
+        }
+
         return [$out, $emitted, $warnings];
     }
 

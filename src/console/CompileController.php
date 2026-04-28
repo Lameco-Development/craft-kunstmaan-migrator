@@ -9,6 +9,7 @@ use craft\console\Controller;
 use craft\helpers\Console;
 use lameco\kunstmaanmigrator\audit\PageRootedCoverageAuditor;
 use lameco\kunstmaanmigrator\audit\PageRootedSurfaceDiscovery;
+use lameco\kunstmaanmigrator\compile\GraphCompatibilityValidator;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use Symfony\Component\Yaml\Yaml as SymfonyYaml;
@@ -112,10 +113,39 @@ class CompileController extends Controller
             Console::FG_GREEN,
         );
 
+        // 3.5. Graph compatibility gate. Phase 11 makes these canonical
+        // artifacts versioned graphs; stale/missing versions fail before an
+        // executable mapping can be written.
+        $kunstmaanGraph = $this->loadJsonObject($storageDir . '/kunstmaan-schema.json');
+        $craftGraph = $this->loadJsonObject($storageDir . '/craft-schema.json');
+        $graphCompatibilityRows = (new GraphCompatibilityValidator())->validate($mapping, $kunstmaanGraph, $craftGraph);
+        $graphFatalRows = array_values(array_filter(
+            $graphCompatibilityRows,
+            static fn(array $row): bool => (string) ($row['severity'] ?? '') === 'fatal',
+        ));
+        foreach ($graphCompatibilityRows as $row) {
+            $line = sprintf(
+                '%s [%s] %s%s%s',
+                strtoupper((string) ($row['severity'] ?? 'warning')),
+                (string) ($row['code'] ?? 'graph_compatibility'),
+                (string) ($row['message'] ?? ''),
+                ((string) ($row['sourceRef'] ?? '')) !== '' ? ' source=' . (string) $row['sourceRef'] : '',
+                ((string) ($row['targetRef'] ?? '')) !== '' ? ' target=' . (string) $row['targetRef'] : '',
+            );
+            if ((string) ($row['severity'] ?? '') === 'fatal') {
+                $this->stderr("  FAIL graph validation: {$line}\n", Console::FG_RED);
+            } else {
+                $this->stdout("  WARN graph validation: {$line}\n", Console::FG_YELLOW);
+            }
+        }
+        if ($graphFatalRows !== []) {
+            return ExitCode::CONFIG;
+        }
+
         // 4. Resolve sites map. Precedence (highest first):
         //    a. existing mapping.yaml `sites:` block (operator-curated)
         //    b. Settings::localeMap (host config)
-        //    c. auto-derived from schema-dump.json legacy locales × Craft sites
+        //    c. auto-derived from kunstmaan-schema.json legacy locales × Craft sites
         //       (language-code match: legacy locale 'nl' → site whose language
         //       starts with 'nl-' or equals 'nl').
         $sites = (array) ($mapping['sites'] ?? []);
@@ -126,7 +156,7 @@ class CompileController extends Controller
         }
         if ($sites === []) {
             $sites = $this->autoDeriveSitesFromLegacyLocales($storageDir);
-            $sitesSource = 'auto-derived (schema-dump locales × Craft sites by language code)';
+            $sitesSource = 'auto-derived (kunstmaan-schema locales × Craft sites by language code)';
         }
         $this->stdout(sprintf(
             "  OK   sites map resolved: %d entries (source: %s)\n",
@@ -265,6 +295,13 @@ class CompileController extends Controller
                 $dataProvidersEmitted,
             ), Console::FG_GREEN);
         }
+        $promotedTargetsEmitted = (int) ($report['promotedTargetsEmitted'] ?? 0);
+        if ($promotedTargetsEmitted > 0) {
+            $this->stdout(sprintf(
+                "  OK   compiled %d promoted relation target(s) into mapping.promotedTargets\n",
+                $promotedTargetsEmitted,
+            ), Console::FG_GREEN);
+        }
 
         // Validate compiled section handles against Craft's actual entry-type
         // catalog. Compiler derives candidate handles from FQCN basenames
@@ -350,6 +387,7 @@ class CompileController extends Controller
         $pagePartsOut      = (array) ($compiled['pageParts'] ?? []);
         $taxonomiesOut     = (array) ($compiled['taxonomies'] ?? []);
         $dataProvidersOut  = (array) ($compiled['dataProviders'] ?? []);
+        $promotedTargetsOut = (array) ($compiled['promotedTargets'] ?? []);
         $ordered = [
             'sites'       => $compiled['sites'],
             'sections'    => $compiled['sections'],
@@ -363,6 +401,9 @@ class CompileController extends Controller
         }
         if ($dataProvidersOut !== []) {
             $ordered['dataProviders'] = $dataProvidersOut;
+        }
+        if ($promotedTargetsOut !== []) {
+            $ordered['promotedTargets'] = $promotedTargetsOut;
         }
         $ordered['proposals'] = $compiled['proposals'];
         try {
@@ -444,6 +485,20 @@ class CompileController extends Controller
         }
         ksort($out);
         return $out;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function loadJsonObject(string $path): array
+    {
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $decoded = json_decode((string) file_get_contents($path), true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**
@@ -548,7 +603,7 @@ class CompileController extends Controller
     }
 
     /**
-     * Derive a candidate locale → siteHandle map from schema-dump.json's
+     * Derive a candidate locale → siteHandle map from kunstmaan-schema.json's
      * `locales` list cross-referenced with Craft's configured sites by
      * language-code prefix. Returns [] when either side is empty or no
      * languages match — operator must then hand-curate Settings::localeMap
@@ -565,9 +620,13 @@ class CompileController extends Controller
      */
     private function autoDeriveSitesFromLegacyLocales(string $storageDir): array
     {
-        $schemaPath = $storageDir . '/schema-dump.json';
+        $schemaPath = $storageDir . '/kunstmaan-schema.json';
         if (!is_file($schemaPath)) {
-            return [];
+            $legacySchemaPath = $storageDir . '/schema-dump.json';
+            if (!is_file($legacySchemaPath)) {
+                return [];
+            }
+            $schemaPath = $legacySchemaPath;
         }
         $raw = (string) file_get_contents($schemaPath);
         $schema = json_decode($raw, true);
