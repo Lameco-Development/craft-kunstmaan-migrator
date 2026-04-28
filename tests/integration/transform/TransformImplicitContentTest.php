@@ -18,14 +18,10 @@ use PHPUnit\Framework\TestCase;
 /**
  * Phase 7 — end-to-end loop closure for the implicit-content pipeline.
  *
- * Drives TransformService::run() with a synthetic page-part record exactly
- * shaped as ExtractService::buildImplicitContentPageParts() emits, against
- * a mapping shaped exactly as MappingCompiler::compileImplicitBlocks()
- * emits. Asserts a Matrix block with the right type + _sourcePartRef
- * lands on the page entry's pageBuilder field. This is the test that
- * actually validates "implicit-content rows migrate" — unit tests on the
- * compile and extract halves alone do not prove the contract holds across
- * the seam.
+ * Drives TransformService::run() with source-faithful extracted data (no real
+ * page-parts) plus an implicit-content mapping shaped exactly as
+ * MappingCompiler::compileImplicitBlocks() emits. Asserts transform-time
+ * synthesis still emits a Matrix block with the right type + _sourcePartRef.
  */
 final class TransformImplicitContentTest extends TestCase
 {
@@ -62,10 +58,9 @@ final class TransformImplicitContentTest extends TestCase
             ],
         ];
 
-        // Shaped exactly as ExtractService writes:
-        //   perSite[lang] => { detail, pageParts: list<{ fqcn, sourcePartId, sequence, context, row }> }
-        // The synthetic pagePart's row IS the page detail row (where the
-        // content-like columns live by definition for content-only pages).
+        // Source-faithful extracted shape: the page has no real Kunstmaan
+        // page-parts, but transform still synthesizes implicit content from
+        // the page detail row when mapping.pageParts declares it.
         $detail = ['id' => 42, 'content' => '<p>Welcome to the homepage.</p>'];
         $extracted = [
             'kunstmaanSourceId' => 'App_Entity_Pages_HomePage:42',
@@ -83,15 +78,7 @@ final class TransformImplicitContentTest extends TestCase
                     'url' => '/',
                     'refId' => 42,
                     'detail' => $detail,
-                    'pageParts' => [
-                        [
-                            'fqcn' => $implicitKey,
-                            'sourcePartId' => 42,
-                            'sequence' => 1_000_000,
-                            'context' => 'main',
-                            'row' => $detail,
-                        ],
-                    ],
+                    'pageParts' => [],
                 ],
             ],
         ];

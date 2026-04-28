@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\transform;
 
 use lameco\kunstmaanmigrator\fields\FieldHandlerRegistry;
+use lameco\kunstmaanmigrator\extract\ExtractService;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateReader;
@@ -173,6 +174,7 @@ class TransformService extends Component
                 $ctx = $this->buildContext($siteId, $siteHandle, $siteMap, $dryRun, $migrationReport);
 
                 $fieldValues = $this->transformFields(
+                    $fqcn,
                     (array) $siteData,
                     $nodeSpec,
                     $mapping,
@@ -233,6 +235,7 @@ class TransformService extends Component
      * @return array<string, mixed>
      */
     private function transformFields(
+        string $fqcn,
         array $siteData,
         array $nodeSpec,
         array $mapping,
@@ -241,13 +244,20 @@ class TransformService extends Component
     ): array {
         $detail = is_array($siteData['detail'] ?? null) ? (array) $siteData['detail'] : [];
         $detail = $this->hydrateDetailJoins($detail, $nodeSpec, $report);
+        $pageParts = (array) ($siteData['pageParts'] ?? []);
+        if ($detail !== []) {
+            $implicitPageParts = ExtractService::buildImplicitContentPageParts($fqcn, $detail, $mapping);
+            if ($implicitPageParts !== []) {
+                $pageParts = array_merge($pageParts, $implicitPageParts);
+            }
+        }
 
         // Inject synthetic _pageParts_{context} columns for pages that use direct
         // field mapping instead of a pageBuilder matrix (pageBuilderHandle: ~).
         // Each synthetic key holds the concatenated HTML from all page parts in
         // that context slot whose row contains a 'content', 'body', or 'text' column.
         // This allows mapping.yaml to say: source: _pageParts_main, handler: ckeditor
-        foreach ($this->buildPagePartColumns((array) ($siteData['pageParts'] ?? [])) as $key => $html) {
+        foreach ($this->buildPagePartColumns($pageParts) as $key => $html) {
             $detail[$key] ??= $html;
         }
 
@@ -302,7 +312,7 @@ class TransformService extends Component
                 ? null
                 : array_values(array_filter(array_map('trim', (array) $rawCtxs), 'strlen'));
             $blocks = $this->transformPageBuilder(
-                (array) ($siteData['pageParts'] ?? []),
+                $pageParts,
                 $mapping,
                 $ctx,
                 $report,
@@ -328,7 +338,7 @@ class TransformService extends Component
                 ? array_values(array_filter(array_map('strval', $contextFilter), 'strlen'))
                 : null;
             $chunks = [];
-            foreach ((array) ($siteData['pageParts'] ?? []) as $p) {
+            foreach ($pageParts as $p) {
                 if (!is_array($p)) {
                     continue;
                 }

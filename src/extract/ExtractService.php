@@ -57,7 +57,8 @@ class ExtractService extends Component
      * Phase 8.5 / D-24 — runtime gate for `joinManyToOneRelations()`. Default
      * true. Flipped to false by Settings::joinFkRelations or the
      * `--no-rel-join` CLI flag (see MigrateController). When false the
-     * helper short-circuits: no `_rel:` keys are merged into detail rows.
+     * helper short-circuits: no relation-expanded keys are merged into detail
+     * rows; raw FK columns like `employee_id` remain available for mapping.
      */
     public bool $joinFkRelations = true;
 
@@ -336,19 +337,6 @@ class ExtractService extends Component
                         : null;
                     $pageParts = $this->loadPageParts($perLocaleRefId, $fqcn);
 
-                    // Phase 7: synthetic page-part injection for content-only pages.
-                    // When mapping.pageParts has any '__implicit_content__|<shortFqcn>|<context>'
-                    // entries for this FQCN's short name, synthesize a pagePart record per
-                    // (key, detail-row) so TransformService.transformPageBuilder dispatches
-                    // through the regular pageParts pipeline. The synthetic row IS the page
-                    // detail row — that's where the content-like columns live by definition.
-                    if ($detail !== null) {
-                        $synthetic = self::buildImplicitContentPageParts($fqcn, $detail, $mapping);
-                        if ($synthetic !== []) {
-                            $pageParts = array_merge($pageParts, $synthetic);
-                        }
-                    }
-
                     $perSite[$lang] = [
                         'online'     => (bool) ($t['online'] ?? false),
                         'title'      => (string) ($t['title'] ?? ''),
@@ -454,9 +442,20 @@ class ExtractService extends Component
         }
 
         // Auto-follow FK relations to non-system, non-media tables.
-        foreach ($this->discoverFkRelations($table) as $fkCol => [$refTable, $refPk]) {
+        // This is governed by the same join flag as Doctrine `_rel:*` expansion:
+        // operators using --no-rel-join expect extracted JSON to keep raw FK IDs
+        // only. When Doctrine already joined a relation, do not also emit the
+        // legacy information_schema alias for the same FK.
+        $doctrineFkProperties = $entityFqcn !== ''
+            ? $this->doctrineManyToOneFkProperties($entityFqcn)
+            : [];
+        foreach ($this->joinFkRelations ? $this->discoverFkRelations($table) : [] as $fkCol => [$refTable, $refPk]) {
             $fkValue = $detail[$fkCol] ?? null;
             if ($fkValue === null || $fkValue === '' || $fkValue === 0 || $fkValue === '0') {
+                continue;
+            }
+            $doctrineProperty = $doctrineFkProperties[$fkCol] ?? null;
+            if ($doctrineProperty !== null && $this->hasJoinedRelationPrefix($detail, $doctrineProperty)) {
                 continue;
             }
             if (!preg_match('/^[a-zA-Z0-9_]+$/', $refTable)) {
@@ -755,6 +754,43 @@ class ExtractService extends Component
             }
         }
         return $row;
+    }
+
+    /**
+     * @return array<string, string> FK column => Doctrine property name
+     */
+    private function doctrineManyToOneFkProperties(string $entityFqcn): array
+    {
+        if ($this->entityParser === null) {
+            return [];
+        }
+        $info = $this->entityParser->getByFqcn($entityFqcn);
+        if ($info === null) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($info->relations as $rel) {
+            if ($rel->relationType !== 'ManyToOne' || $rel->fkColumn === null || $rel->fkColumn === '') {
+                continue;
+            }
+            $out[$rel->fkColumn] = $rel->propertyName;
+        }
+
+        return $out;
+    }
+
+    /** @param array<string, mixed> $detail */
+    private function hasJoinedRelationPrefix(array $detail, string $propertyName): bool
+    {
+        $prefix = '_rel:' . $propertyName . '.';
+        foreach ($detail as $key => $_value) {
+            if (is_string($key) && str_starts_with($key, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
