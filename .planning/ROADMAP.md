@@ -352,7 +352,7 @@ Plans:
 5. Kunstmaan Page-rooted introspection has an explicit coverage report: for each Page class, list page parts, direct fields, ManyToOne/ManyToMany/OneToMany relations, asset references, dataProviders, taxonomy references, SEO rows, redirect/URL rows, CKEditor `[M]`/`[NT]`/media URLs, and the Craft target(s) or drop reason.
 6. The Craft target introspection is checked against compiled mapping: every accepted target entry type, Matrix field, block type, field handle, asset field, Entries field source, and SEO/Retour adapter target is valid for the receiving Craft schema.
 7. `migrate --live` still continues per-entry for diagnostics, but exits non-zero and writes a clear report when any entry/stage failed.
-8. CKEditor unresolved markers cannot break HTML comments or inject renderable markup; regression tests include malicious legacy URL/comment-breakout cases.
+8. CKEditor unresolved markers cannot break HTML comments or inject renderable markup; regression tests include malicious legacy URL/comment-breakout cases. _(Covered by 09-06: unresolved marker source details now use recoverable unpadded base64url `sourceB64` payloads; tests cover `-->`, `<script`, and quote-looking URL values.)_
 9. Transform characterization uses real fixtures or fails loudly in release/CI mode; incomplete taxonomy/leaf-entity coverage is either completed or explicitly excluded from v1.0.
 10. CI smoke, README, PROJECT, ROADMAP, and CHANGELOG match the actual release workflow, generic plugin positioning, and known limitations.
 
@@ -366,7 +366,7 @@ Plans:
 - `09-03-PLAN.md` — compiler validation and Craft target introspection.
 - `09-04-PLAN.md` — Page-rooted surface discovery and coverage report.
 - `09-05-PLAN.md` — truthful migrate failure exit and referenced-only preload.
-- `09-06-PLAN.md` — CKEditor unresolved marker hardening.
+- [x] `09-06-PLAN.md` — CKEditor unresolved marker hardening. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-06-SUMMARY.md`.
 - `09-07-PLAN.md` — docs, CI, release, fixture, and genericity evidence.
 
 ---
