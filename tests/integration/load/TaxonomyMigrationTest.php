@@ -278,6 +278,33 @@ final class TaxonomyMigrationTest extends TestCase
         );
     }
 
+    public function testCompiledMappingSiteHandlesResolveFromMappingValues(): void
+    {
+        $method = new \ReflectionMethod(TaxonomyMigrationService::class, 'siteHandleFromMappingSite');
+        $svc = new TaxonomyMigrationService();
+
+        $compiledSites = ['nl' => 'default', 'en' => 'enUs'];
+
+        self::assertSame('default', $method->invoke($svc, 'nl', $compiledSites['nl']));
+        self::assertSame('enUs', $method->invoke($svc, 'en', $compiledSites['en']));
+    }
+
+    public function testArrayMappingSiteHandleCompatibilityUsesExplicitSiteHandle(): void
+    {
+        $method = new \ReflectionMethod(TaxonomyMigrationService::class, 'siteHandleFromMappingSite');
+        $svc = new TaxonomyMigrationService();
+
+        self::assertSame('enUs', $method->invoke($svc, 'en', ['siteHandle' => 'enUs']));
+    }
+
+    public function testArrayMappingSiteHandleCompatibilityFallsBackToLegacyLocale(): void
+    {
+        $method = new \ReflectionMethod(TaxonomyMigrationService::class, 'siteHandleFromMappingSite');
+        $svc = new TaxonomyMigrationService();
+
+        self::assertSame('en', $method->invoke($svc, 'en', ['language' => 'en-US']));
+    }
+
     public function testLazyResolverReusesExistingStateRowWithoutCraftLookup(): void
     {
         $mappingFile = $this->createStub(MappingFile::class);
