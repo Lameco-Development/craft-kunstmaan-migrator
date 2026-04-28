@@ -280,10 +280,17 @@ class AnalyzeController extends Controller
                 $isContentSqlType = in_array($sqlType, $contentLikeSqlTypes, true);
                 $isContentName = (bool) preg_match($contentLikeNamePatterns, $colName);
                 if ($isContentSqlType || $isContentName) {
+                    // Phase 8.7 / issue 6 Phase 2 — surface sqlType so
+                    // buildPagePartFieldsContext can hydrate the page-part
+                    // fields LLM's `cols=[{column,type}]` shape for implicit
+                    // rows (the synthetic `__implicit_content__` marker has
+                    // no Doctrine class for the parser to resolve, so the
+                    // emitter is the only source of column-type info).
                     $contentColumns[] = [
                         'sourceProperty' => $colName,
                         'targetHandle'   => '',
                         'handler'        => '',
+                        'sqlType'        => $sqlType,
                     ];
                 }
             }
@@ -1366,6 +1373,44 @@ class AnalyzeController extends Controller
             if ($blockType === '') { continue; }
 
             $ppFqcn = (string) ($row['pagePartClass'] ?? '');
+
+            // Phase 8.7 / issue 6 Phase 2 — implicit-content rows have a
+            // synthetic pagePartClass marker, not a real Doctrine class. The
+            // parser returns null for them, which used to leave
+            // $pagePartColumns empty → proposePagePartFields skipped the row
+            // (no source-column list) → targetHandle never proposed →
+            // MappingCompiler::emitImplicitContentRows dropped the row at
+            // compile. Hydrate columns from the row's own fields[] (the
+            // implicit emitter populated `sourceProperty` + `sqlType` from
+            // the page table). Cache key is composite so multiple implicit
+            // rows (CaseStudyPage/main vs ContactPage/main) don't collide.
+            if ($ppFqcn === '__implicit_content__') {
+                $key = self::implicitContentColumnsKey($row);
+                if ($key !== null && !isset($pagePartColumns[$key])) {
+                    $cols = [];
+                    foreach ((array) ($row['fields'] ?? []) as $f) {
+                        if (!is_array($f)) { continue; }
+                        $col = (string) ($f['sourceProperty'] ?? '');
+                        $sqlType = (string) ($f['sqlType'] ?? '');
+                        if ($col === '') { continue; }
+                        $cols[] = ['column' => $col, 'type' => $sqlType];
+                    }
+                    if ($cols !== []) {
+                        $pagePartColumns[$key] = $cols;
+                    }
+                }
+                // Implicit rows have no Doctrine relations; skip the parser
+                // path entirely. Block-type fields hint still needs to land
+                // in $blockTypeFields so the LLM gets the closed set.
+                if (!isset($blockTypeFields[$blockType])) {
+                    $rich = self::buildBlockTypeFieldsHint($fieldIndex[$blockType] ?? []);
+                    if ($rich !== []) {
+                        $blockTypeFields[$blockType] = $rich;
+                    }
+                }
+                continue;
+            }
+
             if ($ppFqcn !== '' && !isset($pagePartColumns[$ppFqcn])) {
                 $info = $parser->getByFqcn($ppFqcn);
                 if ($info !== null) {
@@ -1451,37 +1496,72 @@ class AnalyzeController extends Controller
             }
 
             if (!isset($blockTypeFields[$blockType])) {
-                $fields = $fieldIndex[$blockType] ?? [];
-                $rich = [];
-                foreach ($fields as $f) {
-                    if (!is_array($f)) { continue; }
-                    $h = (string) ($f['handle'] ?? '');
-                    // Skip dotted-path Matrix-sub entries here — block-types
-                    // rarely contain nested Matrix fields, and when they do
-                    // the column proposer is the wrong tool. Flat fields only.
-                    if ($h === '' || str_contains($h, '.')) { continue; }
-                    // Phase 8.6 / D-28 — pass through the type-specific meta
-                    // (options / allowedBlockTypes / sources / allowedKinds)
-                    // emitted by CraftKnowledgeBase::describeField. The LLM
-                    // prompt builder renders them inline so name-matches
-                    // can't ride past closed-set constraints unchecked.
-                    $entry = [
-                        'handle' => $h,
-                        'type'   => (string) ($f['type'] ?? ''),
-                    ];
-                    foreach (['options', 'allowedBlockTypes', 'sources', 'allowedKinds'] as $metaKey) {
-                        if (isset($f[$metaKey]) && is_array($f[$metaKey]) && $f[$metaKey] !== []) {
-                            $entry[$metaKey] = $f[$metaKey];
-                        }
-                    }
-                    $rich[] = $entry;
-                }
+                $rich = self::buildBlockTypeFieldsHint($fieldIndex[$blockType] ?? []);
                 if ($rich !== []) {
                     $blockTypeFields[$blockType] = $rich;
                 }
             }
         }
         return [$pagePartColumns, $blockTypeFields, $pagePartRelations];
+    }
+
+    /**
+     * Phase 8.7 / issue 6 Phase 2 — composite cache key for implicit-content
+     * page-part rows. Bare `__implicit_content__` collides across pages
+     * (CaseStudyPage/main and ContactPage/main both share the literal),
+     * which would overwrite each other's column lists in $pagePartColumns.
+     * The triple `<marker>|<parent>|<context>` mirrors the identity tuple
+     * MappingFile::merge uses for page-part rows.
+     *
+     * @param  array<string, mixed> $row
+     */
+    private static function implicitContentColumnsKey(array $row): ?string
+    {
+        $parent = (string) ($row['parentPageClass'] ?? '');
+        $context = (string) ($row['context'] ?? '');
+        if ($parent === '' || $context === '') {
+            return null;
+        }
+        return '__implicit_content__|' . $parent . '|' . $context;
+    }
+
+    /**
+     * Phase 8.7 / issue 6 Phase 2 — extracted from buildPagePartFieldsContext
+     * so the implicit-content branch can reuse the same closed-set field
+     * shape (handle, type, options, allowedBlockTypes, sources, allowedKinds)
+     * that the Doctrine path produces. Single source of truth for the
+     * "what does the LLM see for allowedBlockFields" projection.
+     *
+     * @param  list<array<string, mixed>> $fields
+     * @return list<array<string, mixed>>
+     */
+    private static function buildBlockTypeFieldsHint(array $fields): array
+    {
+        $rich = [];
+        foreach ($fields as $f) {
+            if (!is_array($f)) { continue; }
+            $h = (string) ($f['handle'] ?? '');
+            // Skip dotted-path Matrix-sub entries here — block-types rarely
+            // contain nested Matrix fields, and when they do the column
+            // proposer is the wrong tool. Flat fields only.
+            if ($h === '' || str_contains($h, '.')) { continue; }
+            // Phase 8.6 / D-28 — pass through the type-specific meta
+            // (options / allowedBlockTypes / sources / allowedKinds) emitted
+            // by CraftKnowledgeBase::describeField. The LLM prompt builder
+            // renders them inline so name-matches can't ride past closed-set
+            // constraints unchecked.
+            $entry = [
+                'handle' => $h,
+                'type'   => (string) ($f['type'] ?? ''),
+            ];
+            foreach (['options', 'allowedBlockTypes', 'sources', 'allowedKinds'] as $metaKey) {
+                if (isset($f[$metaKey]) && is_array($f[$metaKey]) && $f[$metaKey] !== []) {
+                    $entry[$metaKey] = $f[$metaKey];
+                }
+            }
+            $rich[] = $entry;
+        }
+        return $rich;
     }
 
     /**

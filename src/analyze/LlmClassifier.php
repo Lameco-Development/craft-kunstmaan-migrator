@@ -1535,8 +1535,7 @@ final class LlmClassifier extends Component
                 continue;
             }
             $blockType = (string) ($row['targetBlockType'] ?? '');
-            $ppFqcn = (string) ($row['pagePartClass'] ?? '');
-            $cols = $pagePartColumns[$ppFqcn] ?? [];
+            $cols = $pagePartColumns[self::pagePartColumnsKey($row)] ?? [];
             $blockFields = $blockTypeFields[$blockType] ?? [];
             if ($blockType === '' || $cols === [] || $blockFields === []) {
                 $passthrough[] = $row;
@@ -1664,7 +1663,7 @@ final class LlmClassifier extends Component
                 . '|' . (string) ($row['context'] ?? '');
             $p = $byKey[$key] ?? null;
             $blockType = (string) ($row['targetBlockType'] ?? '');
-            $sourceCols = array_column($pagePartColumns[(string) ($row['pagePartClass'] ?? '')] ?? [], 'column');
+            $sourceCols = array_column($pagePartColumns[self::pagePartColumnsKey($row)] ?? [], 'column');
             $allowedFieldHandles = array_column($blockTypeFields[$blockType] ?? [], 'handle');
             // Phase 8.6 / D-28 — allow `title` and `heading` even when not
             // declared as custom fields on the block. EntryMigrationService::
@@ -1827,6 +1826,27 @@ final class LlmClassifier extends Component
     }
 
     /**
+     * Phase 8.7 / issue 6 Phase 2 — cache key for the row's source-column
+     * list in $pagePartColumns. Real Doctrine page-parts key by FQCN. The
+     * synthetic `__implicit_content__` marker collides across pages
+     * (CaseStudyPage/main and ContactPage/main both share the literal), so
+     * implicit rows key by `<marker>|<parent>|<context>`. Mirrors
+     * AnalyzeController::implicitContentColumnsKey — both must agree.
+     *
+     * @param  array<string, mixed> $row
+     */
+    private static function pagePartColumnsKey(array $row): string
+    {
+        $ppFqcn = (string) ($row['pagePartClass'] ?? '');
+        if ($ppFqcn !== '__implicit_content__') {
+            return $ppFqcn;
+        }
+        return '__implicit_content__|'
+            . (string) ($row['parentPageClass'] ?? '')
+            . '|' . (string) ($row['context'] ?? '');
+    }
+
+    /**
      * @param  list<array<string, mixed>>                                  $chunk
      * @param  array<string, list<array{column: string, type: string}>>    $pagePartColumns
      * @param  array<string, list<array{handle: string, type: string}>>    $blockTypeFields
@@ -1880,7 +1900,7 @@ final class LlmClassifier extends Component
         foreach ($chunk as $row) {
             $ppFqcn = (string) ($row['pagePartClass'] ?? '');
             $blockType = (string) ($row['targetBlockType'] ?? '');
-            $cols = $pagePartColumns[$ppFqcn] ?? [];
+            $cols = $pagePartColumns[self::pagePartColumnsKey($row)] ?? [];
             $allowedFields = $blockTypeFields[$blockType] ?? [];
 
             $sourceColsHint = implode(', ', array_map(
