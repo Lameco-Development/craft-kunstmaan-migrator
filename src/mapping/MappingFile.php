@@ -121,6 +121,21 @@ class MappingFile extends Component
         if (isset($proposal['handlerOptions']) && is_array($proposal['handlerOptions']) && $proposal['handlerOptions'] !== []) {
             $row['handlerOptions'] = $proposal['handlerOptions'];
         }
+        foreach ([
+            'sourceRef',
+            'targetRef',
+            'targetEntryTypeRef',
+            'targetMatrixFieldRef',
+            'targetBlockRef',
+            'relationTargetRef',
+            'assetVolumeRef',
+            'relationIntent',
+        ] as $graphKey) {
+            $value = $proposal[$graphKey] ?? null;
+            if (is_string($value) && $value !== '') {
+                $row[$graphKey] = $value;
+            }
+        }
         return $row;
     }
 
@@ -207,10 +222,47 @@ class MappingFile extends Component
             if (!isset($seen[$key])) {
                 $merged[] = $row;
                 $seen[$key] = true;
+            } else {
+                foreach ($merged as &$existingRow) {
+                    if (is_array($existingRow) && $this->identityKey($existingRow) === $key) {
+                        $this->fillMissingGraphFields($existingRow, $row);
+                        break;
+                    }
+                }
+                unset($existingRow);
             }
         }
         $result['proposals'] = $merged;
         return $result;
+    }
+
+    /**
+     * Preserve operator decisions while letting newer analyze runs backfill
+     * non-decision graph metadata required by compile/reporting.
+     *
+     * @param array<string, mixed> $existingRow
+     * @param array<string, mixed> $incomingRow
+     */
+    private function fillMissingGraphFields(array &$existingRow, array $incomingRow): void
+    {
+        foreach ([
+            'sourceRef',
+            'targetRef',
+            'targetEntryTypeRef',
+            'targetMatrixFieldRef',
+            'targetBlockRef',
+            'relationTargetRef',
+            'assetVolumeRef',
+            'relationIntent',
+        ] as $graphKey) {
+            if ((string) ($existingRow[$graphKey] ?? '') !== '') {
+                continue;
+            }
+            $value = $incomingRow[$graphKey] ?? null;
+            if (is_string($value) && $value !== '') {
+                $existingRow[$graphKey] = $value;
+            }
+        }
     }
 
     /**

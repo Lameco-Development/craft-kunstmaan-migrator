@@ -8,6 +8,8 @@ use Craft;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\RequestException;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\source\CraftGraphContract;
+use lameco\kunstmaanmigrator\source\KunstmaanGraphContract;
 use Psr\Http\Message\ResponseInterface;
 use Throwable;
 use yii\base\Component;
@@ -2075,6 +2077,8 @@ final class LlmClassifier extends Component
             $handler = (string) ($p['handler'] ?? '');
             $rationale = (string) ($p['rationale'] ?? '');
             $graphFields = $this->normaliseGraphProposalFields($p);
+            $graphFields = $this->fallbackGraphProposalFields($graphFields, $v, $entryType, $targetHandle, $decision, $handler);
+            $graphFields = $this->filterKnownGraphProposalFields($graphFields, $kunstmaanGraph, $craftGraph);
 
             // Read confidence from LLM response; validate and default.
             $confidence = (string) ($p['confidence'] ?? '');
@@ -2110,6 +2114,8 @@ final class LlmClassifier extends Component
                 continue;
             }
             if ($targetHandle === '' || $targetHandle === 'NEEDS_FIELD') {
+                $graphFields = $this->fallbackGraphProposalFields($graphFields, $v, $entryType, '', 'drop', '');
+                $graphFields = $this->filterKnownGraphProposalFields($graphFields, $kunstmaanGraph, $craftGraph);
                 $out[] = array_merge([
                     'table' => $v['table'],
                     'column' => $v['column'],
@@ -2126,6 +2132,8 @@ final class LlmClassifier extends Component
                 continue;
             }
             if ($allowed !== [] && !in_array($targetHandle, $allowed, true)) {
+                $graphFields = $this->fallbackGraphProposalFields($graphFields, $v, $entryType, '', 'drop', '');
+                $graphFields = $this->filterKnownGraphProposalFields($graphFields, $kunstmaanGraph, $craftGraph);
                 $out[] = array_merge([
                     'table' => $v['table'],
                     'column' => $v['column'],
@@ -2231,6 +2239,94 @@ final class LlmClassifier extends Component
     }
 
     /**
+     * @param array<string, string> $graphFields
+     * @param array<string, mixed> $inputRow
+     * @return array<string, string>
+     */
+    private function fallbackGraphProposalFields(
+        array $graphFields,
+        array $inputRow,
+        string $entryType,
+        string $targetHandle,
+        string $decision,
+        string $handler,
+    ): array {
+        $sourceRef = trim((string) ($inputRow['sourceRef'] ?? ''));
+        if ($sourceRef !== '' && !isset($graphFields['sourceRef'])) {
+            $graphFields['sourceRef'] = $sourceRef;
+        }
+
+        if (!isset($graphFields['targetRef']) && $entryType !== '' && $targetHandle !== '' && $targetHandle !== 'NEEDS_FIELD') {
+            $graphFields['targetRef'] = CraftGraphContract::craftFieldRef($entryType, $targetHandle);
+        }
+
+        if ($sourceRef !== '' && !isset($graphFields['relationIntent'])) {
+            if ($decision === 'drop') {
+                $graphFields['relationIntent'] = 'drop';
+            } elseif (in_array($handler, ['asset', 'relation'], true)) {
+                $graphFields['relationIntent'] = 'reference';
+            } elseif ($handler === 'matrix') {
+                $graphFields['relationIntent'] = 'embed';
+            }
+        }
+
+        return $graphFields;
+    }
+
+    /**
+     * @param array<string, string> $graphFields
+     * @param array<string, mixed> $kunstmaanGraph
+     * @param array<string, mixed> $craftGraph
+     * @return array<string, string>
+     */
+    private function filterKnownGraphProposalFields(array $graphFields, array $kunstmaanGraph, array $craftGraph): array
+    {
+        $sourceRef = (string) ($graphFields['sourceRef'] ?? '');
+        if ($sourceRef !== '' && !$this->graphHasRef($kunstmaanGraph, [
+            KunstmaanGraphContract::KEY_ROOTS,
+            KunstmaanGraphContract::KEY_ENTITIES,
+            KunstmaanGraphContract::KEY_RELATIONS,
+            KunstmaanGraphContract::KEY_PAGEPARTS,
+            KunstmaanGraphContract::KEY_PAGEPART_USAGES,
+            KunstmaanGraphContract::KEY_ASSETS,
+            KunstmaanGraphContract::KEY_SAMPLES,
+        ], $sourceRef)) {
+            unset($graphFields['sourceRef'], $graphFields['relationIntent']);
+        }
+
+        $targetRef = (string) ($graphFields['targetRef'] ?? '');
+        if ($targetRef !== '' && !$this->graphHasRef($craftGraph, [
+            CraftGraphContract::KEY_ROOTS,
+            CraftGraphContract::KEY_ENTRY_TYPES,
+            CraftGraphContract::KEY_FIELDS,
+            CraftGraphContract::KEY_MATRIX_BLOCK_TYPES,
+            CraftGraphContract::KEY_MATRIX_USAGES,
+            CraftGraphContract::KEY_RELATION_TARGETS,
+            CraftGraphContract::KEY_ASSET_VOLUMES,
+        ], $targetRef)) {
+            unset($graphFields['targetRef']);
+        }
+
+        return $graphFields;
+    }
+
+    /**
+     * @param array<string, mixed> $graph
+     * @param list<string> $registryKeys
+     */
+    private function graphHasRef(array $graph, array $registryKeys, string $ref): bool
+    {
+        foreach ($registryKeys as $registryKey) {
+            $registry = $graph[$registryKey] ?? [];
+            if (is_array($registry) && array_key_exists($ref, $registry)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Build [systemPreamble, userPrompt] for a batched proposal call.
      * Includes SQL type in residual lines and requests confidence from
      * the LLM.
@@ -2305,12 +2401,15 @@ final class LlmClassifier extends Component
             );
             $sqlType = (string) ($v['sqlType'] ?? '');
             $sqlTypePart = $sqlType !== '' ? sprintf(', sqlType=%s', $sqlType) : '';
+            $sourceRef = (string) ($v['sourceRef'] ?? '');
+            $sourceRefPart = $sourceRef !== '' ? sprintf(', sourceRef=%s', $sourceRef) : '';
             $residualLines[] = sprintf(
-                '- %s.%s (fill=%s%%%s, entryType=%s, allowed=[%s], samples=[%s])',
+                '- %s.%s (fill=%s%%%s%s, entryType=%s, allowed=[%s], samples=[%s])',
                 (string) ($v['table'] ?? '?'),
                 (string) ($v['column'] ?? '?'),
                 (string) ($v['fillRate'] ?? '?'),
                 $sqlTypePart,
+                $sourceRefPart,
                 $entryType,
                 implode(', ', $allowedHints),
                 implode(' | ', $samples),

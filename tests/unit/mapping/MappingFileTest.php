@@ -59,6 +59,28 @@ final class MappingFileTest extends TestCase
         self::assertCount(3, $row['samples'], 'Samples must be capped at 3.');
     }
 
+    public function testBuildRowPreservesGraphCompatibilityFields(): void
+    {
+        $mf = new MappingFile();
+        $row = $mf->buildRow(
+            [
+                'table' => 'lameco_websitebundle_newspages',
+                'column' => 'employee_id',
+                'targetEntryType' => 'newsPage',
+                'targetHandle' => 'caseTeamMembers',
+                'handler' => 'relation',
+                'sourceRef' => 'kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee',
+                'targetRef' => 'craft.field:newsPage.caseTeamMembers',
+                'relationIntent' => 'promote',
+            ],
+            'accepted',
+        );
+
+        self::assertSame('kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee', $row['sourceRef']);
+        self::assertSame('craft.field:newsPage.caseTeamMembers', $row['targetRef']);
+        self::assertSame('promote', $row['relationIntent']);
+    }
+
     public function testMergePreservesExistingRowsVerbatimOnD04SkipExisting(): void
     {
         $mf = new MappingFile();
@@ -100,6 +122,42 @@ final class MappingFileTest extends TestCase
         self::assertSame('accepted', $merged['proposals'][0]['status']);
         self::assertSame('OPERATOR DECISION', $merged['proposals'][0]['rationale']);
         self::assertSame('body', $merged['proposals'][0]['targetHandle']);
+    }
+
+    public function testMergeBackfillsMissingGraphFieldsOnExistingDecision(): void
+    {
+        $mf = new MappingFile();
+        $existing = ['proposals' => [[
+            'kind' => 'column',
+            'table' => 'lameco_websitebundle_newspages',
+            'column' => 'employee_id',
+            'targetEntryType' => 'newsPage',
+            'targetHandle' => 'caseTeamMembers',
+            'handler' => 'relation',
+            'status' => 'accepted',
+            'rationale' => 'operator-selected',
+        ]]];
+        $incoming = [[
+            'kind' => 'column',
+            'table' => 'lameco_websitebundle_newspages',
+            'column' => 'employee_id',
+            'targetEntryType' => 'newsPage',
+            'targetHandle' => 'differentGuess',
+            'handler' => 'plain',
+            'status' => 'proposed',
+            'sourceRef' => 'kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee',
+            'targetRef' => 'craft.field:newsPage.caseTeamMembers',
+            'relationIntent' => 'reference',
+        ]];
+
+        $merged = $mf->merge($existing, $incoming);
+
+        self::assertCount(1, $merged['proposals']);
+        self::assertSame('caseTeamMembers', $merged['proposals'][0]['targetHandle']);
+        self::assertSame('relation', $merged['proposals'][0]['handler']);
+        self::assertSame('kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee', $merged['proposals'][0]['sourceRef']);
+        self::assertSame('craft.field:newsPage.caseTeamMembers', $merged['proposals'][0]['targetRef']);
+        self::assertSame('reference', $merged['proposals'][0]['relationIntent']);
     }
 
     public function testMergePreservesCompiledAndUnknownTopLevelBlocks(): void

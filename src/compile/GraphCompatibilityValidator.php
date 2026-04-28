@@ -183,6 +183,10 @@ final class GraphCompatibilityValidator extends Component
     {
         $decided = [];
         foreach ($proposals as $proposal) {
+            $status = (string) ($proposal['status'] ?? 'accepted');
+            if (!in_array($status, ['accepted', 'dropped'], true)) {
+                continue;
+            }
             $sourceRef = (string) ($proposal['sourceRef'] ?? '');
             $intent = (string) ($proposal['relationIntent'] ?? '');
             if ($sourceRef !== '' && in_array($intent, $this->validRelationIntents(), true)) {
@@ -200,7 +204,7 @@ final class GraphCompatibilityValidator extends Component
             }
             if (!isset($decided[$relationRef])) {
                 $rows[] = $this->row(
-                    'fatal',
+                    'warning',
                     'relation_intent_required',
                     $relationRef,
                     (string) ($relation['targetRef'] ?? ''),

@@ -416,6 +416,8 @@ class AnalyzeController extends Controller
                 $violations,
                 $craftFieldIndex,
             );
+            $heuristicProposals = $this->annotateRowsWithKunstmaanRelationRefs($heuristicProposals, $kunstmaanGraph);
+            $residual = $this->annotateRowsWithKunstmaanRelationRefs($residual, $kunstmaanGraph);
         } catch (Throwable $e) {
             $this->stderr("  FAIL heuristic proposer: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
@@ -534,6 +536,7 @@ class AnalyzeController extends Controller
             $pageTableToEntryType,
         );
         if ($pageWrapSyntheticRows !== []) {
+            $pageWrapSyntheticRows = $this->annotateRowsWithKunstmaanRelationRefs($pageWrapSyntheticRows, $kunstmaanGraph);
             $residual = array_merge($residual, $pageWrapSyntheticRows);
             $this->stdout(
                 "  OK   page-wrap fold (F1) injected " . count($pageWrapSyntheticRows)
@@ -1457,6 +1460,62 @@ class AnalyzeController extends Controller
             }
         }
         return $out;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @param array<string, mixed> $kunstmaanGraph
+     * @return list<array<string, mixed>>
+     */
+    private function annotateRowsWithKunstmaanRelationRefs(array $rows, array $kunstmaanGraph): array
+    {
+        if ($rows === []) {
+            return [];
+        }
+
+        $relationRefsByColumn = [];
+        $entities = (array) ($kunstmaanGraph[KunstmaanGraphContract::KEY_ENTITIES] ?? []);
+        foreach ((array) ($kunstmaanGraph[KunstmaanGraphContract::KEY_RELATIONS] ?? []) as $relationRef => $relation) {
+            if (!is_string($relationRef) || !is_array($relation)) {
+                continue;
+            }
+            $sourceRef = (string) ($relation['sourceRef'] ?? '');
+            $fkColumn = (string) ($relation['fkColumn'] ?? '');
+            if ($sourceRef === '' || $fkColumn === '') {
+                continue;
+            }
+            $source = $entities[$sourceRef] ?? [];
+            if (!is_array($source)) {
+                continue;
+            }
+            $table = (string) ($source['table'] ?? '');
+            if ($table === '') {
+                continue;
+            }
+            $relationRefsByColumn[$table . "\0" . $fkColumn] ??= $relationRef;
+        }
+
+        if ($relationRefsByColumn === []) {
+            return $rows;
+        }
+
+        foreach ($rows as &$row) {
+            if (!is_array($row) || (string) ($row['sourceRef'] ?? '') !== '') {
+                continue;
+            }
+            $table = (string) ($row['table'] ?? '');
+            $column = (string) ($row['column'] ?? '');
+            if ($table === '' || $column === '') {
+                continue;
+            }
+            $relationRef = $relationRefsByColumn[$table . "\0" . $column] ?? null;
+            if (is_string($relationRef) && $relationRef !== '') {
+                $row['sourceRef'] = $relationRef;
+            }
+        }
+        unset($row);
+
+        return $rows;
     }
 
     /**

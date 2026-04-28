@@ -29,6 +29,7 @@ final class LlmClassifierGraphPromptTest extends TestCase
                     'fillRate' => 100,
                     'sqlType' => 'int',
                     'samples' => [97],
+                    'sourceRef' => KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\NewsPage') . '.employee',
                 ],
             ],
             [
@@ -48,6 +49,7 @@ final class LlmClassifierGraphPromptTest extends TestCase
         self::assertStringContainsString(CraftGraphContract::GRAPH_VERSION, $user);
         self::assertStringContainsString('kunstmaan.entity:App\\\\Entity\\\\Employee', $user);
         self::assertStringContainsString(CraftGraphContract::craftEntryTypeRef('newsPage'), $user);
+        self::assertStringContainsString('sourceRef=kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee', $user);
     }
 
     public function testBatchPromptSystemNamesExactRelationIntents(): void
@@ -86,6 +88,26 @@ final class LlmClassifierGraphPromptTest extends TestCase
             'targetRef' => CraftGraphContract::craftEntryTypeRef('teamMember'),
             'relationIntent' => 'promote',
         ], $fields);
+    }
+
+    public function testFallbackGraphProposalFieldsUsesInputSourceAndTargetHandle(): void
+    {
+        $classifier = $this->classifierWithoutYiiInit();
+        $method = new ReflectionMethod($classifier, 'fallbackGraphProposalFields');
+
+        $fields = $method->invoke(
+            $classifier,
+            [],
+            ['sourceRef' => KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\NewsPage') . '.employee'],
+            'newsPage',
+            'caseTeamMembers',
+            'map',
+            'relation',
+        );
+
+        self::assertSame(KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\NewsPage') . '.employee', $fields['sourceRef']);
+        self::assertSame(CraftGraphContract::craftFieldRef('newsPage', 'caseTeamMembers'), $fields['targetRef']);
+        self::assertSame('reference', $fields['relationIntent']);
     }
 
     private function classifierWithoutYiiInit(): LlmClassifier

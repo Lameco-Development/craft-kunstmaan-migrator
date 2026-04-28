@@ -52,6 +52,44 @@ final class GraphCompatibilityValidatorTest extends TestCase
         )));
     }
 
+    public function testMissingRelationIntentIsWarningUntilOperatorDecisionExists(): void
+    {
+        $rows = (new GraphCompatibilityValidator())->validate([
+            'proposals' => [],
+        ], GraphFixtureFactory::kunstmaanNewsEmployeeGraph(), GraphFixtureFactory::craftNewsHomeGraph());
+
+        $relationRows = array_values(array_filter(
+            $rows,
+            static fn(array $row): bool => $row['code'] === 'relation_intent_required',
+        ));
+
+        self::assertNotEmpty($relationRows);
+        self::assertSame('warning', $relationRows[0]['severity']);
+    }
+
+    public function testProposedRelationIntentDoesNotSatisfyRelationEvidence(): void
+    {
+        $kunstmaanGraph = GraphFixtureFactory::kunstmaanNewsEmployeeGraph();
+        $craftGraph = GraphFixtureFactory::craftNewsHomeGraph();
+        $newsRef = KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\NewsPage');
+
+        $rows = (new GraphCompatibilityValidator())->validate([
+            'proposals' => [
+                [
+                    'status' => 'proposed',
+                    'sourceRef' => $newsRef . '.employee',
+                    'targetRef' => CraftGraphContract::craftFieldRef('newsPage', 'caseTeamMembers'),
+                    'relationIntent' => KunstmaanGraphContract::INTENT_PROMOTE,
+                ],
+            ],
+        ], $kunstmaanGraph, $craftGraph);
+
+        self::assertNotEmpty(array_values(array_filter(
+            $rows,
+            static fn(array $row): bool => $row['code'] === 'relation_intent_required',
+        )));
+    }
+
     public function testMatrixRelationAndAssetCompatibilityAreValidated(): void
     {
         $kunstmaanGraph = GraphFixtureFactory::kunstmaanNewsEmployeeGraph();
