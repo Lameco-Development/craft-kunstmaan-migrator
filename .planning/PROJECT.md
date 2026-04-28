@@ -16,19 +16,18 @@ If everything else fails, that one workflow must work.
 
 ### Validated
 
-(None yet — ship to validate)
+- [x] Read a Kunstmaan MySQL dump via plugin-owned connection (no host-config leakage) — Validated in Phase 1 (FND-01..05, CONN-01..03) + UAT-strengthened in Phase 2 (D-26: doctor verifies SELECT DATABASE() after SELECT 1).
+- [x] AI-assisted mapping proposals (Anthropic) with deterministic-heuristics-first routing — Validated in Phase 2 (MAP-01..05). UAT against the CQM dump: 113 heuristic + 165 LLM proposals across 278 columns.
+- [x] Stateful single-file mapping with per-row status (proposed/accepted/dropped/needs-review) — Validated in Phase 2 (MAP-04 + D-01 + D-04 skip-existing merge).
+- [x] One canonical CLI rubber-stamp loop for review — Validated in Phase 2 (MAP-05). UAT: `--auto-accept-high` promoted 143 high-confidence rows. Interactive TTY pass deferred to operator (mapping.yaml is populated and ready to drive).
+- [x] Filter spec from day one (entity allow-list, locale subset, `--since` date floor) — Validated in Phase 2 (FILT-01..03 + D-12 dropped per-entity row cap; three flags, not four). Locale matching ladder (D-28: explicit map → exact handle/language → language-prefix loose match) lands in Phase 2 UAT round.
 
 ### Active
 
 See `.planning/REQUIREMENTS.md` for the full breakdown with REQ-IDs.
 
 Headline scope:
-- [ ] Read a Kunstmaan MySQL dump via plugin-owned connection (no host-config leakage)
-- [ ] AI-assisted mapping proposals (Anthropic) with deterministic-heuristics-first routing
-- [ ] Stateful single-file mapping with per-row status (proposed/accepted/dropped/needs-review)
-- [ ] One canonical CLI rubber-stamp loop for review
 - [ ] ETL pipeline: extract → transform → load → finalize → verify
-- [ ] Filter spec from day one (entity allow-list, locale subset, `--since` date floor)
 - [ ] Optional SEOmatic + Retour adapters (detected at runtime, not required deps)
 - [ ] CKEditor body-token rewrite (cross-entry / media references)
 - [ ] Per-entry atomic load + idempotent re-runs via state table
@@ -47,6 +46,8 @@ Headline scope:
 - **Multiple mapping files (`mapping.yaml.draft`, `mapping-drops-{ts}.yaml`)** — Single mapping file with per-row status replaces all three.
 - **Atomic flag, runtime AI calls, always-on asset preload** — Resolved decisions from v1.1 carried forward: atomic-always (transactional rollback per entry), runtime-zero-AI, JIT assets driven by page/entry references.
 - **Migrating orphan assets** — Out of scope for v1. The migration is page-driven by design (see Migration model below) — only assets actually referenced from migrated entries get pulled in. A post-run "sync remaining" pass for un-referenced media is roadmapped (`NEXT-05`).
+
+> See also [CHANGELOG.md > Known omissions in v1.0](../CHANGELOG.md#known-omissions-in-v10) for the operator-facing summary of Kunstmaan surfaces this migrator deliberately does not cover (FormBundle, SearchBundle, MenuBundle, user accounts/roles/ACLs, `kuma_translations`, media folder hierarchy, asset metadata, slug history, drafts).
 
 ## Context
 

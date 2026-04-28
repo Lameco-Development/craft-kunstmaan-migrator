@@ -1,13 +1,59 @@
 name: CI
 on: [push, pull_request]
+
 jobs:
-  test:
+  unit:
+    name: Unit + Integration tests + coverage gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
+          coverage: pcov          # D-06: PCOV installed at system level; no composer dep
       - run: composer validate --strict --no-plugins
       - run: composer install --no-interaction --no-progress
       - run: composer test
+      - run: composer test-coverage    # D-07: per-module 70% gate via tools/check-coverage.php
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-clover
+          path: build/coverage/clover.xml
+          if-no-files-found: warn
+
+  smoke:
+    name: Plugin-load smoke (scratch-Craft → doctor exit 0)
+    runs-on: ubuntu-latest
+    needs: unit       # D-18: gate on unit pass; saves CI minutes on broken unit
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+
+      - name: Bootstrap scratch Craft 5
+        # Pin to the supported major (composer requires craftcms/cms ^5.0).
+        # Without the constraint, the smoke job would silently install Craft 6
+        # the moment it ships, producing a confusing solver failure or a
+        # half-installed scratch site (Phase 5 review MEDIUM #2). Bump
+        # deliberately when Phase 6 / Craft 6 work begins.
+        run: |
+          composer create-project "craftcms/craft:^5.0" scratch-craft \
+            --no-interaction --prefer-dist --no-progress
+
+      - name: Register plugin as path repository + install
+        working-directory: scratch-craft
+        run: |
+          composer config repositories.plugin path ../plugin
+          composer require lameco/craft-kunstmaan-migrator @dev \
+            --no-interaction --no-progress
+
+      - name: Plugin-load smoke (D-17 — doctor exit 0; WARN exits 0, FAIL exits 1)
+        working-directory: scratch-craft
+        env:
+          CRAFT_ENVIRONMENT: dev
+        run: ./craft kunstmaan-migrator/doctor

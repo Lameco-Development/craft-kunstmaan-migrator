@@ -1,17 +1,178 @@
-{# D-16: Phase 1 placeholder. The real CP Settings form lands in Phase 4 / CFG-01. #}
-{% extends "_layouts/cp" %}
+{# Phase 4.1 / CFG-05 — slimmed CP Settings form (9 fields, two H2 groups).
+   Decisions: D-14 (Connectivity / Mapping H2 split), D-15 (14 advanced fields
+   moved to config/kunstmaan-migrator.example.php), D-18 (no tabs), D-19
+   (preserve Phase 4 G-01 fragment-shape + G-03 passwordField masking),
+   D-21 (legacy locale column: select when DB reachable, free-text fallback),
+   D-22 (Craft site handle column: always select), D-23 (option arrays
+   pre-computed in Plugin::settingsHtml()).
 
-{% set title = "Kunstmaan Migrator — Settings" %}
+   Rendering contract: hasCpSettings = true + Plugin::settingsHtml() point
+   at this template. Craft's settings/plugins/_settings.twig (cms vendor)
+   already inherits the CP layout, opens fullPageForm, injects
+   actionInput/pluginHandle/redirectInput, then dumps `settingsHtml|raw`
+   inside its own content block. This template is therefore an HTML
+   FRAGMENT — no layout-inheritance directive, no content-block wrapper,
+   no <form> or csrf/action inputs (would nest layouts and double-form).
+#}
+{% import "_includes/forms" as forms %}
 
-{% block content %}
-    <div>
-        <p><strong>Kunstmaan Migrator settings</strong> — placeholder.</p>
-        <p>The CP Settings form ships in Phase 4 (CFG-01). Until then, configure the plugin via environment variables:</p>
-        <ul>
-            <li><code>CRAFT_LEGACY_DB_SERVER</code>, <code>CRAFT_LEGACY_DB_DATABASE</code>, <code>CRAFT_LEGACY_DB_USER</code>, <code>CRAFT_LEGACY_DB_PASSWORD</code></li>
-            <li><code>CRAFT_LEGACY_DB_PORT</code> (default 3306), <code>CRAFT_LEGACY_DB_CHARSET</code> (default utf8mb4), <code>CRAFT_LEGACY_DB_TABLE_PREFIX</code></li>
-            <li><code>ANTHROPIC_API_KEY</code></li>
-        </ul>
-        <p>Run <code>./craft kunstmaan-migrator/doctor</code> to verify connectivity.</p>
-    </div>
-{% endblock %}
+<h2>{{ 'Connectivity'|t('kunstmaan-migrator') }}</h2>
+
+{{ forms.autosuggestField({
+    label: 'Legacy DB host'|t('kunstmaan-migrator'),
+    id: 'legacyDbServer',
+    name: 'legacyDbServer',
+    value: settings.legacyDbServer,
+    suggestEnvVars: true,
+    instructions: 'Defaults to `CRAFT_LEGACY_DB_SERVER` env var, or autofills from `KUNSTMAAN_SOURCE_PATH/.env` `DATABASE_URL` when blank (Phase 4.1 / CFG-04).'|t('kunstmaan-migrator'),
+}) }}
+
+{{ forms.textField({
+    label: 'Legacy DB port'|t('kunstmaan-migrator'),
+    id: 'legacyDbPort',
+    name: 'legacyDbPort',
+    type: 'number',
+    value: settings.legacyDbPort,
+    instructions: 'Defaults to `CRAFT_LEGACY_DB_PORT` env var (or 3306). Autofills from `DATABASE_URL` when at default.'|t('kunstmaan-migrator'),
+}) }}
+
+{{ forms.autosuggestField({
+    label: 'Legacy DB database'|t('kunstmaan-migrator'),
+    id: 'legacyDbDatabase',
+    name: 'legacyDbDatabase',
+    value: settings.legacyDbDatabase,
+    suggestEnvVars: true,
+    instructions: 'Defaults to `CRAFT_LEGACY_DB_DATABASE` env var. Autofills from `DATABASE_URL` when blank.'|t('kunstmaan-migrator'),
+}) }}
+
+{{ forms.autosuggestField({
+    label: 'Legacy DB user'|t('kunstmaan-migrator'),
+    id: 'legacyDbUser',
+    name: 'legacyDbUser',
+    value: settings.legacyDbUser,
+    suggestEnvVars: true,
+    instructions: 'Defaults to `CRAFT_LEGACY_DB_USER` env var. Autofills from `DATABASE_URL` when blank.'|t('kunstmaan-migrator'),
+}) }}
+
+{# G-03 fix preserved (D-19) — passwordField macro masks display. #}
+{{ forms.passwordField({
+    label: 'Legacy DB password'|t('kunstmaan-migrator'),
+    id: 'legacyDbPassword',
+    name: 'legacyDbPassword',
+    value: settings.legacyDbPassword,
+    instructions: 'Type `$CRAFT_LEGACY_DB_PASSWORD` (env reference) or paste a raw value. Resolved via `App::parseEnv()` at read time. Autofills from `DATABASE_URL` when blank. Never logged.'|t('kunstmaan-migrator'),
+}) }}
+
+{# G-03 fix preserved (D-19) — passwordField macro masks display. #}
+{{ forms.passwordField({
+    label: 'Anthropic API key'|t('kunstmaan-migrator'),
+    id: 'anthropicApiKey',
+    name: 'anthropicApiKey',
+    value: settings.anthropicApiKey,
+    instructions: 'Type `$ANTHROPIC_API_KEY` (env reference, recommended) or paste a raw key. Required for `analyze`. Never logged — `doctor` reports presence only.'|t('kunstmaan-migrator'),
+}) }}
+
+<h2>{{ 'Mapping'|t('kunstmaan-migrator') }}</h2>
+
+{{ forms.autosuggestField({
+    label: 'Kunstmaan source path'|t('kunstmaan-migrator'),
+    id: 'kunstmaanSourcePath',
+    name: 'kunstmaanSourcePath',
+    value: settings.kunstmaanSourcePath,
+    suggestEnvVars: true,
+    instructions: 'Filesystem path to the Kunstmaan source checkout (must contain `src/Entity/`). Required for `analyze` and CFG-04 .env auto-fill. Defaults to `KUNSTMAAN_SOURCE_PATH` env var.'|t('kunstmaan-migrator'),
+}) }}
+
+{{ forms.autosuggestField({
+    label: 'Mapping file path'|t('kunstmaan-migrator'),
+    id: 'mappingPath',
+    name: 'mappingPath',
+    value: settings.mappingPath,
+    suggestEnvVars: true,
+    instructions: 'Path to the canonical `mapping.yaml`. Leave empty for the plugin default (`storage/migration/mapping.yaml`).'|t('kunstmaan-migrator'),
+}) }}
+
+{# CFG-06 — D-21 + D-22: dropdowns where source data is knowable. Legacy
+   column falls back to free-text when localeOptions is empty (DB unreachable). #}
+{{ forms.editableTableField({
+    label: 'Locale map'|t('kunstmaan-migrator'),
+    instructions: 'Explicit override map: legacy Kunstmaan locale → Craft site handle. Wins over exact-match and language-prefix loose-match.'|t('kunstmaan-migrator'),
+    id: 'localeMap',
+    name: 'localeMap',
+    cols: {
+        legacy: {
+            heading: 'Legacy locale'|t('kunstmaan-migrator'),
+            type: localeOptions ? 'select' : 'singleline',
+            options: localeOptions ?? [],
+        },
+        craft: {
+            heading: 'Craft site handle'|t('kunstmaan-migrator'),
+            type: 'select',
+            options: siteHandleOptions,
+        },
+    },
+    rows: settings.localeMap|default([]),
+    addRowLabel: 'Add locale mapping'|t('kunstmaan-migrator'),
+    allowAdd: true,
+    allowDelete: true,
+}) }}
+
+{# Phase 8.5 / D-24 — Doctrine ManyToOne FK relation join gate. Defaults ON so
+   pages that wrap a content entity (EmployeePage→Employee, CaseStudyPage→
+   CaseStudyCategory, …) get the related row's columns embedded under
+   `_rel:<prop>.<col>` keys at extract time, surfacing the cross-relation
+   data to the LLM proposer + operator. Flip OFF when the related table is
+   huge or the join queries dominate extract latency. CLI --no-rel-join
+   bypasses per-run. #}
+{{ forms.lightswitchField({
+    label: 'Join Doctrine ManyToOne FK relations at extract'|t('kunstmaan-migrator'),
+    id: 'joinFkRelations',
+    name: 'joinFkRelations',
+    on: settings.joinFkRelations,
+    instructions: 'When ON, every page or page-part row carries the related entity\'s columns under `_rel:<property>.<column>` keys. Lets the LLM and operator map e.g. `_rel:employee.name → name` directly instead of stopping at the bare `employee_id` FK. CLI --no-rel-join bypasses per-run.'|t('kunstmaan-migrator'),
+}) }}
+
+<h2>{{ 'AI'|t('kunstmaan-migrator') }}</h2>
+
+{# Phase 8 / D-14 — AI proposer scope gates. Defaults to ON (proposers run);
+   flip OFF to disable per Settings persistence. CLI --no-layout / --no-providers
+   bypass per-run. The blanket --no-ai flag still disables every LLM call. #}
+{{ forms.lightswitchField({
+    label: 'Propose page-builder layout (header / body-wrap / body-column)'|t('kunstmaan-migrator'),
+    id: 'proposeLayout',
+    name: 'proposeLayout',
+    on: settings.proposeLayout,
+    instructions: 'When ON, analyze proposes Matrix layout slots (headerBlock / bodyWrapBlock / bodyColumn) for each accepted nodeClass. Heuristic-gated by Matrix catalog. CLI --no-layout bypasses per-run.'|t('kunstmaan-migrator'),
+}) }}
+
+{{ forms.lightswitchField({
+    label: 'Propose dataProviders (orphan page-parts)'|t('kunstmaan-migrator'),
+    id: 'proposeProviders',
+    name: 'proposeProviders',
+    on: settings.proposeProviders,
+    instructions: 'When ON, analyze proposes mapping.dataProviders rows for orphan page-parts (no kuma_page_part_refs row + sourceTable not joined to kuma_node_versions). CLI --no-providers bypasses per-run.'|t('kunstmaan-migrator'),
+}) }}
+
+<h2>{{ 'Fallback'|t('kunstmaan-migrator') }}</h2>
+
+{# Phase 6 — graceful fallback for AI-uncertain mappings. Three-state via the
+   "(no fallback — skip)" sentinel option pre-pended to each dropdown. The
+   compiler reads these settings and routes unmatched FQCNs / page-parts to
+   the chosen handle (or skips them when no fallback is selected). #}
+{{ forms.selectField({
+    label: 'Default entry type (Pages)'|t('kunstmaan-migrator'),
+    instructions: 'When the AI cannot confidently map a Kunstmaan Page to a Craft entry type, route it here instead of dropping it. Pick "(no fallback — skip)" to keep the legacy fail-loud behavior.'|t('kunstmaan-migrator'),
+    id: 'defaultEntryType',
+    name: 'defaultEntryType',
+    options: entryTypeFallbackOptions,
+    value: settings.defaultEntryType ?? '',
+}) }}
+
+{{ forms.selectField({
+    label: 'Default block type (PageParts)'|t('kunstmaan-migrator'),
+    instructions: 'When the AI cannot confidently map a Kunstmaan PagePart to a Craft Matrix block type, route it here. Status flips to accepted automatically. Pick "(no fallback — skip)" to keep page-parts as needs-review for hand-fill via map.'|t('kunstmaan-migrator'),
+    id: 'defaultBlockType',
+    name: 'defaultBlockType',
+    options: blockTypeFallbackOptions,
+    value: settings.defaultBlockType ?? '',
+}) }}
