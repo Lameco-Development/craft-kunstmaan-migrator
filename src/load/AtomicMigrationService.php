@@ -154,6 +154,7 @@ class AtomicMigrationService extends Component
                 $sourceId,
                 $perSite,
                 $overwrite,
+                $report,
             );
 
             // Merge refIdsByLocale into the state row's meta so the SEO

@@ -100,6 +100,7 @@ class EntryMigrationService extends Component
         string|int $stateKey,
         array $perSite,
         bool $force = false,
+        ?MigrationReport $report = null,
     ): Entry {
         // Resolve the configured site handles (values of $this->sites).
         $configuredHandles = array_values($this->sites);
@@ -270,7 +271,15 @@ class EntryMigrationService extends Component
         $primarySourceRefPositions = $this->extractSourceRefPositions(
             (array) ($primaryData['fieldValues'] ?? []),
         );
-        $this->applyPerSiteData($entry, $primaryData, $blockUidMap);
+        $this->applyPerSiteData(
+            $entry,
+            $primaryData,
+            $blockUidMap,
+            $report,
+            $stateSource,
+            (string) $stateKey,
+            $primarySite->handle,
+        );
 
         // Critical: propagateChanges=false (Pitfall 2)
         if (!Craft::$app->elements->saveElement($entry, true, false)) {
@@ -327,7 +336,15 @@ class EntryMigrationService extends Component
                 continue;
             }
 
-            $this->applyPerSiteData($localised, $perSite[$site->handle], $blockUidMap);
+            $this->applyPerSiteData(
+                $localised,
+                $perSite[$site->handle],
+                $blockUidMap,
+                $report,
+                $stateSource,
+                (string) $stateKey,
+                $site->handle,
+            );
 
             // Critical: propagateChanges=false (Pitfall 2)
             if (!Craft::$app->elements->saveElement($localised, true, false)) {
@@ -378,8 +395,15 @@ class EntryMigrationService extends Component
      * @param array<string, mixed> $data
      * @param array<string, string> $blockUidMap
      */
-    private function applyPerSiteData(Entry $entry, array $data, array $blockUidMap): void
-    {
+    private function applyPerSiteData(
+        Entry $entry,
+        array $data,
+        array $blockUidMap,
+        ?MigrationReport $report = null,
+        ?string $stateSource = null,
+        ?string $stateKey = null,
+        ?string $siteHandle = null,
+    ): void {
         $entry->title = (string) ($data['title'] ?? '');
         // Only overwrite slug when the Transform emitted a non-empty value.
         // Singleton sections (HomePage, ErrorPage, overview pages) have a
@@ -405,7 +429,15 @@ class EntryMigrationService extends Component
                 );
             }
         }
-        $fieldValues = $this->stripSourcePartRefs($fieldValues);
+        $fieldValues = $this->stripSourcePartRefs(
+            $fieldValues,
+            $report,
+            [
+                'stateSource' => $stateSource,
+                'stateKey' => $stateKey,
+                'site' => $siteHandle,
+            ],
+        );
 
         // Native Entry properties are NOT custom fields — CustomFieldBehavior
         // rejects them. mapping.yaml can list `postDate`/`expiryDate`/
@@ -512,16 +544,24 @@ class EntryMigrationService extends Component
      * @param array<string, mixed> $fieldValues
      * @return array<string, mixed>
      */
-    private function stripSourcePartRefs(array $fieldValues): array
-    {
+    private function stripSourcePartRefs(
+        array $fieldValues,
+        ?MigrationReport $report = null,
+        array $context = [],
+    ): array {
         foreach ($fieldValues as $handle => $value) {
             if (!is_array($value)) {
                 continue;
             }
+            $position = 0;
             foreach ($value as $blockKey => $block) {
                 if (!is_array($block) || !isset($block['fields']) || !is_array($block['fields'])) {
+                    ++$position;
                     continue;
                 }
+                $sourceRef = isset($block['fields']['_sourcePartRef'])
+                    ? (string) $block['fields']['_sourcePartRef']
+                    : null;
                 // Strip the hidden ref tag.
                 unset($block['fields']['_sourcePartRef']);
 
@@ -538,7 +578,27 @@ class EntryMigrationService extends Component
                     }
                 }
 
+                if (!$this->hasNonEmptyString($block['title'] ?? null)) {
+                    $block['title'] = $this->synthesiseMatrixBlockTitle($block, $position, $sourceRef);
+                    $this->recordFallback(
+                        $report,
+                        'matrix_native_title',
+                        sprintf(
+                            'Matrix native-title fallback: source=%s:%s site=%s field=%s blockType=%s position=%d%s title="%s"',
+                            (string) ($context['stateSource'] ?? '?'),
+                            (string) ($context['stateKey'] ?? '?'),
+                            (string) ($context['site'] ?? '?'),
+                            $handle,
+                            (string) ($block['type'] ?? 'unknown'),
+                            $position + 1,
+                            $sourceRef !== null ? ' sourceRef=' . $sourceRef : '',
+                            (string) $block['title'],
+                        ),
+                    );
+                }
+
                 $value[$blockKey] = $block;
+                ++$position;
             }
             $fieldValues[$handle] = $value;
         }
@@ -556,6 +616,34 @@ class EntryMigrationService extends Component
     public function normalizeMatrixPayload(array $fieldValues): array
     {
         return $this->stripSourcePartRefs($fieldValues);
+    }
+
+    /**
+     * @param array<string, mixed> $block
+     */
+    private function synthesiseMatrixBlockTitle(array $block, int $position, ?string $sourceRef): string
+    {
+        $type = trim((string) ($block['type'] ?? 'matrixBlock'));
+        $type = $type !== '' ? $type : 'matrixBlock';
+        $base = sprintf('Migrated %s block %d', $type, $position + 1);
+
+        return $sourceRef !== null && trim($sourceRef) !== ''
+            ? sprintf('%s (%s)', $base, trim($sourceRef))
+            : $base;
+    }
+
+    private function hasNonEmptyString(mixed $value): bool
+    {
+        return is_string($value) && trim($value) !== '';
+    }
+
+    private function recordFallback(?MigrationReport $report, string $category, string $message): void
+    {
+        if ($report !== null) {
+            $report->warn($message);
+            $report->incr('fallback.' . $category);
+        }
+        Craft::warning('EntryMigrationService: ' . $message, __METHOD__);
     }
 
     /**
