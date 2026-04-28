@@ -106,6 +106,7 @@ final class MappingCompiler extends Component
         array $craftEntryTypeHandles = [],
         array $matrixFieldCatalog = [],
         array $flatPagePartCandidates = [],
+        array $entryTypeFlatHandles = [],
     ): array {
         $proposals = (array) ($mapping['proposals'] ?? []);
 
@@ -395,10 +396,39 @@ final class MappingCompiler extends Component
                 $tableRows,
                 static fn(array $r): bool => (string) ($r['targetEntryType'] ?? '') === $sectionKey,
             ));
+            // Phase 8.7 / D-40 — entry-type's allowed flat-handle catalog
+            // for targetHandle validation. Empty list = no catalog passed
+            // (legacy callers / tests) → skip validation per call-site.
+            $allowedHandles = $entryTypeFlatHandles[$sectionKey] ?? null;
             $fields = [];
             foreach ($sectionRows as $r) {
                 $targetHandle = (string) ($r['targetHandle'] ?? '');
                 if ($targetHandle === '') {
+                    continue;
+                }
+                // Phase 8.7 / D-40 — drop+warn when targetHandle doesn't exist
+                // on the chosen entry-type. Catches silent-empty bugs like
+                // `content → newsPage::content` (newsPage has no `content`
+                // field). Only fires when the catalog was supplied; the
+                // legacy null path keeps existing tests passing. Dotted-path
+                // targets (Matrix sub-fields, e.g. `headerHome.title` per
+                // Phase 8.2 / D-15) are handled by a separate validation
+                // path — skip flat-catalog check.
+                if ($allowedHandles !== null
+                    && !str_contains($targetHandle, '.')
+                    && !in_array($targetHandle, $allowedHandles, true)
+                ) {
+                    $warnings[] = sprintf(
+                        '%s: column proposal %s.%s → %s::%s dropped — `%s` is not a flat field on entry-type `%s` (allowed: %s)',
+                        $fqcn,
+                        (string) ($r['table'] ?? '?'),
+                        (string) ($r['column'] ?? '?'),
+                        $sectionKey,
+                        $targetHandle,
+                        $targetHandle,
+                        $sectionKey,
+                        implode(', ', $allowedHandles),
+                    );
                     continue;
                 }
                 if (isset($fields[$targetHandle])) {

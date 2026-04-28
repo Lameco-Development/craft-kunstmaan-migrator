@@ -156,6 +156,11 @@ class CompileController extends Controller
             // content (TextPagePart, etc.) into the right ckeditor field
             // automatically — no per-project hand-curation needed.
             $plugin->craftKnowledgeBase->flatPagePartCandidates(),
+            // Phase 8.7 / D-40 — pass entry-type's flat-handle catalog so
+            // compile can drop+warn on column proposals whose targetHandle
+            // doesn't exist on the chosen entry-type (silent-empty
+            // prevention).
+            $plugin->craftKnowledgeBase->entryTypeFlatHandles(),
         );
         $report = $compiled['_compileReport'];
 
