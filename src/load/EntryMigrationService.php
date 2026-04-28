@@ -266,7 +266,13 @@ class EntryMigrationService extends Component
         // ------------------------------------------------------------------ 5
         // First save — PRIMARY site (propagate=false, per Pitfall 2)
         // ------------------------------------------------------------------ 5
-        $primaryData = $perSite[$primarySite->handle] ?? [];
+        $primaryData = $this->primarySiteDataForSave(
+            $perSite,
+            $primarySite->handle,
+            $report,
+            $stateSource,
+            (string) $stateKey,
+        );
         // Extract source-ref positions BEFORE applyPerSiteData strips them.
         $primarySourceRefPositions = $this->extractSourceRefPositions(
             (array) ($primaryData['fieldValues'] ?? []),
@@ -315,7 +321,10 @@ class EntryMigrationService extends Component
         // Pitfall 2. Each site save stays independent; a per-site failure is
         // a warning, not fatal — don't abort the whole migration.
         // ------------------------------------------------------------------ 7
-        foreach (array_slice($sites, 1) as $site) {
+        foreach ($sites as $site) {
+            if ($site->id === $primarySite->id) {
+                continue;
+            }
             if (!isset($perSite[$site->handle])) {
                 continue;
             }
@@ -519,6 +528,96 @@ class EntryMigrationService extends Component
             }
         }
         $entry->setFieldValues($fieldValues);
+    }
+
+    /**
+     * Craft requires the primary site to save first. Sparse source payloads may
+     * legitimately omit the Craft primary site while still carrying valid native
+     * values on another source locale. For that first save only, borrow the best
+     * available native payload without mutating the source-keyed perSite map.
+     *
+     * @param array<string, array<string, mixed>> $perSite
+     * @return array<string, mixed>
+     */
+    private function primarySiteDataForSave(
+        array $perSite,
+        string $primaryHandle,
+        ?MigrationReport $report,
+        string $stateSource,
+        string $stateKey,
+    ): array {
+        $primaryData = (array) ($perSite[$primaryHandle] ?? []);
+        if (!$this->primaryNativeValuesNeedFallback($primaryData)) {
+            return $primaryData;
+        }
+
+        $fallbackHandle = null;
+        $fallbackData = null;
+        foreach ($perSite as $handle => $candidate) {
+            if ($handle === $primaryHandle || !is_array($candidate)) {
+                continue;
+            }
+            if (!$this->payloadHasUsableNativeValues($candidate)) {
+                continue;
+            }
+            $fallbackHandle = (string) $handle;
+            $fallbackData = $candidate;
+            break;
+        }
+
+        if ($fallbackData === null) {
+            return $primaryData;
+        }
+
+        $borrowed = [];
+        if ($primaryData === []) {
+            $primaryData = $fallbackData;
+            $borrowed = ['payload'];
+        } else {
+            foreach (['title', 'slug'] as $nativeKey) {
+                if (!$this->hasNonEmptyString($primaryData[$nativeKey] ?? null)
+                    && $this->hasNonEmptyString($fallbackData[$nativeKey] ?? null)
+                ) {
+                    $primaryData[$nativeKey] = $fallbackData[$nativeKey];
+                    $borrowed[] = $nativeKey;
+                }
+            }
+        }
+
+        if ($borrowed !== []) {
+            $this->recordFallback(
+                $report,
+                'sparse_locale_primary',
+                sprintf(
+                    'Sparse-locale primary-save fallback: source=%s:%s primarySite=%s fallbackSite=%s borrowed=%s',
+                    $stateSource,
+                    $stateKey,
+                    $primaryHandle,
+                    (string) $fallbackHandle,
+                    implode(',', $borrowed),
+                ),
+            );
+        }
+
+        return $primaryData;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function primaryNativeValuesNeedFallback(array $data): bool
+    {
+        return !$this->hasNonEmptyString($data['title'] ?? null)
+            || !$this->hasNonEmptyString($data['slug'] ?? null);
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function payloadHasUsableNativeValues(array $data): bool
+    {
+        return $this->hasNonEmptyString($data['title'] ?? null)
+            || $this->hasNonEmptyString($data['slug'] ?? null);
     }
 
     /**

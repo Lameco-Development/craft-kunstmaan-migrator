@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\integration\load;
 
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
+use lameco\kunstmaanmigrator\load\MigrationReport;
 use PHPUnit\Framework\TestCase;
+use ReflectionMethod;
 
 require_once __DIR__ . '/_craft_shim.php';
 
@@ -79,5 +81,82 @@ final class EntryMigrationServiceTest extends TestCase
         self::assertArrayNotHasKey('title', $normalized['contentBuilder']['new1']['fields']);
         self::assertArrayNotHasKey('title', $normalized['contentBuilder']['new2']['fields']);
         self::assertArrayNotHasKey('heading', $normalized['contentBuilder']['new3']['fields']);
+    }
+
+    public function testSparseLocalePrimaryFallbackBorrowsBestAvailablePayloadWithoutMutatingSourceSites(): void
+    {
+        $service = new EntryMigrationService();
+        $report = new MigrationReport();
+        $method = new ReflectionMethod(EntryMigrationService::class, 'primarySiteDataForSave');
+
+        $perSite = [
+            'en' => [
+                'enabled' => true,
+                'title' => 'English source title',
+                'slug' => 'english-source-title',
+                'fieldValues' => [
+                    'summary' => 'English source summary',
+                ],
+            ],
+        ];
+        $original = $perSite;
+
+        $primaryData = $method->invoke(
+            $service,
+            $perSite,
+            'default',
+            $report,
+            'App\\Entity\\GenericTextPage',
+            '1001',
+        );
+
+        self::assertSame('English source title', $primaryData['title']);
+        self::assertSame('english-source-title', $primaryData['slug']);
+        self::assertSame('English source summary', $primaryData['fieldValues']['summary']);
+        self::assertSame($original, $perSite, 'Primary-save fallback must not fake a source primary-site payload.');
+        self::assertSame(1, $report->counts['fallback.sparse_locale_primary'] ?? 0);
+        self::assertSame(0, $report->counts['failed'] ?? 0);
+        self::assertStringContainsString('Sparse-locale primary-save fallback', implode("\n", $report->warnings));
+        self::assertStringContainsString('primarySite=default', implode("\n", $report->warnings));
+        self::assertStringContainsString('fallbackSite=en', implode("\n", $report->warnings));
+    }
+
+    public function testSparseLocalePrimaryFallbackOnlyBorrowsMissingNativeValues(): void
+    {
+        $service = new EntryMigrationService();
+        $report = new MigrationReport();
+        $method = new ReflectionMethod(EntryMigrationService::class, 'primarySiteDataForSave');
+
+        $primaryData = $method->invoke(
+            $service,
+            [
+                'default' => [
+                    'enabled' => false,
+                    'title' => '',
+                    'slug' => 'primary-slug',
+                    'fieldValues' => [
+                        'body' => 'Primary body remains source truth',
+                    ],
+                ],
+                'en' => [
+                    'enabled' => true,
+                    'title' => 'English fallback title',
+                    'slug' => 'english-fallback-slug',
+                    'fieldValues' => [
+                        'body' => 'English body must not overwrite primary body',
+                    ],
+                ],
+            ],
+            'default',
+            $report,
+            'App\\Entity\\GenericTextPage',
+            '1002',
+        );
+
+        self::assertSame('English fallback title', $primaryData['title']);
+        self::assertSame('primary-slug', $primaryData['slug']);
+        self::assertSame('Primary body remains source truth', $primaryData['fieldValues']['body']);
+        self::assertSame(1, $report->counts['fallback.sparse_locale_primary'] ?? 0);
+        self::assertSame(0, $report->counts['failed'] ?? 0);
     }
 }
