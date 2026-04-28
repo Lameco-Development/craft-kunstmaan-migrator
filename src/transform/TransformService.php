@@ -313,6 +313,47 @@ class TransformService extends Component
             }
         }
 
+        // 2.5) Phase 8.7 / D-38 — flat page-part content fold. When the parent
+        // entry-type has no Matrix field to host page-parts (e.g. teamMember,
+        // which has flat ckeditorDefault but no pageBuilder), the operator
+        // sets `flatPagePartContent: <flatFieldHandle>` on the nodeClass and
+        // we concatenate every page-part's `content` (or `text` / `body`)
+        // column into that single field. Optional `flatPagePartContextFilter`
+        // narrows to specific contexts; default = all contexts. Operator-
+        // opt-in only; no auto-detect in v1 (queued follow-up).
+        $flatTarget = (string) ($nodeSpec['flatPagePartContent'] ?? '');
+        if ($flatTarget !== '') {
+            $contextFilter = $nodeSpec['flatPagePartContextFilter'] ?? null;
+            $contextFilter = is_array($contextFilter)
+                ? array_values(array_filter(array_map('strval', $contextFilter), 'strlen'))
+                : null;
+            $chunks = [];
+            foreach ((array) ($siteData['pageParts'] ?? []) as $p) {
+                if (!is_array($p)) {
+                    continue;
+                }
+                if ($contextFilter !== null
+                    && !in_array((string) ($p['context'] ?? ''), $contextFilter, true)
+                ) {
+                    continue;
+                }
+                $row = (array) ($p['row'] ?? []);
+                // Probe known content-column names emitted by Kunstmaan vendor
+                // page-parts (TextPagePart, MultiLine/SingleLineTextPagePart →
+                // `content`; HeaderPagePart → `title`). First non-empty wins.
+                foreach (['content', 'text', 'body'] as $col) {
+                    $val = $row[$col] ?? null;
+                    if (is_string($val) && $val !== '') {
+                        $chunks[] = $val;
+                        break;
+                    }
+                }
+            }
+            if ($chunks !== []) {
+                $fieldValues[$flatTarget] = implode("\n\n", $chunks);
+            }
+        }
+
         // 3) Plan 05-05: headerBlock — emit a single-block Matrix payload under
         //    $nodeSpec['headerBlock']['fieldHandle'] for entry types that have a
         //    `header` Matrix field (typical on MethodPage / FieldPage / TextPagePlus /
