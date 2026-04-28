@@ -245,6 +245,22 @@ final class MigrateControllerFailureExitTest extends TestCase
         self::assertStringContainsString('| media | 1 | `[M1]` | 1 | 101 | `body` | no matching Craft asset id |', $rendered);
         self::assertStringContainsString('Showing 100 of 101 diagnostics', $rendered);
         self::assertStringNotContainsString('PRIVATE', $rendered);
+
+        $mediaUrlRendered = implode("\n", MigrateController::renderFinalizeUnresolvedDiagnosticsSection([
+            [
+                'tokenFamily' => 'media_url',
+                'legacyId' => 0,
+                'token' => '/uploads/media/missing.jpg',
+                'siteId' => 2,
+                'entryId' => 321,
+                'fieldHandle' => 'body',
+                'reason' => 'no matching Craft asset id for legacy media URL',
+            ],
+        ]));
+        self::assertStringContainsString(
+            '| media_url | 0 | `/uploads/media/missing.jpg` | 2 | 321 | `body` | no matching Craft asset id for legacy media URL |',
+            $mediaUrlRendered,
+        );
     }
 
     public function testZeroFinalizeUnresolvedDoesNotRecordBlockingFailure(): void

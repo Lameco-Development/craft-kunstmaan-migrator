@@ -539,9 +539,34 @@ class CkeditorRewriterService extends Component
 
             // Unresolved — emit a marker comment adjacent to the attribute so
             // editors and the check action can grep the raw HTML.
+            $diagnosticUrl = $this->diagnosticMediaUrlToken($url);
+            $this->recordUnresolvedDiagnostic(
+                'media_url',
+                0,
+                $siteId,
+                $diagnosticUrl,
+                $diagnosticUrl,
+                'no matching Craft asset id for legacy media URL',
+            );
             $marker = $this->unresolvedMarker($url);
             return $attr . '=' . $quote . $url . $quote . $marker;
         }, $html) ?? $html;
+    }
+
+    private function diagnosticMediaUrlToken(string $url): string
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (!is_string($path) || $path === '') {
+            $path = preg_replace('/[?#].*$/', '', $url) ?? $url;
+        }
+
+        $path = preg_replace('/[\x00-\x1F\x7F`|<>]/', '?', $path) ?? $path;
+
+        if (strlen($path) > 255) {
+            return substr($path, 0, 252) . '...';
+        }
+
+        return $path;
     }
 
     /**

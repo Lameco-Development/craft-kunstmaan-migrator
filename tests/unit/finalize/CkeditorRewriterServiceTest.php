@@ -101,6 +101,15 @@ final class CkeditorRewriterServiceTest extends TestCase
             $out,
         );
         self::assertSame('/uploads/media/missing.jpg', $this->decodeMarkerSource($out));
+        $diagnostics = $svc->consumeUnresolvedDiagnostics();
+        self::assertCount(1, $diagnostics);
+        self::assertSame('media_url', $diagnostics[0]['tokenFamily']);
+        self::assertSame(0, $diagnostics[0]['legacyId']);
+        self::assertSame('/uploads/media/missing.jpg', $diagnostics[0]['token']);
+        self::assertSame('/uploads/media/missing.jpg', $diagnostics[0]['source']);
+        self::assertSame(1, $diagnostics[0]['siteId']);
+        self::assertSame('no matching Craft asset id for legacy media URL', $diagnostics[0]['reason']);
+        self::assertSame([], $svc->consumeUnresolvedDiagnostics(), 'Diagnostics are consumed/reset per field.');
     }
 
     public function testUnresolvedMarkerEncodesMaliciousLegacyUrlCommentPayload(): void
@@ -121,6 +130,11 @@ final class CkeditorRewriterServiceTest extends TestCase
         self::assertStringNotContainsString('-->', $matches[1]);
         self::assertStringNotContainsString('<script', $matches[1]);
         self::assertStringNotContainsString('&quot;', $matches[1]);
+
+        $diagnostics = $svc->consumeUnresolvedDiagnostics();
+        self::assertSame('media_url', $diagnostics[0]['tokenFamily']);
+        self::assertStringNotContainsString('<script', $diagnostics[0]['token']);
+        self::assertStringNotContainsString('-->', $diagnostics[0]['token']);
     }
 
     public function testRewritesKumaMediaPlaceholderToAssetRefToken(): void
