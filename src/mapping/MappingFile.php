@@ -186,12 +186,13 @@ class MappingFile extends Component
      *
      * Existing rows preserved verbatim; incoming rows appended only if their tuple is unseen.
      *
-     * @param array{proposals: list<array<string, mixed>>} $existing
-     * @param list<array<string, mixed>>                    $incoming
-     * @return array{proposals: list<array<string, mixed>>}
+     * @param array<string, mixed>       $existing
+     * @param list<array<string, mixed>> $incoming
+     * @return array<string, mixed>
      */
     public function merge(array $existing, array $incoming): array
     {
+        $result = $existing;
         $merged = [];
         $seen = [];
         foreach (($existing['proposals'] ?? []) as $row) {
@@ -208,7 +209,8 @@ class MappingFile extends Component
                 $seen[$key] = true;
             }
         }
-        return ['proposals' => $merged];
+        $result['proposals'] = $merged;
+        return $result;
     }
 
     /**
