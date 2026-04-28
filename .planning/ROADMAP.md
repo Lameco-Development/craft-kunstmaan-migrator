@@ -452,13 +452,13 @@ Plans:
 **Plans:** 7 plans
 
 Plans:
-- [ ] `11-01-PLAN.md` — graph contracts/versioning and shared fixtures.
-- [ ] `11-02-PLAN.md` — `KunstmaanPageWalker` source graph.
-- [ ] `11-03-PLAN.md` — `CraftEntryWalker` target graph.
-- [ ] `11-04-PLAN.md` — analyze artifact and graph-first LLM prompt integration.
-- [ ] `11-05-PLAN.md` — compile/audit graph compatibility and relation intent validation.
-- [ ] `11-06-PLAN.md` — promoted/shared relation target extract/transform/load support.
-- [ ] `11-07-PLAN.md` — graph-backed relation reporting and scoped NewsPage/HomePage rehearsal.
+- [x] `11-01-PLAN.md` — graph contracts/versioning and shared fixtures — completed.
+- [x] `11-02-PLAN.md` — `KunstmaanPageWalker` source graph — completed.
+- [x] `11-03-PLAN.md` — `CraftEntryWalker` target graph — completed.
+- [x] `11-04-PLAN.md` — analyze artifact and graph-first LLM prompt integration — completed.
+- [x] `11-05-PLAN.md` — compile/audit graph compatibility and relation intent validation — completed.
+- [x] `11-06-PLAN.md` — promoted/shared relation target extract/transform/load support — completed.
+- [x] `11-07-PLAN.md` — graph-backed relation reporting and scoped NewsPage/HomePage rehearsal — completed.
 
 ---
 
