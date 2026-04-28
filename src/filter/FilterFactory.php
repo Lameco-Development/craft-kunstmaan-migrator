@@ -29,9 +29,11 @@ final class FilterFactory extends Component
     ): MigrationFilters {
         $settings = Plugin::getInstance()->getSettings();
 
-        $entities = $entitiesArg !== null
-            ? ($entitiesArg === '' ? [] : array_values(array_filter(array_map('trim', explode(',', $entitiesArg)), static fn(string $s): bool => $s !== '')))
-            : array_values((array) $settings->defaultEntities);
+        $entities = self::normalizeEntityFilters(
+            $entitiesArg !== null
+                ? ($entitiesArg === '' ? [] : explode(',', $entitiesArg))
+                : (array) $settings->defaultEntities,
+        );
 
         $locales = $localesArg !== null
             ? ($localesArg === '' ? [] : array_values(array_filter(array_map('trim', explode(',', $localesArg)), static fn(string $s): bool => $s !== '')))
@@ -48,5 +50,46 @@ final class FilterFactory extends Component
             noSeo:    $noSeo,
             noRetour: $noRetour,
         );
+    }
+
+    /**
+     * Normalize `--entities` values as Kunstmaan source identities.
+     *
+     * FQCN inputs retain their exact spelling and also add the class basename so
+     * callers can compare either source form. Basename inputs are kept as-is; no
+     * Craft handle/camel-case inference happens at this boundary.
+     *
+     * @param array<int, string> $entities
+     * @return list<string>
+     */
+    public static function normalizeEntityFilters(array $entities): array
+    {
+        $normalized = [];
+        $seen = [];
+
+        foreach ($entities as $entity) {
+            $entity = trim($entity);
+            if ($entity === '') {
+                continue;
+            }
+
+            foreach ([$entity, self::sourceBasename($entity)] as $identity) {
+                if ($identity === '' || isset($seen[$identity])) {
+                    continue;
+                }
+
+                $seen[$identity] = true;
+                $normalized[] = $identity;
+            }
+        }
+
+        return $normalized;
+    }
+
+    private static function sourceBasename(string $entity): string
+    {
+        $parts = explode('\\', $entity);
+
+        return (string) end($parts);
     }
 }

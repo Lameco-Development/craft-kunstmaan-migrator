@@ -73,7 +73,7 @@ final class MigrationFilters
             return true;
         }
 
-        return isset($this->reachable()[$fqcn]);
+        return $this->identityInSet($fqcn, $this->reachable());
     }
 
     /**
@@ -99,6 +99,13 @@ final class MigrationFilters
             }
         }
 
+        foreach ($this->relationGraph as $source => $_targets) {
+            if ($this->identityInSet((string) $source, $reachable) && !isset($reachable[$source])) {
+                $reachable[$source] = true;
+                $stack[] = (string) $source;
+            }
+        }
+
         while ($stack !== []) {
             $cur = array_pop($stack);
             foreach ($this->relationGraph[$cur] ?? [] as $rel) {
@@ -110,5 +117,28 @@ final class MigrationFilters
         }
 
         return $this->reachableCache = $reachable;
+    }
+
+    /**
+     * Match Kunstmaan source identity in either exact FQCN or basename form.
+     *
+     * @param array<string, true> $set
+     */
+    private function identityInSet(string $fqcn, array $set): bool
+    {
+        if (isset($set[$fqcn])) {
+            return true;
+        }
+
+        $basename = $this->sourceBasename($fqcn);
+
+        return $basename !== $fqcn && isset($set[$basename]);
+    }
+
+    private function sourceBasename(string $fqcn): string
+    {
+        $parts = explode('\\', $fqcn);
+
+        return (string) end($parts);
     }
 }
