@@ -7,6 +7,8 @@ namespace lameco\kunstmaanmigrator\console;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
+use lameco\kunstmaanmigrator\audit\PageRootedCoverageAuditor;
+use lameco\kunstmaanmigrator\audit\PageRootedSurfaceDiscovery;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use Symfony\Component\Yaml\Yaml as SymfonyYaml;
@@ -370,8 +372,72 @@ class CompileController extends Controller
         }
         $this->stdout("  OK   mapping.yaml written → {$mappingPath}\n", Console::FG_GREEN);
 
+        // 8. Page-rooted structural coverage artifacts.
+        // The audit is intentionally structural-only: discovery consumes compiled
+        // mapping/pageStructure/warnings and emits FQCNs, tables, handles, relation
+        // shapes, adapter names, ids, and token types — never source samples.
+        $coverageMapping = $compiled;
+        unset($coverageMapping['_compileReport']);
+        $surfaceDiscovery = $plugin->pageRootedSurfaceDiscovery ?? new PageRootedSurfaceDiscovery();
+        $coverageAuditor = $plugin->pageRootedCoverageAuditor ?? new PageRootedCoverageAuditor();
+        $discoveryRows = $surfaceDiscovery->discover(
+            $coverageMapping,
+            $pageStructure,
+            $this->relationMetadataFromPageStructure($pageStructure),
+        );
+        $coverageRows = $coverageAuditor->audit(
+            $discoveryRows,
+            $coverageMapping,
+            $pageStructure,
+            (array) ($report['warnings'] ?? []),
+        );
+        $coverageJsonPath = $storageDir . '/page-rooted-coverage.json';
+        $coverageMarkdownPath = $storageDir . '/PAGE-ROOTED-COVERAGE.md';
+        if (!$plugin->mappingFile->writeAtomicJson($coverageJsonPath, ['rows' => $coverageRows])) {
+            $this->stderr("  FAIL writeAtomicJson to {$coverageJsonPath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        if (!$plugin->mappingFile->writeAtomic($coverageMarkdownPath, $coverageAuditor->renderMarkdown($coverageRows))) {
+            $this->stderr("  FAIL writeAtomic to {$coverageMarkdownPath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout("  OK   Page-rooted coverage written → {$coverageJsonPath}\n", Console::FG_GREEN);
+        $this->stdout("  OK   Page-rooted coverage written → {$coverageMarkdownPath}\n", Console::FG_GREEN);
+
         $this->stdout("\nCompile: PASS\n", Console::FG_GREEN);
         return ExitCode::OK;
+    }
+
+    /**
+     * Normalize optional relation metadata embedded by source scanners into the
+     * shape consumed by PageRootedSurfaceDiscovery. Scanners differ by project,
+     * so this accepts common keys and otherwise returns an empty map, which the
+     * discovery service converts into explicit unsupported relation descriptors.
+     *
+     * @param array<string, mixed> $pageStructure
+     * @return array<string, list<array<string, mixed>>>
+     */
+    private function relationMetadataFromPageStructure(array $pageStructure): array
+    {
+        $out = [];
+        foreach ($pageStructure as $fqcn => $record) {
+            if (!is_string($fqcn) || !is_array($record)) {
+                continue;
+            }
+            $relations = [];
+            foreach (['relations', 'relationMetadata', 'doctrineRelations'] as $key) {
+                foreach ((array) ($record[$key] ?? []) as $relation) {
+                    if (is_array($relation)) {
+                        $relations[] = $relation;
+                    }
+                }
+            }
+            if ($relations !== []) {
+                $out[$fqcn] = $relations;
+            }
+        }
+        ksort($out);
+        return $out;
     }
 
     /**

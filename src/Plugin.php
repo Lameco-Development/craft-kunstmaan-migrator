@@ -11,6 +11,8 @@ use lameco\kunstmaanmigrator\analyze\HeuristicProposer;
 use lameco\kunstmaanmigrator\analyze\LlmClassifier;
 use lameco\kunstmaanmigrator\analyze\ReportBuilder;
 use lameco\kunstmaanmigrator\analyze\SchemaDumper;
+use lameco\kunstmaanmigrator\audit\PageRootedCoverageAuditor;
+use lameco\kunstmaanmigrator\audit\PageRootedSurfaceDiscovery;
 use lameco\kunstmaanmigrator\compile\MappingCompiler;
 use lameco\kunstmaanmigrator\compile\CraftTargetIntrospector;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
@@ -75,6 +77,8 @@ use yii\db\Connection;
  * @property-read MappingAuditor $mappingAuditor
  * @property-read MappingCompiler $mappingCompiler
  * @property-read CraftTargetIntrospector $craftTargetIntrospector
+ * @property-read PageRootedSurfaceDiscovery $pageRootedSurfaceDiscovery
+ * @property-read PageRootedCoverageAuditor $pageRootedCoverageAuditor
  * @property-read KunstmaanSourcePathResolver $kunstmaanSourcePathResolver
  * @property-read KunstmaanEnvReader $kunstmaanEnvReader
  * @property-read DoctrineEntityParser $doctrineEntityParser
@@ -137,6 +141,8 @@ class Plugin extends BasePlugin
                 'mappingAuditor'    => MappingAuditor::class,     // Phase 2 (Plan 05) — D-16 MAP-07
                 'mappingCompiler'   => MappingCompiler::class,    // Phase 6 — proposals[] → nodeClasses/sections/sites bridge
                 'craftTargetIntrospector' => CraftTargetIntrospector::class, // Phase 9 — compiled target schema validation
+                'pageRootedSurfaceDiscovery' => PageRootedSurfaceDiscovery::class, // Phase 9 — structural Page-rooted surface discovery
+                'pageRootedCoverageAuditor'  => PageRootedCoverageAuditor::class,  // Phase 9 — deterministic Page-rooted coverage report
                 'kunstmaanSourcePathResolver' => KunstmaanSourcePathResolver::class, // Phase 02.1 (Plan 01) — D-33 source-path resolver
                 'kunstmaanEnvReader'            => KunstmaanEnvReader::class,           // Phase 4.1 / D-05 — .env reader, 2-key whitelist
                 'doctrineEntityParser'          => DoctrineEntityParser::class,         // Phase 02.1 (Plan 02) — D-41 verbatim port
