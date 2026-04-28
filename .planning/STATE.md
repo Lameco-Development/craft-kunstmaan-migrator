@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Phase 9 execution in progress
-stopped_at: "Completed 09-06-PLAN.md — CKEditor unresolved marker hardening. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-06-SUMMARY.md`. Commits: 39666ca RED tests, b3e6f8f GREEN implementation. Verification passed: targeted unresolved marker tests, full CkeditorRewriterService suite, and composer test-unit."
+stopped_at: "Completed 09-02-PLAN.md — source-domain filter core. Summary: `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/09-02-SUMMARY.md`. Commits: 5178393 RED normalization tests, fbf3996 normalization implementation, 0ac7c6b RED relationGraph tests, f8b5f1a relationGraph implementation. Verification passed: targeted filter PHPUnit suites and composer test-unit."
 stopped_at_prior: "Phase 8 / Plan 12 (Plugin DI + MigrateController bolt-on/sub-action — TAX-08) shipped 2026-04-27 in 4 atomic commits (25c745c RED 1, f466d5f GREEN 1, 79a6927 RED 2, 8c24cb3 GREEN 2). Two tasks both followed RED → GREEN TDD: Task 1 wired TaxonomyMigrationService into Plugin DI (use import + @property-read TaxonomyMigrationService docblock at line 105 + 'taxonomyMigrationService' => TaxonomyMigrationService::class config() slot at line 169 + init() DI fanout legacyDb/migrationState/mappingFile at lines 330-332); Task 2 inserted the Step 4.5 actionIndex bolt-on (line 282, BEFORE Step 5 load — D-03 taxonomies migrate before pages so RelationHandler FK→entryId lookups succeed) + actionTaxonomies sub-action (lines 553-625, NeverProductionTrait gate FIRST per D-20, mirrors actionRetour shape). D-04 + D-12 three-flag cap preserved (--live / --confirm / --force only — no opt-out flag for the taxonomies stage; grep -cE "noTaxonomies|--no-taxonomies" returns 0). Two test files: PluginBootstrapTest extended with testPluginDeclaresTaxonomyMigrationServiceWiring (4 sub-assertions); new tests/Unit/console/MigrateControllerTaxonomiesWiringTest (5 tests, 10 assertions covering migrateAll-twice + actionTaxonomies-public + Stage-line-twice + no-opt-out-flag + enforceNeverProduction-FIRST). composer test exits 0: 370 tests / 1030 assertions, all passing. Three deviations documented: (1) Rule 3 — `composer phpstan` script is not defined in the project's composer.json (no PHPStan installed), substituted `php -l` + `composer test` for verification; out of scope to add PHPStan. (2) Rule 1 — original actionTaxonomies docblock contained literal `--no-taxonomies` substring as self-documentation, broke the plan's `! grep -E '--no-taxonomies'` invariant; reworded to `NO opt-out flag for the taxonomies stage`. (3) Plan template referenced non-existent `MigrationOptions::fromCli` helper; used the actionRetour-mirroring direct-ctor shape (`new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false)`). TAX-08 mark-complete in REQUIREMENTS.md skipped — TAX-08 is referenced by ROADMAP.md Plan 08-12 row but is NOT yet codified as a checklist item in REQUIREMENTS.md; Plan 08-17 owns DOC-01/DOC-02 codification work and will tick it then. Phase 8 progress now 13/15 plans complete; remaining open: Plan 08-15 (TaxonomyMigrationTest integration — TAX-10) and Plan 08-17 (RECONCILIATION + CHANGELOG known-omissions + REQUIREMENTS codification — DOC-01, DOC-02). (Prior session: Phase 4 closed 2026-04-26 with Plan 12 growing the test corpus 60 → 83 tests / 137 → 210 assertions across 7 new test files + the phase-level RECONCILIATION.md aggregate; canonical record in `.planning/phases/04-adapters-verify-settings/`.)"
-last_updated: "2026-04-28T11:01:49Z"
+last_updated: "2026-04-28T11:10:11Z"
 progress:
   total_phases: 9
   completed_phases: 8
   total_plans: 85
-  completed_plans: 77
-  percent: 91
+  completed_plans: 78
+  percent: 92
 ---
 
 # State
@@ -22,7 +22,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Core value:** An operator can take a Kunstmaan SQL dump and a configured Craft site, walk through an AI-assisted mapping review, and end up with a faithful migration of content into Craft — predictably, idempotently, and with a clear record of what was migrated and what was dropped. The plugin should stay as generic as practical across Lameco Kunstmaan websites (for example CQM, Simac, and Enreach), with project-specific differences surfaced as mapping/operator decisions rather than hardcoded plugin assumptions wherever possible.
 
-**Current focus:** Phase 9 execution is in progress. Plan 09-06 is complete; CKEditor unresolved markers now encode recoverable source detail in comment-safe `sourceB64` payloads while preserving the original unresolved URL/literal for operators. The verified plan set lives in `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/` and preserves the genericity constraint: CQM is the installed Craft integration target (`~/Sites/cqm-craft-website`), while CQM/Simac/Enreach Kunstmaan source shapes are sampled structurally to avoid CQM-only assumptions.
+**Current focus:** Phase 9 execution is in progress. Plan 09-02 is complete; the source-domain filter core now normalizes Kunstmaan source FQCN/basename entity filters and wires relationGraph reachability through `FilterFactory::fromCli()` into `MigrationFilters`. Plan 09-06 is also complete. The verified plan set lives in `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/` and preserves the genericity constraint: CQM is the installed Craft integration target (`~/Sites/cqm-craft-website`), while CQM/Simac/Enreach Kunstmaan source shapes are sampled structurally to avoid CQM-only assumptions.
 
 ## Milestone
 
@@ -40,7 +40,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 9: Migration Workflow Hardening & Page-rooted Introspection Audit — execution in progress.** Context, discussion log, pattern map, plans, and completed summaries live at `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/`. Plan 09-06 is complete. Continue the verified wave order across the remaining plans: 09-01/09-02/09-03, then 09-02B/09-04, then 09-05, then 09-02C, then 09-07.
+**Phase 9: Migration Workflow Hardening & Page-rooted Introspection Audit — execution in progress.** Context, discussion log, pattern map, plans, and completed summaries live at `.planning/phases/09-migration-workflow-hardening-page-rooted-introspection-audit/`. Plans 09-02 and 09-06 are complete. Continue the verified wave order across the remaining plans: 09-01/09-03, then 09-02B/09-04, then 09-05, then 09-02C, then 09-07.
 
 ## Historical Phase Notes
 
@@ -114,6 +114,8 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 ## Decisions
 
+- Phase 9 / Plan 02 D-14 source filters: `FilterFactory::normalizeEntityFilters()` preserves exact Kunstmaan source FQCN spellings and adds basename aliases; no Craft handle/camel-case inference occurs at the filter core.
+- Phase 9 / Plan 02 D-15 reachability seam: `FilterFactory::fromCli()` appends optional `array $relationGraph = []` and passes it into `MigrationFilters`, preserving existing call sites while enabling DFS dependency inclusion.
 - Phase 9 / Plan 06 CKEditor marker safety: unresolved markers use unpadded base64url `sourceB64` payloads so raw legacy URLs never appear inside HTML comments while remaining recoverable by tooling. The raw unresolved URL/literal stays in the original attribute or placeholder location for operator discovery.
 - Phase 4 / Plan 02 verbatim-port discipline (D-54 enforcement): only the two reshape kinds the plan permits were applied — namespace declaration (`bridge\load` → `load`) and the `MigrationStateService` use-statement target (`bridge\load\MigrationStateService` → `load\MigrationStateService`). Every other byte of the 165-LOC v1 file is byte-for-byte preserved: class signature, all docblocks (including the 39-line class-header documenting the column→payload contract), the 6-key `metaGlobalVars`, the 4-key `metaBundleSettings` base + 3-key image extension, the test-seam `Closure::fromCallable` injection, the `lookupCraftAssetId` resolver-then-state-then-null fallback ladder. Line count exact match: 165 LOC.
 - Phase 4 / Plan 02 zero Plugin::config() changes: per plan contract, DI registration is **deferred to Plan 04-09** (Plugin::config + init wiring). This plan ships the file only — `Plugin::config()` is untouched, no `seomaticPayloadBuilder` component entry added, no @property-read line added. PluginBootstrapTest invariant preserved untouched.
@@ -219,9 +221,9 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 ## Last Session
 
-- **Last:** 2026-04-28T11:01:49Z
-- **Stopped at:** Completed Phase 9 / Plan 06 (CKEditor unresolved marker hardening). TDD RED commit `39666ca` added failing coverage for `sourceB64` unresolved markers and malicious legacy URLs containing `-->`, `<script`, and quote-looking text. GREEN commit `b3e6f8f` added `CkeditorRewriterService::unresolvedMarker()` with unpadded base64url encoding and routed unresolved media URL, `[M]`, and `[NT]` marker paths through it. The original unresolved URL/literal remains in the attribute or placeholder location; raw source detail no longer appears inside the HTML comment. Verification passed: targeted unresolved marker filter, full `CkeditorRewriterServiceTest` suite, and `composer test-unit`. `gsd-sdk` was unavailable in this shell, so STATE/ROADMAP updates were applied manually; PH9-16 is not yet codified as a checkbox in REQUIREMENTS.md, so there was no requirement row to mark.
-- **Resume file:** None — Plan 09-06 is closed. Continue remaining Phase 9 plans in dependency order.
+- **Last:** 2026-04-28T11:10:11Z
+- **Stopped at:** Completed Phase 9 / Plan 02 (source-domain filter core). TDD RED commit `5178393` added failing D-14 normalization coverage and GREEN commit `fbf3996` implemented `FilterFactory::normalizeEntityFilters()` plus FQCN/basename matching in `MigrationFilters`. TDD RED commit `0ac7c6b` added failing D-15 relationGraph seam/reachability coverage and GREEN commit `f8b5f1a` appended the optional `relationGraph` argument to `FilterFactory::fromCli()` and passed it into `MigrationFilters`. Verification passed: targeted filter suites and `composer test-unit` (406 tests / 1160 assertions; PHPUnit no-coverage warning and Composer bundled json-schema deprecation notice only). `gsd-sdk` was unavailable in this shell, so STATE/ROADMAP updates were applied manually; PH9-04 and PH9-05 are referenced by the plan but are not yet codified as checkboxes in REQUIREMENTS.md, so there were no requirement rows to mark.
+- **Resume file:** None — Plan 09-02 is closed. Continue remaining Phase 9 plans in dependency order.
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-9 have something to match against; Phase 02.1 / Plan 07 heuristic 1.5 entity-aware match should fire repeatedly once Plan 09 reconciliation lands and accepted column rows seed acceptedRows).
 
