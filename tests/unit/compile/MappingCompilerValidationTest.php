@@ -75,11 +75,74 @@ final class MappingCompilerValidationTest extends TestCase
         self::assertStringContainsString('category_id', $warnings);
     }
 
+    public function testPageBuilderHandlePropagatesWhenParentEntryTypeOwnsMatrixField(): void
+    {
+        $compiled = (new MappingCompiler())->compile(
+            $this->mapping([], [
+                $this->pagePart('App\\Entity\\TextPagePart', 'ArticlePage', 'bodyBlocks', 'textBlock'),
+            ]),
+            $this->pageStructure(),
+            ['nl' => 'default'],
+            entryTypeFlatHandles: ['articlePage' => ['title', 'bodyBlocks']],
+        );
+
+        self::assertSame(
+            'bodyBlocks',
+            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['pageBuilderHandle'],
+        );
+        self::assertSame([], array_filter(
+            $compiled['_compileReport']['warnings'],
+            static fn(string $warning): bool => str_contains($warning, 'pageBuilderHandle `bodyBlocks` not propagated'),
+        ));
+    }
+
+    public function testInvalidPageBuilderOwnershipKeepsFlatFallbackAndDoesNotPropagate(): void
+    {
+        $compiled = (new MappingCompiler())->compile(
+            $this->mapping([], [
+                $this->pagePart('App\\Entity\\TextPagePart', 'ArticlePage', 'otherBuilder', 'textBlock'),
+            ]),
+            $this->pageStructure(),
+            ['nl' => 'default'],
+            flatPagePartCandidates: ['articlePage' => 'body'],
+            entryTypeFlatHandles: ['articlePage' => ['title', 'body']],
+        );
+
+        $nodeClass = $compiled['nodeClasses']['App\\Entity\\ArticlePage'];
+        self::assertSame('', $nodeClass['pageBuilderHandle']);
+        self::assertSame('body', $nodeClass['flatPagePartContent']);
+
+        $warnings = implode("\n", $compiled['_compileReport']['warnings']);
+        self::assertStringContainsString('pageBuilderHandle `otherBuilder` not propagated', $warnings);
+        self::assertStringContainsString('flatPagePartContent `body`', $warnings);
+    }
+
+    public function testInvalidPageBuilderOwnershipWithoutFallbackIsVisibleForOperatorReview(): void
+    {
+        $compiled = (new MappingCompiler())->compile(
+            $this->mapping([], [
+                $this->pagePart('App\\Entity\\TextPagePart', 'ArticlePage', 'otherBuilder', 'textBlock'),
+            ]),
+            $this->pageStructure(),
+            ['nl' => 'default'],
+            entryTypeFlatHandles: ['articlePage' => ['title', 'body']],
+        );
+
+        self::assertSame(
+            '',
+            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['pageBuilderHandle'],
+        );
+        $warnings = implode("\n", $compiled['_compileReport']['warnings']);
+        self::assertStringContainsString('pageBuilderHandle `otherBuilder` not propagated', $warnings);
+        self::assertStringContainsString('no flatPagePartContent fallback is available', $warnings);
+        self::assertStringContainsString('operator review', $warnings);
+    }
+
     /**
      * @param list<array<string, mixed>> $columns
      * @return array<string, mixed>
      */
-    private function mapping(array $columns): array
+    private function mapping(array $columns, array $pageParts = []): array
     {
         return [
             'proposals' => array_merge([
@@ -92,7 +155,7 @@ final class MappingCompilerValidationTest extends TestCase
                     'status' => 'accepted',
                 ],
                 $this->column('title', 'title', 'plain'),
-            ], $columns),
+            ], $columns, $pageParts),
         ];
     }
 
@@ -106,6 +169,20 @@ final class MappingCompilerValidationTest extends TestCase
             'targetEntryType' => 'articlePage',
             'targetHandle' => $targetHandle,
             'handler' => $handler,
+            'status' => 'accepted',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function pagePart(string $pagePartClass, string $parentPageClass, string $matrixField, string $blockType): array
+    {
+        return [
+            'kind' => 'pagePart',
+            'pagePartClass' => $pagePartClass,
+            'parentPageClass' => $parentPageClass,
+            'context' => 'main',
+            'targetMatrixField' => $matrixField,
+            'targetBlockType' => $blockType,
             'status' => 'accepted',
         ];
     }

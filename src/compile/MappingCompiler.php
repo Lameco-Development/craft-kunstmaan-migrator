@@ -534,7 +534,7 @@ final class MappingCompiler extends Component
         // Operator hand-edits to mapping.pageParts/nodeClasses are preserved (skip-existing).
         $existingPageParts = (array) ($mapping['pageParts'] ?? []);
         [$pagePartsOut, $nodeClasses, $implicitEmitted, $implicitWarnings] =
-            $this->compileImplicitBlocks($proposals, $pageStructure, $existingPageParts, $nodeClasses);
+            $this->compileImplicitBlocks($proposals, $pageStructure, $existingPageParts, $nodeClasses, $entryTypeFlatHandles);
         $warnings = array_merge($warnings, $implicitWarnings);
 
         // Phase 8.4 / D-19 — fold accepted kind=pagePart proposals into
@@ -606,6 +606,10 @@ final class MappingCompiler extends Component
                 if (((string) end($parts)) === $parentShort) { $parentFqcn = $fqcn; break; }
             }
             if ($parentFqcn === null || !isset($nodeClasses[$parentFqcn])) { continue; }
+            if (!$this->parentOwnsMatrixField($nodeClasses[$parentFqcn], $matrix, $entryTypeFlatHandles)) {
+                $warnings[] = $this->pageBuilderOwnershipWarning($parentFqcn, $matrix, $pRow, $nodeClasses[$parentFqcn]);
+                continue;
+            }
             // Skip-existing: operator-set wins.
             if ((string) ($nodeClasses[$parentFqcn]['pageBuilderHandle'] ?? '') === '') {
                 $nodeClasses[$parentFqcn]['pageBuilderHandle'] = $matrix;
@@ -703,6 +707,7 @@ final class MappingCompiler extends Component
      * @param  array<string, mixed>                          $pageStructure
      * @param  array<string, mixed>                          $existingPageParts  Operator-curated pageParts block from mapping.yaml
      * @param  array<string, array<string, mixed>>           $nodeClasses        Already-built nodeClasses (mutated in-place)
+     * @param  array<string, list<string>>                   $entryTypeFlatHandles
      * @return array{0: array<string, array<string, mixed>>, 1: array<string, array<string, mixed>>, 2: int, 3: list<string>}
      *         [pagePartsOut, nodeClassesOut, implicitEmittedCount, warnings]
      */
@@ -711,6 +716,7 @@ final class MappingCompiler extends Component
         array $pageStructure,
         array $existingPageParts,
         array $nodeClasses,
+        array $entryTypeFlatHandles = [],
     ): array {
         $pagePartsOut = [];
         foreach ($existingPageParts as $k => $v) {
@@ -824,6 +830,10 @@ final class MappingCompiler extends Component
                 );
                 continue;
             }
+            if (!$this->parentOwnsMatrixField($nodeClasses[$fqcn], $matrixField, $entryTypeFlatHandles)) {
+                $warnings[] = $this->pageBuilderOwnershipWarning($fqcn, $matrixField, $row, $nodeClasses[$fqcn]);
+                continue;
+            }
 
             // Operator-set pageBuilderHandle wins; only fill when empty.
             if ((string) ($nodeClasses[$fqcn]['pageBuilderHandle'] ?? '') === '') {
@@ -841,6 +851,58 @@ final class MappingCompiler extends Component
         }
 
         return [$pagePartsOut, $nodeClasses, $emitted, $warnings];
+    }
+
+    /**
+     * Validate that a page-builder Matrix field is owned by the parent entry
+     * type before propagating it to nodeClasses[].pageBuilderHandle.
+     *
+     * Empty catalogs preserve legacy/test behavior; when a caller supplies the
+     * Craft entry-type handle catalog, invalid ownership is treated as visible
+     * compile validation and propagation is blocked.
+     *
+     * @param array<string, mixed>        $nodeClass
+     * @param array<string, list<string>> $entryTypeFlatHandles
+     */
+    private function parentOwnsMatrixField(array $nodeClass, string $matrixField, array $entryTypeFlatHandles): bool
+    {
+        if ($matrixField === '' || $entryTypeFlatHandles === []) {
+            return true;
+        }
+        $entryType = (string) ($nodeClass['section'] ?? '');
+        if ($entryType === '' || !isset($entryTypeFlatHandles[$entryType])) {
+            return true;
+        }
+        return in_array($matrixField, $entryTypeFlatHandles[$entryType], true);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $nodeClass
+     */
+    private function pageBuilderOwnershipWarning(string $parentFqcn, string $matrixField, array $row, array $nodeClass): string
+    {
+        $entryType = (string) ($nodeClass['section'] ?? '∅');
+        $source = (string) ($row['pagePartClass'] ?? $row['parentPageClass'] ?? '__implicit_content__');
+        $flatFallback = (string) ($nodeClass['flatPagePartContent'] ?? '');
+        if ($flatFallback !== '') {
+            return sprintf(
+                '%s: pageBuilderHandle `%s` not propagated for %s because entry-type `%s` does not own that Matrix field; preserving page-part content via flatPagePartContent `%s`.',
+                $parentFqcn,
+                $matrixField,
+                $source,
+                $entryType,
+                $flatFallback,
+            );
+        }
+
+        return sprintf(
+            '%s: pageBuilderHandle `%s` not propagated for %s because entry-type `%s` does not own that Matrix field and no flatPagePartContent fallback is available; mapping requires operator review to avoid data loss.',
+            $parentFqcn,
+            $matrixField,
+            $source,
+            $entryType,
+        );
     }
 
     /**
