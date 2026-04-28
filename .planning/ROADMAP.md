@@ -1,6 +1,6 @@
 # Roadmap
 
-5 phases. Coarse granularity. Built greenfield against the v1.x plugin as
+9 phases. Coarse granularity. Built greenfield against the v1.x plugin as
 brownfield reference. Every v1 requirement maps to exactly one phase. v2
 requirements (`NEXT-*`) are deferred to a follow-up milestone.
 
@@ -22,6 +22,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 | 08.5 | FK-relation introspection + extract joining | (D-20) Surface ManyToOne / ManyToMany relations on page entities + page-parts in KnowledgeBase markdown (target table + columns visible to LLM via the KB Relations table). (D-21) ExtractService joins ManyToOne FK targets and embeds their columns under `_rel:<property>.<column>` namespace — operator can map across the relation by setting `fields[].source: '_rel:employee.name'`. (D-22) System prompt notes the `_rel:` idiom (forward-looking — today's residual builder reads from information_schema, so direct LLM proposal of `_rel:*` keys waits on extract-derived residuals in a later phase). (D-23) Emit relation-graph.json artifact during analyze. (D-24) `--no-rel-join` flag + Settings::joinFkRelations toggle. Unblocks EmployeePage→Employee, CaseStudyPage→CaseStudyCategory, NewsPage→NewsAuthor and similar wrapping patterns that today only carry the FK column. | (codified in 08.5-CONTEXT.md) | 1 | no |
 | 08.6 | Page-builder block completeness (homepage unblocker) | (D-25) Parent-aware Matrix selection — `CraftKnowledgeBase::matrixFieldsForEntryType` + LLM `proposePagePartBlocks` per-row `allowedMatrixFields=[…]` scoping + MappingCompiler intersection tie-break for shared block-types. Closes 8.3's parent-blind pick that was routing CQM HomePage's page-parts to `pageBuilderCondensed` instead of the actual `pageBuilder` Matrix the entry-type owns. (D-26+D-27) Per-pagepart column proposer (`proposePagePartFields`) + per-block-type sub-field catalog: each pagePart's source columns get their own LLM batch with the chosen block's allowed fields as the closed set. MappingCompiler.collapsePagePartFieldsList converts the residual list-of-dicts shape to the final assoc map. Plus two latent bugs surfaced by validation: --entities now actually scopes the analyze proposer steps (not just SchemaDumper) and the load stage (not just transform). Validated end-to-end against CQM HomePage: `pageBuilderHandle` correctly resolves to `pageBuilder`; all 5 page-parts route to specific blocks (casesCarouselBlock, newsGridBlock, callToActionBlock, iconListBlock, clientLogosBlock); `clientLogosBlock` resolves 15 client logos via the joinTable RelationHandler path; block titles auto-lift from legacy `title` columns. KNOWN GAP (D-28, deferred): LLM prompt's `allowedBlockFields=[handle:type]` is too thin — for Dropdown the options should be surfaced; for Matrix the allowed block-types; for Entries the target section; for Asset the kinds. Without this, the proposer makes plausible-name-matches that fail at handler-time (e.g. `title→titleLevel` is a heading-level dropdown, not a content title). Operator hand-curation works around it; D-28 closes it permanently. | (codified inline) | 1 | no |
 | 08.7 | Page-rooted leaf-entity migration (embed vs promote) — first slice | (D-30) `AnalyzeController::buildPagePartFieldsContext` returns a third `pagePartRelations` map per FQCN containing OneToMany / ManyToMany Doctrine relations with target FQCN, child table name, back-ref FK column, and child columns (PK + back-ref filtered out so the LLM picks payload-only). (D-31) `LlmClassifier::proposePagePartFields` accepts the relations map; the prompt renders `relations=[<prop>:<type>(target/childTable/backRef/childCols)]` per row; the system-prompt teaches the LLM to emit `handler: relation` with `joinTable`/`joinLocalColumn`/`joinForeignColumn`/`stateSource` handlerOptions when the target field is `Entries(from: ...)` or `Assets(kinds: ...)` and the page-part has a relation whose child table contains an `_id` column matching the target shape. CRITICAL guardrail: `joinForeignColumn` must end with `_id` — `sanitiseHandlerOptions` drops the whole option set otherwise. `MappingCompiler::collapsePagePartFieldsList` preserves `handlerOptions` through the residual list-of-dicts → final assoc map collapse. Validated end-to-end against CQM HomePage: ClientsPagePart auto-proposes the exact joinTable config the operator hand-curated in 8.6, yielding 15 client logos resolved via the existing RelationHandler joinTable path. (D-29 deferred): true ManyToMany join-table auto-discovery without `#[JoinTable]` annotations — the OneToMany path covers most CQM-shaped projects (back-ref FK on the child); ManyToMany without explicit annotations still requires operator hand-curation. KNOWN GAP: full `mode: embed | promote` per-relation operator intent + topological leaf-migration ordering still future work. The current slice is "operator chooses by adding the relation handler line; LLM auto-proposes when it can"; full embed/promote with leaf entry-type creation will land when operator workflows demand it. | (codified inline) | 1 | no |
+| 9 | Migration Workflow Hardening & Page-rooted Introspection Audit | Close the release-blocking audit gaps before v1.0: make the canonical workflow impossible to run as a successful no-op, preserve compiled mapping blocks across analyze reruns, make scoped runs trustworthy, harden CKEditor unresolved markers and migration failure exits, and critically audit Kunstmaan Page-rooted introspection end-to-end. The audit treats a Kunstmaan Page as the entry point and a Craft Entry as the result: every page-owned relation, asset, page-part, taxonomy/data-provider/leaf entity, SEO/redirect sidecar, and CKEditor reference must be either migrated, intentionally dropped with a visible reason, or explicitly marked out of scope. | TBD | TBD | no |
 
 ### Phase 1: Foundation & Connectivity
 
@@ -335,6 +336,33 @@ Plans:
 
 ---
 
+### Phase 9: Migration Workflow Hardening & Page-rooted Introspection Audit
+
+**Goal:** The operator workflow is release-safe, page-faithful, and generic across Lameco Kunstmaan sites: running the documented commands cannot silently do nothing, reruns cannot erase compiled mapping state, scoped migrations behave consistently, failures surface as failures, and a Kunstmaan Page's complete content graph is accounted for before it becomes a Craft Entry.
+
+**Why this phase exists:** A post-audit review found that the plugin has broad implementation coverage but still has workflow-fidelity risks: the documented command sequence omits `compile`, `analyze` reruns can drop compiled mapping blocks, filter semantics drift across stages, CKEditor unresolved markers embed raw legacy URLs, `migrate --live` can finish with exit 0 after per-entry failures, transform characterization fixtures are empty, and CI/doc surfaces lag the real plugin state. The same audit also called for a deeper source/target introspection check: Kunstmaan Pages are the root of migration, so related page-parts, assets, page-owned relations, leaf entities, taxonomies, dataProviders, SEO, redirects, and CKEditor references must be traced from that root to their Craft result. This must not overfit to the current CQM rehearsal/install target (`~/Sites/cqm-craft-website`); the plugin goal is to be as generic as practical for any Kunstmaan website Lameco needs to migrate, including `~/Sites/simac-website` and `~/Sites/enreach-website`, while accepting that Kunstmaan → Craft migration will never reach perfect 100% automation.
+
+**Requirements:** TBD during plan-phase. Seed backlog: workflow hardening, mapping preservation, filter consistency, Page-rooted introspection coverage, failure semantics, security hardening, fixture/CI/doc alignment.
+
+**Success criteria (vision — refine in discuss/plan):**
+1. Canonical docs and command behavior agree: `compile` is included, or `migrate` refuses/auto-compiles when runtime blocks are missing.
+2. Re-running `analyze` after `compile` preserves all non-proposal mapping blocks (`nodeClasses`, `sections`, `sites`, `pageParts`, `taxonomies`, `dataProviders`, and future top-level blocks).
+3. `MigrationFilters` have one authoritative interpretation across analyze, extract, transform, load, finalize, taxonomy, SEO, Retour, verify, and recovery commands; relation graph reachability is either wired or removed from the value object.
+4. Genericity is tested and documented as a first-class constraint: CQM remains the installed integration target, but the audit samples at least Simac and Enreach source shapes where available and identifies any project-specific assumptions, naming heuristics, hardcoded CQM patterns, or fields that need operator mapping rather than plugin logic.
+5. Kunstmaan Page-rooted introspection has an explicit coverage report: for each Page class, list page parts, direct fields, ManyToOne/ManyToMany/OneToMany relations, asset references, dataProviders, taxonomy references, SEO rows, redirect/URL rows, CKEditor `[M]`/`[NT]`/media URLs, and the Craft target(s) or drop reason.
+6. The Craft target introspection is checked against compiled mapping: every accepted target entry type, Matrix field, block type, field handle, asset field, Entries field source, and SEO/Retour adapter target is valid for the receiving Craft schema.
+7. `migrate --live` still continues per-entry for diagnostics, but exits non-zero and writes a clear report when any entry/stage failed.
+8. CKEditor unresolved markers cannot break HTML comments or inject renderable markup; regression tests include malicious legacy URL/comment-breakout cases.
+9. Transform characterization uses real fixtures or fails loudly in release/CI mode; incomplete taxonomy/leaf-entity coverage is either completed or explicitly excluded from v1.0.
+10. CI smoke, README, PROJECT, ROADMAP, and CHANGELOG match the actual release workflow, generic plugin positioning, and known limitations.
+
+**Plans:** 0 plans
+
+Plans:
+- Not planned yet.
+
+---
+
 ## Dependencies
 
 - Phase 2 depends on Phase 1 (needs `doctor`, state table, legacy DB connection).
@@ -342,6 +370,7 @@ Plans:
 - Phase 4 can start after Phase 3 begins — adapter and verify work is largely independent of ETL details.
 - Phase 5 depends on Phase 3 + Phase 4 being feature-complete.
 - Phase 8 depends on Phase 3 (Load stage + Asset/SEO/Redirect migration shape) + Phase 02.1 (KnowledgeBase + DoctrineEntityParser → fed to LLM for new proposers).
+- Phase 9 depends on Phase 8 and the post-audit findings; it is the final hardening gate before v1.0 release rehearsal/tagging.
 
 ## Out-of-milestone (deferred)
 
