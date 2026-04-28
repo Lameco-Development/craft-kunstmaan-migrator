@@ -95,6 +95,14 @@ class MigrateController extends Controller
     public bool $noRelJoin = false;
 
     /**
+     * Phase 10: full taxonomy vocabulary import is explicit opt-in. Default
+     * actionIndex behavior is page-rooted referenced-only lazy taxonomy
+     * resolution; this flag restores the pre-page-load migrateAll() path when
+     * operators intentionally want unreferenced taxonomy rows too.
+     */
+    public bool $includeUnreferencedTaxonomies = false;
+
+    /**
      * D-65 verbosity counter — `-v` / `-vv` / `-vvv`. Yii parses repeated
      * short flags as a string value (`-vv` → `verbose='v'`); verbosityLevel()
      * does the str-length count. Accept int form too so `--verbose=2` works.
@@ -114,6 +122,7 @@ class MigrateController extends Controller
             'noSeo', 'noRetour',
             // Phase 8.5 / D-24 — Doctrine ManyToOne FK join bypass per-run.
             'noRelJoin',
+            'includeUnreferencedTaxonomies',
             // D-65: -v..-vvv verbosity (string|int — see verbosityLevel()).
             'verbose',
             // Phase 7 debug flags.
@@ -259,7 +268,7 @@ class MigrateController extends Controller
         $transformProgress = $this->makeTransformProgress($extractedNodes);
         try {
             $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions(), $transformProgress) as $payload) {
+            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions($report), $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
                     continue; // sentinel — counters available via the Transform run report
                 }
@@ -304,12 +313,17 @@ class MigrateController extends Controller
             skipAssets: false,
         );
 
-        // Step 4.5 (Phase 8 / D-03 / TAX-08): taxonomies migrate BEFORE pages.
-        // Their state rows must exist before any page's RelationHandler does the
-        // FK -> entryId lookup, so this bolt-on lands BETWEEN transform-complete
-        // and load-entries (NOT between load and finalize like SEO/Retour).
-        // Gated on --live to match the load-entries gate; dry-run skips silently.
-        if ($this->live) {
+        // Step 4.5 (Phase 10): default taxonomy mode is page-rooted and
+        // referenced-only. The full pre-load migrateAll() import runs only when
+        // operators explicitly opt in via CLI/settings; the standalone
+        // migrate/taxonomies sub-action remains the explicit full import path.
+        $settings = $plugin->getSettings();
+        $includeUnreferencedTaxonomies = $this->includeUnreferencedTaxonomies
+            || (bool) $settings->includeUnreferencedTaxonomies;
+        $taxonomyMode = $includeUnreferencedTaxonomies ? 'full' : 'referenced-only';
+        $report->warn('taxonomyMode=' . $taxonomyMode);
+        $this->stdout("  Taxonomy mode: {$taxonomyMode}\n", Console::FG_CYAN);
+        if ($includeUnreferencedTaxonomies) {
             try {
                 $plugin->taxonomyMigrationService->filters = $filters;
                 $taxonomyReport = $plugin->taxonomyMigrationService->migrateAll($opts);
@@ -2280,9 +2294,14 @@ class MigrateController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function buildTransformOptions(): array
+    private function buildTransformOptions(?MigrationReport $report = null): array
     {
-        $opts = [];
+        $opts = [
+            'dryRun' => !$this->live,
+        ];
+        if ($report !== null) {
+            $opts['migrationReport'] = $report;
+        }
         if ($this->limit !== null) {
             $opts['limit'] = (int) $this->limit;
         }

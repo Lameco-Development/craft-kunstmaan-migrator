@@ -101,6 +101,11 @@ class Settings extends Model
     // `--no-seo` / `Settings::seoEnabled` pattern.
     public bool $joinFkRelations = true;
 
+    // Phase 10 — full taxonomy vocabulary import is opt-in. Default false keeps
+    // canonical migration page-driven/referenced-only; CLI
+    // --include-unreferenced-taxonomies can enable it per run.
+    public bool $includeUnreferencedTaxonomies = false;
+
     public function behaviors(): array
     {
         return [
@@ -241,7 +246,7 @@ class Settings extends Model
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             // Phase 8 / D-14 — AI proposer scope gates (proposeLayout, proposeProviders).
             // Phase 8.5 / D-24 — joinFkRelations (Doctrine ManyToOne join gate).
-            [['seoEnabled', 'retourEnabled', 'proposeLayout', 'proposeProviders', 'joinFkRelations'], 'boolean'],
+            [['seoEnabled', 'retourEnabled', 'proposeLayout', 'proposeProviders', 'joinFkRelations', 'includeUnreferencedTaxonomies'], 'boolean'],
             // Phase 4 / D-60 — verify-stage tolerances pinned to [0, 1].
             [['verifyCountTolerance', 'verifyUrlDiffThreshold'], 'number', 'min' => 0, 'max' => 1],
             // Phase 4 / D-57 — adapter source-table overrides.
