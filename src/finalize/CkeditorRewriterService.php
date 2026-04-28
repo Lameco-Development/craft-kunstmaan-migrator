@@ -20,11 +20,13 @@ use yii\db\Query;
  *   4. Strip class tokens matching /^kma-/ (drops the class attr entirely when all tokens are kma-*)
  *   5. Remove empty <p></p>, <p>&nbsp;</p>, <p> </p>, <p><br></p>
  *
- * Unresolvable asset refs keep the original URL + HTML comment marker
- *   <!-- MIGRATION:UNRESOLVED source=... -->
- * so editors can grep. HTML Purifier strips comments on save, so rendered
- * pages won't leak them — Plan 09's `kunstmaan-migrator/migrate/check` scans
- * the raw DB column BEFORE the save-pipeline runs through Purifier.
+     * Unresolvable asset refs keep the original URL + HTML comment marker with a
+     * delimiter-safe source payload:
+     *   <!-- MIGRATION:UNRESOLVED sourceB64=... -->
+     * so editors can grep and tooling can recover the source. HTML Purifier
+     * strips comments on save, so rendered pages won't leak them — Plan 09's
+     * `kunstmaan-migrator/migrate/check` scans the raw DB column BEFORE the
+     * save-pipeline runs through Purifier.
  *
  * Ref-token format (Craft 5 CKEditor, imageMode=img):
  *   {asset:<numeric-id>@<siteId>:url}
@@ -198,7 +200,7 @@ class CkeditorRewriterService extends Component
                 if ($craftAssetId !== null) {
                     return '{asset:' . $craftAssetId . '@' . $siteId . ':url}';
                 }
-                return $m[0] . '<!-- MIGRATION:UNRESOLVED source=kuma_media:' . $kumaMediaId . ' -->';
+                return $m[0] . $this->unresolvedMarker('kuma_media:' . $kumaMediaId);
             },
             $html,
         ) ?? $html;
@@ -222,7 +224,7 @@ class CkeditorRewriterService extends Component
                 if ($craftEntryId !== null) {
                     return '{entry:' . $craftEntryId . '@' . $siteId . ':url}';
                 }
-                return $m[0] . '<!-- MIGRATION:UNRESOLVED source=kuma_node_translation:' . $ntId . ' -->';
+                return $m[0] . $this->unresolvedMarker('kuma_node_translation:' . $ntId);
             },
             $html,
         ) ?? $html;
@@ -426,9 +428,24 @@ class CkeditorRewriterService extends Component
 
             // Unresolved — emit a marker comment adjacent to the attribute so
             // editors and the check action can grep the raw HTML.
-            $marker = '<!-- MIGRATION:UNRESOLVED source=' . $url . ' -->';
+            $marker = $this->unresolvedMarker($url);
             return $attr . '=' . $quote . $url . $quote . $marker;
         }, $html) ?? $html;
+    }
+
+    /**
+     * Build a comment-safe unresolved marker.
+     *
+     * Raw legacy URLs can contain HTML-comment delimiters (`-->`) or markup-like
+     * text. Keep the raw value only in the original attribute/literal and encode
+     * the marker payload using unpadded base64url so it never emits comment or
+     * attribute delimiters such as `+`, `/`, `=`, `<`, `>`, or `--`.
+     */
+    private function unresolvedMarker(string $source): string
+    {
+        $sourceB64 = rtrim(strtr(base64_encode($source), '+/', '-_'), '=');
+
+        return '<!-- MIGRATION:UNRESOLVED sourceB64=' . $sourceB64 . ' -->';
     }
 
     /**
