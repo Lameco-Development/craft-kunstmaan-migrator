@@ -12,6 +12,7 @@ use lameco\kunstmaanmigrator\fields\handlers\RelationHandler;
 use lameco\kunstmaanmigrator\fields\handlers\SplitNameHandler;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
+use lameco\kunstmaanmigrator\load\MigrationStateReader;
 use lameco\kunstmaanmigrator\transform\TransformService;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -60,6 +61,141 @@ use RuntimeException;
  */
 final class TransformCharacterizationTest extends TestCase
 {
+    public function testStructuralFixtureCapturesPagePartMatrixBlockWithoutNativeTitle(): void
+    {
+        $payload = self::transformOne(
+            self::structuralExtractedRow([
+                'pageParts' => [[
+                    'fqcn' => 'App\\Entity\\TextPart',
+                    'context' => 'main',
+                    'sourcePartId' => 77,
+                    'row' => ['heading' => 'Synthetic heading'],
+                ]],
+            ]),
+            self::structuralMapping([
+                'nodeClasses' => [
+                    'App\\Entity\\StructuralPage' => [
+                        'sourceTable' => 'structural_pages',
+                        'section' => 'structuralPage',
+                        'fields' => [
+                            'title' => ['handler' => 'plain', 'source' => 'title'],
+                        ],
+                        'pageBuilderHandle' => 'pageBuilder',
+                        'pageBuilderContexts' => ['main'],
+                    ],
+                ],
+                'pageParts' => [
+                    'App\\Entity\\TextPart' => [
+                        'target' => 'contentBlock',
+                        'fields' => [
+                            'heading' => ['handler' => 'plain', 'source' => 'heading'],
+                        ],
+                    ],
+                ],
+            ]),
+        );
+
+        $block = $payload['perSite']['default']['fieldValues']['pageBuilder']['new1'];
+        self::assertSame('contentBlock', $block['type']);
+        self::assertSame('Synthetic heading', $block['fields']['heading']);
+        self::assertSame('TextPart:77', $block['fields']['_sourcePartRef']);
+        self::assertArrayNotHasKey('title', $block, 'Structural fixture intentionally models Matrix blocks that reach load without native titles.');
+    }
+
+    public function testStructuralFixtureCapturesSparseLocalePrimarySaveShape(): void
+    {
+        $payload = self::transformOne(
+            self::structuralExtractedRow(siteHandle: 'en'),
+            self::structuralMapping(),
+        );
+
+        self::assertSame(['en'], array_keys($payload['perSite']));
+        self::assertArrayNotHasKey('default', $payload['perSite']);
+        self::assertSame('Sparse locale title', $payload['perSite']['en']['title']);
+        self::assertSame('sparse-locale-title', $payload['perSite']['en']['slug']);
+    }
+
+    public function testStructuralFixtureCapturesInvalidSectionEntryTypeTargetShape(): void
+    {
+        $payload = self::transformOne(
+            self::structuralExtractedRow(),
+            self::structuralMapping([
+                'sections' => [
+                    'formContentBlock' => [
+                        'section' => 'contentPages',
+                        'entryType' => 'formContentBlock',
+                    ],
+                ],
+                'nodeClasses' => [
+                    'App\\Entity\\StructuralPage' => [
+                        'sourceTable' => 'structural_pages',
+                        'section' => 'formContentBlock',
+                        'fields' => [
+                            'title' => ['handler' => 'plain', 'source' => 'title'],
+                        ],
+                    ],
+                ],
+            ]),
+        );
+
+        self::assertSame('contentPages', $payload['section']);
+        self::assertSame('formContentBlock', $payload['entryType']);
+    }
+
+    public function testStructuralFixtureCapturesTaxonomyRelationBeforeStateExists(): void
+    {
+        $service = self::createService();
+        $service->migrationState = new class implements MigrationStateReader {
+            public function getTargetId(string $source, string $key, ?int $siteId = null): ?int
+            {
+                return null;
+            }
+
+            public function getTargetUid(string $source, string $key, ?int $siteId = null): ?string
+            {
+                return null;
+            }
+
+            public function get(string $source, string $key, ?int $siteId = null): ?array
+            {
+                return null;
+            }
+        };
+
+        $payloads = [];
+        foreach ($service->run([
+            self::structuralExtractedRow([
+                'detail' => [
+                    'id' => 101,
+                    'title' => 'Taxonomy relation title',
+                    'category_id' => 44,
+                ],
+            ]),
+        ], self::structuralMapping([
+            'nodeClasses' => [
+                'App\\Entity\\StructuralPage' => [
+                    'sourceTable' => 'structural_pages',
+                    'section' => 'structuralPage',
+                    'fields' => [
+                        'title' => ['handler' => 'plain', 'source' => 'title'],
+                        'category' => [
+                            'handler' => 'relation',
+                            'source' => 'category_id',
+                            'handlerOptions' => ['stateSource' => 'App_Entity_TaxonomyCategory'],
+                        ],
+                    ],
+                ],
+            ],
+        ]), new MigrationFilters(), []) as $yielded) {
+            if (is_array($yielded) && !isset($yielded['__report'])) {
+                $payloads[] = $yielded;
+            }
+        }
+
+        self::assertCount(1, $payloads);
+        self::assertSame([], $payloads[0]['perSite']['default']['fieldValues']['category']);
+    }
+
     /**
      * @return iterable<string, array{string, string}> rel => [inputPath, goldenPath]
      */
@@ -160,6 +296,82 @@ final class TransformCharacterizationTest extends TestCase
         }
         $decoded = json_decode($raw, true);
         return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
+     * @param array<string, mixed> $extractedOverrides
+     * @param array<string, mixed> $mapping
+     * @return array<string, mixed>
+     */
+    private static function transformOne(array $extractedOverrides, array $mapping): array
+    {
+        $payloads = [];
+        foreach (self::createService()->run([$extractedOverrides], $mapping, new MigrationFilters(), []) as $yielded) {
+            if (is_array($yielded) && !isset($yielded['__report'])) {
+                $payloads[] = $yielded;
+            }
+        }
+        self::assertCount(1, $payloads);
+        return $payloads[0];
+    }
+
+    /**
+     * @param array<string, mixed> $siteOverrides
+     * @return array<string, mixed>
+     */
+    private static function structuralExtractedRow(array $siteOverrides = [], string $siteHandle = 'nl'): array
+    {
+        $siteData = array_replace_recursive([
+            'online' => true,
+            'title' => $siteHandle === 'en' ? 'Sparse locale title' : 'Structural title',
+            'slug' => $siteHandle === 'en' ? 'sparse-locale-title' : 'structural-title',
+            'detail' => [
+                'id' => 101,
+                'title' => $siteHandle === 'en' ? 'Sparse locale title' : 'Structural title',
+                'body' => '<p>Synthetic body</p>',
+            ],
+            'pageParts' => [],
+        ], $siteOverrides);
+
+        return [
+            'fqcn' => 'App\\Entity\\StructuralPage',
+            'kunstmaanSourceId' => 'structural:101',
+            'kuma_node_id' => 101,
+            'kuma_parent_id' => null,
+            'refIdsByLocale' => [$siteHandle => 101],
+            'perSite' => [
+                $siteHandle => $siteData,
+            ],
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $overrides
+     * @return array<string, mixed>
+     */
+    private static function structuralMapping(array $overrides = []): array
+    {
+        return array_replace_recursive([
+            'sites' => [
+                'nl' => 'default',
+                'en' => 'en',
+            ],
+            'sections' => [
+                'structuralPage' => [
+                    'section' => 'contentPages',
+                    'entryType' => 'contentPage',
+                ],
+            ],
+            'nodeClasses' => [
+                'App\\Entity\\StructuralPage' => [
+                    'sourceTable' => 'structural_pages',
+                    'section' => 'structuralPage',
+                    'fields' => [
+                        'title' => ['handler' => 'plain', 'source' => 'title'],
+                    ],
+                ],
+            ],
+        ], $overrides);
     }
 
     /**
