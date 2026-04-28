@@ -22,8 +22,8 @@ use yii\base\Component;
  *    single asset on demand. Called from AssetHandler (state-lookup miss path)
  *    and AtomicMigrationService::ingestAndResolveAssets via the `asset:N`
  *    deferred-token list.
-     *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, MigrationFilters, list<int>)
-     *    pre-walks the in-scope referenced kuma_media ids before the entries loop.
+ *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, MigrationFilters, list<int>)
+ *    pre-walks the in-scope referenced kuma_media ids before the entries loop.
  *    Repurposed from v1's batch-by-default; v2 makes it opt-in only (called
  *    when MigrateController parses --preload-assets).
  *
@@ -50,10 +50,10 @@ use yii\base\Component;
  *
  * Reshape from v1 (~/Sites/craft-kunstmaan-migrator/src/bridge/load/AssetMigrationService.php):
  *  - Namespace flatten: bridge\load → load.
-     *  - Drop the v1 asset-scan import — page-driven JIT default per FH-03; assets
-     *    discover via the deferred-token resolver per-entry. ingestReferenced()
-     *    accepts the current in-scope referenced id set; it never scans all
-     *    kuma_media rows.
+ *  - Drop the v1 asset-scan import — page-driven JIT default per FH-03; assets
+ *    discover via the deferred-token resolver per-entry. ingestReferenced()
+ *    accepts the current in-scope referenced id set; it never scans all
+ *    kuma_media rows.
  *  - Drop the v1 batch-job import — queue out of scope per PROJECT.md (D-46);
  *    synchronous loop replaces queue.push.
  *  - Drop the v1 serialized-decoder import — replaced with `?object $serializedDecoder`
@@ -156,8 +156,7 @@ class AssetMigrationService extends Component
      * via Craft::warning and accumulates counters in a local $counts array.
      * Plan 03-13 will reinstate the MigrationReport VO; Plan 03-14 re-wires
      * consumers.
-     */
-    /**
+     *
      * @param list<int> $referencedIds in-scope kuma_media ids collected from
      *                                 transformed/extracted payload references
      */
