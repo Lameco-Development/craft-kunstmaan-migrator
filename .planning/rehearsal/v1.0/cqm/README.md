@@ -25,6 +25,28 @@ php tools/audit-source-shapes.php ~/Sites/cqm-website
 
 Dry-run is the default `php craft kunstmaan-migrator/migrate` mode; `php craft kunstmaan-migrator/migrate --live` is the write mode.
 
+## Scoped Phase 11 proof: NewsPage/HomePage
+
+Use this focused run before the full restored-backup closing workflow when validating the dual graph walkers and promoted relation target path:
+
+```bash
+cd ~/Sites/cqm-craft-website
+php craft kunstmaan-migrator/doctor
+php craft kunstmaan-migrator/analyze --entities=NewsPage,HomePage
+php craft kunstmaan-migrator/map --entities=NewsPage,HomePage
+php craft kunstmaan-migrator/compile
+php craft kunstmaan-migrator/migrate --entities=NewsPage,HomePage
+php craft kunstmaan-migrator/migrate --entities=NewsPage,HomePage --live
+```
+
+Expected evidence for this scoped proof:
+
+1. `storage/migration/kunstmaan-schema.json` has `graphVersion=kunstmaan-page-graph-v1`, includes NewsPage relation evidence for the employee FK and asset evidence, and includes HomePage pagepart usage evidence without duplicating reusable pagepart definitions.
+2. `storage/migration/craft-schema.json` has `graphVersion=craft-entry-graph-v1`, includes the `newsPage` and `homePage` entry types, and exposes field, Matrix, asset-volume, relation-target, and ownership constraints.
+3. Owner extracts keep `employee_id` as a raw FK value; they must not require `_rel:employee.*` or copied employee columns as canonical owner data.
+4. If mapping chooses promotion for the employee relation, the promoted target appears under its own extracted/transformed identity and writes state rows using its configured `stateSource` before NewsPage owners are loaded.
+5. HomePage pagepart and Matrix ownership is visible in the graph artifacts and compile/report evidence.
+
 Strict acceptance bar:
 
 1. `storage/migration/REPORT.md` shows **zero entry failures** and **zero stage

@@ -192,8 +192,24 @@ final class PageRootedCoverageAuditor extends Component
                 $identifier = (string) ($row['pagePartClass'] ?? '') . '|' . (string) ($row['context'] ?? '');
             } elseif (in_array($kind, ['taxonomy', 'dataProvider'], true)) {
                 $identifier = (string) ($row['fqcn'] ?? '');
+            } elseif (in_array($kind, ['promotedTarget', 'promotedRelationTarget'], true)) {
+                $identifier = (string) ($row['sourceRef'] ?? $row['relationRef'] ?? '');
             }
             if ($identifier === null || $identifier === '.' || $identifier === '') {
+                continue;
+            }
+            $relationIntent = (string) ($row['relationIntent'] ?? '');
+            if ($relationIntent !== '') {
+                $out[$identifier] = [
+                    'category' => $this->categoryForRelationIntent($relationIntent),
+                    'reason' => $this->reasonForRelationIntent($relationIntent),
+                ];
+                foreach (['relationRef', 'sourceRef', 'targetRef'] as $key) {
+                    $alias = (string) ($row[$key] ?? '');
+                    if ($alias !== '') {
+                        $out[$alias] = $out[$identifier];
+                    }
+                }
                 continue;
             }
             $out[$identifier] = [
@@ -211,6 +227,12 @@ final class PageRootedCoverageAuditor extends Component
         $identifier = (string) ($discovered['sourceIdentifier'] ?? '');
         if (isset($mappingCategories[$identifier])) {
             return $mappingCategories[$identifier]['category'];
+        }
+        foreach (['relationRef', 'sourceRef', 'targetRef'] as $key) {
+            $alias = (string) ($discovered[$key] ?? '');
+            if ($alias !== '' && isset($mappingCategories[$alias])) {
+                return $mappingCategories[$alias]['category'];
+            }
         }
         $hint = (string) ($discovered['categoryHint'] ?? 'warning');
         return in_array($hint, self::CATEGORIES, true) ? $hint : 'warning';
@@ -235,6 +257,22 @@ final class PageRootedCoverageAuditor extends Component
                 return $warning;
             }
         }
+        if (($discovered['surfaceType'] ?? '') === 'relation') {
+            if ($category === 'dropped') {
+                return 'relation.intent.drop: intentionally dropped by accepted mapping.';
+            }
+            if ($category === 'out_of_scope') {
+                return 'relation.intent.out_of_scope: intentionally outside migration scope.';
+            }
+            if ($category === 'migrated') {
+                return 'relation.promoted/reference/embed: accepted relation intent covers this evidence.';
+            }
+            $reason = (string) ($discovered['reason'] ?? '');
+            if ($reason !== '') {
+                return $reason;
+            }
+            return 'relation.unresolved: non-empty relation FK evidence requires reference, promote, embed, drop, or out_of_scope.';
+        }
         $reason = (string) ($discovered['reason'] ?? '');
         if ($reason !== '') {
             return $reason;
@@ -245,6 +283,28 @@ final class PageRootedCoverageAuditor extends Component
             'out_of_scope' => 'Explicitly outside the configured migration scope.',
             'unsupported' => 'Unsupported or incomplete source shape; operator review required.',
             default => 'Warning: discovery found no migrated target or complete support metadata.',
+        };
+    }
+
+    private function categoryForRelationIntent(string $intent): string
+    {
+        return match ($intent) {
+            'drop' => 'dropped',
+            'out_of_scope' => 'out_of_scope',
+            'reference', 'promote', 'embed' => 'migrated',
+            default => 'warning',
+        };
+    }
+
+    private function reasonForRelationIntent(string $intent): string
+    {
+        return match ($intent) {
+            'drop' => 'relation.intent.drop: intentionally dropped by accepted mapping.',
+            'out_of_scope' => 'relation.intent.out_of_scope: intentionally outside migration scope.',
+            'promote' => 'relation.promoted: promoted/shared target is loaded under its own stateSource.',
+            'reference' => 'relation reference resolved through stateSource.',
+            'embed' => 'relation embedded into owner payload.',
+            default => 'relation.unresolved: relation evidence has no accepted intent.',
         };
     }
 

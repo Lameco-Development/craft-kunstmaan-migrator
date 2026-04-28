@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\audit;
 
+use lameco\kunstmaanmigrator\source\KunstmaanGraphContract;
 use yii\base\Component;
 
 /**
@@ -27,6 +28,7 @@ final class PageRootedSurfaceDiscovery extends Component
      * @param array<string, mixed> $pageStructure
      * @param array<string, list<array<string, mixed>>> $relationMetadata FQCN => relation rows
      * @param array<string, list<array<string, mixed>>> $serviceMetadata assets/seo/redirects/ckeditorRefs
+     * @param array<string, mixed> $kunstmaanGraph
      * @return list<array<string, mixed>>
      */
     public function discover(
@@ -34,6 +36,7 @@ final class PageRootedSurfaceDiscovery extends Component
         array $pageStructure,
         array $relationMetadata = [],
         array $serviceMetadata = [],
+        array $kunstmaanGraph = [],
     ): array {
         $pageRoots = $this->acceptedPageRoots($mapping, $pageStructure);
         $rows = [];
@@ -50,6 +53,9 @@ final class PageRootedSurfaceDiscovery extends Component
                 $rows[] = $row;
             }
             foreach ($this->relationRows($pageFqcn, $targetSection, $targetEntryType, $relationMetadata[$pageFqcn] ?? []) as $row) {
+                $rows[] = $row;
+            }
+            foreach ($this->graphRelationRows($pageFqcn, $targetSection, $targetEntryType, $kunstmaanGraph) as $row) {
                 $rows[] = $row;
             }
             foreach ($this->taxonomyAndDataProviderRows($pageFqcn, $targetSection, $targetEntryType, $mapping, (array) ($relationMetadata[$pageFqcn] ?? []), (array) ($pageStructure[$pageFqcn] ?? [])) as $row) {
@@ -71,6 +77,45 @@ final class PageRootedSurfaceDiscovery extends Component
                 (string) ($b['sourceIdentifier'] ?? ''),
             ];
         });
+
+        return $rows;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function graphRelationRows(string $pageFqcn, string $targetSection, string $targetEntryType, array $kunstmaanGraph): array
+    {
+        if (($kunstmaanGraph[KunstmaanGraphContract::KEY_GRAPH_VERSION] ?? null) !== KunstmaanGraphContract::GRAPH_VERSION) {
+            return [];
+        }
+
+        $pageRef = KunstmaanGraphContract::pageRootRef($pageFqcn);
+        $rows = [];
+        foreach ((array) ($kunstmaanGraph[KunstmaanGraphContract::KEY_RELATIONS] ?? []) as $relationRef => $relation) {
+            if (!is_array($relation)) {
+                continue;
+            }
+            if ((string) ($relation['sourceRef'] ?? '') !== $pageRef) {
+                continue;
+            }
+            $property = (string) ($relation['property'] ?? '');
+            $fkColumn = (string) ($relation['fkColumn'] ?? '');
+            $identifier = is_string($relationRef) && $relationRef !== '' ? $relationRef : ($property !== '' ? $property : $fkColumn);
+            if ($identifier === '') {
+                continue;
+            }
+            $rows[] = $this->row($pageFqcn, 'relation', self::CATEGORY_WARNING, 'kunstmaanGraph relation evidence', $identifier, [
+                'property' => $property,
+                'relationType' => (string) ($relation['relationType'] ?? ''),
+                'fkColumn' => $fkColumn,
+                'sourceRef' => (string) ($relation['sourceRef'] ?? ''),
+                'targetRef' => (string) ($relation['targetRef'] ?? ''),
+                'relationRef' => (string) $identifier,
+                'intentCandidates' => (array) ($relation['intentCandidates'] ?? []),
+                'reason' => 'relation.unresolved: non-empty relation FK evidence requires reference, promote, embed, drop, or out_of_scope.',
+                'targetSection' => $targetSection,
+                'targetEntryType' => $targetEntryType,
+            ]);
+        }
 
         return $rows;
     }

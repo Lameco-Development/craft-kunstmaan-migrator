@@ -58,6 +58,9 @@ final class MigrationReport
      */
     public array $finalizeUnresolvedDiagnostics = [];
 
+    /** @var list<array<string, mixed>> */
+    public array $relationCoverageRows = [];
+
     /**
      * Increment a named bucket by `$by` (default 1). Idempotent: a missing
      * bucket initialises to 0 then accumulates.
@@ -88,6 +91,30 @@ final class MigrationReport
             'reason'   => $reason,
             'path'     => $path,
         ];
+    }
+
+    /**
+     * @param list<array<string, mixed>> $coverageRows
+     */
+    public function recordRelationCoverage(array $coverageRows): void
+    {
+        foreach ($coverageRows as $row) {
+            if (!is_array($row) || (string) ($row['surfaceType'] ?? '') !== 'relation') {
+                continue;
+            }
+            $this->relationCoverageRows[] = $row;
+            $category = (string) ($row['category'] ?? '');
+            $reason = (string) ($row['reason'] ?? '');
+            if ($category === 'warning' || str_contains($reason, 'relation.unresolved')) {
+                $this->incr('relation.unresolved');
+            } elseif ($category === 'dropped') {
+                $this->incr('relation.intent.drop');
+            } elseif ($category === 'out_of_scope') {
+                $this->incr('relation.intent.out_of_scope');
+            } elseif (str_contains($reason, 'relation.promoted') || str_contains($reason, 'promoted')) {
+                $this->incr('relation.promoted');
+            }
+        }
     }
 
     /**

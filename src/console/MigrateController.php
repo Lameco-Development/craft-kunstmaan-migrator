@@ -2210,7 +2210,7 @@ class MigrateController extends Controller
         $lines[] = "";
         $lines[] = "| Bucket | Count |";
         $lines[] = "|--------|------:|";
-        $buckets = ['created', 'updated', 'skipped', 'failed', 'finalize.processed', 'finalize.rewritten', 'finalize.unresolvable'];
+        $buckets = ['created', 'updated', 'skipped', 'failed', 'finalize.processed', 'finalize.rewritten', 'finalize.unresolvable', 'relation.unresolved', 'relation.intent.drop', 'relation.intent.out_of_scope', 'relation.promoted'];
         foreach ($buckets as $bucket) {
             $lines[] = "| {$bucket} | " . (int) ($report->counts[$bucket] ?? 0) . " |";
         }
