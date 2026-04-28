@@ -102,9 +102,6 @@ class TransformService extends Component
         $processed = 0;
 
         // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port.
-        // entities allow-list scopes the FQCN dispatch (empty = unbounded).
-        $entitiesFilter = $filters->entities;
-        // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port.
         // locales scope the per-site loop in ResolverContext construction (empty = unbounded).
         $localesFilter = $filters->locales;
 
@@ -130,14 +127,10 @@ class TransformService extends Component
                 continue;
             }
 
-            // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port.
-            // entities allow-list (FQCN simple-name match) scopes the FQCN dispatch.
-            if ($entitiesFilter !== []) {
-                $simpleParts = explode('\\', trim($fqcn, '\\'));
-                $simpleName = end($simpleParts);
-                if (!in_array($simpleName, $entitiesFilter, true) && !in_array($fqcn, $entitiesFilter, true)) {
-                    continue;
-                }
+            // Phase 9 / D-16: consume MigrationFilters' source-domain
+            // reachability set instead of re-parsing basename/FQCN lists here.
+            if (!$filters->allows($fqcn)) {
+                continue;
             }
 
             $nodeSpec = $mapping['nodeClasses'][$fqcn] ?? null;

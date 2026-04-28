@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\console;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
+use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use Symfony\Component\Yaml\Yaml;
@@ -80,7 +81,12 @@ class AnalyzeController extends Controller
         $this->stdout("Analyze: scanning legacy source + schema\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli(
+            entitiesArg: $this->entities,
+            localesArg: $this->locales,
+            sinceArg: $this->since,
+            relationGraph: [],
+        );
 
         // Step 1.5 (Phase 02.1 / D-31): KUNSTMAAN_SOURCE_PATH gate. Second gate after
         // enforceNeverProduction. Greenfield-fallback was dropped per D-31; without a
@@ -212,6 +218,12 @@ class AnalyzeController extends Controller
         // time. Best-effort — a missing parser or empty entity index drops the
         // file silently rather than failing the analyze run.
         $relationGraph = $this->buildRelationGraph();
+        $filters = $plugin->filterFactory->fromCli(
+            entitiesArg: $this->entities,
+            localesArg: $this->locales,
+            sinceArg: $this->since,
+            relationGraph: FilterFactory::relationGraphFromArtifact($relationGraph),
+        );
         $relationGraphPath = $storageDir . '/relation-graph.json';
         if ($relationGraph !== []) {
             if (!$plugin->mappingFile->writeAtomicJson($relationGraphPath, $relationGraph)) {

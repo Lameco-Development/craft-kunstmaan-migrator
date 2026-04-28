@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\console;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
+use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\filter\MappingFilterTranslator;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
@@ -108,7 +109,7 @@ class VerifyController extends Controller
         // Phase 4.1 / VER-04: $filters flows into CountGateService::run() (gate evaluation
         // is now filter-aware — see CountGateService::isSectionFilteredOut + locale→siteId
         // scoping).
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $this->buildRuntimeFilters($plugin);
         try {
             $translatedScope = $this->loadTranslatedScopeForEntityFilters($filters, $plugin);
         } catch (Throwable $e) {
@@ -328,6 +329,37 @@ class VerifyController extends Controller
         return $translatedScope;
     }
 
+    private function buildRuntimeFilters(Plugin $plugin): MigrationFilters
+    {
+        return $plugin->filterFactory->fromCli(
+            entitiesArg: $this->entities,
+            localesArg: $this->locales,
+            sinceArg: $this->since,
+            relationGraph: $this->loadRuntimeRelationGraph(),
+        );
+    }
+
+    /**
+     * @return array<string, list<string>>
+     */
+    private function loadRuntimeRelationGraph(): array
+    {
+        $path = Craft::$app->path->getStoragePath() . '/migration/relation-graph.json';
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $raw = file_get_contents($path);
+        if ($raw === false || $raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        return is_array($decoded)
+            ? FilterFactory::relationGraphFromArtifact($decoded)
+            : [];
+    }
+
     /**
      * D-59: capture light counts of the current Craft DB state to baseline.json.
      * Used post-migration as the equivalence reference for `verify` Gate 1 re-runs.
@@ -344,8 +376,14 @@ class VerifyController extends Controller
         // Phase 4.1 / VER-04: $filters flows into capture() — the snapshot embeds a
         // filterScope JSON header (entities / locales / since) so a later doctor 8th
         // check can detect filter-scope drift between capture and verify (D-30).
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
-        $snapshot = $plugin->baselineCounterService->capture($filters);
+        $filters = $this->buildRuntimeFilters($plugin);
+        try {
+            $translatedScope = $this->loadTranslatedScopeForEntityFilters($filters, $plugin);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::CONFIG;
+        }
+        $snapshot = $plugin->baselineCounterService->capture($filters, $translatedScope);
 
         $path = $this->output ?? Craft::$app->path->getStoragePath() . '/migration/baseline.json';
         // Phase 2 / D-07 atomic write seam.
@@ -375,7 +413,8 @@ class VerifyController extends Controller
         // Criterion 5: filter flags accepted for CLI uniformity. spot-check-urls.txt is
         // operator-curated, so URL-list scoping is already operator-controlled; $filters parsed
         // but unused at v1.0.
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $this->buildRuntimeFilters($plugin);
+        unset($filters);
 
         $urlList = $this->urlSpotCheck ?? Craft::$app->path->getStoragePath() . '/migration/spot-check-urls.txt';
         $outDir  = $this->outputDir   ?? Craft::$app->path->getStoragePath() . '/migration/baseline';

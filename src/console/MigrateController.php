@@ -10,6 +10,7 @@ use craft\db\MigrationManager;
 use craft\helpers\Console;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
@@ -188,7 +189,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate: extract → transform → load → finalize\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $this->applyNoRelJoinOverride($plugin);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $report = new MigrationReport();
@@ -310,6 +311,7 @@ class MigrateController extends Controller
         // Gated on --live to match the load-entries gate; dry-run skips silently.
         if ($this->live) {
             try {
+                $plugin->taxonomyMigrationService->filters = $filters;
                 $taxonomyReport = $plugin->taxonomyMigrationService->migrateAll($opts);
             } catch (Throwable $e) {
                 $this->stderr("  FAIL taxonomies: {$e->getMessage()}\n", Console::FG_RED);
@@ -334,7 +336,7 @@ class MigrateController extends Controller
         } else {
             if ($this->preloadAssets) {
                 try {
-                    $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir);
+                    $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir, $filters);
                     $plugin->assetMigrationService->ingestReferenced($opts, $filters, $referencedAssetIds);
                     $this->stdout("  OK   --preload-assets batch complete\n", Console::FG_GREEN);
                 } catch (Throwable $e) {
@@ -481,13 +483,7 @@ class MigrateController extends Controller
         // here would defeat its purpose. Force noSeo=false; pass --no-retour
         // through unchanged (inert here — actionSeo never calls the Retour
         // service — but faithfully reflects the operator's invocation).
-        $filters = $plugin->filterFactory->fromCli(
-            $this->entities,
-            $this->locales,
-            $this->since,
-            false,
-            $this->noRetour,
-        );
+        $filters = $this->buildRuntimeFilters($plugin, false, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -542,13 +538,7 @@ class MigrateController extends Controller
         // --no-retour here would defeat its purpose. Force noRetour=false;
         // pass --no-seo through unchanged (inert here — actionRetour never
         // calls the SEO service — but faithfully reflects the invocation).
-        $filters = $plugin->filterFactory->fromCli(
-            $this->entities,
-            $this->locales,
-            $this->since,
-            $this->noSeo,
-            false,
-        );
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, false);
 
         if (!$this->live) {
             $this->stdout(
@@ -614,13 +604,7 @@ class MigrateController extends Controller
         $plugin = Plugin::getInstance();
         // Phase 4.1 / D-26: pass --no-seo / --no-retour through unchanged for
         // filter shape parity. TaxonomyMigrationService never reads them.
-        $filters = $plugin->filterFactory->fromCli(
-            $this->entities,
-            $this->locales,
-            $this->since,
-            $this->noSeo,
-            $this->noRetour,
-        );
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -634,6 +618,7 @@ class MigrateController extends Controller
         $report = new MigrationReport();
 
         try {
+            $plugin->taxonomyMigrationService->filters = $filters;
             $taxonomyReport = $plugin->taxonomyMigrationService->migrateAll($opts);
         } catch (Throwable $e) {
             $this->stderr("  FAIL taxonomies: {$e->getMessage()}\n", Console::FG_RED);
@@ -663,7 +648,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (extract): legacy DB → storage/migration/extracted/\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $this->applyNoRelJoinOverride($plugin);
 
         if (($exit = $this->preflightLocale($filters)) !== ExitCode::OK) {
@@ -708,7 +693,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (transform): extracted → transformed/entries\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
 
         if (($exit = $this->preflightLocale($filters)) !== ExitCode::OK) {
@@ -777,7 +762,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (load): transformed/entries → Craft\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $transformedDir = $storageDir . '/transformed/entries';
         $report = new MigrationReport();
@@ -831,7 +816,7 @@ class MigrateController extends Controller
 
         if ($this->preloadAssets) {
             try {
-                $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir);
+                $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir, $filters);
                 $plugin->assetMigrationService->ingestReferenced($opts, $filters, $referencedAssetIds);
                 $this->stdout("  OK   --preload-assets batch complete\n", Console::FG_GREEN);
             } catch (Throwable $e) {
@@ -861,7 +846,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (finalize): CKEditor token resolution pass\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -914,7 +899,7 @@ class MigrateController extends Controller
         }
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
 
         $entitiesScope = $filters->entities === [] ? '(all migrated)' : implode(', ', $filters->entities);
         $localesScope = $filters->locales === [] ? '(all sites)' : implode(', ', $filters->locales);
@@ -991,13 +976,7 @@ class MigrateController extends Controller
         $this->logLine('actionSyncAssets started; verbosity=' . $this->verbosityLevel(), 1);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli(
-            $this->entities,
-            $this->locales,
-            $this->since,
-            $this->noSeo,
-            $this->noRetour,
-        );
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $report = new MigrationReport();
         $tStart = microtime(true);
@@ -1369,6 +1348,44 @@ class MigrateController extends Controller
         }
     }
 
+    private function buildRuntimeFilters(Plugin $plugin, bool $noSeo, bool $noRetour): MigrationFilters
+    {
+        return $plugin->filterFactory->fromCli(
+            entitiesArg: $this->entities,
+            localesArg: $this->locales,
+            sinceArg: $this->since,
+            noSeo: $noSeo,
+            noRetour: $noRetour,
+            relationGraph: $this->loadRuntimeRelationGraph(),
+        );
+    }
+
+    /**
+     * Load the analyzer's relation-graph artifact for all runtime actions.
+     *
+     * Missing artifact is non-fatal: unscoped runs and first-run dry paths keep
+     * working, while scoped runs still have exact FQCN/basename filtering.
+     *
+     * @return array<string, list<string>>
+     */
+    private function loadRuntimeRelationGraph(): array
+    {
+        $path = Craft::$app->path->getStoragePath() . '/migration/relation-graph.json';
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $raw = file_get_contents($path);
+        if ($raw === false || $raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        return is_array($decoded)
+            ? FilterFactory::relationGraphFromArtifact($decoded)
+            : [];
+    }
+
     /**
      * LOC-02 preflight gate — shared by every action that reads legacy data.
      */
@@ -1535,10 +1552,13 @@ class MigrateController extends Controller
      *
      * @return list<int>
      */
-    private function collectReferencedAssetIdsFromPayloadDirectory(string $transformedDir): array
+    private function collectReferencedAssetIdsFromPayloadDirectory(string $transformedDir, ?MigrationFilters $filters = null): array
     {
         $ids = [];
         foreach ($this->iterateTransformedFiles($transformedDir) as $jsonPath) {
+            if ($filters !== null && !$this->payloadFileMatchesFilters($jsonPath, $filters)) {
+                continue;
+            }
             $raw = file_get_contents($jsonPath);
             if ($raw === false) {
                 continue;
@@ -1555,6 +1575,16 @@ class MigrateController extends Controller
         $out = array_keys($ids);
         sort($out, SORT_NUMERIC);
         return array_map('intval', $out);
+    }
+
+    private function payloadFileMatchesFilters(string $jsonPath, MigrationFilters $filters): bool
+    {
+        if ($filters->entities === []) {
+            return true;
+        }
+
+        $fqcn = str_replace('_', '\\', basename(dirname($jsonPath)));
+        return $filters->allows($fqcn);
     }
 
     /**
@@ -1629,24 +1659,10 @@ class MigrateController extends Controller
         // through. Transform's `--entities` filter prevents NEW writes, but
         // load was reading every file on disk regardless. Match by FQCN slug
         // (path is `transformed/entries/<fqcnSlug>/<nodeId>.json`).
-        $entityAllow = $filters !== null ? $filters->entities : [];
         $files = [];
         foreach ($this->iterateTransformedFiles($transformedDir) as $f) {
-            if ($entityAllow !== []) {
-                // Path is `transformed/entries/<fqcnSlug>/<nodeId>.json` — the
-                // FQCN slug is the parent dir name (e.g. `App_Entity_Pages_HomePage`).
-                // Match operator-supplied --entities against BOTH the simple
-                // basename AND the reconstructed FQCN — mirrors TransformService's
-                // accept-either rule (TransformService:135-141). Without this,
-                // operators passing `--entities=App\Entity\Pages\CaseStudyPage`
-                // got transform output but zero load (empty-result).
-                $fqcnSlug = basename(dirname($f));
-                $parts = explode('_', $fqcnSlug);
-                $basename = (string) end($parts);
-                $fqcn = str_replace('_', '\\', $fqcnSlug);
-                if (!in_array($basename, $entityAllow, true) && !in_array($fqcn, $entityAllow, true)) {
-                    continue;
-                }
+            if ($filters !== null && !$this->payloadFileMatchesFilters($f, $filters)) {
+                continue;
             }
             $files[] = $f;
         }

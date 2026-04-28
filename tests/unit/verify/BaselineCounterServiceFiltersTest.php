@@ -23,11 +23,16 @@ final class BaselineCounterServiceFiltersTest extends TestCase
     public function testCaptureSignatureAcceptsOptionalFiltersParameter(): void
     {
         $rm = new ReflectionMethod(BaselineCounterService::class, 'capture');
-        self::assertCount(1, $rm->getParameters());
+        self::assertCount(2, $rm->getParameters());
         $p = $rm->getParameters()[0];
         self::assertSame('filters', $p->getName());
         self::assertTrue($p->isOptional(), 'filters arg must default to null for BC.');
         self::assertTrue($p->allowsNull());
+
+        $scope = $rm->getParameters()[1];
+        self::assertSame('translatedScope', $scope->getName());
+        self::assertTrue($scope->isOptional(), 'translatedScope arg must default to null for BC.');
+        self::assertTrue($scope->allowsNull());
     }
 
     public function testBuildFilterScopeReturnsNullForNullFilters(): void

@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
 use craft\elements\Entry;
+use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\mapping\MappingFile;
 use RuntimeException;
@@ -76,6 +77,7 @@ class TaxonomyMigrationService extends Component
     public ?LegacyDbService $legacyDb = null;
     /** D-08 reshape #1: v1's MappingLoader → v2's MappingFile (single mapping.yaml). */
     public ?MappingFile $mappingFile = null;
+    public ?MigrationFilters $filters = null;
 
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
@@ -98,6 +100,14 @@ class TaxonomyMigrationService extends Component
 
         foreach ($taxonomies as $fqcn => $row) {
             if (!is_array($row)) {
+                continue;
+            }
+            if ($this->filters !== null && !$this->filters->allows((string) $fqcn)) {
+                $report->incr('skipped');
+                $report->warn(sprintf(
+                    'taxonomies[%s] skipped: filtered out by source entity scope',
+                    (string) $fqcn,
+                ));
                 continue;
             }
             // D-08 reshape #4 — v2 compiler never emits `action: SKIP`

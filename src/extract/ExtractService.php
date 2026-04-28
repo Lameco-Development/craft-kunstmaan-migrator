@@ -143,7 +143,6 @@ class ExtractService extends Component
             return 0;
         }
         $nodeClasses = (array) ($mapping['nodeClasses'] ?? []);
-        $entityAllow = $filters->entities;
         $total = 0;
         foreach ($nodeClasses as $fqcn => $spec) {
             if (!is_string($fqcn) || !is_array($spec)) {
@@ -152,15 +151,8 @@ class ExtractService extends Component
             if (($spec['action'] ?? null) === 'SKIP') {
                 continue;
             }
-            if ($entityAllow !== []) {
-                $basename = $fqcn;
-                $lastSlash = strrpos($fqcn, '\\');
-                if ($lastSlash !== false) {
-                    $basename = substr($fqcn, $lastSlash + 1);
-                }
-                if (!in_array($basename, $entityAllow, true)) {
-                    continue;
-                }
+            if (!$filters->allows($fqcn)) {
+                continue;
             }
             $sourceTable = (string) ($spec['sourceTable'] ?? '');
             if ($sourceTable === '' && $this->detailTableResolver !== null) {
@@ -237,12 +229,6 @@ class ExtractService extends Component
         // single-entry target.
         $onlyId = isset($options['onlyId']) ? (int) $options['onlyId'] : null;
 
-        // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port (not in v1).
-        // entities allow-list scopes the FQCN walk. MigrationFilters::$entities holds
-        // Kunstmaan source class basenames (e.g. 'NewsPage'); compare against the
-        // last `\\`-separated segment of each mapping FQCN. Empty list = unbounded.
-        $entityAllow = $filters->entities;
-
         foreach ($nodeClasses as $fqcn => $spec) {
             if ($onlyFqcns !== null && !in_array($fqcn, $onlyFqcns, true)) {
                 continue;
@@ -251,17 +237,11 @@ class ExtractService extends Component
                 continue;
             }
 
-            // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port (not in v1).
-            // entities allow-list applied at the FQCN walk site.
-            if ($entityAllow !== []) {
-                $basename = $fqcn;
-                $lastSlash = strrpos($fqcn, '\\');
-                if ($lastSlash !== false) {
-                    $basename = substr($fqcn, $lastSlash + 1);
-                }
-                if (!in_array($basename, $entityAllow, true)) {
-                    continue;
-                }
+            // Phase 9 / D-16: use the source-domain reachability set so scoped
+            // Page runs include graph-reachable page-owned dependencies instead
+            // of re-parsing basename filters at this stage.
+            if (!$filters->allows($fqcn)) {
+                continue;
             }
 
             // Honor SKIP rows — mapping.yaml can exclude whole node classes from extraction.

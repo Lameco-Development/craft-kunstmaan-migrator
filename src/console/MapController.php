@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\console;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
+use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
@@ -59,7 +60,12 @@ class MapController extends Controller
         }
 
         $plugin  = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since);
+        $filters = $plugin->filterFactory->fromCli(
+            entitiesArg: $this->entities,
+            localesArg: $this->locales,
+            sinceArg: $this->since,
+            relationGraph: $this->loadRuntimeRelationGraph(),
+        );
 
         // Locale preflight (D-17 LOC-02 — every legacy-reading command checks).
         // map() doesn't read legacy DB directly, but the rubber-stamp loop is downstream
@@ -683,14 +689,7 @@ class MapController extends Controller
             if ($parent === '') {
                 return false;
             }
-            $basename = (string) (strrchr($parent, '\\') ?: $parent);
-            $basename = ltrim($basename, '\\');
-            foreach ($filters->entities as $e) {
-                if ($basename === $e) {
-                    return true;
-                }
-            }
-            return false;
+            return $filters->allows($parent);
         }
 
         $table = (string) ($row['table'] ?? '');
@@ -706,5 +705,26 @@ class MapController extends Controller
             }
         }
         return false;
+    }
+
+    /**
+     * @return array<string, list<string>>
+     */
+    private function loadRuntimeRelationGraph(): array
+    {
+        $path = Craft::$app->path->getStoragePath() . '/migration/relation-graph.json';
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $raw = file_get_contents($path);
+        if ($raw === false || $raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        return is_array($decoded)
+            ? FilterFactory::relationGraphFromArtifact($decoded)
+            : [];
     }
 }

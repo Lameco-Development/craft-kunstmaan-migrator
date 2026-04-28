@@ -88,6 +88,75 @@ final class FilterFactory extends Component
         return $normalized;
     }
 
+    /**
+     * Normalize the analyzer's relation-graph artifact into the reachability map
+     * consumed by MigrationFilters.
+     *
+     * Supported inputs:
+     * - Phase 8.5/9 artifact rows:
+     *   `FQCN => ['manyToOne' => [['targetEntity' => TargetFqcn], ...]]`
+     * - Already-normalized maps:
+     *   `FQCN => [TargetFqcn, ...]`
+     *
+     * @param array<string, mixed> $artifact
+     * @return array<string, list<string>>
+     */
+    public static function relationGraphFromArtifact(array $artifact): array
+    {
+        $graph = [];
+
+        foreach ($artifact as $source => $row) {
+            $source = (string) $source;
+            if ($source === '') {
+                continue;
+            }
+
+            $targets = [];
+            if (is_array($row) && array_is_list($row)) {
+                foreach ($row as $target) {
+                    $target = is_string($target) ? trim($target) : '';
+                    if ($target !== '' && !isset($targets[$target])) {
+                        $targets[$target] = true;
+                    }
+                }
+            } elseif (is_array($row)) {
+                foreach ((array) ($row['manyToOne'] ?? []) as $relation) {
+                    if (!is_array($relation)) {
+                        continue;
+                    }
+                    $target = trim((string) ($relation['targetEntity'] ?? ''));
+                    if ($target !== '' && !isset($targets[$target])) {
+                        $targets[$target] = true;
+                    }
+                }
+                foreach ((array) ($row['manyToMany'] ?? []) as $relation) {
+                    if (!is_array($relation)) {
+                        continue;
+                    }
+                    $target = trim((string) ($relation['targetEntity'] ?? ''));
+                    if ($target !== '' && !isset($targets[$target])) {
+                        $targets[$target] = true;
+                    }
+                }
+                foreach ((array) ($row['oneToMany'] ?? []) as $relation) {
+                    if (!is_array($relation)) {
+                        continue;
+                    }
+                    $target = trim((string) ($relation['targetEntity'] ?? ''));
+                    if ($target !== '' && !isset($targets[$target])) {
+                        $targets[$target] = true;
+                    }
+                }
+            }
+
+            if ($targets !== []) {
+                $graph[$source] = array_keys($targets);
+            }
+        }
+
+        return $graph;
+    }
+
     private static function sourceBasename(string $entity): string
     {
         $parts = explode('\\', $entity);

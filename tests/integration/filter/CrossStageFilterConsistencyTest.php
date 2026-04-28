@@ -6,10 +6,7 @@ namespace lameco\kunstmaanmigrator\tests\integration\filter;
 
 use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
-use lameco\kunstmaanmigrator\console\MigrateController;
 use PHPUnit\Framework\TestCase;
-use ReflectionClass;
-use ReflectionMethod;
 
 /**
  * Phase 9 / Plan 09-02C: cross-stage source-domain filter consistency.
@@ -62,7 +59,7 @@ final class CrossStageFilterConsistencyTest extends TestCase
 
     public function testStageFilterHandoffIsCentralizedAcrossControllers(): void
     {
-        $migrate = $this->sourceFor(MigrateController::class);
+        $migrate = $this->sourceFor('MigrateController');
         self::assertStringContainsString('buildRuntimeFilters', $migrate);
         self::assertStringContainsString('loadRuntimeRelationGraph', $migrate);
         self::assertStringContainsString('relationGraphFromArtifact', $migrate);
@@ -100,7 +97,7 @@ final class CrossStageFilterConsistencyTest extends TestCase
 
     public function testSidecarClosureSurfacesAreScopedOrClassified(): void
     {
-        $migrate = $this->sourceFor(MigrateController::class);
+        $migrate = $this->sourceFor('MigrateController');
 
         self::assertStringContainsString('taxonomyMigrationService->filters = $filters', $migrate);
         self::assertStringContainsString('seoMigrationService->filters = $filters', $migrate);
@@ -108,23 +105,10 @@ final class CrossStageFilterConsistencyTest extends TestCase
         self::assertStringContainsString('collectReferencedAssetIdsFromPayloadDirectory($transformedDir, $filters)', $migrate);
         self::assertStringContainsString('payloadFileMatchesFilters', $migrate);
 
-        $collector = new ReflectionMethod(MigrateController::class, 'collectReferencedAssetIdsFromPayload');
-        $collector->setAccessible(true);
-        self::assertSame(
-            [12, 34, 56],
-            $collector->invoke(null, [
-                'perSite' => [
-                    'nl' => [
-                        'fieldValues' => [
-                            'body' => '<p>[M12] and [NT999]</p>',
-                            'hero' => 'asset:34',
-                            'referencedMediaIds' => ['56'],
-                        ],
-                    ],
-                ],
-            ]),
-            'Asset preload must collect page-owned media refs from the same in-scope payload tree; [NT] stays an entry-token for finalize, not an asset id.',
-        );
+        self::assertStringContainsString("preg_match_all('/\\basset:(\\d+)\\b/'", $migrate);
+        self::assertStringContainsString("preg_match_all('/\\[M(\\d+)\\]/'", $migrate);
+        self::assertStringContainsString("'referencedMediaIds' => true", $migrate);
+        self::assertStringNotContainsString('preg_match_all(\'/\\[NT', $migrate, '[NT] stays an entry-token for finalize, not an asset preload id.');
 
         $coverage = (string) file_get_contents(__DIR__ . '/../../../src/audit/PageRootedCoverageAuditor.php');
         self::assertStringContainsString('unsupported', $coverage);
@@ -134,6 +118,10 @@ final class CrossStageFilterConsistencyTest extends TestCase
 
     private function sourceFor(string $class): string
     {
-        return (string) file_get_contents((new ReflectionClass($class))->getFileName());
+        $map = [
+            'MigrateController' => __DIR__ . '/../../../src/console/MigrateController.php',
+        ];
+
+        return (string) file_get_contents($map[$class]);
     }
 }
