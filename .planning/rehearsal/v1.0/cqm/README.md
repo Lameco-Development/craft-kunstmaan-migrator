@@ -4,15 +4,36 @@
 
 ## Operator capture procedure
 
-Run the migration against `~/Sites/cqm-website/` on a dev host (not production — `NeverProductionTrait` enforces). Then commit these files into this directory:
+Run the full workflow against `~/Sites/cqm-website/` on a dev host with the
+configured CQM Craft target at `~/Sites/cqm-craft-website/` (not production —
+`NeverProductionTrait` enforces):
+
+```bash
+./craft kunstmaan-migrator/doctor
+./craft kunstmaan-migrator/analyze
+./craft kunstmaan-migrator/map
+./craft kunstmaan-migrator/compile
+./craft kunstmaan-migrator/migrate --dry-run
+./craft kunstmaan-migrator/migrate --live
+./craft kunstmaan-migrator/verify
+php tools/audit-source-shapes.php ~/Sites/cqm-website
+```
+
+The source-shape audit is structural only: keep counts, class names, table
+names, relation types, metadata presence, and risk flags; do not copy source
+method bodies, property values, SQL rows, secrets, or content samples.
+
+Then commit these files into this directory:
 
 | File | Source | Purpose |
 |---|---|---|
 | `REPORT.md` | `storage/migration/REPORT.md` (after `migrate --live`) | Rehearsal summary + skipped stages + asset RCA (Phase 4 / Plan 12 + Phase 4.1 / CFG-07) |
 | `VERIFY.md` | `storage/migration/VERIFY-<ts>.md` (after `verify`; drop the timestamp suffix) | Count-match gate + URL diff gate output (Phase 4 / Plan 04) |
+| `PAGE-ROOTED-COVERAGE.md` | `storage/migration/PAGE-ROOTED-COVERAGE.md` (after `compile`) | Page-rooted migrated/dropped/out_of_scope/unsupported/warning review evidence |
 | `baseline.json` | `storage/migration/baseline.json` (after `verify capture-baseline`) | Light entity-count snapshot |
 | `doctor-output.txt` | Captured stdout/stderr of `./craft kunstmaan-migrator/doctor` | All doctor checks passing |
 | `mapping-summary.txt` | Counts of accepted/dropped/needs-review/proposed rows from CQM's `mapping.yaml` | Operator-side script |
+| `source-shape-audit.txt` | `php tools/audit-source-shapes.php ~/Sites/cqm-website` | Structural genericity sample output |
 | `allow-tokens.txt` | Optional, operator-curated | One CKEditor token literal per line; `#` comments OK |
 
 ## Mechanical gate

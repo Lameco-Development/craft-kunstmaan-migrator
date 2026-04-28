@@ -75,7 +75,7 @@ final class GenericitySourceShapeAuditTest extends TestCase
 
         $output = $this->runAudit($this->tmpRoot);
 
-        self::assertStringContainsString('project=' . $this->tmpRoot, $output);
+        self::assertStringContainsString(' status=ok ', $output);
         self::assertStringContainsString('classes=2', $output);
         self::assertStringContainsString('pages=1', $output);
         self::assertStringContainsString('pageparts=1', $output);
