@@ -406,6 +406,8 @@ Plans:
 - [x] `10-03-PLAN.md` — page-rooted taxonomy lazy resolver, referenced-only default, and explicit full-taxonomy import path. Completed 2026-04-28 (`10-03-SUMMARY.md`).
 - [x] `10-04-PLAN.md` — verify count-domain semantics, restored-backup CQM runbook, and closing proof. Completed 2026-04-28 (`10-04-SUMMARY.md`; restored CQM `REPORT.md` reached zero failures).
 
+**Verification:** `10-VERIFICATION.md` status is `gaps_found` (18/21 must-haves verified). Gap closure needed for taxonomy locale fallback site-handle mapping, transform sentinel warning/report merge, and the unsupported dry-run command in the CQM runbook.
+
 ---
 
 ## Dependencies
