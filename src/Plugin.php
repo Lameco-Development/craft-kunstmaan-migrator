@@ -317,6 +317,10 @@ class Plugin extends BasePlugin
         $this->transformService->legacyDb          = $this->legacyDbService;
         $this->transformService->migrationState    = $this->migrationStateService;
         $this->transformService->assetPathResolver = new AssetPathResolver();
+        // Phase 10: page-rooted taxonomy relations delegate lazy state misses
+        // to TaxonomyMigrationService through ResolverContext. The handler
+        // remains read/delegate-only and never owns taxonomy writes.
+        $this->transformService->taxonomyResolver  = $this->taxonomyMigrationService;
 
         // AssetMigrationService deps.
         $this->assetMigrationService->legacyDb       = $this->legacyDbService;

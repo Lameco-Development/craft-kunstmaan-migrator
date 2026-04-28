@@ -8,7 +8,9 @@ use lameco\kunstmaanmigrator\fields\FieldHandlerRegistry;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateReader;
+use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\AssetPathResolver;
+use lameco\kunstmaanmigrator\load\TaxonomyMigrationService;
 use lameco\kunstmaanmigrator\fields\ResolverContext;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use Craft;
@@ -46,6 +48,7 @@ class TransformService extends Component
     public ?LegacyDbService $legacyDb = null;
     public ?MigrationStateReader $migrationState = null;
     public ?AssetPathResolver $assetPathResolver = null;
+    public ?TaxonomyMigrationService $taxonomyResolver = null;
 
     public string $storagePath = '@storage/migration';
 
@@ -96,6 +99,10 @@ class TransformService extends Component
 
         // Build siteMap (legacy-locale → Craft siteId) for ResolverContext construction.
         $siteMap = $this->buildSiteMap($mapping);
+        $dryRun = (bool) ($options['dryRun'] ?? true);
+        $migrationReport = ($options['migrationReport'] ?? null) instanceof MigrationReport
+            ? $options['migrationReport']
+            : null;
 
         $onlyFqcn = isset($options['onlyNodeClass']) ? (string) $options['onlyNodeClass'] : null;
         $limit = isset($options['limit']) ? (int) $options['limit'] : null;
@@ -163,7 +170,7 @@ class TransformService extends Component
                 $siteHandle = (string) ($mapping['sites'][$locale] ?? 'default');
                 $siteId = $siteMap[$locale] ?? 1;
 
-                $ctx = $this->buildContext($siteId, $siteHandle, $siteMap);
+                $ctx = $this->buildContext($siteId, $siteHandle, $siteMap, $dryRun, $migrationReport);
 
                 $fieldValues = $this->transformFields(
                     (array) $siteData,
@@ -929,7 +936,13 @@ class TransformService extends Component
      *
      * @param  array<string, int> $siteMap  locale → craft site id
      */
-    private function buildContext(int $siteId, string $siteHandle, array $siteMap): ResolverContext
+    private function buildContext(
+        int $siteId,
+        string $siteHandle,
+        array $siteMap,
+        bool $dryRun = true,
+        ?MigrationReport $report = null,
+    ): ResolverContext
     {
         return new ResolverContext(
             siteId:     $siteId,
@@ -939,6 +952,9 @@ class TransformService extends Component
             paths:      $this->resolvePaths(),
             siteMap:    $siteMap,
             legacyDb:   $this->legacyDb,
+            taxonomyResolver: $this->taxonomyResolver,
+            dryRun:     $dryRun,
+            report:     $report,
         );
     }
 
