@@ -102,6 +102,26 @@ final class MigrationReport
     }
 
     /**
+     * Central truth for final command outcome. A run has failed when either
+     * detailed failure rows were recorded or a stage merged a failed-count
+     * bucket without pushing per-entry rows.
+     */
+    public function hasFailures(): bool
+    {
+        return $this->failureCount() > 0;
+    }
+
+    /**
+     * Concise failure count for CLI summaries. Use the larger of the explicit
+     * failures[] rows and the aggregate failed bucket so stage-level merged
+     * reports cannot under-report failures.
+     */
+    public function failureCount(): int
+    {
+        return max(count($this->failures), (int) ($this->counts['failed'] ?? 0));
+    }
+
+    /**
      * Render a list of stack frames as `file:line class::method` lines —
      * preserves the D-50 stack-trace excerpt format.
      *

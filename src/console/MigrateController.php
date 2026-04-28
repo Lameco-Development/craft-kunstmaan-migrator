@@ -455,8 +455,7 @@ class MigrateController extends Controller
         $tRunMs = (int) round((microtime(true) - $tRunStart) * 1000);
         $this->logLine(sprintf('actionIndex complete in %dms', $tRunMs), 1);
 
-        $this->stdout("\nMigrate: PASS\n", Console::FG_GREEN);
-        return ExitCode::OK;
+        return $this->reportExitCode($report);
     }
 
     /**
@@ -841,7 +840,10 @@ class MigrateController extends Controller
 
         $exit = $this->runLoadFromDisk($transformedDir, $opts, $report, $filters);
         $this->writeReport($storageDir, $report, $filters);
-        return $exit;
+        if ($exit !== ExitCode::OK) {
+            return $exit;
+        }
+        return $this->reportExitCode($report);
     }
 
     /**
@@ -1605,6 +1607,26 @@ class MigrateController extends Controller
             ), Console::FG_GREEN);
         }
 
+        return ExitCode::OK;
+    }
+
+    /**
+     * Phase 9 / D-18: final command status must reflect the report after all
+     * diagnostic continuation and REPORT.md writing has happened. Per-entry
+     * failures still continue through runLoadFromDisk(); this method only
+     * translates the central report state into truthful process status.
+     */
+    private function reportExitCode(MigrationReport $report): int
+    {
+        if ($report->hasFailures()) {
+            $this->stdout(
+                sprintf("\nMigrate: FAIL (%d failures)\n", $report->failureCount()),
+                Console::FG_RED,
+            );
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+
+        $this->stdout("\nMigrate: PASS\n", Console::FG_GREEN);
         return ExitCode::OK;
     }
 
