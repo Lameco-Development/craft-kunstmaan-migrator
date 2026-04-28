@@ -213,6 +213,47 @@ final class CraftKnowledgeBase extends Component
     }
 
     /**
+     * Phase 8.7 / D-40 — flat-handle catalog per entry type.
+     *
+     * Returns `entryTypeHandle => list<fieldHandle>` for every entry type's
+     * top-level custom fields. `MappingCompiler` consumes this to validate
+     * that a column proposal's `targetHandle` actually exists on the chosen
+     * entry-type before writing it into `nodeClasses[fqcn].fields[]` —
+     * silent-empty bugs like `content → newsPage::content` (newsPage has no
+     * `content` field) are caught at compile time rather than producing
+     * orphan field assignments that get dropped at save time.
+     *
+     * Includes the built-in `title` and `slug` handles per entry type
+     * because EntryMigrationService writes them as native Craft fields
+     * (not custom fields). Excludes Matrix sub-fields — those are handled
+     * via dotted-path targets, not flat ones.
+     *
+     * @return array<string, list<string>>
+     */
+    public function entryTypeFlatHandles(): array
+    {
+        $out = [];
+        foreach (Craft::$app->entries->getAllEntryTypes() as $entryType) {
+            $handle = (string) $entryType->handle;
+            if ($handle === '') {
+                continue;
+            }
+            $handles = ['title', 'slug'];  // built-in native fields
+            $layout = $entryType->getFieldLayout();
+            if ($layout !== null) {
+                foreach ($layout->getCustomFields() as $field) {
+                    $h = (string) $field->handle;
+                    if ($h !== '' && !str_contains($h, '.')) {
+                        $handles[] = $h;
+                    }
+                }
+            }
+            $out[$handle] = array_values(array_unique($handles));
+        }
+        return $out;
+    }
+
+    /**
      * Phase 8.7 / D-39 — auto-detect entry types that should fold page-part
      * content into a flat ckeditor field instead of a Matrix block.
      *
