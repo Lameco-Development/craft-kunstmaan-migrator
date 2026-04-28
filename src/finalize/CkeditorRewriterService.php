@@ -95,6 +95,9 @@ class CkeditorRewriterService extends Component
 
     private bool $ntCacheWarm = false;
 
+    /** @var list<array<string, mixed>> */
+    private array $unresolvedDiagnostics = [];
+
     /**
      * Rewrite a legacy CKEditor body HTML string to Craft-native form.
      *
@@ -182,6 +185,20 @@ class CkeditorRewriterService extends Component
     }
 
     /**
+     * Consume reasoned unresolved-token diagnostics for the most recent rewrite
+     * batch. The buffer is reset after consumption so callers can safely attach
+     * field-local context without stale rows leaking into later fields.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function consumeUnresolvedDiagnostics(): array
+    {
+        $rows = $this->unresolvedDiagnostics;
+        $this->unresolvedDiagnostics = [];
+        return $rows;
+    }
+
+    /**
      * Rewrite `[M<id>]` Kunstmaan media placeholders to Craft asset ref tokens.
      * Works whether the placeholder sits inside an attribute (`href="[M482]"`)
      * or bare; the regex matches anywhere.
@@ -200,6 +217,7 @@ class CkeditorRewriterService extends Component
                 if ($craftAssetId !== null) {
                     return '{asset:' . $craftAssetId . '@' . $siteId . ':url}';
                 }
+                $this->recordUnresolvedDiagnostic('media', $kumaMediaId, $siteId, (string) $m[0], 'kuma_media:' . $kumaMediaId, 'no matching Craft asset id');
                 return $m[0] . $this->unresolvedMarker('kuma_media:' . $kumaMediaId);
             },
             $html,
@@ -224,6 +242,7 @@ class CkeditorRewriterService extends Component
                 if ($craftEntryId !== null) {
                     return '{entry:' . $craftEntryId . '@' . $siteId . ':url}';
                 }
+                $this->recordUnresolvedDiagnostic('nt', $ntId, $siteId, (string) $m[0], 'kuma_node_translation:' . $ntId, 'no matching Craft entry id');
                 return $m[0] . $this->unresolvedMarker('kuma_node_translation:' . $ntId);
             },
             $html,
@@ -382,23 +401,16 @@ class CkeditorRewriterService extends Component
             }
         }
 
-        if (empty($nodeIdToTargetId)) {
-            $this->ntCacheWarm = true;
-            return;
-        }
-
         // Join NT rows from legacy DB to get nt.id → node_id
         try {
             $ntRows = $this->legacyDb->queryAll(
                 'SELECT id AS nt_id, node_id FROM kuma_node_translations WHERE node_id IS NOT NULL',
             );
-            foreach ($ntRows as $r) {
-                $ntId = (int) ($r['nt_id'] ?? 0);
-                $nodeId = (int) ($r['node_id'] ?? 0);
-                if ($ntId > 0 && isset($nodeIdToTargetId[$nodeId])) {
-                    $this->ntToEntryCache[$ntId] = $nodeIdToTargetId[$nodeId];
-                }
-            }
+            $this->ntToEntryCache += self::buildNtToEntryCacheFromRows(
+                $this->stateEntryRows(),
+                $refNodeRows ?? [],
+                $ntRows,
+            );
         } catch (\Throwable $e) {
             Craft::warning(
                 'CkeditorRewriterService: could not warm NT cache: ' . $e->getMessage(),
@@ -407,6 +419,105 @@ class CkeditorRewriterService extends Component
         }
 
         $this->ntCacheWarm = true;
+    }
+
+    /**
+     * Pure NT cache builder used by warmNtCache() and PHPUnit. It maps state rows
+     * to node ids through both sourceKey/ref rows and decoded meta.kumaNodeId,
+     * then maps node translations to Craft entry ids.
+     *
+     * @param list<array<string, mixed>> $stateRows
+     * @param list<array<string, mixed>> $refNodeRows
+     * @param list<array<string, mixed>> $ntRows
+     * @return array<int, int>
+     */
+    private static function buildNtToEntryCacheFromRows(array $stateRows, array $refNodeRows, array $ntRows): array
+    {
+        $refToNodeMap = [];
+        foreach ($refNodeRows as $r) {
+            $fqcn = (string) ($r['ref_entity_name'] ?? $r['source'] ?? '');
+            $refId = (int) ($r['ref_id'] ?? $r['sourceKey'] ?? 0);
+            $nodeId = (int) ($r['node_id'] ?? $r['kumaNodeId'] ?? 0);
+            if ($fqcn !== '' && $refId > 0 && $nodeId > 0) {
+                $refToNodeMap[$fqcn][$refId] = $nodeId;
+                $refToNodeMap[str_replace('\\', '_', $fqcn)][$refId] = $nodeId;
+            }
+        }
+
+        $nodeIdToTargetId = [];
+        foreach ($stateRows as $row) {
+            if (($row['targetType'] ?? null) !== 'entry' || empty($row['targetId'])) {
+                continue;
+            }
+            $source = (string) ($row['source'] ?? '');
+            $fqcn = str_replace('_', '\\', $source);
+            $targetId = (int) $row['targetId'];
+            $sourceKey = (int) ($row['sourceKey'] ?? 0);
+            $mappedNodeId = $sourceKey > 0
+                ? (int) ($refToNodeMap[$fqcn][$sourceKey] ?? $refToNodeMap[$source][$sourceKey] ?? 0)
+                : 0;
+            if ($mappedNodeId > 0) {
+                $nodeIdToTargetId[$mappedNodeId] = $targetId;
+            } elseif ($sourceKey > 0) {
+                $nodeIdToTargetId[$sourceKey] = $targetId;
+            }
+            $meta = $row['meta'] ?? null;
+            if (is_string($meta)) {
+                $meta = json_decode($meta, true);
+            }
+            if (is_array($meta)) {
+                $metaNodeId = (int) ($meta['kumaNodeId'] ?? 0);
+                if ($metaNodeId > 0) {
+                    $nodeIdToTargetId[$metaNodeId] = $targetId;
+                }
+            }
+        }
+
+        $out = [];
+        foreach ($ntRows as $r) {
+            $ntId = (int) ($r['nt_id'] ?? $r['id'] ?? 0);
+            $nodeId = (int) ($r['node_id'] ?? 0);
+            if ($ntId > 0 && isset($nodeIdToTargetId[$nodeId])) {
+                $out[$ntId] = $nodeIdToTargetId[$nodeId];
+            }
+        }
+        ksort($out);
+        return $out;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function stateEntryRows(): array
+    {
+        $rows = [];
+        $sources = array_column(
+            (new Query())
+                ->select('source')
+                ->distinct()
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['targetType' => 'entry'])
+                ->all(),
+            'source',
+        );
+        foreach ($sources as $source) {
+            foreach ($this->migrationState->all((string) $source) as $row) {
+                if (is_array($row)) {
+                    $rows[] = ['source' => (string) $source] + $row;
+                }
+            }
+        }
+        return $rows;
+    }
+
+    private function recordUnresolvedDiagnostic(string $family, int $legacyId, int $siteId, string $token, string $source, string $reason): void
+    {
+        $this->unresolvedDiagnostics[] = [
+            'tokenFamily' => $family,
+            'legacyId' => $legacyId,
+            'siteId' => $siteId,
+            'token' => $token,
+            'source' => $source,
+            'reason' => $reason,
+        ];
     }
 
     private function rewriteAssetAttributes(string $html, int $siteId): string

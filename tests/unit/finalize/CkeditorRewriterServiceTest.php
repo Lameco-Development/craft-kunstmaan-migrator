@@ -144,6 +144,36 @@ final class CkeditorRewriterServiceTest extends TestCase
         $out = $svc->rewrite($html, 3);
 
         self::assertStringContainsString('{asset:1234@3:url}', $out);
+        self::assertStringNotContainsString('%5BM482%5D', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
+    }
+
+    public function testRawAndEncodedNodeTranslationPlaceholdersResolveWithoutLegacyLiterals(): void
+    {
+        $svc = $this->service();
+        $svc->seedNtToEntryCache([80 => 555]);
+
+        $out = $svc->rewrite('<a href="[NT80]">raw</a><a href="%5BNT80%5D">encoded</a>', 2);
+
+        self::assertSame(2, substr_count($out, '{entry:555@2:url}'));
+        self::assertStringNotContainsString('[NT80]', $out);
+        self::assertStringNotContainsString('%5BNT80%5D', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
+        self::assertSame([], $svc->consumeUnresolvedDiagnostics());
+    }
+
+    public function testRawAndEncodedMediaPlaceholdersResolveWithoutLegacyLiterals(): void
+    {
+        $svc = $this->service();
+        $svc->seedKumaMediaIdCache([482 => 1234]);
+
+        $out = $svc->rewrite('<a href="[M482]">raw</a><a href="%5BM482%5D">encoded</a>', 3);
+
+        self::assertSame(2, substr_count($out, '{asset:1234@3:url}'));
+        self::assertStringNotContainsString('[M482]', $out);
+        self::assertStringNotContainsString('%5BM482%5D', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
+        self::assertSame([], $svc->consumeUnresolvedDiagnostics());
     }
 
     public function testUnresolvedKumaMediaPlaceholderPreservesLiteralWithMarker(): void
@@ -161,6 +191,12 @@ final class CkeditorRewriterServiceTest extends TestCase
             $out,
         );
         self::assertSame('kuma_media:999', $this->decodeMarkerSource($out));
+        $diagnostics = $svc->consumeUnresolvedDiagnostics();
+        self::assertSame('media', $diagnostics[0]['tokenFamily']);
+        self::assertSame(999, $diagnostics[0]['legacyId']);
+        self::assertSame('[M999]', $diagnostics[0]['token']);
+        self::assertSame(1, $diagnostics[0]['siteId']);
+        self::assertArrayHasKey('reason', $diagnostics[0]);
     }
 
     public function testRewritesNodeTranslationPlaceholderToEntryRefToken(): void
@@ -189,6 +225,42 @@ final class CkeditorRewriterServiceTest extends TestCase
             $out,
         );
         self::assertSame('kuma_node_translation:404', $this->decodeMarkerSource($out));
+        $diagnostics = $svc->consumeUnresolvedDiagnostics();
+        self::assertSame('nt', $diagnostics[0]['tokenFamily']);
+        self::assertSame(404, $diagnostics[0]['legacyId']);
+        self::assertSame('[NT404]', $diagnostics[0]['token']);
+        self::assertSame(1, $diagnostics[0]['siteId']);
+        self::assertArrayHasKey('reason', $diagnostics[0]);
+        self::assertSame([], $svc->consumeUnresolvedDiagnostics(), 'Diagnostics are consumed/reset per field.');
+    }
+
+    public function testPureNtCacheBuilderMapsSourceKeyAndMetaKumaNodeId(): void
+    {
+        $svc = $this->service();
+        $method = new ReflectionMethod(CkeditorRewriterService::class, 'buildNtToEntryCacheFromRows');
+        $result = $method->invoke(null, [
+            [
+                'source' => 'App_Entity_GenericPage',
+                'sourceKey' => '10',
+                'targetType' => 'entry',
+                'targetId' => 1000,
+                'meta' => [],
+            ],
+            [
+                'source' => 'App_Entity_MetaPage',
+                'sourceKey' => '99',
+                'targetType' => 'entry',
+                'targetId' => 2000,
+                'meta' => json_encode(['kumaNodeId' => 600], JSON_THROW_ON_ERROR),
+            ],
+        ], [
+            ['ref_entity_name' => 'App\\Entity\\GenericPage', 'ref_id' => 10, 'node_id' => 500],
+        ], [
+            ['nt_id' => 80, 'node_id' => 500],
+            ['nt_id' => 81, 'node_id' => 600],
+        ]);
+
+        self::assertSame([80 => 1000, 81 => 2000], $result);
     }
 
     public function testRewritesInternalEntryLinksWhenMapProvided(): void
