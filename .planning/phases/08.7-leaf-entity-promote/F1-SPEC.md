@@ -2,14 +2,25 @@
 phase: 08.7-leaf-entity-promote
 artifact: feature-spec
 feature: F1 — page-wins auto-folding for ManyToOne 1:1 wrapping pairs
-status: queued (designed, not yet implemented)
+status: implemented (2026-04-28)
 depends-on: D-39 (auto-detect flatPagePartContent), D-40 (targetHandle validation)
 generated: 2026-04-28
 ---
 
 # F1 — Page-wins auto-folding for ManyToOne 1:1 wrapping pairs
 
-This is the third generalization feature from the 08.7 trio (F2 = D-39, F3 = D-40, F1 = this). F2 + F3 shipped. F1 is queued.
+This is the third generalization feature from the 08.7 trio (F2 = D-39, F3 = D-40, F1 = this). All three shipped.
+
+## Implementation summary (2026-04-28)
+
+Branch `feature/08.7-f1-page-wins-folding`.
+
+- **Helper**: `AnalyzeController::emitPageWrapSyntheticColumns(scopedPageStructure, entityIndex, columnsByTable, pageTableToEntryType) → [syntheticRows, foldedTargetFqcns]` — public static so the unit test can drive it without a Craft + DB harness.
+- **Pipeline injection**: between the entity-level LLM step (7.5) and the lines-441-469 backfill, after the nodeClassProposals are in hand. Synthetic rows append to `$residual` so they reach the existing column-residual LLM (step 8) which already understands `_rel:<prop>.<col>` columns (LlmClassifier::buildBatchPrompt:2219).
+- **Wrapped-target taxonomy drop**: walks `$taxonomyProposals` after step 7.7 returns; force-marks `status: dropped, reason: superseded-by-page` for FQCNs in the folded set. `MappingFile::merge` is skip-existing on the FQCN identity tuple, so an operator-accepted row from a prior run survives the override on re-analyze.
+- **Gating**: symmetric name-match (`<X>Page` strips to `<X>` matching the target basename). `EmployeePage→Employee` triggers; `CaseStudyPage→CaseStudyCategory` does NOT. Same heuristic gates BOTH emit AND drop, avoiding noise on Page→Taxonomy ManyToOne FKs.
+- **Determinism**: helper runs unconditionally (no `--no-ai` gate); only the downstream LLM step is AI-gated. On `--no-ai` runs, synthetic rows hit the skip-LLM stub-emit branch at lines 1149-1164 and land as `needs-review` stubs — operator review path matches native columns.
+- **Tests**: 7 new unit tests in `tests/unit/console/AnalyzeControllerPageWrapFoldTest.php` cover: name-match emit, name-mismatch skip (CaseStudy case), vendor-target skip, FK-column omission, no-`Page`-suffix skip, non-ManyToOne ignore, empty-input passthrough.
 
 ## Problem
 
