@@ -83,7 +83,7 @@ final class MigrateControllerFailureExitTest extends TestCase
 
         $mapping = [
             'nodeClasses' => [
-                'App\\Entity\\VacancyFormPage' => [
+                'App\\Entity\\StructuralFormPage' => [
                     'sourceTable' => 'vacancy_form_pages',
                     'section' => 'formContentBlock',
                     'fields' => [],
