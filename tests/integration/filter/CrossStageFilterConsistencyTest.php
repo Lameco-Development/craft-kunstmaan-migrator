@@ -116,6 +116,28 @@ final class CrossStageFilterConsistencyTest extends TestCase
         self::assertStringContainsString('out_of_scope', $coverage);
     }
 
+    public function testSidecarGraphKeepsPageOwnedDependenciesInScope(): void
+    {
+        $filters = new MigrationFilters(
+            entities: ['NewsPage'],
+            relationGraph: [
+                'App\\Entity\\Pages\\NewsPage' => [
+                    'App\\Entity\\Taxonomy\\NewsCategory',
+                    'App\\Entity\\Providers\\FeaturedNewsProvider',
+                ],
+                'App\\Entity\\Taxonomy\\NewsCategory' => [
+                    'App\\Entity\\Taxonomy\\CategoryGroup',
+                ],
+            ],
+        );
+
+        self::assertTrue($filters->allows('App\\Entity\\Pages\\NewsPage'));
+        self::assertTrue($filters->allows('App\\Entity\\Taxonomy\\NewsCategory'));
+        self::assertTrue($filters->allows('FeaturedNewsProvider'));
+        self::assertTrue($filters->allows('App\\Entity\\Taxonomy\\CategoryGroup'));
+        self::assertFalse($filters->allows('App\\Entity\\Pages\\UnrelatedPage'));
+    }
+
     private function sourceFor(string $class): string
     {
         $map = [
