@@ -146,6 +146,7 @@ class AtomicMigrationService extends Component
             $overwrite,
             $opts,
             $refIdsByLocale,
+            $report,
         ): void {
             $entry = $module->entryMigrationService->saveEntryForSites(
                 $section->id,
