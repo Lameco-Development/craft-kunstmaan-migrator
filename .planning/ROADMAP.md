@@ -473,7 +473,7 @@ Plans:
 - [x] `12-02-PLAN.md` — Analyze and compile workflow extraction — completed.
 - [x] `12-03-PLAN.md` — Migrate and verify workflow extraction — completed.
 - [x] `12-04-PLAN.md` — Mapping review UX filters, visible findings, and safe batch actions — completed.
-- [ ] `12-05-PLAN.md`
+- [x] `12-05-PLAN.md` — Stable CP settings boundary for queue/live allowance, retention, adapters, default filters, and config-only project-shape hints — completed.
 - [ ] `12-06-PLAN.md`
 - [ ] `12-07-PLAN.md`
 - [ ] `12-08-PLAN.md`
