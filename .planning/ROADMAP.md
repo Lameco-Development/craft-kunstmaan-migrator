@@ -1,6 +1,6 @@
 # Roadmap
 
-11 phases. Coarse granularity. Built greenfield against the v1.x plugin as
+12 phases. Coarse granularity. Built greenfield against the v1.x plugin as
 brownfield reference. Every v1 requirement maps to exactly one phase. v2
 requirements (`NEXT-*`) are deferred to a follow-up milestone.
 
@@ -25,6 +25,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 | 9 | Migration Workflow Hardening & Page-rooted Introspection Audit | Close the release-blocking audit gaps before v1.0: make the canonical workflow impossible to run as a successful no-op, preserve compiled mapping blocks across analyze reruns, make scoped runs trustworthy, harden CKEditor unresolved markers and migration failure exits, and critically audit Kunstmaan Page-rooted introspection end-to-end. The audit treats a Kunstmaan Page as the entry point and a Craft Entry as the result: every page-owned relation, asset, page-part, taxonomy/data-provider/leaf entity, SEO/redirect sidecar, and CKEditor reference must be either migrated, intentionally dropped with a visible reason, or explicitly marked out of scope. | PH9-01..20 | 10 criteria below | no |
 | 10 | Generic Migration Rehearsal Gap Closure | Fix the generic release-rehearsal gaps surfaced by the first full CQM staging run: required Matrix block titles, sparse-locale primary saves, invalid section/entry-type routing, taxonomy-before-transform relation resolution, pageBuilder ownership validation, and verify count semantics. The fixes must remain generic across Lameco Kunstmaan sites and must be validated by a clean rerun path. | PH10-01..08 (to be refined in planning) | 8 criteria below | no |
 | 11 | Dual Schema Walkers & LLM-first Mapping | Replace ad-hoc heuristic expansion with explicit Kunstmaan and Craft graph walkers. The Kunstmaan walker starts at `Entity\Pages`, walks direct properties, assets, relations, pageparts, and pagepart relations; the Craft walker starts at candidate entry types and walks fields, Matrix blocks, nested fields, Entries/Assets targets, and validation constraints. Mapping then compares two persisted graphs (`kunstmaan-schema.json` / `craft-schema.json`) so the LLM can make generic mapping decisions before deterministic compile/load enforcement. | PH11-01..10 (to be refined in planning) | 10 criteria below | no |
+| 12 | CP Migration Console & Queue Workflow | Add a Control Panel operator cockpit for readiness, insights, run records, queue-backed safe actions, and guarded dry-run execution while keeping CLI execution canonical and live migration heavily gated until queue/retry safety is proven. | TBD | TBD | yes |
 
 ### Phase 1: Foundation & Connectivity
 
@@ -459,6 +460,16 @@ Plans:
 - [x] `11-05-PLAN.md` — compile/audit graph compatibility and relation intent validation — completed.
 - [x] `11-06-PLAN.md` — promoted/shared relation target extract/transform/load support — completed.
 - [x] `11-07-PLAN.md` — graph-backed relation reporting and scoped NewsPage/HomePage rehearsal — completed.
+
+### Phase 12: CP Migration Console & Queue Workflow
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 11
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 12 to break down)
 
 ---
 

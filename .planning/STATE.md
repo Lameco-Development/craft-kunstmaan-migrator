@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Phase 11 executed; scoped CQM NewsPage/HomePage dry-run proof passed
-stopped_at: "Phase 11 execution and scoped CQM proof complete. Implemented dual graph walkers, graph-shaped analyze artifacts, graph-first LLM prompt context, compile-time graph compatibility validation, promoted/shared target ETL support, and graph-backed reporting. Follow-up proof fix eb80c9e preserves graph relation metadata through mapping rows while treating unresolved relation intents as report-level warnings. CQM doctor/analyze/map/compile passed; scoped dry-run migrate passed with --no-rel-join and verified NewsPage 97 keeps raw employee_id/image FK columns, has no fake pageparts, and has no _rel:* owner detail keys. Composer test passed."
-last_updated: "2026-04-28T19:20:00.000Z"
+stopped_at: Phase 12 context gathered
+last_updated: "2026-04-29T07:07:16.949Z"
 progress:
-  total_phases: 11
-  completed_phases: 10
-  total_plans: 96
-  completed_plans: 96
+  total_phases: 12
+  completed_phases: 11
+  total_plans: 99
+  completed_plans: 99
   percent: 100
 ---
 
@@ -27,7 +27,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-25)
 
 **Active:** v1.0 — Initial release of the revisited plugin.
 
-Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal hardening slices, Phase 9, Phase 10, and Phase 11:
+Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal hardening slices, Phase 9, Phase 10, Phase 11, and Phase 12:
 
 1. Foundation & Connectivity
 2. Schema, Mapping & Filters
@@ -38,6 +38,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 9. Migration Workflow Hardening & Page-rooted Introspection Audit
 10. Generic Migration Rehearsal Gap Closure
 11. Dual Schema Walkers & LLM-first Mapping
+12. CP Migration Console & Queue Workflow
 
 ## Current Phase
 
@@ -69,6 +70,7 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 ## Roadmap Evolution
 
+- 2026-04-29: Phase 12 added: CP Migration Console & Queue Workflow. Driver: user wants to explore making the plugin useful and runnable through the Craft Control Panel without regressing the CLI-first safety model. Initial scope should be a CP operator cockpit with readiness/insights, run records, queue-backed safe actions, guarded dry-run execution, and live migration kept CLI-only or heavily gated until queue/retry safety is proven.
 - 2026-04-28: Phase 11 (Dual Schema Walkers & LLM-first Mapping) appended to the v1.0 milestone on branch `gsd/phase-9-migration-hardening-page-rooted-introspection`. Driver: NewsPage/Employee UAT clarified the original plugin goal as `dump full Kunstmaan page schema + dump full Craft entry schema + LLM cleverness = mapping`, with Page relations staying references rather than copied inline data. The deeper correction is symmetric: Kunstmaan needs a Page-rooted walker and Craft needs an Entry-rooted walker, both persisted as graph artifacts, so the LLM can propose generic mappings from structure instead of forcing the plugin to accrete fragile heuristics. Shared relation targets such as `App\Entity\Employee` remain the first proof case: `NewsPage.employee_id` and `EmployeePage.employee_id` should both resolve to the same Craft-side element through state rows when the accepted graph mapping chooses promotion.
 - 2026-04-28: Phase 11 proof scope narrowed to NewsPage + HomePage before broad rollout. NewsPage is the relation-heavy proof for direct columns, image FKs, shared Employee targets, and taxonomy/classifier-style relations. HomePage is the pagepart/Matrix-heavy proof for real pageparts, nested Matrix block mapping, assets, pagepart relations, ordering, and target Matrix ownership. Project-specific content-only page fallbacks (e.g. WYSIWYG `content` with no pageparts mapped to either a pagebuilder block or `ckeditorSimple`) are explicitly configurable policy and should not become hidden generic heuristics.
 - 2026-04-28: Phase 10 (Generic Migration Rehearsal Gap Closure) appended to the v1.0 milestone on branch `gsd/phase-9-migration-hardening-page-rooted-introspection`. Driver: first live CQM staging rehearsal mostly succeeded but exposed generic release blockers that should not be solved as CQM-only mapping hacks: required Matrix blocks need native title fallback, sparse-locale nodes need safe primary-site save behavior, compile must prevent section/entry-type incompatibilities such as `contentPages/formContentBlock`, taxonomy state must exist before relation resolution or relations must be deferred, pageBuilderHandle propagation must respect entry-type field ownership, and verify count semantics must distinguish source parity from pre-migration Craft baselines. Existing partial CQM DB remains preserved for inspection; future clean rerun should restore the pre-live backup first.
@@ -241,8 +243,8 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 ## Last Session
 
 - **Last:** 2026-04-28T12:33:42Z
-- **Stopped at:** Completed Phase 9 / Plan 07 (docs, CI, release, fixture, and genericity evidence). Commits: `0b90867` docs workflow alignment, `b0a1693` RED source-shape audit coverage, `20821fd` structural source-shape audit + rehearsal docs, `10db911` RED release fixture guard coverage, `70cdc74` CI smoke + release fixture gates. Final verification passed: `GenericitySourceShapeAuditTest`, `TransformCharacterizationTest`, combined transform/genericity tests, grep checks for `kunstmaan-migrator/compile` and `PAGE-ROOTED-COVERAGE`, and `composer test` (460 tests / 1506 assertions; PHPUnit no-coverage warning, 1 deprecation, 1 PHPUnit deprecation, 1 expected empty fixture skip, 1 pre-existing incomplete taxonomy test). `gsd-sdk` was unavailable in this shell, so STATE/ROADMAP updates were applied manually; PH9-17..PH9-20 are referenced by the plan but are not codified as checkboxes in REQUIREMENTS.md, so there were no requirement rows to mark.
-- **Resume file:** None — Phase 9 is closed.
+- **Stopped at:** Phase 12 context gathered
+- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-CONTEXT.md
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-9 have something to match against; Phase 02.1 / Plan 07 heuristic 1.5 entity-aware match should fire repeatedly once Plan 09 reconciliation lands and accepted column rows seed acceptedRows).
 
