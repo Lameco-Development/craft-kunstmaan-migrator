@@ -155,6 +155,44 @@ final class SettingsBeforeValidateTest extends TestCase
         );
     }
 
+    public function testStableCpExecutionAndRetentionDefaults(): void
+    {
+        $settings = $this->makeSettingsWithEnv(null);
+
+        self::assertTrue($settings->allowCpQueueActions);
+        self::assertFalse($settings->allowCpLiveQueueAction);
+        self::assertSame(30, $settings->runRecordRetentionDays);
+        self::assertSame(30, $settings->artifactRetentionDays);
+        self::assertSame([], $settings->defaultFilters);
+    }
+
+    public function testStableCpExecutionAndRetentionFieldsAreValidated(): void
+    {
+        $settings = $this->makeSettingsWithEnv(null);
+
+        $booleanRules = array_values(array_filter(
+            $settings->rules(),
+            static fn(array $rule): bool => ($rule[1] ?? null) === 'boolean'
+                && in_array('allowCpQueueActions', (array) ($rule[0] ?? []), true)
+                && in_array('allowCpLiveQueueAction', (array) ($rule[0] ?? []), true),
+        ));
+        $integerRules = array_values(array_filter(
+            $settings->rules(),
+            static fn(array $rule): bool => ($rule[1] ?? null) === 'integer'
+                && in_array('runRecordRetentionDays', (array) ($rule[0] ?? []), true)
+                && in_array('artifactRetentionDays', (array) ($rule[0] ?? []), true),
+        ));
+        $safeRules = array_values(array_filter(
+            $settings->rules(),
+            static fn(array $rule): bool => ($rule[1] ?? null) === 'safe'
+                && in_array('defaultFilters', (array) ($rule[0] ?? []), true),
+        ));
+
+        self::assertNotEmpty($booleanRules);
+        self::assertNotEmpty($integerRules);
+        self::assertNotEmpty($safeRules);
+    }
+
     public function testNoOpWhenDsnNonMysql(): void
     {
         // Reader exposes raw DSN (postgres) but parsed components are null per D-09.
