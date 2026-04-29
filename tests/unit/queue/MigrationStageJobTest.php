@@ -88,4 +88,38 @@ final class MigrationStageJobTest extends TestCase
             self::assertStringContainsString($needle, $source);
         }
     }
+
+    public function testStageJobUsesOnlyScalarOrArrayPublicPayloadAndNoShellOuts(): void
+    {
+        $reflection = new ReflectionClass(MigrationStageJob::class);
+
+        foreach ($reflection->getProperties() as $property) {
+            if (!$property->isPublic()) {
+                continue;
+            }
+
+            $type = $property->getType();
+            self::assertInstanceOf(ReflectionNamedType::class, $type, $property->getName() . ' must have a named scalar/array type');
+            self::assertContains($type->getName(), ['int', 'string', 'array'], $property->getName() . ' must be serialization-safe');
+        }
+
+        $source = $this->source();
+        self::assertStringNotContainsString('shell_exec', $source);
+        self::assertStringNotContainsString('php craft', $source);
+        self::assertMatchesRegularExpression('/analyzeWorkflow|compileWorkflow|verifyWorkflow/', $source);
+    }
+
+    public function testStageJobProductionRecheckIsBeforeAnyWorkflowServiceDispatch(): void
+    {
+        $source = $this->source();
+
+        $safetyOffset = strpos($source, 'assertNotProductionForJob');
+        self::assertIsInt($safetyOffset);
+
+        foreach (['analyzeWorkflow', 'compileWorkflow', 'verifyWorkflow'] as $workflow) {
+            $workflowOffset = strpos($source, $workflow);
+            self::assertIsInt($workflowOffset);
+            self::assertLessThan($workflowOffset, $safetyOffset, 'Production must be re-checked before ' . $workflow);
+        }
+    }
 }

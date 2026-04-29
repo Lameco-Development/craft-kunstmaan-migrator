@@ -90,4 +90,34 @@ final class MigrationPipelineJobTest extends TestCase
         self::assertStringNotContainsString('shell_exec', $source);
         self::assertStringNotContainsString('php craft', $source);
     }
+
+    public function testPipelineJobUsesOnlyScalarOrArrayPublicPayloadProperties(): void
+    {
+        $reflection = new ReflectionClass(MigrationPipelineJob::class);
+
+        foreach ($reflection->getProperties() as $property) {
+            if (!$property->isPublic()) {
+                continue;
+            }
+
+            $type = $property->getType();
+            self::assertInstanceOf(ReflectionNamedType::class, $type, $property->getName() . ' must have a named scalar/array type');
+            self::assertContains($type->getName(), ['int', 'string', 'array'], $property->getName() . ' must be serialization-safe');
+        }
+    }
+
+    public function testPipelineJobSourceLocksStagedBatchQueueChainingContract(): void
+    {
+        $source = $this->source();
+
+        foreach (['batchOffset', 'batchLimit', 'nextBatchOffset', 'appendQueueJobId'] as $needle) {
+            self::assertStringContainsString($needle, $source);
+        }
+
+        $pushOffset = strpos($source, 'push(new self');
+        $appendOffset = strpos($source, 'appendQueueJobId');
+        self::assertIsInt($pushOffset);
+        self::assertIsInt($appendOffset);
+        self::assertGreaterThan($pushOffset, $appendOffset, 'Next queue job ID must be appended after push() returns it');
+    }
 }
