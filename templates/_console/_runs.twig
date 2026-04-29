@@ -1,0 +1,63 @@
+{% set runs = runs ?? [] %}
+{% set latestRun = latestRun ?? null %}
+{% set cliCommands = cliCommands ?? {} %}
+{% set runId = craft.app.request.getQueryParam('runId') ?? null %}
+
+{% if runId and latestRun and (latestRun.id ?? '') == runId %}
+    {% include 'kunstmaan-migrator/_console/_run-detail' with {run: latestRun, copy: copy ?? {}, cliCommands: cliCommands} only %}
+{% else %}
+    <section class="pane">
+        <h2>Runs</h2>
+        <p class="km-console-muted">First-class migration run records with queue job IDs, progress, logs, artifacts, and retry actions.</p>
+
+        {% if runs is empty %}
+            <div class="zilch">
+                <h3>No migration runs yet</h3>
+                <p>Queue a dry run after readiness checks pass, or run the equivalent CLI command from your terminal.</p>
+            </div>
+        {% else %}
+            <table class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th>Run ID</th>
+                        <th>Stage</th>
+                        <th>Mode</th>
+                        <th>Status</th>
+                        <th>Filters</th>
+                        <th>Initiated by</th>
+                        <th>Queue job IDs</th>
+                        <th>Progress</th>
+                        <th>Started</th>
+                        <th>Finished</th>
+                        <th>Artifacts</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for run in runs %}
+                        <tr>
+                            <td>{{ run.id ?? '—' }}</td>
+                            <td>{{ run.stage ?? '—' }}</td>
+                            <td>{{ run.mode ?? '—' }}</td>
+                            <td><span class="km-console-status km-console-status--{{ run.status ?? 'unknown' }}">{{ run.status ?? 'unknown' }}</span></td>
+                            <td><code class="km-console-code">{{ run.filters|default({})|json_encode }}</code></td>
+                            <td>{{ run.initiatedByUserId ?? run.initiatedBy ?? '—' }}</td>
+                            <td><code class="km-console-code">{{ run.queueJobIds|default(run.queueJobId ?? [])|json_encode }}</code></td>
+                            <td>{{ run.progress ?? 0 }}%</td>
+                            <td>{{ run.dateStarted ?? run.startedAt ?? '—' }}</td>
+                            <td>{{ run.dateFinished ?? run.finishedAt ?? '—' }}</td>
+                            <td>{{ run.artifactPaths|default([])|join(', ') ?: '—' }}</td>
+                            <td>
+                                <a href="?tab=runs&amp;runId={{ run.id ?? '' }}">View details</a><br>
+                                <a href="{{ run.logPath ?? '#' }}">View log</a><br>
+                                <a href="?tab=reports&amp;runId={{ run.id ?? '' }}">View artifacts</a><br>
+                                <button type="button" class="btn small" data-cli="{{ run.cliCommand ?? cliCommands.dryRun ?? './craft kunstmaan-migrator/migrate --dry-run' }}">Copy CLI command</button><br>
+                                <span class="km-console-muted">Retry safe stage</span>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% endif %}
+    </section>
+{% endif %}
