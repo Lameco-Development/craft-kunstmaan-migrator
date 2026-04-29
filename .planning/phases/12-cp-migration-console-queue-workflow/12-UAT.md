@@ -1,5 +1,5 @@
 ---
-status: testing
+status: complete
 phase: 12-cp-migration-console-queue-workflow
 source:
   - 12-01-SUMMARY.md
@@ -14,16 +14,13 @@ source:
   - 12-10-SUMMARY.md
   - 12-UI-SPEC.md
 started: 2026-04-29T11:36:47Z
-updated: 2026-04-29T11:47:54Z
+updated: 2026-04-29T12:01:09Z
 ---
 
 ## Current Test
 
-number: 5
-name: Mapping tab supports canonical review
-expected: |
-  The Mapping tab exposes URL-preserved filters for entity/page, status, kind, finding severity, and search; rows show source, target, handler, status, finding, and rationale before edit controls; batch actions support accept, needs-review, drop, and warning acceptance with typed confirmations for high-risk actions while updating the canonical mapping.yaml only.
-awaiting: user response
+complete: true
+result: "UAT checklist complete: 7 passed, 2 minor issues, 1 blocked verification."
 
 ## Tests
 
@@ -50,36 +47,39 @@ severity: minor
 
 ### 5. Mapping tab supports canonical review
 expected: The Mapping tab exposes URL-preserved filters for entity/page, status, kind, finding severity, and search; rows show source, target, handler, status, finding, and rationale before edit controls; batch actions support accept, needs-review, drop, and warning acceptance with typed confirmations for high-risk actions while updating the canonical mapping.yaml only.
-result: [pending]
+result: pass
+note: "Initially lost tab=mapping on filter submit; fixed in 9b9205b and confirmed by user."
 
 ### 6. Compile and Reports tabs expose artifacts
 expected: The Compile tab shows latest compile timestamp/status, fatal/warning counts, artifact/log paths, readiness gates, equivalent CLI command, and a Queue compile form. The Reports tab lists REPORT.md, VERIFY artifacts, PAGE-ROOTED-COVERAGE.md, MAPPING-AUDIT.md, schema/graph artifacts, and provides a queued verify/report action without inventing a separate reporting model.
-result: [pending]
+result: pass
 
 ### 7. Runs tab and run detail show durable records
 expected: The Runs tab lists durable migration runs with run ID, stage, mode, status, filters, initiating admin, queue job IDs, progress, timestamps, artifacts, and actions. View details opens the selected run, including gate snapshot, filters/options, queue job IDs, log/artifact paths, failure details, readable summary data, and collapsed raw JSON where applicable.
-result: [pending]
+result: pass
 
 ### 8. CP queue actions create jobs, not inline workflows
 expected: Queue analyze, compile, verify/report, dry-run, and live actions are CP POST/admin-only, create a run record, push a Craft queue job, store the queue job ID, redirect back to the console Runs/detail context, and do not execute long migration workflows inline during the web request.
-result: [pending]
+result: blocked
+reported: "Yes, however not able to queue anything since we have blocking items."
+reason: "Queue-submit path could not be exercised because readiness gates correctly prevented queueing."
 
 ### 9. Live migration is strictly gated
 expected: The live migration panel is visually separated from dry run and blocks live queueing unless non-production, admin, elevated session, MIGRATE LIVE typed phrase, successful same-options dry run, recent no-fatal compile, queue worker readiness, backup acknowledgement, warning/unsupported acceptance, CP live opt-in, and job production hard-block gates all pass. Unverifiable queue readiness blocks CP live and points to CLI remediation.
-result: [pending]
+result: pass
 
 ### 10. Danger Zone remains deferred
 expected: The Danger Zone tab shows reset/truncate and artifact cleanup panels with the required RESET MIGRATION STATE and DELETE ARTIFACTS copy, but those actions are disabled/deferred in this phase and there are no active destructive reset or cleanup submit forms.
-result: [pending]
+result: pass
 
 ## Summary
 
 total: 10
-passed: 2
+passed: 7
 issues: 2
-pending: 6
+pending: 0
 skipped: 0
-blocked: 0
+blocked: 1
 
 ## Gaps
 
