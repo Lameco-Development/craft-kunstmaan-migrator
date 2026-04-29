@@ -34,6 +34,18 @@ final class MappingController extends Controller
         if ($selectedEntity === '' && $entities !== []) {
             $selectedEntity = $entities[0];
         }
+        $statusFilter = $request->getIsConsoleRequest()
+            ? 'all'
+            : MappingReview::normalizeStatusFilter((string) $request->getQueryParam('status', 'all'));
+        $kindFilter = $request->getIsConsoleRequest()
+            ? 'all'
+            : MappingReview::normalizeKindFilter((string) $request->getQueryParam('kind', 'all'));
+        $findingFilter = $request->getIsConsoleRequest()
+            ? 'all'
+            : MappingReview::normalizeFindingFilter((string) $request->getQueryParam('finding', 'all'));
+        $searchQuery = $request->getIsConsoleRequest()
+            ? ''
+            : MappingReview::normalizeSearchQuery((string) $request->getQueryParam('q', ''));
 
         $indexedRows = [];
         if ($selectedEntity !== '') {
@@ -45,12 +57,25 @@ final class MappingController extends Controller
                 $item['summary'] = MappingReview::summaryLine($item['row']);
             }
             unset($item);
+            $indexedRows = MappingReview::filterRows($indexedRows, [
+                'statusFilter' => $statusFilter,
+                'kindFilter' => $kindFilter,
+                'findingFilter' => $findingFilter,
+                'searchQuery' => $searchQuery,
+            ]);
         }
 
         return [
             'mappingPath' => $path,
             'entities' => $entities,
             'selectedEntity' => $selectedEntity,
+            'statusFilter' => $statusFilter,
+            'statusFilterOptions' => MappingReview::statusFilterOptions(),
+            'kindFilter' => $kindFilter,
+            'kindFilterOptions' => MappingReview::kindFilterOptions(),
+            'findingFilter' => $findingFilter,
+            'findingFilterOptions' => MappingReview::findingFilterOptions(),
+            'searchQuery' => $searchQuery,
             'indexedRows' => $indexedRows,
             'summaryCounts' => self::summaryCounts($indexedRows),
             'targetOptions' => self::targetOptions(),
