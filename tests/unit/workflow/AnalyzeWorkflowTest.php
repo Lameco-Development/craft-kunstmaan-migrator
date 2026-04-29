@@ -36,11 +36,9 @@ final class AnalyzeWorkflowTest extends TestCase
 
         self::assertStringContainsString('AnalyzeWorkflow', $source);
         self::assertStringContainsString('->run(', $source);
-        self::assertLessThan(
-            strpos($source, 'AnalyzeWorkflow'),
-            strpos($source, '$plugin = Plugin::getInstance()') ?: PHP_INT_MAX,
-            'Controller should delegate before orchestration service lookup.',
-        );
+        $action = substr($source, (int) strpos($source, 'public function actionIndex(): int'), 1400);
+        self::assertStringContainsString('(new AnalyzeWorkflow())->run(', $action);
+        self::assertStringNotContainsString('$plugin = Plugin::getInstance()', $action);
     }
 
     public function testAnthropicRemainsAnalyzeOnlyAndNoAiGatesIt(): void
