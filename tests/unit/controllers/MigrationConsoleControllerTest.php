@@ -100,6 +100,54 @@ final class MigrationConsoleControllerTest extends TestCase
         }
     }
 
+    public function testControllerDeclaresAdminOnlyQueueActionEndpoints(): void
+    {
+        $source = $this->source();
+
+        foreach ([
+            'function actionQueueAnalyze',
+            'function actionQueueCompile',
+            'function actionQueueVerify',
+            'function actionQueueDryRun',
+            'function actionQueueLive',
+            'requireCpRequest',
+            'requirePostRequest',
+            'requireAdmin',
+            'requireElevatedSession',
+            'assertNotProductionForCp',
+            'allowCpQueueActions',
+            'allowCpLiveQueueAction',
+            'MIGRATE LIVE',
+            'warningsAccepted',
+            'markQueued',
+            'appendQueueJobId',
+            'Job queued. Progress will appear in the current run record.',
+        ] as $needle) {
+            self::assertStringContainsString($needle, $source);
+        }
+    }
+
+    public function testCpProductionGuardAppearsBeforeQueuePush(): void
+    {
+        $source = $this->source();
+
+        $safetyOffset = strpos($source, 'assertNotProductionForCp');
+        $queueOffset = strpos($source, 'Craft::$app->queue->push');
+
+        self::assertIsInt($safetyOffset);
+        self::assertIsInt($queueOffset);
+        self::assertLessThan($queueOffset, $safetyOffset, 'CP production hard-block must run before queue jobs are pushed.');
+    }
+
+    public function testControllerDoesNotExposeDestructiveResetOrRunWorkflowsInline(): void
+    {
+        $source = $this->source();
+
+        self::assertStringNotContainsString('function actionResetState', $source);
+        self::assertStringNotContainsString('function actionCleanupArtifacts', $source);
+        self::assertStringNotContainsString('->run(', $source, 'CP controller must enqueue jobs instead of running migration workflows inline.');
+    }
+
     private function source(): string
     {
         $reflection = new ReflectionClass(MigrationConsoleController::class);
