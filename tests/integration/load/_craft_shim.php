@@ -16,7 +16,7 @@ declare(strict_types=1);
 // raises a warning when properties are read on null.)
 //
 // Rather than introduce that test-suite-wide noise, we shim the two static
-// methods this single service actually invokes. Anything additional must be
+// methods these focused service tests actually invoke. Anything additional must be
 // added here explicitly.
 
 if (!class_exists(\Craft::class, false)) {
@@ -42,6 +42,15 @@ if (!class_exists(\Craft::class, false)) {
         public static function info(mixed $message, string $category = 'application'): void
         {
             // No-op: matches Yii's signature so the call site doesn't error.
+        }
+
+        public static function getAlias(string $alias): string
+        {
+            if ($alias === '@storage' || str_starts_with($alias, '@storage/')) {
+                return sys_get_temp_dir() . '/craft-test-storage' . substr($alias, strlen('@storage'));
+            }
+
+            return $alias;
         }
     }
 }

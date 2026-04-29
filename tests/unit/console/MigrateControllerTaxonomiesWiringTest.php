@@ -17,8 +17,9 @@ use ReflectionClass;
  *   2. actionTaxonomies public sub-action exists for resume / debug.
  *   3. The "Stage taxonomies: created=X updated=X skipped=X failed=X" line
  *      is emitted in BOTH the bolt-on (actionIndex) and the sub-action.
- *   4. NO --no-taxonomies CLI flag exists (D-04 + D-12 invariant: three-flag
- *      cap of --live / --confirm / --force is preserved).
+ *   4. Default full-pipeline taxonomy mode is referenced-only; full
+ *      unreferenced import requires explicit --include-unreferenced-taxonomies
+ *      or Settings::includeUnreferencedTaxonomies.
  *
  * Source-reflection style mirrors PluginBootstrapTest::testPluginDeclaresLegacyDbServiceComponent
  * — no Craft bootstrap required, runs in unit context.
@@ -68,20 +69,28 @@ final class MigrateControllerTaxonomiesWiringTest extends TestCase
         );
     }
 
-    public function testNoTaxonomiesFlagNotIntroduced(): void
+    public function testFullTaxonomyImportRequiresExplicitIncludeUnreferencedFlag(): void
     {
         $source = self::source();
-        // D-04 + D-12 invariant: three-flag cap (--live / --confirm / --force)
-        // preserved — no new --no-taxonomies flag.
-        self::assertSame(
-            0,
-            substr_count($source, 'noTaxonomies'),
-            'No noTaxonomies property may exist (D-04 / D-12 three-flag cap)',
-        );
-        self::assertSame(
-            0,
-            substr_count($source, '--no-taxonomies'),
-            'No --no-taxonomies CLI flag may be referenced (D-04 / D-12)',
+        self::assertStringContainsString('includeUnreferencedTaxonomies', $source);
+        self::assertStringContainsString('referenced-only', $source);
+        self::assertStringContainsString('taxonomyMode=', $source);
+        self::assertStringNotContainsString('noTaxonomies', $source);
+        self::assertStringNotContainsString('--no-taxonomies', $source);
+    }
+
+    public function testDefaultReferencedOnlyModeIsBeforeConditionalMigrateAll(): void
+    {
+        $source = self::source();
+        $modePos = strpos($source, '$taxonomyMode = $includeUnreferencedTaxonomies ? \'full\' : \'referenced-only\'');
+        $migrateAllPos = strpos($source, 'taxonomyMigrationService->migrateAll', $modePos ?: 0);
+
+        self::assertNotFalse($modePos, 'actionIndex must compute taxonomyMode full vs referenced-only.');
+        self::assertNotFalse($migrateAllPos, 'actionIndex must still have an explicit full-import migrateAll path.');
+        self::assertLessThan(
+            $migrateAllPos,
+            $modePos,
+            'Default taxonomy mode must be decided before the conditional full-import path runs.',
         );
     }
 

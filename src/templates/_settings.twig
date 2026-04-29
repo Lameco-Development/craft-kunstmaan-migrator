@@ -117,19 +117,17 @@
     allowDelete: true,
 }) }}
 
-{# Phase 8.5 / D-24 — Doctrine ManyToOne FK relation join gate. Defaults ON so
-   pages that wrap a content entity (EmployeePage→Employee, CaseStudyPage→
-   CaseStudyCategory, …) get the related row's columns embedded under
-   `_rel:<prop>.<col>` keys at extract time, surfacing the cross-relation
-   data to the LLM proposer + operator. Flip OFF when the related table is
-   huge or the join queries dominate extract latency. CLI --no-rel-join
-   bypasses per-run. #}
+{# Phase 8.5 / D-24 — optional Doctrine ManyToOne FK relation expansion.
+   Defaults OFF so extracted JSON stays source-faithful: raw FK columns such
+   as employee_id are present, while synthetic `_rel:<prop>.<col>` helper keys
+   are opt-in for operator/debug workflows. CLI --no-rel-join still bypasses
+   per-run if this setting is enabled. #}
 {{ forms.lightswitchField({
-    label: 'Join Doctrine ManyToOne FK relations at extract'|t('kunstmaan-migrator'),
+    label: 'Expand Doctrine ManyToOne FK relations in extracted JSON'|t('kunstmaan-migrator'),
     id: 'joinFkRelations',
     name: 'joinFkRelations',
     on: settings.joinFkRelations,
-    instructions: 'When ON, every page or page-part row carries the related entity\'s columns under `_rel:<property>.<column>` keys. Lets the LLM and operator map e.g. `_rel:employee.name → name` directly instead of stopping at the bare `employee_id` FK. CLI --no-rel-join bypasses per-run.'|t('kunstmaan-migrator'),
+    instructions: 'When OFF, extracted JSON keeps only factual source values such as `employee_id`. When ON, page and page-part rows also carry related entity columns under `_rel:<property>.<column>` keys for debugging or hand-curated mappings. CLI --no-rel-join bypasses per-run.'|t('kunstmaan-migrator'),
 }) }}
 
 <h2>{{ 'AI'|t('kunstmaan-migrator') }}</h2>

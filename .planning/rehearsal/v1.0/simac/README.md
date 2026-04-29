@@ -1,17 +1,29 @@
 # Simac Rehearsal — Advisory Only
 
-**Status:** ADVISORY. Failures here do NOT block the v1.0 tag (Phase 5 / D-19). Captured for cross-client matrix signal; informs Phase 5.1 / NEXT-04 if cross-client correctness blocks adoption.
+**Status:** STRUCTURAL SAMPLE ONLY for v1.0. Simac failures do NOT block the
+v1.0 tag (Phase 5 / D-19). The required evidence is source-shape structure
+that helps catch CQM-only assumptions; a Simac Craft target is not required
+unless an operator separately configures one.
 
 ## Operator capture procedure
 
-Same shape as `.planning/rehearsal/v1.0/cqm/README.md`, but against `~/Sites/simac-website/` (multi-locale corpus).
+Run the structural source-shape audit against `~/Sites/simac-website/`
+(multi-locale corpus):
 
-Required files: `REPORT.md`, `VERIFY.md`, `baseline.json`, `doctor-output.txt`, `mapping-summary.txt`. Optional: `allow-tokens.txt`.
+```bash
+php tools/audit-source-shapes.php ~/Sites/simac-website
+```
+
+Commit `source-shape-audit.txt` with structural rows only: counts, class names,
+table names, relation types, relation metadata presence, and risk flags. Do
+not commit source method bodies, property values, SQL row data, secrets, or
+content samples.
+
+If a Simac Craft target is later configured, the CQM rehearsal workflow can be
+mirrored as an advisory exercise, but that is not a v1.0 release requirement.
 
 ## Mechanical gate
 
-```bash
-./craft kunstmaan-migrator/rehearsal/check .planning/rehearsal/v1.0/simac
-```
-
-Exit 1 here = a Phase 5.1 / NEXT-04 input. Document the failure mode in the v1.0 RELEASE-CHECKLIST.md "Simac advisory" section, but do not block the tag.
+There is no mandatory Simac Craft mechanical gate for v1.0. Review the
+structural audit for CQM-specific assumptions and record follow-up risks in
+release notes or a later phase.

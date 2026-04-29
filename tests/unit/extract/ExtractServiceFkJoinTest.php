@@ -27,9 +27,9 @@ use ReflectionMethod;
 final class ExtractServiceFkJoinTest extends TestCase
 {
     /** Synthetic CQM-shaped fixture (EmployeePage→Employee via employee_id FK). */
-    private const PAGE_FQCN     = 'App\\Entity\\Pages\\EmployeePage';
-    private const TARGET_FQCN   = 'App\\Entity\\Employee';
-    private const TARGET_TABLE  = 'lameco_websitebundle_employee_employees';
+    public const PAGE_FQCN     = 'App\\Entity\\Pages\\EmployeePage';
+    public const TARGET_FQCN   = 'App\\Entity\\Employee';
+    public const TARGET_TABLE  = 'lameco_websitebundle_employee_employees';
 
     public function testEmbedsRelKeysWhenFkValuePresent(): void
     {
@@ -122,6 +122,29 @@ final class ExtractServiceFkJoinTest extends TestCase
         self::assertSame($row, $result);
     }
 
+    public function testLoadDetailRowDoesNotDuplicateDoctrineRelationWithTableAlias(): void
+    {
+        $svc = $this->buildServiceWithDb(
+            joinFlag: true,
+            db: new FkJoinAndInformationSchemaDbStub(
+                detailRow: ['id' => 78, 'employee_id' => 31, 'title' => 'News'],
+                relatedRow: [
+                    'id' => 31,
+                    'name' => 'Bram Kranenburg',
+                    'email' => 'kranenburg@cqm.nl',
+                ],
+            ),
+        );
+
+        $result = $this->invokeLoadDetailRow($svc, 'lameco_websitebundle_newspages', 78, self::PAGE_FQCN);
+
+        self::assertSame(31, $result['employee_id']);
+        self::assertSame(31, $result['_rel:employee.id']);
+        self::assertSame('Bram Kranenburg', $result['_rel:employee.name']);
+        self::assertArrayNotHasKey('employee_employees.id', $result);
+        self::assertArrayNotHasKey('employee_employees.name', $result);
+    }
+
     /**
      * D-21 invariant: the existing key is preserved on collision (the join
      * never overwrites a column that already exists in the row). This guards
@@ -186,7 +209,40 @@ final class ExtractServiceFkJoinTest extends TestCase
             self::TARGET_FQCN => $employeeInfo,
         ]);
 
-        $db = new FkJoinDbStub($relatedRow);
+        return $this->buildServiceWithDb($joinFlag, new FkJoinDbStub($relatedRow));
+    }
+
+    private function buildServiceWithDb(bool $joinFlag, LegacyDbService $db): ExtractService
+    {
+        $employeeInfo = new DoctrineEntityInfo(
+            fqcn: self::TARGET_FQCN,
+            tableName: self::TARGET_TABLE,
+            columns: [
+                new DoctrineColumnInfo('id', 'integer', false, 'id', false),
+                new DoctrineColumnInfo('name', 'string', true, 'name', false),
+                new DoctrineColumnInfo('email', 'string', true, 'email', false),
+                new DoctrineColumnInfo('job_title', 'string', true, 'jobTitle', false),
+            ],
+            relations: [],
+        );
+        $pageInfo = new DoctrineEntityInfo(
+            fqcn: self::PAGE_FQCN,
+            tableName: 'lameco_websitebundle_employee_pages',
+            columns: [],
+            relations: [
+                new DoctrineRelationInfo(
+                    relationType: 'ManyToOne',
+                    targetEntity: self::TARGET_FQCN,
+                    propertyName: 'employee',
+                    fkColumn: 'employee_id',
+                ),
+            ],
+        );
+
+        $parser = $this->buildParser([
+            self::PAGE_FQCN   => $pageInfo,
+            self::TARGET_FQCN => $employeeInfo,
+        ]);
 
         $svc = new ExtractService();
         $svc->legacyDb = $db;
@@ -235,6 +291,17 @@ final class ExtractServiceFkJoinTest extends TestCase
         $result = $m->invoke($svc, $fqcn, $row);
         return $result;
     }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function invokeLoadDetailRow(ExtractService $svc, string $table, int $refId, string $fqcn): array
+    {
+        $m = new ReflectionMethod(ExtractService::class, 'loadDetailRow');
+        /** @var array<string, mixed> $result */
+        $result = $m->invoke($svc, $table, $refId, $fqcn);
+        return $result;
+    }
 }
 
 /**
@@ -264,5 +331,55 @@ final class FkJoinDbStub extends LegacyDbService
     public function queryScalar(string $sql, array $params = []): mixed
     {
         return 0;
+    }
+}
+
+final class FkJoinAndInformationSchemaDbStub extends LegacyDbService
+{
+    /**
+     * @param array<string, mixed> $detailRow
+     * @param array<string, mixed> $relatedRow
+     */
+    public function __construct(
+        private readonly array $detailRow,
+        private readonly array $relatedRow,
+    ) {
+    }
+
+    public function queryOne(string $sql, array $params = []): ?array
+    {
+        if (str_contains($sql, '`lameco_websitebundle_newspages`')) {
+            return $this->detailRow;
+        }
+
+        if (str_contains($sql, '`' . ExtractServiceFkJoinTest::TARGET_TABLE . '`')) {
+            return $this->relatedRow;
+        }
+
+        return null;
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    public function queryAll(string $sql, array $params = []): array
+    {
+        if (str_contains($sql, 'information_schema.KEY_COLUMN_USAGE')) {
+            return [[
+                'COLUMN_NAME' => 'employee_id',
+                'REFERENCED_TABLE_NAME' => ExtractServiceFkJoinTest::TARGET_TABLE,
+                'REFERENCED_COLUMN_NAME' => 'id',
+            ]];
+        }
+
+        return [];
+    }
+
+    public function queryScalar(string $sql, array $params = []): mixed
+    {
+        return 'legacy';
+    }
+
+    public function getDatabaseName(): string
+    {
+        return 'legacy';
     }
 }

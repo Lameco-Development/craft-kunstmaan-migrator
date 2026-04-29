@@ -30,14 +30,18 @@ final class CountGateServiceFiltersTest extends TestCase
     public function testRunSignatureAcceptsOptionalFiltersParameter(): void
     {
         $rm = new ReflectionMethod(CountGateService::class, 'run');
-        self::assertCount(3, $rm->getParameters(), 'run() must accept 3 args: expectedCounts, tolerance, filters.');
+        self::assertCount(4, $rm->getParameters(), 'run() must accept 4 args: expectedCounts, tolerance, filters, translatedScope.');
         $names = array_map(static fn(ReflectionParameter $p): string => $p->getName(), $rm->getParameters());
-        self::assertSame(['expectedCounts', 'tolerance', 'filters'], $names);
+        self::assertSame(['expectedCounts', 'tolerance', 'filters', 'translatedScope'], $names);
 
         // Third parameter must be optional (BC: pre-Phase-4.1 callers pass 2 args).
         $filtersParam = $rm->getParameters()[2];
         self::assertTrue($filtersParam->isOptional(), 'filters arg must default to null for BC.');
         self::assertTrue($filtersParam->allowsNull(), 'filters arg must accept null.');
+
+        // Fourth parameter must be optional (BC: pre-09-02B callers pass 3 args).
+        $scopeParam = $rm->getParameters()[3];
+        self::assertTrue($scopeParam->isOptional(), 'translatedScope arg must default to null for BC.');
     }
 
     public function testIsSectionFilteredOutReturnsFalseForNullFilters(): void
@@ -53,19 +57,29 @@ final class CountGateServiceFiltersTest extends TestCase
         self::assertFalse(CountGateService::isSectionFilteredOut('blogPosts', $f));
     }
 
-    public function testIsSectionFilteredOutReturnsTrueWhenSectionNotInAllowList(): void
+    public function testIsSectionFilteredOutUsesTranslatedCraftSectionScope(): void
     {
-        // D-28: section excluded by entities allow-list → SKIPPED row, not 0/expected fail.
-        $f = new MigrationFilters(entities: ['blogPosts']);
-        self::assertTrue(CountGateService::isSectionFilteredOut('events', $f));
-        self::assertTrue(CountGateService::isSectionFilteredOut('contentPages', $f));
+        // D-17: source entity filters must not be compared directly to Craft
+        // section handles. The translated Craft scope is the only allow-list.
+        $f = new MigrationFilters(entities: ['App\\Entity\\Pages\\ArticlePage']);
+        $scope = [
+            'sectionHandles' => ['articles'],
+            'entryTypeHandles' => ['articlePage'],
+            'unmappedSourceEntities' => [],
+        ];
+
+        self::assertFalse(CountGateService::isSectionFilteredOut('articles', $f, $scope));
+        self::assertTrue(CountGateService::isSectionFilteredOut('events', $f, $scope));
+        self::assertTrue(CountGateService::isSectionFilteredOut('ArticlePage', $f, $scope));
     }
 
-    public function testIsSectionFilteredOutReturnsFalseWhenSectionInAllowList(): void
+    public function testIsSectionFilteredOutDoesNotCompareRawSourceFiltersToSections(): void
     {
-        $f = new MigrationFilters(entities: ['blogPosts', 'events']);
-        self::assertFalse(CountGateService::isSectionFilteredOut('blogPosts', $f));
-        self::assertFalse(CountGateService::isSectionFilteredOut('events', $f));
+        $f = new MigrationFilters(entities: ['ArticlePage']);
+        self::assertFalse(
+            CountGateService::isSectionFilteredOut('articles', $f),
+            'Without a translated Craft scope, CountGateService must not guess by comparing source entities to section handles.',
+        );
     }
 
     public function testSourceWiresFiltersIntoEntryQueryViaSiteIdScoping(): void
@@ -76,5 +90,38 @@ final class CountGateServiceFiltersTest extends TestCase
         self::assertStringContainsString('resolveScopeSiteIds', $source, 'D-28 locale→siteId helper must exist.');
         self::assertStringContainsString('siteId($scopeSiteIds)', $source, 'Entry query must apply scoped siteIds.');
         self::assertStringContainsString('localeMap', $source, 'Locale resolution goes through Settings::$localeMap.');
+    }
+
+    public function testVerifyControllerLoadsCompiledMappingForEntityFilterTranslation(): void
+    {
+        $source = (string) file_get_contents(__DIR__ . '/../../../src/console/VerifyController.php');
+
+        self::assertStringContainsString('MappingFilterTranslator', $source);
+        self::assertStringContainsString('loadTranslatedScopeForEntityFilters', $source);
+        self::assertStringContainsString('mappingFile->load', $source);
+        self::assertStringContainsString('unmappedSourceEntities', $source);
+        self::assertStringContainsString('sourceParityExpectedCounts', $source);
+        self::assertStringContainsString('countGateService->run($sourceExpectedCounts, (float) $tolerance, $filters, $translatedScope)', $source);
+        self::assertStringContainsString('DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT', $source);
+        self::assertStringContainsString('DOMAIN_MIGRATION_CREATED_STATE_COUNTS', $source);
+        self::assertStringContainsString('DOMAIN_SOURCE_TRANSFORMED_PARITY', $source);
+    }
+
+    public function testFinalizeWalkerUsesTranslatedCraftScopeForEntryQueries(): void
+    {
+        $source = (string) file_get_contents(__DIR__ . '/../../../src/finalize/FinalizeWalker.php');
+
+        self::assertStringContainsString('MappingFilterTranslator', $source);
+        self::assertStringContainsString('loadTranslatedScopeForEntityFilters', $source);
+        self::assertStringContainsString('section($translatedScope[\'sectionHandles\'])', $source);
+        self::assertStringContainsString('type($translatedScope[\'entryTypeHandles\'])', $source);
+        self::assertStringContainsString('unmappedSourceEntities', $source);
+    }
+
+    public function testFinalizeWalkerResetsRewriterLookupCachesBeforeWalking(): void
+    {
+        $source = (string) file_get_contents(__DIR__ . '/../../../src/finalize/FinalizeWalker.php');
+
+        self::assertStringContainsString('resetLookupCaches()', $source);
     }
 }

@@ -54,12 +54,12 @@ class ExtractService extends Component
     public ?DoctrineEntityParser $entityParser = null;
 
     /**
-     * Phase 8.5 / D-24 — runtime gate for `joinManyToOneRelations()`. Default
-     * true. Flipped to false by Settings::joinFkRelations or the
-     * `--no-rel-join` CLI flag (see MigrateController). When false the
-     * helper short-circuits: no `_rel:` keys are merged into detail rows.
+     * Phase 8.5 / D-24 — runtime gate for relation-expanded helper columns.
+     * Default false keeps extracted JSON source-faithful: raw FK columns like
+     * `employee_id` remain available for mapping, without synthetic `_rel:*`
+     * payloads unless operators explicitly enable the setting.
      */
-    public bool $joinFkRelations = true;
+    public bool $joinFkRelations = false;
 
     /** B11 — injected for T-04-05-03 mitigation; every serialized blob routes through here.
      *  v2 port: typed slot replaced with `?object` — the decoder dependency is deferred to Phase 4
@@ -68,6 +68,16 @@ class ExtractService extends Component
 
     /** Root for intermediate artifacts. Defaults to Craft's `@storage/migration`. */
     public string $storagePath = '@storage/migration';
+
+    /**
+     * Test/integration seam for analyze's pageStructure.json artifact.
+     *
+     * @var array<string, mixed>
+     */
+    public array $pageStructureSnapshot = [];
+
+    /** @var array<string, mixed>|null */
+    private ?array $pageStructureCache = null;
 
     /**
      * D-08-18 — auto-detect distinct Kunstmaan locales from the legacy DB.
@@ -143,7 +153,6 @@ class ExtractService extends Component
             return 0;
         }
         $nodeClasses = (array) ($mapping['nodeClasses'] ?? []);
-        $entityAllow = $filters->entities;
         $total = 0;
         foreach ($nodeClasses as $fqcn => $spec) {
             if (!is_string($fqcn) || !is_array($spec)) {
@@ -152,15 +161,8 @@ class ExtractService extends Component
             if (($spec['action'] ?? null) === 'SKIP') {
                 continue;
             }
-            if ($entityAllow !== []) {
-                $basename = $fqcn;
-                $lastSlash = strrpos($fqcn, '\\');
-                if ($lastSlash !== false) {
-                    $basename = substr($fqcn, $lastSlash + 1);
-                }
-                if (!in_array($basename, $entityAllow, true)) {
-                    continue;
-                }
+            if (!$filters->allows($fqcn)) {
+                continue;
             }
             $sourceTable = (string) ($spec['sourceTable'] ?? '');
             if ($sourceTable === '' && $this->detailTableResolver !== null) {
@@ -210,6 +212,7 @@ class ExtractService extends Component
         $report = [
             'nodeClasses'   => 0,
             'nodesExtracted' => 0,
+            'promotedTargets' => 0,
             'skipped'       => 0,
             'warnings'      => [],
         ];
@@ -237,12 +240,6 @@ class ExtractService extends Component
         // single-entry target.
         $onlyId = isset($options['onlyId']) ? (int) $options['onlyId'] : null;
 
-        // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port (not in v1).
-        // entities allow-list scopes the FQCN walk. MigrationFilters::$entities holds
-        // Kunstmaan source class basenames (e.g. 'NewsPage'); compare against the
-        // last `\\`-separated segment of each mapping FQCN. Empty list = unbounded.
-        $entityAllow = $filters->entities;
-
         foreach ($nodeClasses as $fqcn => $spec) {
             if ($onlyFqcns !== null && !in_array($fqcn, $onlyFqcns, true)) {
                 continue;
@@ -251,17 +248,11 @@ class ExtractService extends Component
                 continue;
             }
 
-            // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port (not in v1).
-            // entities allow-list applied at the FQCN walk site.
-            if ($entityAllow !== []) {
-                $basename = $fqcn;
-                $lastSlash = strrpos($fqcn, '\\');
-                if ($lastSlash !== false) {
-                    $basename = substr($fqcn, $lastSlash + 1);
-                }
-                if (!in_array($basename, $entityAllow, true)) {
-                    continue;
-                }
+            // Phase 9 / D-16: use the source-domain reachability set so scoped
+            // Page runs include graph-reachable page-owned dependencies instead
+            // of re-parsing basename filters at this stage.
+            if (!$filters->allows($fqcn)) {
+                continue;
             }
 
             // Honor SKIP rows — mapping.yaml can exclude whole node classes from extraction.
@@ -354,20 +345,11 @@ class ExtractService extends Component
                     $detail = $sourceTable !== ''
                         ? $this->loadDetailRow($sourceTable, $perLocaleRefId, $fqcn)
                         : null;
-                    $pageParts = $this->loadPageParts($perLocaleRefId, $fqcn);
-
-                    // Phase 7: synthetic page-part injection for content-only pages.
-                    // When mapping.pageParts has any '__implicit_content__|<shortFqcn>|<context>'
-                    // entries for this FQCN's short name, synthesize a pagePart record per
-                    // (key, detail-row) so TransformService.transformPageBuilder dispatches
-                    // through the regular pageParts pipeline. The synthetic row IS the page
-                    // detail row — that's where the content-like columns live by definition.
-                    if ($detail !== null) {
-                        $synthetic = self::buildImplicitContentPageParts($fqcn, $detail, $mapping);
-                        if ($synthetic !== []) {
-                            $pageParts = array_merge($pageParts, $synthetic);
-                        }
-                    }
+                    $pageParts = $this->loadPageParts(
+                        $perLocaleRefId,
+                        $fqcn,
+                        $this->pagePartAllowMapFor($fqcn, $mapping),
+                    );
 
                     $perSite[$lang] = [
                         'online'     => (bool) ($t['online'] ?? false),
@@ -422,7 +404,155 @@ class ExtractService extends Component
             }
         }
 
+        $this->extractPromotedTargets($mapping, $outRoot, $report, $limit);
+
         return $report;
+    }
+
+    /**
+     * Extract promoted/shared relation targets as standalone source records.
+     *
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $report
+     */
+    private function extractPromotedTargets(array $mapping, string $outRoot, array &$report, ?int $limit): void
+    {
+        $targets = (array) ($mapping['promotedTargets'] ?? []);
+        if ($targets === []) {
+            return;
+        }
+
+        foreach ($targets as $key => $spec) {
+            if (!is_array($spec)) {
+                continue;
+            }
+            $stateSource = (string) ($spec['stateSource'] ?? $key);
+            $sourceFqcn = $this->sourceFqcnFromRef((string) ($spec['sourceRef'] ?? ''));
+            if ($stateSource === '' || $sourceFqcn === '') {
+                $report['warnings'][] = 'promoted target skipped: missing stateSource/sourceRef';
+                continue;
+            }
+
+            $sourceTable = (string) ($spec['sourceTable'] ?? '');
+            if ($sourceTable === '' && $this->entityParser !== null) {
+                $sourceTable = (string) ($this->entityParser->getByFqcn($sourceFqcn)?->tableName ?? '');
+            }
+            if ($sourceTable === '' && $this->detailTableResolver !== null) {
+                try {
+                    $sourceTable = $this->detailTableResolver->resolve($sourceFqcn);
+                } catch (Throwable $e) {
+                    $report['warnings'][] = "Cannot resolve promoted target table for {$sourceFqcn}: " . $e->getMessage();
+                    continue;
+                }
+            }
+            if ($sourceTable === '' || !preg_match('/^[a-zA-Z0-9_]+$/', $sourceTable)) {
+                $report['warnings'][] = "promoted target {$stateSource} skipped: invalid sourceTable";
+                continue;
+            }
+
+            $outDir = $outRoot . '/promoted_' . $this->fqcnSlug($stateSource);
+            if (!is_dir($outDir) && !@mkdir($outDir, 0775, true) && !is_dir($outDir)) {
+                throw new \RuntimeException("ExtractService: cannot create output dir {$outDir}");
+            }
+
+            $extracted = 0;
+            foreach ($this->legacyDb->streamQuery("SELECT * FROM `{$sourceTable}` ORDER BY id") as $row) {
+                if ($limit !== null && $extracted >= $limit) {
+                    break;
+                }
+                if (!is_array($row)) {
+                    continue;
+                }
+                $id = (int) ($row['id'] ?? 0);
+                if ($id <= 0) {
+                    continue;
+                }
+                $detail = $this->decodeSerializedColumns($row);
+                $perSite = $this->promotedPerSite($sourceFqcn, $id, $detail, (array) ($mapping['sites'] ?? []));
+                $payload = [
+                    'kind' => 'promotedTarget',
+                    'promotedTarget' => $spec,
+                    'kunstmaanSourceId' => $stateSource . ':' . $id,
+                    'fqcn' => $sourceFqcn,
+                    'stateSource' => $stateSource,
+                    'stateKey' => $id,
+                    'kuma_node_id' => $id,
+                    'kuma_parent_id' => null,
+                    'ref_id' => $id,
+                    'refIdsByLocale' => array_fill_keys(array_keys($perSite), $id),
+                    'sourceTable' => $sourceTable,
+                    'perSite' => $perSite,
+                ];
+
+                $outFile = $outDir . '/' . $id . '.json';
+                $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                if ($json === false || file_put_contents($outFile, $json) === false) {
+                    $report['warnings'][] = "promoted target write failed for {$stateSource}:{$id}";
+                    continue;
+                }
+
+                $report['promotedTargets']++;
+                $report['nodesExtracted']++;
+                $extracted++;
+            }
+        }
+    }
+
+    /** @param array<string, mixed> $detail @param array<string, string> $sites */
+    private function promotedPerSite(string $sourceFqcn, int $id, array $detail, array $sites): array
+    {
+        $locales = array_keys($sites);
+        if ($locales === []) {
+            $locales = ['default'];
+        }
+        $translations = $this->legacyDb->extTranslationsFor($sourceFqcn, $id);
+        $out = [];
+        foreach ($locales as $locale) {
+            $locale = (string) $locale;
+            $localized = $detail;
+            foreach ((array) ($translations[$locale] ?? []) as $field => $content) {
+                $localized[(string) $field] = $content;
+            }
+            $title = $this->promotedTitle($localized, $id);
+            $out[$locale] = [
+                'online' => true,
+                'title' => $title,
+                'slug' => $this->slugifyText($title),
+                'url' => '',
+                'refId' => $id,
+                'detail' => $localized,
+                'pageParts' => [],
+            ];
+        }
+        return $out;
+    }
+
+    /** @param array<string, mixed> $detail */
+    private function promotedTitle(array $detail, int $id): string
+    {
+        foreach (['title', 'name', 'label'] as $key) {
+            $value = trim((string) ($detail[$key] ?? ''));
+            if ($value !== '') {
+                return $value;
+            }
+        }
+        return 'Legacy item ' . $id;
+    }
+
+    private function slugifyText(string $value): string
+    {
+        $slug = strtolower(trim(preg_replace('/[^A-Za-z0-9]+/', '-', $value) ?? '', '-'));
+        return $slug !== '' ? $slug : 'legacy-item';
+    }
+
+    private function sourceFqcnFromRef(string $sourceRef): string
+    {
+        foreach (['kunstmaan.entity:', 'kunstmaan.page:'] as $prefix) {
+            if (str_starts_with($sourceRef, $prefix)) {
+                return substr($sourceRef, strlen($prefix));
+            }
+        }
+        return '';
     }
 
     /**
@@ -474,9 +604,20 @@ class ExtractService extends Component
         }
 
         // Auto-follow FK relations to non-system, non-media tables.
-        foreach ($this->discoverFkRelations($table) as $fkCol => [$refTable, $refPk]) {
+        // This is governed by the same join flag as Doctrine `_rel:*` expansion:
+        // operators using --no-rel-join expect extracted JSON to keep raw FK IDs
+        // only. When Doctrine already joined a relation, do not also emit the
+        // legacy information_schema alias for the same FK.
+        $doctrineFkProperties = $entityFqcn !== ''
+            ? $this->doctrineManyToOneFkProperties($entityFqcn)
+            : [];
+        foreach ($this->joinFkRelations ? $this->discoverFkRelations($table) : [] as $fkCol => [$refTable, $refPk]) {
             $fkValue = $detail[$fkCol] ?? null;
             if ($fkValue === null || $fkValue === '' || $fkValue === 0 || $fkValue === '0') {
+                continue;
+            }
+            $doctrineProperty = $doctrineFkProperties[$fkCol] ?? null;
+            if ($doctrineProperty !== null && $this->hasJoinedRelationPrefix($detail, $doctrineProperty)) {
                 continue;
             }
             if (!preg_match('/^[a-zA-Z0-9_]+$/', $refTable)) {
@@ -674,7 +815,10 @@ class ExtractService extends Component
      *
      * @return list<array<string, mixed>>
      */
-    private function loadPageParts(int $refId, string $pageClass): array
+    /**
+     * @param array<string, array<string, true>|null>|null $allowedContextClasses
+     */
+    private function loadPageParts(int $refId, string $pageClass, ?array $allowedContextClasses = null): array
     {
         $refs = $this->legacyDb->queryAll(
             'SELECT context, sequencenumber, page_part_id, page_part_entityname'
@@ -690,6 +834,16 @@ class ExtractService extends Component
             $partId = (int) ($ref['page_part_id'] ?? 0);
             if ($partFqcn === '' || $partId <= 0) {
                 continue;
+            }
+            $context = (string) ($ref['context'] ?? '');
+            if ($allowedContextClasses !== null) {
+                if (!array_key_exists($context, $allowedContextClasses)) {
+                    continue;
+                }
+                $allowedClasses = $allowedContextClasses[$context];
+                if (is_array($allowedClasses) && $allowedClasses !== [] && !isset($allowedClasses[$partFqcn])) {
+                    continue;
+                }
             }
 
             $partTable = null;
@@ -729,12 +883,78 @@ class ExtractService extends Component
                 'fqcn'          => $partFqcn,
                 'sourcePartId'  => $partId,
                 'sequence'      => (int) ($ref['sequencenumber'] ?? 0),
-                'context'       => (string) ($ref['context'] ?? ''),
+                'context'       => $context,
                 'row'           => $partRowDecoded,
             ];
         }
 
         return $out;
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @return array<string, array<string, true>|null>|null context => allowed class set; null value means context-only filtering
+     */
+    private function pagePartAllowMapFor(string $fqcn, array $mapping): ?array
+    {
+        $pageStructure = $this->loadPageStructure();
+        $record = $pageStructure[$fqcn] ?? null;
+        if (is_array($record)) {
+            $out = [];
+            foreach ((array) ($record['contexts'] ?? []) as $context) {
+                if (!is_array($context)) {
+                    continue;
+                }
+                $name = (string) ($context['name'] ?? '');
+                if ($name === '') {
+                    continue;
+                }
+                $classes = [];
+                foreach ((array) ($context['allowedPagePartClasses'] ?? []) as $allowed) {
+                    if (!is_array($allowed)) {
+                        continue;
+                    }
+                    $class = ltrim((string) ($allowed['class'] ?? ''), '\\');
+                    if ($class !== '') {
+                        $classes[$class] = true;
+                    }
+                }
+                $out[$name] = $classes !== [] ? $classes : null;
+            }
+            if ($out !== []) {
+                return $out;
+            }
+        }
+
+        $contexts = (array) ($mapping['nodeClasses'][$fqcn]['pageBuilderContexts'] ?? []);
+        $fallback = [];
+        foreach ($contexts as $context) {
+            $context = (string) $context;
+            if ($context !== '') {
+                $fallback[$context] = null;
+            }
+        }
+
+        return $fallback !== [] ? $fallback : null;
+    }
+
+    /** @return array<string, mixed> */
+    private function loadPageStructure(): array
+    {
+        if ($this->pageStructureSnapshot !== []) {
+            return $this->pageStructureSnapshot;
+        }
+        if ($this->pageStructureCache !== null) {
+            return $this->pageStructureCache;
+        }
+
+        $path = Craft::getAlias($this->storagePath) . '/pageStructure.json';
+        if (!is_file($path)) {
+            return $this->pageStructureCache = [];
+        }
+
+        $decoded = json_decode((string) file_get_contents($path), true);
+        return $this->pageStructureCache = is_array($decoded) ? $decoded : [];
     }
 
     /**
@@ -775,6 +995,43 @@ class ExtractService extends Component
             }
         }
         return $row;
+    }
+
+    /**
+     * @return array<string, string> FK column => Doctrine property name
+     */
+    private function doctrineManyToOneFkProperties(string $entityFqcn): array
+    {
+        if ($this->entityParser === null) {
+            return [];
+        }
+        $info = $this->entityParser->getByFqcn($entityFqcn);
+        if ($info === null) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($info->relations as $rel) {
+            if ($rel->relationType !== 'ManyToOne' || $rel->fkColumn === null || $rel->fkColumn === '') {
+                continue;
+            }
+            $out[$rel->fkColumn] = $rel->propertyName;
+        }
+
+        return $out;
+    }
+
+    /** @param array<string, mixed> $detail */
+    private function hasJoinedRelationPrefix(array $detail, string $propertyName): bool
+    {
+        $prefix = '_rel:' . $propertyName . '.';
+        foreach ($detail as $key => $_value) {
+            if (is_string($key) && str_starts_with($key, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -828,7 +1085,7 @@ class ExtractService extends Component
 
     /**
      * Produce a filesystem-safe slug from an FQCN.
-     *   "App\Entity\Pages\NewsPage" -> "App_Entity_Pages_NewsPage"
+     *   "App\Entity\Pages\SomePage" -> "App_Entity_Pages_SomePage"
      */
     private function fqcnSlug(string $fqcn): string
     {

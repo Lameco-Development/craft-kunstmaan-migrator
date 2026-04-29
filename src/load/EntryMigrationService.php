@@ -100,6 +100,7 @@ class EntryMigrationService extends Component
         string|int $stateKey,
         array $perSite,
         bool $force = false,
+        ?MigrationReport $report = null,
     ): Entry {
         // Resolve the configured site handles (values of $this->sites).
         $configuredHandles = array_values($this->sites);
@@ -248,8 +249,7 @@ class EntryMigrationService extends Component
 
         // Inject the kunstmaanSourceId custom-field value on each per-site
         // payload BEFORE applyPerSiteData runs. Every migrated entry carries
-        // its legacy origin id as "<stateSource>:<stateKey>" (e.g.
-        // "App_Entity_Pages_NewsPage:34") — same format as the state-table
+        // its legacy origin id as "<stateSource>:<stateKey>" — same format as the state-table
         // row key, so the field joinably maps to {{%kunstmaanmigrator_state}}.
         //
         // This is set programmatically (not declared in mapping.yaml under
@@ -265,12 +265,26 @@ class EntryMigrationService extends Component
         // ------------------------------------------------------------------ 5
         // First save — PRIMARY site (propagate=false, per Pitfall 2)
         // ------------------------------------------------------------------ 5
-        $primaryData = $perSite[$primarySite->handle] ?? [];
+        $primaryData = $this->primarySiteDataForSave(
+            $perSite,
+            $primarySite->handle,
+            $report,
+            $stateSource,
+            (string) $stateKey,
+        );
         // Extract source-ref positions BEFORE applyPerSiteData strips them.
         $primarySourceRefPositions = $this->extractSourceRefPositions(
             (array) ($primaryData['fieldValues'] ?? []),
         );
-        $this->applyPerSiteData($entry, $primaryData, $blockUidMap);
+        $this->applyPerSiteData(
+            $entry,
+            $primaryData,
+            $blockUidMap,
+            $report,
+            $stateSource,
+            (string) $stateKey,
+            $primarySite->handle,
+        );
 
         // Critical: propagateChanges=false (Pitfall 2)
         if (!Craft::$app->elements->saveElement($entry, true, false)) {
@@ -306,7 +320,10 @@ class EntryMigrationService extends Component
         // Pitfall 2. Each site save stays independent; a per-site failure is
         // a warning, not fatal — don't abort the whole migration.
         // ------------------------------------------------------------------ 7
-        foreach (array_slice($sites, 1) as $site) {
+        foreach ($sites as $site) {
+            if ($site->id === $primarySite->id) {
+                continue;
+            }
             if (!isset($perSite[$site->handle])) {
                 continue;
             }
@@ -327,7 +344,15 @@ class EntryMigrationService extends Component
                 continue;
             }
 
-            $this->applyPerSiteData($localised, $perSite[$site->handle], $blockUidMap);
+            $this->applyPerSiteData(
+                $localised,
+                $perSite[$site->handle],
+                $blockUidMap,
+                $report,
+                $stateSource,
+                (string) $stateKey,
+                $site->handle,
+            );
 
             // Critical: propagateChanges=false (Pitfall 2)
             if (!Craft::$app->elements->saveElement($localised, true, false)) {
@@ -366,6 +391,24 @@ class EntryMigrationService extends Component
         return $entry;
     }
 
+    /**
+     * Save a promoted/shared relation target through the same idempotent
+     * stateSource/stateKey state-row path as owner entries.
+     *
+     * @param array<string, array<string, mixed>> $perSite
+     */
+    public function savePromotedTargetForSites(
+        int $sectionId,
+        int $typeId,
+        string $stateSource,
+        string|int $stateKey,
+        array $perSite,
+        bool $force = false,
+        ?MigrationReport $report = null,
+    ): Entry {
+        return $this->saveEntryForSites($sectionId, $typeId, $stateSource, $stateKey, $perSite, $force, $report);
+    }
+
     // --------------------------------------------------------------------------
     // Private helpers
     // --------------------------------------------------------------------------
@@ -378,8 +421,15 @@ class EntryMigrationService extends Component
      * @param array<string, mixed> $data
      * @param array<string, string> $blockUidMap
      */
-    private function applyPerSiteData(Entry $entry, array $data, array $blockUidMap): void
-    {
+    private function applyPerSiteData(
+        Entry $entry,
+        array $data,
+        array $blockUidMap,
+        ?MigrationReport $report = null,
+        ?string $stateSource = null,
+        ?string $stateKey = null,
+        ?string $siteHandle = null,
+    ): void {
         $entry->title = (string) ($data['title'] ?? '');
         // Only overwrite slug when the Transform emitted a non-empty value.
         // Singleton sections (HomePage, ErrorPage, overview pages) have a
@@ -405,7 +455,15 @@ class EntryMigrationService extends Component
                 );
             }
         }
-        $fieldValues = $this->stripSourcePartRefs($fieldValues);
+        $fieldValues = $this->stripSourcePartRefs(
+            $fieldValues,
+            $report,
+            [
+                'stateSource' => $stateSource,
+                'stateKey' => $stateKey,
+                'site' => $siteHandle,
+            ],
+        );
 
         // Native Entry properties are NOT custom fields — CustomFieldBehavior
         // rejects them. mapping.yaml can list `postDate`/`expiryDate`/
@@ -490,6 +548,96 @@ class EntryMigrationService extends Component
     }
 
     /**
+     * Craft requires the primary site to save first. Sparse source payloads may
+     * legitimately omit the Craft primary site while still carrying valid native
+     * values on another source locale. For that first save only, borrow the best
+     * available native payload without mutating the source-keyed perSite map.
+     *
+     * @param array<string, array<string, mixed>> $perSite
+     * @return array<string, mixed>
+     */
+    private function primarySiteDataForSave(
+        array $perSite,
+        string $primaryHandle,
+        ?MigrationReport $report,
+        string $stateSource,
+        string $stateKey,
+    ): array {
+        $primaryData = (array) ($perSite[$primaryHandle] ?? []);
+        if (!$this->primaryNativeValuesNeedFallback($primaryData)) {
+            return $primaryData;
+        }
+
+        $fallbackHandle = null;
+        $fallbackData = null;
+        foreach ($perSite as $handle => $candidate) {
+            if ($handle === $primaryHandle || !is_array($candidate)) {
+                continue;
+            }
+            if (!$this->payloadHasUsableNativeValues($candidate)) {
+                continue;
+            }
+            $fallbackHandle = (string) $handle;
+            $fallbackData = $candidate;
+            break;
+        }
+
+        if ($fallbackData === null) {
+            return $primaryData;
+        }
+
+        $borrowed = [];
+        if ($primaryData === []) {
+            $primaryData = $fallbackData;
+            $borrowed = ['payload'];
+        } else {
+            foreach (['title', 'slug'] as $nativeKey) {
+                if (!$this->hasNonEmptyString($primaryData[$nativeKey] ?? null)
+                    && $this->hasNonEmptyString($fallbackData[$nativeKey] ?? null)
+                ) {
+                    $primaryData[$nativeKey] = $fallbackData[$nativeKey];
+                    $borrowed[] = $nativeKey;
+                }
+            }
+        }
+
+        if ($borrowed !== []) {
+            $this->recordFallback(
+                $report,
+                'sparse_locale_primary',
+                sprintf(
+                    'Sparse-locale primary-save fallback: source=%s:%s primarySite=%s fallbackSite=%s borrowed=%s',
+                    $stateSource,
+                    $stateKey,
+                    $primaryHandle,
+                    (string) $fallbackHandle,
+                    implode(',', $borrowed),
+                ),
+            );
+        }
+
+        return $primaryData;
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function primaryNativeValuesNeedFallback(array $data): bool
+    {
+        return !$this->hasNonEmptyString($data['title'] ?? null)
+            || !$this->hasNonEmptyString($data['slug'] ?? null);
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    private function payloadHasUsableNativeValues(array $data): bool
+    {
+        return $this->hasNonEmptyString($data['title'] ?? null)
+            || $this->hasNonEmptyString($data['slug'] ?? null);
+    }
+
+    /**
      * Normalize every matrix-block payload across the whole fieldValues hash.
      *
      * Two Phase 04 bugs we clean up here, centrally:
@@ -512,18 +660,29 @@ class EntryMigrationService extends Component
      * @param array<string, mixed> $fieldValues
      * @return array<string, mixed>
      */
-    private function stripSourcePartRefs(array $fieldValues): array
-    {
+    private function stripSourcePartRefs(
+        array $fieldValues,
+        ?MigrationReport $report = null,
+        array $context = [],
+    ): array {
         foreach ($fieldValues as $handle => $value) {
             if (!is_array($value)) {
                 continue;
             }
+            $position = 0;
             foreach ($value as $blockKey => $block) {
                 if (!is_array($block) || !isset($block['fields']) || !is_array($block['fields'])) {
+                    ++$position;
                     continue;
                 }
-                // Strip the hidden ref tag.
+                $sourceRef = isset($block['fields']['_sourcePartRef'])
+                    ? (string) $block['fields']['_sourcePartRef']
+                    : null;
+                $suppressNativeTitleFallback = ($block['fields']['_suppressNativeTitleFallback'] ?? false) === true;
+
+                // Strip hidden migration-only tags before assigning Matrix fields.
                 unset($block['fields']['_sourcePartRef']);
+                unset($block['fields']['_suppressNativeTitleFallback']);
 
                 // Lift native-property keys from fields → peer.
                 // Prefer existing peer-level value if the caller already set one.
@@ -538,7 +697,29 @@ class EntryMigrationService extends Component
                     }
                 }
 
+                if ($suppressNativeTitleFallback && !$this->hasNonEmptyString($block['title'] ?? null)) {
+                    $block['title'] = '';
+                } elseif (!$this->hasNonEmptyString($block['title'] ?? null)) {
+                    $block['title'] = $this->synthesiseMatrixBlockTitle($block, $position, $sourceRef);
+                    $this->recordFallback(
+                        $report,
+                        'matrix_native_title',
+                        sprintf(
+                            'Matrix native-title fallback: source=%s:%s site=%s field=%s blockType=%s position=%d%s title="%s"',
+                            (string) ($context['stateSource'] ?? '?'),
+                            (string) ($context['stateKey'] ?? '?'),
+                            (string) ($context['site'] ?? '?'),
+                            $handle,
+                            (string) ($block['type'] ?? 'unknown'),
+                            $position + 1,
+                            $sourceRef !== null ? ' sourceRef=' . $sourceRef : '',
+                            (string) $block['title'],
+                        ),
+                    );
+                }
+
                 $value[$blockKey] = $block;
+                ++$position;
             }
             $fieldValues[$handle] = $value;
         }
@@ -556,6 +737,34 @@ class EntryMigrationService extends Component
     public function normalizeMatrixPayload(array $fieldValues): array
     {
         return $this->stripSourcePartRefs($fieldValues);
+    }
+
+    /**
+     * @param array<string, mixed> $block
+     */
+    private function synthesiseMatrixBlockTitle(array $block, int $position, ?string $sourceRef): string
+    {
+        $type = trim((string) ($block['type'] ?? 'matrixBlock'));
+        $type = $type !== '' ? $type : 'matrixBlock';
+        $base = sprintf('Migrated %s block %d', $type, $position + 1);
+
+        return $sourceRef !== null && trim($sourceRef) !== ''
+            ? sprintf('%s (%s)', $base, trim($sourceRef))
+            : $base;
+    }
+
+    private function hasNonEmptyString(mixed $value): bool
+    {
+        return is_string($value) && trim($value) !== '';
+    }
+
+    private function recordFallback(?MigrationReport $report, string $category, string $message): void
+    {
+        if ($report !== null) {
+            $report->warn($message);
+            $report->incr('fallback.' . $category);
+        }
+        Craft::warning('EntryMigrationService: ' . $message, __METHOD__);
     }
 
     /**

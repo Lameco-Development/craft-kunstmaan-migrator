@@ -123,6 +123,13 @@ final class MappingCompiler extends Component
         // heuristic. The heuristic stays as a fallback for projects that
         // ran analyze with --no-ai (no nodeClass proposals were emitted).
         $tableToEntryTypeFromHeuristic = $this->buildTableToEntryTypeMap($pageStructure);
+        if ($craftEntryTypeHandles !== []) {
+            $allowedEntryTypes = array_flip(array_map('strval', $craftEntryTypeHandles));
+            $tableToEntryTypeFromHeuristic = array_filter(
+                $tableToEntryTypeFromHeuristic,
+                static fn(string $entryType): bool => isset($allowedEntryTypes[$entryType]),
+            );
+        }
         $tableToEntryType = $acceptedNodeClassByTable + $tableToEntryTypeFromHeuristic;
         [$proposals, $autoAssigned] = $this->autoAssignTargetEntryType($proposals, $tableToEntryType);
 
@@ -402,10 +409,15 @@ final class MappingCompiler extends Component
             $allowedHandles = $entryTypeFlatHandles[$sectionKey] ?? null;
             $fields = [];
             foreach ($sectionRows as $r) {
-                $targetHandle = (string) ($r['targetHandle'] ?? '');
+                $nativePostDate = $this->isNativePostDateSource($r);
+                if (!$nativePostDate && in_array((string) ($r['relationIntent'] ?? ''), ['drop', 'out_of_scope'], true)) {
+                    continue;
+                }
+                $targetHandle = $this->targetHandleForCompiledRow($r, $sectionKey);
                 if ($targetHandle === '') {
                     continue;
                 }
+                $r['targetHandle'] = $targetHandle;
                 // Phase 8.7 / D-40 — drop+warn when targetHandle doesn't exist
                 // on the chosen entry-type. Catches silent-empty bugs like
                 // `content → newsPage::content` (newsPage has no `content`
@@ -416,6 +428,7 @@ final class MappingCompiler extends Component
                 // path — skip flat-catalog check.
                 if ($allowedHandles !== null
                     && !str_contains($targetHandle, '.')
+                    && !$this->isNativeEntryProperty($targetHandle)
                     && !in_array($targetHandle, $allowedHandles, true)
                 ) {
                     $warnings[] = sprintf(
@@ -445,7 +458,7 @@ final class MappingCompiler extends Component
                     continue;
                 }
                 $compiled = [
-                    'handler' => (string) ($r['handler'] ?? 'plain'),
+                    'handler' => $this->handlerForCompiledRow($r, $targetHandle),
                     'source'  => (string) ($r['column'] ?? $targetHandle),
                 ];
                 // Phase 8.7 / D-32 — auto-fill handlerOptions.stateSource for
@@ -455,16 +468,33 @@ final class MappingCompiler extends Component
                 // mapping has no stateSource and RelationHandler::resolveDirect
                 // can't look up the migrated category at runtime → empty
                 // relation field on every CaseStudyPage.
-                if ($compiled['handler'] === 'relation' && !isset($r['handlerOptions'])) {
-                    $opts = $this->relationOptionsForFkColumn($fqcn, $compiled['source']);
-                    if ($opts !== null) {
-                        $compiled['handlerOptions'] = $opts;
+                if ($compiled['handler'] === 'relation') {
+                    $relationClosure = $this->relationOptionsForCompiledRow($fqcn, $r, $compiled['source'], $pageStructure);
+                    if ($relationClosure['warning'] !== null) {
+                        $warnings[] = $relationClosure['warning'];
+                    }
+                    if ($relationClosure['options'] !== null) {
+                        $compiled['handlerOptions'] = $this->mergeRelationHandlerOptions(
+                            isset($r['handlerOptions']) && is_array($r['handlerOptions']) ? $r['handlerOptions'] : [],
+                            $relationClosure['options'],
+                        );
+                    } elseif (isset($r['handlerOptions']) && is_array($r['handlerOptions']) && $r['handlerOptions'] !== []) {
+                        $compiled['handlerOptions'] = $r['handlerOptions'];
+                    }
+                    if ($relationClosure['source'] !== null) {
+                        $compiled['source'] = $relationClosure['source'];
                     }
                 } elseif (isset($r['handlerOptions']) && is_array($r['handlerOptions']) && $r['handlerOptions'] !== []) {
                     $compiled['handlerOptions'] = $r['handlerOptions'];
                 }
+                $validationWarning = $this->validateCompiledFieldSpec($fqcn, $r, $compiled);
+                if ($validationWarning !== null) {
+                    $warnings[] = $validationWarning;
+                    continue;
+                }
                 $fields[$targetHandle] = $compiled;
             }
+            $this->maybeAddContactCtaTeamMemberField($fields, $sectionKey, $allowedHandles);
             ksort($fields);
 
             // Stub un-derived keys so operator sees the gaps.
@@ -483,6 +513,7 @@ final class MappingCompiler extends Component
                 'bodyWrapBlock'       => null,
                 'joins'               => [],
             ];
+            $this->mergeOperatorNodeClassOverrides($nodeClasses[$fqcn], (array) ($mapping['nodeClasses'][$fqcn] ?? []));
 
             // Phase 8.7 / D-39 — auto-detect flatPagePartContent target. When
             // the entry-type for this FQCN has no Matrix field and has at
@@ -523,7 +554,7 @@ final class MappingCompiler extends Component
         // Operator hand-edits to mapping.pageParts/nodeClasses are preserved (skip-existing).
         $existingPageParts = (array) ($mapping['pageParts'] ?? []);
         [$pagePartsOut, $nodeClasses, $implicitEmitted, $implicitWarnings] =
-            $this->compileImplicitBlocks($proposals, $pageStructure, $existingPageParts, $nodeClasses);
+            $this->compileImplicitBlocks($proposals, $pageStructure, $existingPageParts, $nodeClasses, $entryTypeFlatHandles);
         $warnings = array_merge($warnings, $implicitWarnings);
 
         // Phase 8.4 / D-19 — fold accepted kind=pagePart proposals into
@@ -595,6 +626,10 @@ final class MappingCompiler extends Component
                 if (((string) end($parts)) === $parentShort) { $parentFqcn = $fqcn; break; }
             }
             if ($parentFqcn === null || !isset($nodeClasses[$parentFqcn])) { continue; }
+            if (!$this->parentOwnsMatrixField($nodeClasses[$parentFqcn], $matrix, $entryTypeFlatHandles)) {
+                $warnings[] = $this->pageBuilderOwnershipWarning($parentFqcn, $matrix, $pRow, $nodeClasses[$parentFqcn]);
+                continue;
+            }
             // Skip-existing: operator-set wins.
             if ((string) ($nodeClasses[$parentFqcn]['pageBuilderHandle'] ?? '') === '') {
                 $nodeClasses[$parentFqcn]['pageBuilderHandle'] = $matrix;
@@ -627,6 +662,15 @@ final class MappingCompiler extends Component
         [$nodeClasses, $layoutBlocksEmitted, $layoutWarnings] =
             $this->compileLayoutBlocks($proposals, $nodeClasses);
         $warnings = array_merge($warnings, $layoutWarnings);
+        $this->applyFallbackBodyContent(
+            $nodeClasses,
+            $proposals,
+            $defaultEntryType,
+            $defaultBlockType,
+            $matrixFieldCatalog,
+            $entryTypeFlatHandles,
+        );
+        $this->removeFabricatedBodyWrapTitles($nodeClasses);
 
         // Phase 8 / D-13: emit top-level mapping.dataProviders block from accepted
         // kind=dataProvider proposals. Identity key = FQCN. Skip-existing per
@@ -637,6 +681,13 @@ final class MappingCompiler extends Component
         ksort($dataProvidersOut);
         $warnings = array_merge($warnings, $dataProviderWarnings);
 
+        // Phase 11 / D-16: promoted/shared relation targets need their own
+        // executable identity before owner entries reference them.
+        [$promotedTargetsOut, $promotedTargetsEmitted, $promotedWarnings] =
+            $this->compilePromotedTargets($proposals, (array) ($mapping['promotedTargets'] ?? []));
+        ksort($promotedTargetsOut);
+        $warnings = array_merge($warnings, $promotedWarnings);
+
         return [
             'proposals'      => array_values($proposals),
             'nodeClasses'    => $nodeClasses,
@@ -645,6 +696,7 @@ final class MappingCompiler extends Component
             'pageParts'      => $pagePartsOut,
             'taxonomies'     => $taxonomiesOut,
             'dataProviders'  => $dataProvidersOut,
+            'promotedTargets' => $promotedTargetsOut,
             '_compileReport' => [
                 'nodeClassesEmitted'        => count($nodeClasses),
                 'sectionsEmitted'           => count($sections),
@@ -662,6 +714,7 @@ final class MappingCompiler extends Component
                 'taxonomiesEmitted'         => $taxonomiesEmitted,
                 'layoutBlocksEmitted'       => $layoutBlocksEmitted,
                 'dataProvidersEmitted'      => $dataProvidersEmitted,
+                'promotedTargetsEmitted'    => $promotedTargetsEmitted,
                 'warnings'                  => $warnings,
             ],
         ];
@@ -692,6 +745,7 @@ final class MappingCompiler extends Component
      * @param  array<string, mixed>                          $pageStructure
      * @param  array<string, mixed>                          $existingPageParts  Operator-curated pageParts block from mapping.yaml
      * @param  array<string, array<string, mixed>>           $nodeClasses        Already-built nodeClasses (mutated in-place)
+     * @param  array<string, list<string>>                   $entryTypeFlatHandles
      * @return array{0: array<string, array<string, mixed>>, 1: array<string, array<string, mixed>>, 2: int, 3: list<string>}
      *         [pagePartsOut, nodeClassesOut, implicitEmittedCount, warnings]
      */
@@ -700,6 +754,7 @@ final class MappingCompiler extends Component
         array $pageStructure,
         array $existingPageParts,
         array $nodeClasses,
+        array $entryTypeFlatHandles = [],
     ): array {
         $pagePartsOut = [];
         foreach ($existingPageParts as $k => $v) {
@@ -813,6 +868,10 @@ final class MappingCompiler extends Component
                 );
                 continue;
             }
+            if (!$this->parentOwnsMatrixField($nodeClasses[$fqcn], $matrixField, $entryTypeFlatHandles)) {
+                $warnings[] = $this->pageBuilderOwnershipWarning($fqcn, $matrixField, $row, $nodeClasses[$fqcn]);
+                continue;
+            }
 
             // Operator-set pageBuilderHandle wins; only fill when empty.
             if ((string) ($nodeClasses[$fqcn]['pageBuilderHandle'] ?? '') === '') {
@@ -830,6 +889,58 @@ final class MappingCompiler extends Component
         }
 
         return [$pagePartsOut, $nodeClasses, $emitted, $warnings];
+    }
+
+    /**
+     * Validate that a page-builder Matrix field is owned by the parent entry
+     * type before propagating it to nodeClasses[].pageBuilderHandle.
+     *
+     * Empty catalogs preserve legacy/test behavior; when a caller supplies the
+     * Craft entry-type handle catalog, invalid ownership is treated as visible
+     * compile validation and propagation is blocked.
+     *
+     * @param array<string, mixed>        $nodeClass
+     * @param array<string, list<string>> $entryTypeFlatHandles
+     */
+    private function parentOwnsMatrixField(array $nodeClass, string $matrixField, array $entryTypeFlatHandles): bool
+    {
+        if ($matrixField === '' || $entryTypeFlatHandles === []) {
+            return true;
+        }
+        $entryType = (string) ($nodeClass['section'] ?? '');
+        if ($entryType === '' || !isset($entryTypeFlatHandles[$entryType])) {
+            return true;
+        }
+        return in_array($matrixField, $entryTypeFlatHandles[$entryType], true);
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $nodeClass
+     */
+    private function pageBuilderOwnershipWarning(string $parentFqcn, string $matrixField, array $row, array $nodeClass): string
+    {
+        $entryType = (string) ($nodeClass['section'] ?? '∅');
+        $source = (string) ($row['pagePartClass'] ?? $row['parentPageClass'] ?? '__implicit_content__');
+        $flatFallback = (string) ($nodeClass['flatPagePartContent'] ?? '');
+        if ($flatFallback !== '') {
+            return sprintf(
+                '%s: pageBuilderHandle `%s` not propagated for %s because entry-type `%s` does not own that Matrix field; preserving page-part content via flatPagePartContent `%s`.',
+                $parentFqcn,
+                $matrixField,
+                $source,
+                $entryType,
+                $flatFallback,
+            );
+        }
+
+        return sprintf(
+            '%s: pageBuilderHandle `%s` not propagated for %s because entry-type `%s` does not own that Matrix field and no flatPagePartContent fallback is available; mapping requires operator review to avoid data loss.',
+            $parentFqcn,
+            $matrixField,
+            $source,
+            $entryType,
+        );
     }
 
     /**
@@ -1158,14 +1269,21 @@ final class MappingCompiler extends Component
             if ($fqcn === '' || !isset($nodeClassesOut[$fqcn])) { continue; }
             $entry = $nodeClassesOut[$fqcn];
             $touched = false;
-            foreach (['headerBlock', 'bodyWrapBlock', 'bodyColumn'] as $slot) {
+            foreach (['headerBlock', 'bodyWrapBlock', 'bodyColumn', 'mergeRelations'] as $slot) {
                 if (!array_key_exists($slot, $row)) { continue; }
                 $proposed = $row[$slot];
                 if ($proposed === null || $proposed === '') { continue; }
                 // Per-slot skip-existing: operator-set wins.
                 $existing = $entry[$slot] ?? null;
                 if ($existing !== null && $existing !== '') { continue; }
-                $entry[$slot] = (string) $proposed;
+                if (in_array($slot, ['headerBlock', 'bodyWrapBlock', 'mergeRelations'], true)) {
+                    if (!is_array($proposed) || $proposed === []) {
+                        continue;
+                    }
+                    $entry[$slot] = $proposed;
+                } else {
+                    $entry[$slot] = (string) $proposed;
+                }
                 $touched = true;
             }
             if ($touched) {
@@ -1217,6 +1335,502 @@ final class MappingCompiler extends Component
     }
 
     /**
+     * Resolve an executable flat Craft field handle from either an explicit
+     * targetHandle or the graph-aware targetRef emitted by analyze.
+     *
+     * Rows such as `targetRef: craft.field:newsPage.image` are already a real
+     * operator decision; leaving `targetHandle` blank made them look accepted
+     * in the review surface while compile silently skipped them.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function targetHandleForCompiledRow(array $row, string $entryType): string
+    {
+        $targetHandle = trim((string) ($row['targetHandle'] ?? ''));
+        if ($targetHandle !== '') {
+            return $targetHandle;
+        }
+
+        if ($this->isNativePostDateSource($row)) {
+            return 'postDate';
+        }
+
+        $intent = (string) ($row['relationIntent'] ?? '');
+        if (in_array($intent, ['embed', 'promote'], true)) {
+            return '';
+        }
+
+        $targetRef = (string) ($row['targetRef'] ?? '');
+        $prefix = 'craft.field:';
+        if (!str_starts_with($targetRef, $prefix)) {
+            return '';
+        }
+
+        $tail = substr($targetRef, strlen($prefix));
+        $parts = explode('.', $tail, 2);
+        if (count($parts) !== 2) {
+            return '';
+        }
+
+        [$refEntryType, $refHandle] = $parts;
+        if ($refEntryType !== $entryType || $refHandle === '') {
+            return '';
+        }
+
+        return $refHandle;
+    }
+
+    /**
+     * Infer the narrowest safe handler for graph-derived field rows.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function handlerForCompiledRow(array $row, string $targetHandle): string
+    {
+        $handler = trim((string) ($row['handler'] ?? ''));
+        if ($handler !== '') {
+            return $handler;
+        }
+
+        $sourceRef = strtolower((string) ($row['sourceRef'] ?? ''));
+        $column = strtolower((string) ($row['column'] ?? ''));
+        $target = strtolower($targetHandle);
+
+        if (
+            $target === 'postdate'
+            || $target === 'expirydate'
+            || str_contains((string) ($row['sqlType'] ?? ''), 'date')
+            || str_contains((string) ($row['sqlType'] ?? ''), 'time')
+        ) {
+            return 'date';
+        }
+
+        if (
+            str_contains($sourceRef, 'media')
+            || str_ends_with($column, 'image_id')
+            || str_contains($target, 'image')
+        ) {
+            return 'asset';
+        }
+
+        if (
+            str_ends_with($column, '_id')
+            && in_array((string) ($row['relationIntent'] ?? ''), ['reference', 'promote'], true)
+        ) {
+            return 'relation';
+        }
+
+        return 'plain';
+    }
+
+    /**
+     * If a Craft entry type exposes a top-level contactCta Matrix and the
+     * legacy page already maps an employee/team relation, mirror that relation
+     * into contactCta.teamMember. This is a presentation-specific native Craft
+     * structure, not a second legacy source decision, so it is derived during
+     * compile instead of requiring operators to hand-edit mapping.yaml.
+     *
+     * @param array<string, array<string, mixed>> $fields
+     * @param list<string>|null $allowedHandles
+     */
+    private function maybeAddContactCtaTeamMemberField(array &$fields, string $entryType, ?array $allowedHandles): void
+    {
+        unset($entryType);
+        if ($allowedHandles !== null && !in_array('contactCta', $allowedHandles, true)) {
+            return;
+        }
+        if (isset($fields['contactCta.teamMember'])) {
+            return;
+        }
+
+        foreach ($fields as $handle => $spec) {
+            if (!is_array($spec) || (string) ($spec['handler'] ?? '') !== 'relation') {
+                continue;
+            }
+            $source = strtolower((string) ($spec['source'] ?? ''));
+            $stateSource = strtolower((string) (($spec['handlerOptions'] ?? [])['stateSource'] ?? ''));
+            $handleLower = strtolower((string) $handle);
+            $looksLikeTeamMember =
+                str_contains($handleLower, 'teammember')
+                || str_contains($handleLower, 'employee')
+                || str_contains($source, 'employee')
+                || str_contains($stateSource, 'employee');
+            if (!$looksLikeTeamMember) {
+                continue;
+            }
+
+            $fields['contactCta.teamMember'] = $spec;
+            return;
+        }
+    }
+
+    /**
+     * Graceful fallback pages should not become title-only shells. When a page
+     * type falls back to the configured catch-all entry type and already has a
+     * bodyWrapBlock, infer the most likely source body column and Matrix handle
+     * from the reviewed proposals/Craft field layout.
+     *
+     * @param array<string, array<string, mixed>> $nodeClasses
+     * @param list<array<string, mixed>> $proposals
+     * @param array<string, list<string>> $matrixFieldCatalog
+     * @param array<string, list<string>> $entryTypeFlatHandles
+     */
+    private function applyFallbackBodyContent(
+        array &$nodeClasses,
+        array $proposals,
+        ?string $defaultEntryType,
+        ?string $defaultBlockType,
+        array $matrixFieldCatalog,
+        array $entryTypeFlatHandles,
+    ): void {
+        if ($defaultEntryType === null || $defaultEntryType === '') {
+            return;
+        }
+
+        foreach ($nodeClasses as &$nodeClass) {
+            if ((string) ($nodeClass['section'] ?? '') !== $defaultEntryType) {
+                continue;
+            }
+            if ((string) ($nodeClass['bodyColumn'] ?? '') !== '') {
+                continue;
+            }
+
+            $sourceTable = (string) ($nodeClass['sourceTable'] ?? '');
+            if ($sourceTable === '') {
+                continue;
+            }
+            $bodyColumn = $this->fallbackBodyColumnForTable($proposals, $sourceTable);
+            if ($bodyColumn === null) {
+                continue;
+            }
+
+            $allowedHandles = $entryTypeFlatHandles[$defaultEntryType] ?? [];
+            $pageBuilderHandle = (string) ($nodeClass['pageBuilderHandle'] ?? '');
+            $bodyWrap = $nodeClass['bodyWrapBlock'] ?? null;
+            $declaredFieldHandle = (string) ($bodyWrap['fieldHandle'] ?? '');
+            if ($pageBuilderHandle === ''
+                && $declaredFieldHandle !== ''
+                && in_array($declaredFieldHandle, $allowedHandles, true)
+                && str_contains(strtolower($declaredFieldHandle), 'pagebuilder')
+            ) {
+                $pageBuilderHandle = $declaredFieldHandle;
+            }
+            if ($pageBuilderHandle === '' && in_array('pageBuilder', $allowedHandles, true)) {
+                $pageBuilderHandle = 'pageBuilder';
+            }
+            if ($pageBuilderHandle === '') {
+                continue;
+            }
+
+            if (!is_array($bodyWrap) || (string) ($bodyWrap['blockType'] ?? '') === '') {
+                $blockType = $this->fallbackBodyBlockType(
+                    $matrixFieldCatalog,
+                    $pageBuilderHandle,
+                    $defaultBlockType,
+                );
+                if ($blockType === null) {
+                    continue;
+                }
+                $bodyWrap = [
+                    'blockType' => $blockType,
+                    'fieldHandle' => 'ckeditorDefault',
+                ];
+                $declaredFieldHandle = 'ckeditorDefault';
+            }
+
+            if ($declaredFieldHandle === '' || $declaredFieldHandle === $pageBuilderHandle) {
+                $bodyWrap['fieldHandle'] = 'ckeditorDefault';
+            }
+
+            $nodeClass['pageBuilderHandle'] = $pageBuilderHandle;
+            $nodeClass['bodyColumn'] = $bodyColumn;
+            $nodeClass['bodyWrapBlock'] = $bodyWrap;
+        }
+        unset($nodeClass);
+    }
+
+    /**
+     * @param list<array<string, mixed>> $proposals
+     */
+    private function fallbackBodyColumnForTable(array $proposals, string $sourceTable): ?string
+    {
+        $ranked = [];
+        $rankByColumn = [
+            'content' => 100,
+            'body' => 90,
+            'intro' => 80,
+            'summary' => 70,
+            'description' => 60,
+            'text' => 50,
+        ];
+
+        foreach ($proposals as $index => $row) {
+            if (!is_array($row)
+                || (string) ($row['kind'] ?? '') !== 'column'
+                || (string) ($row['status'] ?? '') !== 'accepted'
+                || (string) ($row['table'] ?? '') !== $sourceTable
+            ) {
+                continue;
+            }
+
+            $column = strtolower((string) ($row['column'] ?? ''));
+            if ($column === '' || !isset($rankByColumn[$column])) {
+                continue;
+            }
+
+            $fillRate = (float) ($row['fillRate'] ?? 1.0);
+            if ($fillRate <= 0.0) {
+                continue;
+            }
+
+            $sqlType = strtolower((string) ($row['sqlType'] ?? ''));
+            if ($sqlType !== ''
+                && !str_contains($sqlType, 'text')
+                && !str_contains($sqlType, 'char')
+            ) {
+                continue;
+            }
+
+            $ranked[] = [
+                'column' => (string) ($row['column'] ?? ''),
+                'score' => $rankByColumn[$column],
+                'index' => $index,
+            ];
+        }
+
+        if ($ranked === []) {
+            return null;
+        }
+
+        usort(
+            $ranked,
+            static fn(array $a, array $b): int => ($b['score'] <=> $a['score']) ?: ($a['index'] <=> $b['index']),
+        );
+
+        return (string) $ranked[0]['column'];
+    }
+
+    /**
+     * @param array<string, list<string>> $matrixFieldCatalog
+     */
+    private function fallbackBodyBlockType(
+        array $matrixFieldCatalog,
+        string $matrixHandle,
+        ?string $defaultBlockType,
+    ): ?string {
+        $blocks = $matrixFieldCatalog[$matrixHandle] ?? [];
+        if ($blocks === []) {
+            return null;
+        }
+
+        foreach (array_filter([(string) $defaultBlockType, 'generalContentBlock', 'textContentBlock']) as $candidate) {
+            if (in_array($candidate, $blocks, true)) {
+                return $candidate;
+            }
+        }
+
+        return (string) $blocks[0];
+    }
+
+    /**
+     * Body wrapper block titles are visible editorial content. Keep only
+     * source-backed templates such as "{title}"; drop literal labels invented
+     * by proposals or previous fallback inference.
+     *
+     * @param array<string, array<string, mixed>> $nodeClasses
+     */
+    private function removeFabricatedBodyWrapTitles(array &$nodeClasses): void
+    {
+        foreach ($nodeClasses as &$nodeClass) {
+            if (!isset($nodeClass['bodyWrapBlock']) || !is_array($nodeClass['bodyWrapBlock'])) {
+                continue;
+            }
+
+            $title = (string) ($nodeClass['bodyWrapBlock']['title'] ?? '');
+            if ($title === '' || !preg_match('/\{[a-zA-Z0-9_]+\}/', $title)) {
+                unset($nodeClass['bodyWrapBlock']['title']);
+            }
+        }
+        unset($nodeClass);
+    }
+
+    /**
+     * Recognize legacy editorial publish-date columns that should hydrate
+     * Craft's native Entry::$postDate instead of requiring a custom field.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function isNativePostDateSource(array $row): bool
+    {
+        $column = strtolower((string) ($row['column'] ?? ''));
+        $sqlType = strtolower((string) ($row['sqlType'] ?? ''));
+        if (!str_contains($sqlType, 'date') && !str_contains($sqlType, 'time')) {
+            return false;
+        }
+
+        return in_array($column, ['date', 'postdate', 'post_date', 'post_at', 'published_at', 'publish_date'], true);
+    }
+
+    private function isNativeEntryProperty(string $handle): bool
+    {
+        return in_array($handle, ['postDate', 'expiryDate', 'enabled', 'authorId', 'parentId'], true);
+    }
+
+    /**
+     * Preserve operator-curated runtime config on nodeClasses during
+     * compile --overwrite. Proposals own regenerated field decisions, but
+     * hand-authored runtime wiring such as joins, mergeRelations, and header
+     * blocks is part of the executable migration contract.
+     *
+     * @param array<string, mixed> $nodeClass
+     * @param array<string, mixed> $existing
+     */
+    private function mergeOperatorNodeClassOverrides(array &$nodeClass, array $existing): void
+    {
+        if ($existing === []) {
+            return;
+        }
+
+        if (isset($existing['fields']) && is_array($existing['fields']) && $existing['fields'] !== []) {
+            $fields = $existing['fields'];
+            foreach ($fields as $handle => $fieldSpec) {
+                $handleString = (string) $handle;
+                if (
+                    $handleString === 'seo'
+                    && is_array($fieldSpec)
+                    && (string) ($fieldSpec['handler'] ?? '') !== 'seomatic'
+                ) {
+                    unset($fields[$handle]);
+                    continue;
+                }
+
+                if ($this->isRuntimeMatrixContainerField($handleString, $nodeClass, $existing)) {
+                    unset($fields[$handle]);
+                }
+            }
+            $nodeClass['fields'] = array_replace((array) ($nodeClass['fields'] ?? []), $fields);
+            ksort($nodeClass['fields']);
+        }
+
+        foreach (['pageBuilderHandle', 'bodyColumn', 'flatPagePartContent'] as $key) {
+            if (isset($existing[$key]) && is_string($existing[$key]) && $existing[$key] !== '') {
+                $nodeClass[$key] = $existing[$key];
+            }
+        }
+
+        if (isset($existing['pageBuilderContexts']) && is_array($existing['pageBuilderContexts'])) {
+            $contexts = array_values(array_filter(
+                array_map('strval', array_merge(
+                    (array) ($nodeClass['pageBuilderContexts'] ?? []),
+                    $existing['pageBuilderContexts'],
+                )),
+                static fn(string $context): bool => $context !== '',
+            ));
+            $nodeClass['pageBuilderContexts'] = array_values(array_unique($contexts));
+        }
+
+        foreach (['headerBlock', 'bodyWrapBlock', 'joins', 'mergeRelations'] as $key) {
+            if (isset($existing[$key]) && is_array($existing[$key]) && $existing[$key] !== []) {
+                $nodeClass[$key] = $existing[$key];
+            }
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $nodeClass
+     * @param array<string, mixed> $existing
+     */
+    private function isRuntimeMatrixContainerField(string $handle, array $nodeClass, array $existing): bool
+    {
+        if ($handle === '') {
+            return false;
+        }
+
+        $headerBlock = $nodeClass['headerBlock'] ?? $existing['headerBlock'] ?? null;
+        if (is_array($headerBlock) && (string) ($headerBlock['fieldHandle'] ?? '') === $handle) {
+            return true;
+        }
+
+        foreach ([$nodeClass['pageBuilderHandle'] ?? null, $existing['pageBuilderHandle'] ?? null] as $pageBuilderHandle) {
+            if (is_string($pageBuilderHandle) && $pageBuilderHandle === $handle) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $proposals
+     * @param array<string, mixed> $existing
+     * @return array{0: array<string, array<string, mixed>>, 1: int, 2: list<string>}
+     */
+    private function compilePromotedTargets(array $proposals, array $existing): array
+    {
+        $out = [];
+        foreach ($existing as $key => $value) {
+            if (is_string($key) && is_array($value)) {
+                $out[$key] = $value;
+            }
+        }
+
+        $emitted = 0;
+        $warnings = [];
+        foreach ($proposals as $row) {
+            if (!is_array($row)) { continue; }
+            $kind = (string) ($row['kind'] ?? '');
+            if (!in_array($kind, ['promotedTarget', 'promotedRelationTarget'], true)) { continue; }
+            if (((string) ($row['status'] ?? '')) !== 'accepted') { continue; }
+
+            $stateSource = (string) ($row['stateSource'] ?? '');
+            $sourceRef = (string) ($row['sourceRef'] ?? '');
+            $targetRef = (string) ($row['targetRef'] ?? '');
+            $targetSection = (string) ($row['targetSection'] ?? '');
+            $targetEntryType = (string) ($row['targetEntryType'] ?? '');
+            $relationIntent = (string) ($row['relationIntent'] ?? '');
+            $key = $stateSource !== '' ? $stateSource : $sourceRef;
+
+            $missing = [];
+            foreach ([
+                'stateSource' => $stateSource,
+                'sourceRef' => $sourceRef,
+                'targetRef' => $targetRef,
+                'targetSection' => $targetSection,
+                'targetEntryType' => $targetEntryType,
+                'relationIntent' => $relationIntent,
+            ] as $field => $value) {
+                if ($value === '') {
+                    $missing[] = $field;
+                }
+            }
+            if ($missing !== []) {
+                $warnings[] = sprintf(
+                    'promoted relation target %s skipped: missing %s',
+                    $sourceRef !== '' ? $sourceRef : '?',
+                    implode(', ', $missing),
+                );
+                continue;
+            }
+            if (isset($out[$key])) {
+                continue;
+            }
+
+            $out[$key] = [
+                'stateSource' => $stateSource,
+                'sourceRef' => $sourceRef,
+                'targetRef' => $targetRef,
+                'targetSection' => $targetSection,
+                'targetEntryType' => $targetEntryType,
+                'relationIntent' => $relationIntent,
+                'fields' => is_array($row['fields'] ?? null) ? $row['fields'] : [],
+            ];
+            $emitted++;
+        }
+
+        return [$out, $emitted, $warnings];
+    }
+
+    /**
      * Phase 8.7 / D-32 — derive `handlerOptions` for a page-level `handler:
      * relation` field from the owning entity's Doctrine relations.
      *
@@ -1237,7 +1851,7 @@ final class MappingCompiler extends Component
      *
      * @return array<string, mixed>|null
      */
-    private function relationOptionsForFkColumn(string $owningFqcn, string $sourceCol): ?array
+    private function relationOptionsForFkColumn(string $owningFqcn, string $sourceCol, array $pageStructure = []): ?array
     {
         if ($owningFqcn === '' || $sourceCol === '') {
             return null;
@@ -1256,10 +1870,266 @@ final class MappingCompiler extends Component
             if ($rel->fkColumn !== $sourceCol) { continue; }
             $targetFqcn = trim($rel->targetEntity, '\\');
             if ($targetFqcn === '') { continue; }
+            $pageWrapper = $this->pageWrapperRelationOptions($targetFqcn, $sourceCol, $pageStructure);
+            if ($pageWrapper !== null) {
+                return $pageWrapper;
+            }
             $stateSource = str_replace('\\', '_', $targetFqcn);
             return ['stateSource' => $stateSource];
         }
         return null;
+    }
+
+    /**
+     * Derive relation handler options for accepted page-owned relation rows.
+     *
+     * Supports two deterministic metadata shapes emitted by analysis/curation:
+     * - ManyToMany: relation.joinTable + joinLocalColumn + joinForeignColumn.
+     * - OneToMany: relation.targetTable + backRefColumn; foreign ids are the
+     *   child table's primary `id` values.
+     *
+     * Falls back to the existing ManyToOne FK helper for direct FK columns.
+     *
+     * @param array<string, mixed> $row
+     * @return array{options: ?array<string, mixed>, source: ?string, warning: ?string}
+     */
+    private function relationOptionsForCompiledRow(string $owningFqcn, array $row, string $sourceCol, array $pageStructure = []): array
+    {
+        $relation = $row['relation'] ?? null;
+        if (is_array($relation) && $relation !== []) {
+            $type = (string) ($relation['relationType'] ?? $relation['type'] ?? '');
+            $property = (string) ($relation['relationProperty'] ?? $relation['property'] ?? '?');
+            $targetFqcn = (string) ($relation['targetFqcn'] ?? $relation['targetEntity'] ?? '');
+            $targetTable = (string) ($relation['targetTable'] ?? '');
+            $stateSource = $this->stateSourceForTargetFqcn($targetFqcn);
+
+            if ($type === 'ManyToOne') {
+                $pageWrapper = $this->pageWrapperRelationOptions($targetFqcn, $sourceCol, $pageStructure);
+                if ($pageWrapper !== null) {
+                    return [
+                        'options' => $pageWrapper,
+                        'source' => null,
+                        'warning' => null,
+                    ];
+                }
+            }
+
+            if ($type === 'ManyToMany') {
+                $joinTable = (string) ($relation['joinTable'] ?? '');
+                $joinLocalColumn = (string) ($relation['joinLocalColumn'] ?? $relation['backRefColumn'] ?? '');
+                $joinForeignColumn = (string) ($relation['joinForeignColumn'] ?? '');
+                $missing = [];
+                foreach ([
+                    'targetFqcn' => $targetFqcn,
+                    'joinTable' => $joinTable,
+                    'joinLocalColumn' => $joinLocalColumn,
+                    'joinForeignColumn' => $joinForeignColumn,
+                ] as $key => $value) {
+                    if ($value === '') {
+                        $missing[] = $key;
+                    }
+                }
+                if ($missing !== []) {
+                    return [
+                        'options' => null,
+                        'source' => null,
+                        'warning' => sprintf(
+                            'unsupported relation %s::%s (%s → %s table=%s) for targetHandle=%s: missing %s',
+                            $owningFqcn,
+                            $property,
+                            $type,
+                            $targetFqcn !== '' ? $targetFqcn : '∅',
+                            $targetTable !== '' ? $targetTable : '∅',
+                            (string) ($row['targetHandle'] ?? '?'),
+                            implode(', ', $missing),
+                        ),
+                    ];
+                }
+                return [
+                    'options' => [
+                        'stateSource' => $stateSource,
+                        'joinTable' => $joinTable,
+                        'joinLocalColumn' => $joinLocalColumn,
+                        'joinForeignColumn' => $joinForeignColumn,
+                    ],
+                    'source' => 'id',
+                    'warning' => null,
+                ];
+            }
+
+            if ($type === 'OneToMany') {
+                $backRefColumn = (string) ($relation['backRefColumn'] ?? $relation['joinLocalColumn'] ?? '');
+                $missing = [];
+                foreach ([
+                    'targetFqcn' => $targetFqcn,
+                    'targetTable' => $targetTable,
+                    'backRefColumn' => $backRefColumn,
+                ] as $key => $value) {
+                    if ($value === '') {
+                        $missing[] = $key;
+                    }
+                }
+                if ($missing !== []) {
+                    return [
+                        'options' => null,
+                        'source' => null,
+                        'warning' => sprintf(
+                            'unsupported relation %s::%s (%s → %s table=%s) for targetHandle=%s: missing %s',
+                            $owningFqcn,
+                            $property,
+                            $type,
+                            $targetFqcn !== '' ? $targetFqcn : '∅',
+                            $targetTable !== '' ? $targetTable : '∅',
+                            (string) ($row['targetHandle'] ?? '?'),
+                            implode(', ', $missing),
+                        ),
+                    ];
+                }
+                return [
+                    'options' => [
+                        'stateSource' => $stateSource,
+                        'joinTable' => $targetTable,
+                        'joinLocalColumn' => $backRefColumn,
+                        'joinForeignColumn' => (string) ($relation['joinForeignColumn'] ?? 'id'),
+                    ],
+                    'source' => 'id',
+                    'warning' => null,
+                ];
+            }
+        }
+
+        $opts = $this->relationOptionsForFkColumn($owningFqcn, $sourceCol, $pageStructure);
+        return ['options' => $opts, 'source' => null, 'warning' => null];
+    }
+
+    /**
+     * Some Kunstmaan sites model a visible target as Page + related entity
+     * (EmployeePage.employee_id -> Employee), while Craft stores the result as
+     * one entry. A foreign key from another page to Employee must therefore
+     * resolve through the wrapper page's state rows, not the raw entity.
+     *
+     * @param array<string, mixed> $pageStructure
+     * @return array<string, mixed>|null
+     */
+    private function pageWrapperRelationOptions(string $targetFqcn, string $sourceCol, array $pageStructure): ?array
+    {
+        $targetBase = $this->classBaseName($targetFqcn);
+        if ($targetBase === '' || $sourceCol === '') {
+            return null;
+        }
+
+        foreach ($pageStructure as $pageFqcn => $info) {
+            if (!is_string($pageFqcn) || !is_array($info)) {
+                continue;
+            }
+            $pageBase = $this->classBaseName($pageFqcn);
+            if ($pageBase !== $targetBase . 'Page') {
+                continue;
+            }
+            $table = (string) ($info['tableName'] ?? '');
+            if ($table === '') {
+                continue;
+            }
+            return [
+                'stateSource' => $this->stateSourceForTargetFqcn($pageFqcn),
+                'joinTranslation' => [
+                    'table' => $table,
+                    'sourceColumn' => $sourceCol,
+                    'targetColumn' => 'id',
+                ],
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * Deterministic graph-derived relation routing wins over LLM-supplied
+     * guesses for the same option keys, while preserving any extra curated
+     * options that do not conflict.
+     *
+     * @param array<string, mixed> $existing
+     * @param array<string, mixed> $derived
+     * @return array<string, mixed>
+     */
+    private function mergeRelationHandlerOptions(array $existing, array $derived): array
+    {
+        return array_replace_recursive($existing, $derived);
+    }
+
+    private function classBaseName(string $fqcn): string
+    {
+        $parts = explode('\\', trim($fqcn, '\\'));
+        return (string) end($parts);
+    }
+
+    private function stateSourceForTargetFqcn(string $targetFqcn): string
+    {
+        return str_replace('\\', '_', trim($targetFqcn, '\\'));
+    }
+
+    /**
+     * Validate handler/source/target combinations that are known to produce
+     * silent empty runtime output.
+     *
+     * @param array<string, mixed> $row
+     * @param array<string, mixed> $compiled
+     */
+    private function validateCompiledFieldSpec(string $fqcn, array $row, array $compiled): ?string
+    {
+        $handler = (string) ($compiled['handler'] ?? '');
+        $source = (string) ($compiled['source'] ?? '');
+        $targetHandle = (string) ($row['targetHandle'] ?? '?');
+        $sqlType = strtolower((string) ($row['sqlType'] ?? $row['sourceType'] ?? ''));
+
+        if ($handler === 'matrix') {
+            $hasMatrixOptions = isset($compiled['handlerOptions']) && is_array($compiled['handlerOptions']) && $compiled['handlerOptions'] !== [];
+            $looksScalar = $sqlType === ''
+                || str_contains($sqlType, 'char')
+                || str_contains($sqlType, 'text')
+                || str_contains($sqlType, 'int')
+                || str_contains($sqlType, 'date');
+            if ($looksScalar && !$hasMatrixOptions) {
+                return $this->fieldWarning($fqcn, $source, $targetHandle, $handler, 'matrix handler cannot materialize scalar source without handlerOptions/block metadata');
+            }
+        }
+
+        if ($handler === 'dropdown') {
+            $options = $row['options'] ?? $row['allowedValues'] ?? $row['enumValues'] ?? $compiled['handlerOptions']['options'] ?? null;
+            if (!is_array($options) || $options === []) {
+                return $this->fieldWarning($fqcn, $source, $targetHandle, $handler, 'dropdown handler requires target options metadata before arbitrary text can be accepted');
+            }
+        }
+
+        if ($handler === 'relation') {
+            $opts = isset($compiled['handlerOptions']) && is_array($compiled['handlerOptions'])
+                ? $compiled['handlerOptions']
+                : [];
+            $hasDirect = isset($opts['stateSource']) && (string) $opts['stateSource'] !== '';
+            $hasJoin = isset($opts['joinTable'])
+                && (string) $opts['joinTable'] !== ''
+                && isset($opts['joinLocalColumn'])
+                && (string) $opts['joinLocalColumn'] !== ''
+                && isset($opts['joinForeignColumn'])
+                && (string) $opts['joinForeignColumn'] !== '';
+            if (!$hasDirect || (isset($opts['joinTable']) && !$hasJoin)) {
+                return $this->fieldWarning($fqcn, $source, $targetHandle, $handler, 'relation handler requires stateSource and complete joinTable options or a derivable ManyToOne FK');
+            }
+        }
+
+        return null;
+    }
+
+    private function fieldWarning(string $fqcn, string $source, string $targetHandle, string $handler, string $reason): string
+    {
+        return sprintf(
+            '%s: source=%s targetHandle=%s handler=%s skipped — %s',
+            $fqcn,
+            $source !== '' ? $source : '∅',
+            $targetHandle !== '' ? $targetHandle : '∅',
+            $handler !== '' ? $handler : '∅',
+            $reason,
+        );
     }
 
     /**

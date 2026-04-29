@@ -41,11 +41,15 @@ use yii\base\Component;
  */
 class CountGateService extends Component
 {
+    public const DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT = 'Craft baseline/current drift';
+    public const DOMAIN_MIGRATION_CREATED_STATE_COUNTS = 'Migration-created state counts';
+    public const DOMAIN_SOURCE_TRANSFORMED_PARITY = 'Source/transformed parity';
+
     /**
      * @param array<string, mixed> $expectedCounts
      * @return array{pass: bool, gates: array<string, array<string, mixed>>}
      */
-    public function run(array $expectedCounts, float $tolerance, ?MigrationFilters $filters = null): array
+    public function run(array $expectedCounts, float $tolerance, ?MigrationFilters $filters = null, ?array $translatedScope = null): array
     {
         $expectedSections   = (array) ($expectedCounts['sections']   ?? []);
         $expectedAssets     = (array) ($expectedCounts['assets']     ?? []);
@@ -55,6 +59,16 @@ class CountGateService extends Component
         $gates = [];
         $overallPass = true;
 
+        $unmappedSourceEntities = (array) ($translatedScope['unmappedSourceEntities'] ?? []);
+        if ($unmappedSourceEntities !== []) {
+            $gates['filters:unmappedSourceEntities'] = [
+                'pass' => false,
+                'note' => 'unmapped source entity filters: ' . implode(', ', array_map('strval', $unmappedSourceEntities)),
+                'unmappedSourceEntities' => array_values(array_map('strval', $unmappedSourceEntities)),
+            ];
+            $overallPass = false;
+        }
+
         // Phase 4.1 / VER-04 — filter-scoped siteIds for locale-restricted runs.
         // Empty array = no scoping (Phase 4 behavior preserved).
         $scopeSiteIds = $this->resolveScopeSiteIds($filters);
@@ -63,7 +77,7 @@ class CountGateService extends Component
         foreach ($expectedSections as $sectionHandle => $expected) {
             // Phase 4.1 / D-28 — filter-aware gate evaluation. Sections excluded
             // by an entities allow-list get a SKIPPED row, not a 0/expected fail.
-            if (self::isSectionFilteredOut($sectionHandle, $filters)) {
+            if (self::isSectionFilteredOut($sectionHandle, $filters, $translatedScope)) {
                 $gates[$sectionHandle] = ['skip' => true, 'note' => 'filtered out (entities allow-list)'];
                 continue;
             }
@@ -191,6 +205,136 @@ class CountGateService extends Component
     }
 
     /**
+     * Compare two already-like-for-like flat count maps.
+     *
+     * This is intentionally domain-agnostic: callers choose whether the domain
+     * is blocking. Phase 10 uses it for Craft baseline/current drift where the
+     * same Craft-count snapshot shape is compared over time, not converted into
+     * migration source expectations.
+     *
+     * @param array<string, int> $expected
+     * @param array<string, int> $actual
+     * @return array{pass: bool, gates: array<string, array<string, mixed>>}
+     */
+    public function compareFlatCounts(array $expected, array $actual, float $tolerance, string $domain, bool $blocking = true): array
+    {
+        $keys = array_values(array_unique(array_merge(array_keys($expected), array_keys($actual))));
+        sort($keys);
+
+        $gates = [];
+        $overallPass = true;
+        foreach ($keys as $key) {
+            $expectedCount = (int) ($expected[$key] ?? 0);
+            $actualCount = (int) ($actual[$key] ?? 0);
+            $delta = $expectedCount > 0 ? abs($actualCount - $expectedCount) / $expectedCount : ($actualCount === 0 ? 0.0 : 1.0);
+            $pass = $delta <= $tolerance;
+            if ($blocking && !$pass) {
+                $overallPass = false;
+            }
+
+            $gates[$key] = [
+                'domain' => $domain,
+                'expected' => $expectedCount,
+                'actual' => $actualCount,
+                'delta' => $delta,
+                'pass' => $pass,
+                'blocking' => $blocking,
+            ];
+        }
+
+        return ['pass' => $overallPass, 'gates' => $gates];
+    }
+
+    /**
+     * Flatten BaselineCounterService's counts-v1 snapshot into an explicit
+     * Craft-count domain. Section totals and per-site counts stay separate so
+     * verify compares like-for-like rows instead of mixing `site('*')` totals
+     * with canonical primary-site migration expectations.
+     *
+     * @param array<string, mixed> $snapshot
+     * @return array<string, int>
+     */
+    public static function flattenCraftSnapshotCounts(array $snapshot): array
+    {
+        $out = [];
+
+        foreach ((array) ($snapshot['sections'] ?? []) as $handle => $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $section = (string) $handle;
+            $out['craft.sections.' . $section . '.total'] = (int) ($row['totalCount'] ?? 0);
+            foreach ((array) ($row['countsBySite'] ?? []) as $siteHandle => $count) {
+                $out['craft.sections.' . $section . '.site.' . (string) $siteHandle] = (int) $count;
+            }
+        }
+
+        $out['craft.assets.total'] = (int) (($snapshot['assets'] ?? [])['totalCount'] ?? 0);
+        foreach ((array) ($snapshot['taxonomies'] ?? []) as $handle => $row) {
+            if (is_array($row)) {
+                $out['craft.taxonomies.' . (string) $handle . '.total'] = (int) ($row['totalCount'] ?? 0);
+            }
+        }
+        $out['craft.plugins.retour.total'] = (int) (($snapshot['retour'] ?? [])['totalCount'] ?? 0);
+        $out['craft.plugins.seomatic.total'] = (int) (($snapshot['seomatic'] ?? [])['totalCount'] ?? 0);
+
+        ksort($out);
+        return $out;
+    }
+
+    /**
+     * Current migration-created counts from the plugin state table.
+     *
+     * These are reported as their own domain. They are not compared against a
+     * pre-migration Craft baseline because that would mix domains.
+     *
+     * @return array<string, int>
+     */
+    public function migrationCreatedStateCounts(): array
+    {
+        $out = [
+            'migration.state.rows.total' => 0,
+            'migration.created.entries' => 0,
+            'migration.created.assets' => 0,
+            'migration.created.redirects' => 0,
+            'migration.created.seo' => 0,
+        ];
+
+        try {
+            $out['migration.state.rows.total'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->count();
+
+            $out['migration.created.entries'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['targetType' => 'entry'])
+                ->andWhere(['not in', 'source', ['media', 'redirect', 'seo_meta']])
+                ->count();
+
+            $out['migration.created.assets'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['source' => 'media', 'targetType' => 'asset'])
+                ->count();
+
+            $out['migration.created.redirects'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['source' => 'redirect'])
+                ->count();
+
+            $out['migration.created.seo'] = (int) (new Query())
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['source' => 'seo_meta'])
+                ->count();
+        } catch (Throwable) {
+            foreach ($out as $key => $_) {
+                $out[$key] = -1;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * Phase 4.1 / D-28 — pure decision: is this section excluded by the
      * filters' entities allow-list?
      *
@@ -201,7 +345,7 @@ class CountGateService extends Component
      * @internal Public-static for direct unit tests without Reflection;
      *           mirrors LocalePreflight::compareEnvDefaultLocaleToLocaleMap.
      */
-    public static function isSectionFilteredOut(string $sectionHandle, ?MigrationFilters $filters): bool
+    public static function isSectionFilteredOut(string $sectionHandle, ?MigrationFilters $filters, ?array $translatedScope = null): bool
     {
         if ($filters === null) {
             return false;
@@ -209,7 +353,17 @@ class CountGateService extends Component
         if ($filters->entities === []) {
             return false;
         }
-        return !in_array($sectionHandle, $filters->entities, true);
+
+        // D-17 / 09-02B: never compare source-domain entity filters directly to
+        // Craft section handles. When callers have not supplied a translated
+        // Craft scope, preserve BC by leaving the section unfiltered.
+        if ($translatedScope === null) {
+            return false;
+        }
+
+        $sectionHandles = array_values(array_map('strval', (array) ($translatedScope['sectionHandles'] ?? [])));
+
+        return !in_array($sectionHandle, $sectionHandles, true);
     }
 
     /**

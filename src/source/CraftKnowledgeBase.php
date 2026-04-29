@@ -12,7 +12,7 @@ use yii\base\Component;
  * entry types, custom field layouts) into LLM-prompt-friendly markdown plus a
  * structured field index keyed by entry-type handle.
  *
- * Sibling of `KnowledgeBase` (which renders the SOURCE Kunstmaan schema). Both
+ * Sibling of `KunstmaanKnowledgeBase` (which renders the SOURCE Kunstmaan schema). Both
  * are fed to LlmClassifier and the new EntityClassifier so the AI sees BOTH
  * sides of the proposed mapping rather than guessing target handles into the
  * void.
@@ -31,6 +31,44 @@ use yii\base\Component;
  */
 final class CraftKnowledgeBase extends Component
 {
+    /**
+     * Return a structured snapshot of the Craft target schema.
+     *
+     * Analyze persists this beside `kunstmaan-schema.json` so operators and tests can
+     * inspect both sides of the mapping contract as files: Kunstmaan source
+     * structure in `kunstmaan-schema.json`, Craft target structure here.
+     *
+     * @return array<string, mixed>
+     */
+    public function dumpTargetSchema(): array
+    {
+        $volumes = [];
+        try {
+            foreach (Craft::$app->volumes->getAllVolumes() as $volume) {
+                $handle = (string) $volume->handle;
+                if ($handle !== '') {
+                    $volumes[] = $handle;
+                }
+            }
+        } catch (\Throwable) {
+            $volumes = [];
+        }
+
+        return [
+            'generatedAt' => date('c'),
+            'sections' => $this->sectionToEntryTypes(),
+            'entryTypes' => $this->buildFieldIndex(),
+            'entryTypeFlatHandles' => $this->entryTypeFlatHandles(),
+            'flatPagePartCandidates' => $this->flatPagePartCandidates(),
+            'matrixFields' => $this->matrixFieldCatalog(),
+            'volumes' => array_values(array_unique($volumes)),
+            'plugins' => [
+                'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
+                'retour' => Craft::$app->plugins->getPlugin('retour') !== null,
+            ],
+        ];
+    }
+
     /**
      * Render Craft's section + entry-type + custom-field catalog as markdown.
      * Intended as the `$targetKbMarkdown` argument to LlmClassifier so the
@@ -493,7 +531,7 @@ final class CraftKnowledgeBase extends Component
      * just `{handle, type}` — those have no closed-set metadata that needs
      * surfacing.
      *
-     * @return array{handle: string, type: string, options?: list<string>, allowedBlockTypes?: list<string>, sources?: list<string>, allowedKinds?: list<string>}
+     * @return array{handle: string, type: string, options?: list<string>, allowedBlockTypes?: list<string>, blocks?: array<string, array{fields: list<string>}>, sources?: list<string>, allowedKinds?: list<string>}
      */
     private function describeField(\craft\base\FieldInterface $field): array
     {
@@ -518,14 +556,29 @@ final class CraftKnowledgeBase extends Component
 
         if ($field instanceof \craft\fields\Matrix) {
             $blocks = [];
+            $blockSchema = [];
             foreach ($field->getEntryTypes() as $bt) {
                 $bh = (string) $bt->handle;
                 if ($bh !== '') {
                     $blocks[] = $bh;
                 }
+                $layout = $bt->getFieldLayout();
+                if ($bh !== '' && $layout !== null) {
+                    $subFields = [];
+                    foreach ($layout->getCustomFields() as $subField) {
+                        $subHandle = (string) $subField->handle;
+                        if ($subHandle !== '') {
+                            $subFields[] = $subHandle;
+                        }
+                    }
+                    $blockSchema[$bh] = ['fields' => array_values(array_unique($subFields))];
+                }
             }
             if ($blocks !== []) {
                 $out['allowedBlockTypes'] = $blocks;
+            }
+            if ($blockSchema !== []) {
+                $out['blocks'] = $blockSchema;
             }
         }
 

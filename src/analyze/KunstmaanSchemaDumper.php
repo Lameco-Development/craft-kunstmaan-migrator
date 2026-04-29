@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\analyze;
 
-use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
+use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\source\DoctrineEntityInfo;
 use yii\base\Component;
 
 /**
@@ -32,7 +33,7 @@ use yii\base\Component;
  *
  * No file I/O — caller writes via MappingFile::writeAtomicJson.
  */
-final class SchemaDumper extends Component
+final class KunstmaanSchemaDumper extends Component
 {
     /** @var int Max distinct sample values to collect per column. */
     public int $maxSamplesPerColumn = 5;
@@ -48,6 +49,9 @@ final class SchemaDumper extends Component
      *   which is more accurate than a runtime DB prefix scan. When null, the legacy
      *   `LIKE 'kuma\_%'` fallback path is preserved (keeps the helper unit-testable
      *   and continues to work for callers that haven't migrated to the scanner yet).
+     * @param array<string, DoctrineEntityInfo> $sourceEntityIndex  FQCN-keyed parser output.
+     *   Used to scope source tables by real Doctrine FQCN → table mappings instead of
+     *   guessing table names from entity basenames.
      * @return array{
      *   generatedAt: string,
      *   driver:      string,
@@ -56,7 +60,7 @@ final class SchemaDumper extends Component
      *   locales:     list<string>,
      * }
      */
-    public function dump(MigrationFilters $filters, ?array $sourceTableList = null): array
+    public function dump(MigrationFilters $filters, ?array $sourceTableList = null, array $sourceEntityIndex = []): array
     {
         $db = Plugin::getInstance()->legacyDbService;
         $conn = $db->db();
@@ -70,7 +74,7 @@ final class SchemaDumper extends Component
         $allTables = $sourceTableList !== null
             ? array_values(array_filter($sourceTableList, static fn($t): bool => is_string($t) && $t !== ''))
             : $this->listKunstmaanTables($schema);
-        $tables = $this->applyEntitiesFilter($allTables, $filters);
+        $tables = $this->applyEntitiesFilter($allTables, $filters, $sourceEntityIndex);
 
         // 2. Per-table row count.
         $rowCounts = [];
@@ -174,16 +178,39 @@ final class SchemaDumper extends Component
     /**
      * Apply $filters->entities to a candidate table list.
      * Empty entities = unbounded (every kuma_* table passes).
-     * Non-empty = include only tables matching `kuma_<snake_case_of_entity>` heuristic.
+     * Non-empty + entity index = include tables whose FQCN is allowed by the
+     * relation-aware filter. Fallback keeps the older `kuma_<snake>` heuristic
+     * for callers that don't have source-parser metadata.
      *
      * @param list<string> $tables
+     * @param array<string, DoctrineEntityInfo> $sourceEntityIndex
      * @return list<string>
      */
-    private function applyEntitiesFilter(array $tables, MigrationFilters $filters): array
+    private function applyEntitiesFilter(array $tables, MigrationFilters $filters, array $sourceEntityIndex = []): array
     {
         if ($filters->entities === []) {
             return $tables;
         }
+
+        $allowedTables = [];
+        foreach ($sourceEntityIndex as $fqcn => $info) {
+            if (!$info instanceof DoctrineEntityInfo) {
+                continue;
+            }
+            if ($info->tableName === '') {
+                continue;
+            }
+            if ($filters->allows((string) $fqcn)) {
+                $allowedTables[$info->tableName] = true;
+            }
+        }
+        if ($allowedTables !== []) {
+            return array_values(array_filter(
+                $tables,
+                static fn(string $table): bool => isset($allowedTables[$table]),
+            ));
+        }
+
         $needles = [];
         foreach ($filters->entities as $e) {
             // 'NewsPage' → 'news_page' (Kunstmaan table convention).

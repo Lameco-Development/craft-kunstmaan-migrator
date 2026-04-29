@@ -34,14 +34,19 @@ final class MappingCompilerLayoutBlocksTest extends TestCase
                 // Column row makes the FQCN reachable in nodeClasses[].
                 $this->columnRow('news_pages', 'title', 'newsPage', 'title'),
                 // Layout proposal — folds headerBlock into nodeClasses[fqcn].
-                $this->layoutRow($fqcn, headerBlock: 'heroBanner'),
+                $this->layoutRow($fqcn, headerBlock: [
+                    'fieldHandle' => 'header',
+                    'blockType' => 'heroBanner',
+                    'title' => '{title}',
+                ]),
             ],
         ];
         $pageStructure = [$fqcn => ['tableName' => 'news_pages']];
 
         $compiled = $this->compiler->compile($mapping, $pageStructure, ['nl' => 'default']);
 
-        $this->assertSame('heroBanner', $compiled['nodeClasses'][$fqcn]['headerBlock']);
+        $this->assertSame('heroBanner', $compiled['nodeClasses'][$fqcn]['headerBlock']['blockType']);
+        $this->assertSame('header', $compiled['nodeClasses'][$fqcn]['headerBlock']['fieldHandle']);
         $this->assertSame(1, (int) $compiled['_compileReport']['layoutBlocksEmitted']);
     }
 
@@ -56,8 +61,14 @@ final class MappingCompilerLayoutBlocksTest extends TestCase
         $mapping = [
             'proposals' => [
                 $this->columnRow('news_pages', 'title', 'newsPage', 'title'),
-                $this->layoutRow($fqcn, headerBlock: 'OPERATOR_OVERRIDE'),
-                $this->layoutRow($fqcn, headerBlock: 'heroBanner'),
+                $this->layoutRow($fqcn, headerBlock: [
+                    'fieldHandle' => 'header',
+                    'blockType' => 'OPERATOR_OVERRIDE',
+                ]),
+                $this->layoutRow($fqcn, headerBlock: [
+                    'fieldHandle' => 'header',
+                    'blockType' => 'heroBanner',
+                ]),
             ],
         ];
         $pageStructure = [$fqcn => ['tableName' => 'news_pages']];
@@ -66,7 +77,7 @@ final class MappingCompilerLayoutBlocksTest extends TestCase
 
         // Per-slot skip-existing: the first-row value held; the second row
         // proposed a different headerBlock but was rejected slot-by-slot.
-        $this->assertSame('OPERATOR_OVERRIDE', $compiled['nodeClasses'][$fqcn]['headerBlock']);
+        $this->assertSame('OPERATOR_OVERRIDE', $compiled['nodeClasses'][$fqcn]['headerBlock']['blockType']);
         // Counter is 1 (first row folded); the second row touched no slot,
         // so it never incremented the counter.
         $this->assertSame(1, (int) $compiled['_compileReport']['layoutBlocksEmitted']);
@@ -78,7 +89,10 @@ final class MappingCompilerLayoutBlocksTest extends TestCase
         $mapping = [
             'proposals' => [
                 $this->columnRow('news_pages', 'title', 'newsPage', 'title'),
-                $this->layoutRow($fqcn, headerBlock: 'heroBanner', status: 'needs-review'),
+                $this->layoutRow($fqcn, headerBlock: [
+                    'fieldHandle' => 'header',
+                    'blockType' => 'heroBanner',
+                ], status: 'needs-review'),
             ],
         ];
         $pageStructure = [$fqcn => ['tableName' => 'news_pages']];
@@ -89,6 +103,75 @@ final class MappingCompilerLayoutBlocksTest extends TestCase
         // pre-fill set on initial construction (null per the empty-stub block).
         $this->assertNull($compiled['nodeClasses'][$fqcn]['headerBlock']);
         $this->assertSame(0, (int) $compiled['_compileReport']['layoutBlocksEmitted']);
+    }
+
+    public function testFallbackEntryTypeUsesAcceptedSummaryAsBodyWrapContent(): void
+    {
+        $fqcn = 'App\\Entity\\Pages\\VacancyPage';
+        $mapping = [
+            'proposals' => [
+                $this->columnRow('vacancy_pages', 'summary', 'vacancyPage', ''),
+                $this->layoutRow(
+                    $fqcn,
+                    bodyWrapBlock: [
+                        'blockType' => 'generalContentBlock',
+                        'fieldHandle' => 'pageBuilder',
+                        'title' => 'Vacancy Details',
+                    ],
+                ),
+            ],
+        ];
+        $pageStructure = [$fqcn => ['tableName' => 'vacancy_pages']];
+
+        $compiled = $this->compiler->compile(
+            $mapping,
+            $pageStructure,
+            ['nl' => 'default'],
+            'contentPage',
+            'textContentBlock',
+            ['contentPage'],
+            ['pageBuilder' => ['generalContentBlock']],
+            [],
+            ['contentPage' => ['title', 'slug', 'header', 'pageBuilder', 'seo']],
+        );
+
+        $nodeClass = $compiled['nodeClasses'][$fqcn];
+        $this->assertSame('contentPage', $nodeClass['section']);
+        $this->assertSame('pageBuilder', $nodeClass['pageBuilderHandle']);
+        $this->assertSame('summary', $nodeClass['bodyColumn']);
+        $this->assertSame('generalContentBlock', $nodeClass['bodyWrapBlock']['blockType']);
+        $this->assertSame('ckeditorDefault', $nodeClass['bodyWrapBlock']['fieldHandle']);
+        $this->assertArrayNotHasKey('title', $nodeClass['bodyWrapBlock']);
+    }
+
+    public function testFallbackEntryTypeSynthesizesBodyWrapBlockWhenContentColumnExists(): void
+    {
+        $fqcn = 'App\\Entity\\Pages\\EventRegisterPage';
+        $mapping = [
+            'proposals' => [
+                $this->columnRow('event_register_pages', 'content', 'eventRegisterPage', ''),
+            ],
+        ];
+        $pageStructure = [$fqcn => ['tableName' => 'event_register_pages']];
+
+        $compiled = $this->compiler->compile(
+            $mapping,
+            $pageStructure,
+            ['nl' => 'default'],
+            'contentPage',
+            'textContentBlock',
+            ['contentPage'],
+            ['pageBuilder' => ['generalContentBlock']],
+            [],
+            ['contentPage' => ['title', 'slug', 'header', 'pageBuilder', 'seo']],
+        );
+
+        $nodeClass = $compiled['nodeClasses'][$fqcn];
+        $this->assertSame('pageBuilder', $nodeClass['pageBuilderHandle']);
+        $this->assertSame('content', $nodeClass['bodyColumn']);
+        $this->assertSame('generalContentBlock', $nodeClass['bodyWrapBlock']['blockType']);
+        $this->assertSame('ckeditorDefault', $nodeClass['bodyWrapBlock']['fieldHandle']);
+        $this->assertArrayNotHasKey('title', $nodeClass['bodyWrapBlock']);
     }
 
     /** @return array<string, mixed> */
@@ -112,8 +195,8 @@ final class MappingCompilerLayoutBlocksTest extends TestCase
     /** @return array<string, mixed> */
     private function layoutRow(
         string $fqcn,
-        ?string $headerBlock = null,
-        ?string $bodyWrapBlock = null,
+        ?array $headerBlock = null,
+        ?array $bodyWrapBlock = null,
         ?string $bodyColumn = null,
         string $status = 'accepted',
     ): array {

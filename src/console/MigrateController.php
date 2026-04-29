@@ -8,8 +8,10 @@ use Craft;
 use craft\console\Controller;
 use craft\db\MigrationManager;
 use craft\helpers\Console;
+use craft\helpers\FileHelper;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
@@ -41,6 +43,8 @@ use yii\console\ExitCode;
 class MigrateController extends Controller
 {
     use NeverProductionTrait;
+
+    private const TRANSFORM_BLOCK_MARKER = 'transform-block.json';
 
     /** Apply writes to Craft. Default false = dry-run. */
     public bool $live = false;
@@ -84,14 +88,21 @@ class MigrateController extends Controller
     public bool $noRetour = false;
 
     /**
-     * Phase 8.5 / D-24 — `--no-rel-join` per-run override. Bypasses
-     * ExtractService's Doctrine ManyToOne FK join (the helper that embeds
-     * `_rel:<prop>.<col>` keys into detail rows + page-part rows). When
-     * the related tables are large or the join queries dominate extract
-     * latency, flip this on to fall back to "FK column only" payloads.
-     * Default false → join runs (when Settings::joinFkRelations also true).
+     * Phase 8.5 / D-24 — `--no-rel-join` per-run override. Bypasses optional
+     * ExtractService Doctrine ManyToOne FK expansion (the helper that embeds
+     * `_rel:<prop>.<col>` keys into detail rows + page-part rows). The setting
+     * now defaults off so extracted JSON stays source-faithful; this flag
+     * remains as a per-run safety override for installations that opt in.
      */
     public bool $noRelJoin = false;
+
+    /**
+     * Phase 10: full taxonomy vocabulary import is explicit opt-in. Default
+     * actionIndex behavior is page-rooted referenced-only lazy taxonomy
+     * resolution; this flag restores the pre-page-load migrateAll() path when
+     * operators intentionally want unreferenced taxonomy rows too.
+     */
+    public bool $includeUnreferencedTaxonomies = false;
 
     /**
      * D-65 verbosity counter — `-v` / `-vv` / `-vvv`. Yii parses repeated
@@ -113,6 +124,7 @@ class MigrateController extends Controller
             'noSeo', 'noRetour',
             // Phase 8.5 / D-24 — Doctrine ManyToOne FK join bypass per-run.
             'noRelJoin',
+            'includeUnreferencedTaxonomies',
             // D-65: -v..-vvv verbosity (string|int — see verbosityLevel()).
             'verbose',
             // Phase 7 debug flags.
@@ -188,7 +200,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate: extract → transform → load → finalize\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $this->applyNoRelJoinOverride($plugin);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $report = new MigrationReport();
@@ -218,6 +230,23 @@ class MigrateController extends Controller
             "  OK   mapping loaded (" . count($mapping['proposals'] ?? []) . " rows) → {$mappingPath}\n",
             Console::FG_GREEN,
         );
+        $compiledPreflight = $this->preflightCompiledMapping($mapping, $this->migrateTargetSchema($plugin));
+        if ($compiledPreflight['missing'] !== [] || $compiledPreflight['fatal'] !== []) {
+            $this->stderr(
+                "  FAIL compiled mapping preflight blocked migrate --live\n",
+                Console::FG_RED,
+            );
+            foreach ($compiledPreflight['messages'] as $message) {
+                $this->stderr("  - {$message}\n", Console::FG_RED);
+            }
+            return ExitCode::CONFIG;
+        }
+        $this->clearFullPipelineArtifacts($storageDir);
+        $opts = new MigrationOptions(
+            dryRun: !$this->live,
+            force: $this->force,
+            skipAssets: false,
+        );
 
         // Step 3: extract (writes storage/migration/extracted/<fqcn-slug>/<node-id>.json).
         $extractProgress = $this->makeExtractProgress();
@@ -236,20 +265,33 @@ class MigrateController extends Controller
             Console::FG_GREEN,
         );
 
+        if ($this->live) {
+            $dependencyExit = $this->migrateMissingPageDependencies($storageDir, $mapping, $filters, $opts, $report);
+            if ($dependencyExit !== ExitCode::OK) {
+                return $dependencyExit;
+            }
+            $extractedNodes = $this->countExtractedFiles($storageDir);
+        }
+
         // Step 4: transform — stream extracted/*.json through TransformService and persist
         // each yielded payload to transformed/entries/<fqcn-slug>/<node-id>.json so the
         // load stage can read by file path (AtomicMigrationService::migrateOneEntry's
         // verbatim v1 contract takes a file path, not a tuple — Plan 03-12 SUMMARY).
         $transformedDir = $storageDir . '/transformed/entries';
         $transformedCount = 0;
+        $this->clearTransformBlockMarker($storageDir);
         // Use the just-completed extract count as the transform denominator — extract and
         // transform are 1:1 at the input level (locale fan-out happens in transform's output).
         $transformProgress = $this->makeTransformProgress($extractedNodes);
+        $hasBlockingTransformRelationFailure = false;
         try {
             $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions(), $transformProgress) as $payload) {
+            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions($report), $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
-                    continue; // sentinel — counters available via the Transform run report
+                    $hasBlockingTransformRelationFailure =
+                        $this->mergeTransformReportSentinel($payload, $report)
+                        || $hasBlockingTransformRelationFailure;
+                    continue;
                 }
                 $fqcn = (string) ($payload['stateSource'] ?? '');
                 $nodeId = (int) ($payload['kuma_node_id'] ?? 0);
@@ -282,23 +324,33 @@ class MigrateController extends Controller
             Console::FG_GREEN,
         );
 
+        if ($hasBlockingTransformRelationFailure) {
+            $this->writeTransformBlockMarker($storageDir, $report);
+        }
+
+        if ($this->live && $hasBlockingTransformRelationFailure) {
+            $this->recordBlockingTransformFailure($report);
+            $this->writeReport($storageDir, $report, $filters, $tRunStart);
+            return $this->reportExitCode($report);
+        }
+
         // FH-03: --preload-assets ingests the full referenced asset set in one batch
         // before the per-entry loop. Default JIT materialises inside migrateOneEntry().
         // Hoisted above the load step so the SEO + Retour bolt-ons (D-55) downstream
         // can re-use the same MigrationOptions instance without redeclaring.
-        $opts = new MigrationOptions(
-            dryRun: !$this->live,
-            force: $this->force,
-            skipAssets: false,
-        );
-
-        // Step 4.5 (Phase 8 / D-03 / TAX-08): taxonomies migrate BEFORE pages.
-        // Their state rows must exist before any page's RelationHandler does the
-        // FK -> entryId lookup, so this bolt-on lands BETWEEN transform-complete
-        // and load-entries (NOT between load and finalize like SEO/Retour).
-        // Gated on --live to match the load-entries gate; dry-run skips silently.
-        if ($this->live) {
+        // Step 4.5 (Phase 10): default taxonomy mode is page-rooted and
+        // referenced-only. The full pre-load migrateAll() import runs only when
+        // operators explicitly opt in via CLI/settings; the standalone
+        // migrate/taxonomies sub-action remains the explicit full import path.
+        $settings = $plugin->getSettings();
+        $includeUnreferencedTaxonomies = $this->includeUnreferencedTaxonomies
+            || (bool) $settings->includeUnreferencedTaxonomies;
+        $taxonomyMode = $includeUnreferencedTaxonomies ? 'full' : 'referenced-only';
+        $report->warn('taxonomyMode=' . $taxonomyMode);
+        $this->stdout("  Taxonomy mode: {$taxonomyMode}\n", Console::FG_CYAN);
+        if ($includeUnreferencedTaxonomies) {
             try {
+                $plugin->taxonomyMigrationService->filters = $filters;
                 $taxonomyReport = $plugin->taxonomyMigrationService->migrateAll($opts);
             } catch (Throwable $e) {
                 $this->stderr("  FAIL taxonomies: {$e->getMessage()}\n", Console::FG_RED);
@@ -323,7 +375,8 @@ class MigrateController extends Controller
         } else {
             if ($this->preloadAssets) {
                 try {
-                    $plugin->assetMigrationService->ingestReferenced($opts, $filters);
+                    $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir, $filters);
+                    $plugin->assetMigrationService->ingestReferenced($opts, $filters, $referencedAssetIds);
                     $this->stdout("  OK   --preload-assets batch complete\n", Console::FG_GREEN);
                 } catch (Throwable $e) {
                     $this->stderr("  FAIL --preload-assets: {$e->getMessage()}\n", Console::FG_RED);
@@ -351,6 +404,7 @@ class MigrateController extends Controller
                 $report->incr('finalize.processed', (int) $finalizeCounts['processed']);
                 $report->incr('finalize.rewritten', (int) $finalizeCounts['rewritten']);
                 $report->incr('finalize.unresolvable', (int) $finalizeCounts['unresolvable']);
+                $this->recordFinalizeUnresolvedGate($report, $finalizeCounts);
             } catch (Throwable $e) {
                 $this->endProgressIfStarted();
                 $this->stderr(sprintf(
@@ -444,8 +498,7 @@ class MigrateController extends Controller
         $tRunMs = (int) round((microtime(true) - $tRunStart) * 1000);
         $this->logLine(sprintf('actionIndex complete in %dms', $tRunMs), 1);
 
-        $this->stdout("\nMigrate: PASS\n", Console::FG_GREEN);
-        return ExitCode::OK;
+        return $this->reportExitCode($report);
     }
 
     /**
@@ -470,13 +523,7 @@ class MigrateController extends Controller
         // here would defeat its purpose. Force noSeo=false; pass --no-retour
         // through unchanged (inert here — actionSeo never calls the Retour
         // service — but faithfully reflects the operator's invocation).
-        $filters = $plugin->filterFactory->fromCli(
-            $this->entities,
-            $this->locales,
-            $this->since,
-            false,
-            $this->noRetour,
-        );
+        $filters = $this->buildRuntimeFilters($plugin, false, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -531,13 +578,7 @@ class MigrateController extends Controller
         // --no-retour here would defeat its purpose. Force noRetour=false;
         // pass --no-seo through unchanged (inert here — actionRetour never
         // calls the SEO service — but faithfully reflects the invocation).
-        $filters = $plugin->filterFactory->fromCli(
-            $this->entities,
-            $this->locales,
-            $this->since,
-            $this->noSeo,
-            false,
-        );
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, false);
 
         if (!$this->live) {
             $this->stdout(
@@ -570,8 +611,7 @@ class MigrateController extends Controller
     }
 
     /**
-     * Sub-action: migrate Doctrine standalone taxonomy entities (NewsCategory,
-     * CaseStudyCategory, Employee-style standalone tables) into Craft entries.
+     * Sub-action: migrate Doctrine standalone taxonomy/classifier entities into Craft entries.
      *
      * Phase 8 / D-03 / TAX-08: standalone resume / debug entry point. The
      * actionIndex bolt-on already runs taxonomies BEFORE pages on every full
@@ -603,13 +643,7 @@ class MigrateController extends Controller
         $plugin = Plugin::getInstance();
         // Phase 4.1 / D-26: pass --no-seo / --no-retour through unchanged for
         // filter shape parity. TaxonomyMigrationService never reads them.
-        $filters = $plugin->filterFactory->fromCli(
-            $this->entities,
-            $this->locales,
-            $this->since,
-            $this->noSeo,
-            $this->noRetour,
-        );
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -623,6 +657,7 @@ class MigrateController extends Controller
         $report = new MigrationReport();
 
         try {
+            $plugin->taxonomyMigrationService->filters = $filters;
             $taxonomyReport = $plugin->taxonomyMigrationService->migrateAll($opts);
         } catch (Throwable $e) {
             $this->stderr("  FAIL taxonomies: {$e->getMessage()}\n", Console::FG_RED);
@@ -652,7 +687,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (extract): legacy DB → storage/migration/extracted/\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $this->applyNoRelJoinOverride($plugin);
 
         if (($exit = $this->preflightLocale($filters)) !== ExitCode::OK) {
@@ -697,7 +732,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (transform): extracted → transformed/entries\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
 
         if (($exit = $this->preflightLocale($filters)) !== ExitCode::OK) {
@@ -710,13 +745,19 @@ class MigrateController extends Controller
 
         $transformedDir = $storageDir . '/transformed/entries';
         $count = 0;
+        $report = new MigrationReport();
+        $hasBlockingTransformRelationFailure = false;
+        $this->clearTransformBlockMarker($storageDir);
         // For standalone transform we don't have a fresh extract precount handy; count
         // extracted/<fqcn>/*.json files on disk as the denominator. Cheap glob.
         $transformProgress = $this->makeTransformProgress($this->countExtractedFiles($storageDir));
         try {
             $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions(), $transformProgress) as $payload) {
+            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions($report), $transformProgress) as $payload) {
                 if (isset($payload['__report'])) {
+                    $hasBlockingTransformRelationFailure =
+                        $this->mergeTransformReportSentinel($payload, $report)
+                        || $hasBlockingTransformRelationFailure;
                     continue;
                 }
                 $fqcn = (string) ($payload['stateSource'] ?? '');
@@ -745,6 +786,19 @@ class MigrateController extends Controller
         }
         $this->endProgressIfStarted();
 
+        if ($hasBlockingTransformRelationFailure) {
+            $this->writeTransformBlockMarker($storageDir, $report);
+        }
+
+        if ($this->live && $hasBlockingTransformRelationFailure) {
+            $this->recordBlockingTransformFailure($report);
+            $this->writeReport($storageDir, $report, $filters);
+            return $this->reportExitCode($report);
+        }
+        if ($report->warnings !== [] || $report->hasFailures()) {
+            $this->writeReport($storageDir, $report, $filters);
+        }
+
         $this->stdout(
             "  OK   transform complete ({$count} payloads → {$transformedDir})\n",
             Console::FG_GREEN,
@@ -766,7 +820,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (load): transformed/entries → Craft\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $transformedDir = $storageDir . '/transformed/entries';
         $report = new MigrationReport();
@@ -775,12 +829,46 @@ class MigrateController extends Controller
             return $exit;
         }
 
+        $mapping = $this->loadMappingOrFail();
+        if ($mapping === null) {
+            return ExitCode::CONFIG;
+        }
+        $compiledPreflight = $this->preflightCompiledMapping($mapping, $this->migrateTargetSchema($plugin));
+        if ($compiledPreflight['missing'] !== [] || $compiledPreflight['fatal'] !== []) {
+            $this->stderr(
+                "  FAIL compiled mapping preflight blocked migrate --live\n",
+                Console::FG_RED,
+            );
+            foreach ($compiledPreflight['messages'] as $message) {
+                $this->stderr("  - {$message}\n", Console::FG_RED);
+            }
+            return ExitCode::CONFIG;
+        }
+
         if (!is_dir($transformedDir)) {
             $this->stderr(
                 "  FAIL transformed/entries dir missing — run `migrate/transform` first ({$transformedDir})\n",
                 Console::FG_RED,
             );
             return ExitCode::CONFIG;
+        }
+
+        $transformBlockMarker = $this->readTransformBlockMarker($storageDir);
+        if ($transformBlockMarker !== null) {
+            $message = $this->transformBlockMarkerLoadFailureMessage($transformBlockMarker);
+            if ($this->live) {
+                $report->warn($message);
+                $report->recordFailure(
+                    'transform',
+                    'transform',
+                    'TransformService',
+                    new \RuntimeException($message),
+                );
+                $this->stderr("  FAIL {$message}\n", Console::FG_RED);
+                $this->writeReport($storageDir, $report, $filters);
+                return $this->reportExitCode($report);
+            }
+            $this->stdout("  WARN {$message}\n", Console::FG_YELLOW);
         }
 
         if (!$this->live) {
@@ -804,7 +892,8 @@ class MigrateController extends Controller
 
         if ($this->preloadAssets) {
             try {
-                $plugin->assetMigrationService->ingestReferenced($opts, $filters);
+                $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir, $filters);
+                $plugin->assetMigrationService->ingestReferenced($opts, $filters, $referencedAssetIds);
                 $this->stdout("  OK   --preload-assets batch complete\n", Console::FG_GREEN);
             } catch (Throwable $e) {
                 $this->stderr("  FAIL --preload-assets: {$e->getMessage()}\n", Console::FG_RED);
@@ -814,7 +903,10 @@ class MigrateController extends Controller
 
         $exit = $this->runLoadFromDisk($transformedDir, $opts, $report, $filters);
         $this->writeReport($storageDir, $report, $filters);
-        return $exit;
+        if ($exit !== ExitCode::OK) {
+            return $exit;
+        }
+        return $this->reportExitCode($report);
     }
 
     /**
@@ -830,7 +922,7 @@ class MigrateController extends Controller
         $this->stdout("Migrate (finalize): CKEditor token resolution pass\n", Console::FG_CYAN);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
 
         if (!$this->live) {
             $this->stdout(
@@ -840,6 +932,8 @@ class MigrateController extends Controller
             return ExitCode::OK;
         }
 
+        $report = new MigrationReport();
+        $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $finalizeProgress = $this->makeFinalizeProgress();
         try {
             $counts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
@@ -861,8 +955,15 @@ class MigrateController extends Controller
             (int) $counts['rewritten'],
             (int) $counts['unresolvable'],
         ), Console::FG_GREEN);
+        $report->incr('finalize.processed', (int) $counts['processed']);
+        $report->incr('finalize.rewritten', (int) $counts['rewritten']);
+        $report->incr('finalize.unresolvable', (int) $counts['unresolvable']);
+        $this->recordFinalizeUnresolvedGate($report, $counts);
+        if ($report->warnings !== [] || $report->hasFailures() || $report->finalizeUnresolvedDiagnostics !== []) {
+            $this->writeReport($storageDir, $report, $filters);
+        }
 
-        return ExitCode::OK;
+        return $this->reportExitCode($report);
     }
 
     /**
@@ -883,7 +984,7 @@ class MigrateController extends Controller
         }
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli($this->entities, $this->locales, $this->since, $this->noSeo, $this->noRetour);
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
 
         $entitiesScope = $filters->entities === [] ? '(all migrated)' : implode(', ', $filters->entities);
         $localesScope = $filters->locales === [] ? '(all sites)' : implode(', ', $filters->locales);
@@ -960,13 +1061,7 @@ class MigrateController extends Controller
         $this->logLine('actionSyncAssets started; verbosity=' . $this->verbosityLevel(), 1);
 
         $plugin = Plugin::getInstance();
-        $filters = $plugin->filterFactory->fromCli(
-            $this->entities,
-            $this->locales,
-            $this->since,
-            $this->noSeo,
-            $this->noRetour,
-        );
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
         $storageDir = Craft::$app->path->getStoragePath() . '/migration';
         $report = new MigrationReport();
         $tStart = microtime(true);
@@ -1321,8 +1416,8 @@ class MigrateController extends Controller
     /**
      * Phase 8.5 / D-24 — apply `--no-rel-join` per-run override on the
      * extract service. The flag only DISABLES (mirrors `--no-seo`); it never
-     * enables. So when `Settings::joinFkRelations` is already false, this
-     * method is a no-op even with the flag set.
+     * enables. So when `Settings::joinFkRelations` is false (the source-
+     * faithful default), this method is a no-op even with the flag set.
      *
      * Plugin::init() seeds `extractService->joinFkRelations` from Settings;
      * we only need to override here when the operator opts out per-run.
@@ -1336,6 +1431,44 @@ class MigrateController extends Controller
                 Console::FG_YELLOW,
             );
         }
+    }
+
+    private function buildRuntimeFilters(Plugin $plugin, bool $noSeo, bool $noRetour): MigrationFilters
+    {
+        return $plugin->filterFactory->fromCli(
+            entitiesArg: $this->entities,
+            localesArg: $this->locales,
+            sinceArg: $this->since,
+            noSeo: $noSeo,
+            noRetour: $noRetour,
+            relationGraph: $this->loadRuntimeRelationGraph(),
+        );
+    }
+
+    /**
+     * Load the analyzer's relation-graph artifact for all runtime actions.
+     *
+     * Missing artifact is non-fatal: unscoped runs and first-run dry paths keep
+     * working, while scoped runs still have exact FQCN/basename filtering.
+     *
+     * @return array<string, list<string>>
+     */
+    private function loadRuntimeRelationGraph(): array
+    {
+        $path = Craft::$app->path->getStoragePath() . '/migration/relation-graph.json';
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $raw = file_get_contents($path);
+        if ($raw === false || $raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        return is_array($decoded)
+            ? FilterFactory::relationGraphFromArtifact($decoded)
+            : [];
     }
 
     /**
@@ -1376,6 +1509,137 @@ class MigrateController extends Controller
             Console::FG_GREEN,
         );
         return $mapping;
+    }
+
+    /**
+     * Phase 9 / D-10 + D-11: migrate must not silently run against a mapping
+     * that has accepted operator decisions but lacks the compiled runtime blocks
+     * generated by `kunstmaan-migrator/compile`.
+     *
+     * Required base blocks are always structural runtime prerequisites. Optional
+     * compiled blocks are required only when accepted proposal rows imply that
+     * runtime surface will be used.
+     *
+     * @param array<string, mixed> $mapping
+     * @return array{missing: list<string>, fatal: list<string>, messages: list<string>}
+     */
+    private function preflightCompiledMapping(array $mapping, ?array $targetSchema = null): array
+    {
+        $missing = [];
+        foreach (['nodeClasses', 'sections', 'sites'] as $block) {
+            if (!$this->mappingBlockPresent($mapping, $block)) {
+                $missing[] = $block;
+            }
+        }
+
+        $acceptedKinds = [];
+        foreach ((array) ($mapping['proposals'] ?? []) as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            if ((string) ($row['status'] ?? '') !== 'accepted') {
+                continue;
+            }
+            $acceptedKinds[(string) ($row['kind'] ?? 'column')] = true;
+        }
+
+        $conditionalBlocks = [
+            'pagePart' => 'pageParts',
+            'taxonomy' => 'taxonomies',
+            'dataProvider' => 'dataProviders',
+        ];
+        foreach ($conditionalBlocks as $kind => $block) {
+            if (isset($acceptedKinds[$kind]) && !$this->mappingBlockPresent($mapping, $block)) {
+                $missing[] = $block;
+            }
+        }
+
+        $fatal = [];
+        if ($targetSchema !== null && $this->mappingBlockPresent($mapping, 'sections')) {
+            $validation = (new \lameco\kunstmaanmigrator\compile\CraftTargetIntrospector())
+                ->validateWithSeverity($mapping, $targetSchema);
+            $fatal = $validation['fatal'];
+        }
+
+        if ($missing === [] && $fatal === []) {
+            return ['missing' => [], 'fatal' => [], 'messages' => []];
+        }
+
+        $messages = [];
+        if ($missing !== []) {
+            $messages[] = 'Run `./craft kunstmaan-migrator/compile` after analyze/map so mapping.yaml contains compiled runtime blocks.';
+            $messages[] = 'Missing compiled block(s): ' . implode(', ', $missing);
+        }
+        foreach ($fatal as $message) {
+            $messages[] = 'Load-fatal target validation: ' . $message;
+        }
+
+        return [
+            'missing' => $missing,
+            'fatal' => $fatal,
+            'messages' => $messages,
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     */
+    private function mappingBlockPresent(array $mapping, string $block): bool
+    {
+        return isset($mapping[$block])
+            && is_array($mapping[$block])
+            && $mapping[$block] !== [];
+    }
+
+    /**
+     * Build the schema facade consumed by CraftTargetIntrospector during live
+     * migrate preflight. This mirrors CompileController's target schema but is
+     * local to migrate so stale hand-edited compiled mappings are blocked even
+     * when operators skip a fresh compile.
+     *
+     * @return array<string, mixed>
+     */
+    private function migrateTargetSchema(Plugin $plugin): array
+    {
+        $sections = [];
+        foreach ($plugin->craftKnowledgeBase->sectionToEntryTypes() as $handle => $entryTypes) {
+            $sections[(string) $handle] = ['entryTypes' => $entryTypes];
+        }
+
+        $entryTypes = [];
+        foreach ($plugin->craftKnowledgeBase->buildFieldIndex() as $entryType => $fields) {
+            $fieldMap = [];
+            foreach ((array) $fields as $field) {
+                if (!is_array($field)) { continue; }
+                $handle = (string) ($field['handle'] ?? '');
+                if ($handle === '' || str_contains($handle, '.')) { continue; }
+                $fieldMap[$handle] = ['type' => strtolower((string) ($field['classification'] ?? $field['type'] ?? 'plain'))];
+                if (isset($field['blocks']) && is_array($field['blocks'])) {
+                    $fieldMap[$handle]['blocks'] = $field['blocks'];
+                }
+            }
+            $entryTypes[(string) $entryType] = ['fields' => $fieldMap];
+        }
+
+        $volumes = [];
+        try {
+            foreach (Craft::$app->volumes->getAllVolumes() as $volume) {
+                $handle = (string) $volume->handle;
+                if ($handle !== '') { $volumes[] = $handle; }
+            }
+        } catch (Throwable) {
+            $volumes = [];
+        }
+
+        return [
+            'sections' => $sections,
+            'entryTypes' => $entryTypes,
+            'volumes' => array_values(array_unique($volumes)),
+            'plugins' => [
+                'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
+                'retour' => Craft::$app->plugins->getPlugin('retour') !== null,
+            ],
+        ];
     }
 
     /**
@@ -1430,6 +1694,119 @@ class MigrateController extends Controller
     }
 
     /**
+     * Phase 9 / D-20: collect the referenced kuma_media ids from the current
+     * in-scope transformed payload tree. This keeps --preload-assets aligned
+     * with the page-rooted load set instead of walking the full legacy media
+     * table. CKEditor [M123] tokens and deferred asset:123 tokens are both
+     * preserved by transform/load and are safe preload inputs.
+     *
+     * @return list<int>
+     */
+    private function collectReferencedAssetIdsFromPayloadDirectory(string $transformedDir, ?MigrationFilters $filters = null): array
+    {
+        $ids = [];
+        foreach ($this->iterateTransformedFiles($transformedDir) as $jsonPath) {
+            if ($filters !== null && !$this->payloadFileMatchesFilters($jsonPath, $filters)) {
+                continue;
+            }
+            $raw = file_get_contents($jsonPath);
+            if ($raw === false) {
+                continue;
+            }
+            $payload = json_decode($raw, true);
+            if (!is_array($payload)) {
+                continue;
+            }
+            foreach (self::collectReferencedAssetIdsFromPayload($payload) as $id) {
+                $ids[$id] = true;
+            }
+        }
+
+        $out = array_keys($ids);
+        sort($out, SORT_NUMERIC);
+        return array_map('intval', $out);
+    }
+
+    private function payloadFileMatchesFilters(string $jsonPath, MigrationFilters $filters): bool
+    {
+        if ($filters->entities === []) {
+            return true;
+        }
+        if ($this->isPromotedTargetPayloadFile($jsonPath)) {
+            return true;
+        }
+
+        $fqcn = str_replace('_', '\\', basename(dirname($jsonPath)));
+        return $filters->allows($fqcn);
+    }
+
+    private function isPromotedTargetPayloadFile(string $jsonPath): bool
+    {
+        $raw = file_get_contents($jsonPath);
+        if ($raw === false) {
+            return false;
+        }
+        $payload = json_decode($raw, true);
+        return is_array($payload)
+            && (
+                ($payload['kind'] ?? '') === 'promotedTarget'
+                || (bool) ($payload['promotedTarget'] ?? false)
+            )
+            && (string) ($payload['stateSource'] ?? '') !== '';
+    }
+
+    /**
+     * Pure recursive collector for in-payload media references.
+     *
+     * @param array<string, mixed> $payload
+     * @return list<int>
+     */
+    private static function collectReferencedAssetIdsFromPayload(array $payload): array
+    {
+        $ids = [];
+        $explicitKeys = [
+            'referencedAssetIds' => true,
+            'referencedMediaIds' => true,
+            'assetIds' => true,
+            'mediaIds' => true,
+        ];
+
+        $walk = static function (mixed $value, bool $allowBareIds = false) use (&$walk, &$ids, $explicitKeys): void {
+            if (is_int($value) && $allowBareIds && $value > 0) {
+                $ids[$value] = true;
+                return;
+            }
+            if (is_string($value)) {
+                if ($allowBareIds && ctype_digit($value) && (int) $value > 0) {
+                    $ids[(int) $value] = true;
+                }
+                if (preg_match_all('/\basset:(\d+)\b/', $value, $assetMatches)) {
+                    foreach ($assetMatches[1] as $id) {
+                        $ids[(int) $id] = true;
+                    }
+                }
+                if (preg_match_all('/\[M(\d+)\]/', $value, $mediaMatches)) {
+                    foreach ($mediaMatches[1] as $id) {
+                        $ids[(int) $id] = true;
+                    }
+                }
+                return;
+            }
+            if (!is_array($value)) {
+                return;
+            }
+            foreach ($value as $key => $child) {
+                $walk($child, $allowBareIds || (is_string($key) && isset($explicitKeys[$key])));
+            }
+        };
+
+        $walk($payload);
+        $out = array_keys($ids);
+        sort($out, SORT_NUMERIC);
+        return array_map('intval', $out);
+    }
+
+    /**
      * Per-entry load loop with ETL-06 progress emission.
      *
      * Emits `[N/total] <slug> → created|updated|skipped` to stdout (FG_GREEN) on
@@ -1450,27 +1827,20 @@ class MigrateController extends Controller
         // through. Transform's `--entities` filter prevents NEW writes, but
         // load was reading every file on disk regardless. Match by FQCN slug
         // (path is `transformed/entries/<fqcnSlug>/<nodeId>.json`).
-        $entityAllow = $filters !== null ? $filters->entities : [];
         $files = [];
         foreach ($this->iterateTransformedFiles($transformedDir) as $f) {
-            if ($entityAllow !== []) {
-                // Path is `transformed/entries/<fqcnSlug>/<nodeId>.json` — the
-                // FQCN slug is the parent dir name (e.g. `App_Entity_Pages_HomePage`).
-                // Match operator-supplied --entities against BOTH the simple
-                // basename AND the reconstructed FQCN — mirrors TransformService's
-                // accept-either rule (TransformService:135-141). Without this,
-                // operators passing `--entities=App\Entity\Pages\CaseStudyPage`
-                // got transform output but zero load (empty-result).
-                $fqcnSlug = basename(dirname($f));
-                $parts = explode('_', $fqcnSlug);
-                $basename = (string) end($parts);
-                $fqcn = str_replace('_', '\\', $fqcnSlug);
-                if (!in_array($basename, $entityAllow, true) && !in_array($fqcn, $entityAllow, true)) {
-                    continue;
-                }
+            if ($filters !== null && !$this->payloadFileMatchesFilters($f, $filters)) {
+                continue;
             }
             $files[] = $f;
         }
+        usort($files, fn(string $a, string $b): int => [
+            $this->isPromotedTargetPayloadFile($a) ? 0 : 1,
+            $a,
+        ] <=> [
+            $this->isPromotedTargetPayloadFile($b) ? 0 : 1,
+            $b,
+        ]);
         $total = count($files);
         if ($total === 0) {
             $this->stdout("  WARN no transformed payloads to load\n", Console::FG_YELLOW);
@@ -1513,6 +1883,175 @@ class MigrateController extends Controller
         }
 
         return ExitCode::OK;
+    }
+
+    /**
+     * Phase 9 / D-18: final command status must reflect the report after all
+     * diagnostic continuation and REPORT.md writing has happened. Per-entry
+     * failures still continue through runLoadFromDisk(); this method only
+     * translates the central report state into truthful process status.
+     */
+    private function reportExitCode(MigrationReport $report): int
+    {
+        if ($report->hasFailures()) {
+            $this->stdout(
+                sprintf("\nMigrate: FAIL (%d failures)\n", $report->failureCount()),
+                Console::FG_RED,
+            );
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+
+        $this->stdout("\nMigrate: PASS\n", Console::FG_GREEN);
+        return ExitCode::OK;
+    }
+
+    /**
+     * Merge TransformService's local sentinel report into the main MigrationReport.
+     *
+     * Decision: dry-run keeps relation/taxonomy handler failures as visible
+     * warnings so operators can inspect the blast radius without writes. Live
+     * mode treats relation/taxonomy handler failures as blocking before load,
+     * because preserving page-owned relation fidelity is more important than
+     * saving entries with omitted relation fields.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function mergeTransformReportSentinel(array $payload, MigrationReport $report): bool
+    {
+        $hasBlockingRelationOrTaxonomyFailure = false;
+        $warnings = (array) ($payload['__report']['warnings'] ?? []);
+        foreach ($warnings as $warning) {
+            $mergedWarning = 'Transform: ' . (string) $warning;
+            $report->warn($mergedWarning);
+            $report->incr('transform.warning');
+            if ($this->isBlockingTransformRelationWarning($mergedWarning)) {
+                $hasBlockingRelationOrTaxonomyFailure = true;
+            }
+        }
+        return $hasBlockingRelationOrTaxonomyFailure;
+    }
+
+    private function isBlockingTransformRelationWarning(string $warning): bool
+    {
+        return str_contains($warning, "Handler 'relation' failed")
+            || str_contains($warning, "Handler 'taxonomy' failed")
+            || str_contains($warning, 'TaxonomyMigrationService')
+            || (str_contains($warning, 'Handler ') && stripos($warning, 'taxonomy') !== false);
+    }
+
+    private function recordBlockingTransformFailure(MigrationReport $report): void
+    {
+        $report->recordFailure(
+            'transform',
+            'transform',
+            'TransformService',
+            new \RuntimeException(
+                'TransformService relation/taxonomy handler failure blocked live load; inspect Transform: warnings in REPORT.md.',
+            ),
+        );
+    }
+
+    /** @param array<string, mixed> $finalizeCounts */
+    private function recordFinalizeUnresolvedGate(MigrationReport $report, array $finalizeCounts): void
+    {
+        $count = (int) ($finalizeCounts['unresolvable'] ?? 0);
+        foreach ((array) ($finalizeCounts['unresolvedDiagnostics'] ?? []) as $row) {
+            if (is_array($row)) {
+                $report->finalizeUnresolvedDiagnostics[] = $row;
+            }
+        }
+        $outOfScopeCount = count((array) ($finalizeCounts['outOfScopeDiagnostics'] ?? []));
+        if ($outOfScopeCount > 0) {
+            $report->warn(
+                'finalize classified ' . $outOfScopeCount
+                . ' CKEditor references outside live page-rooted scope; release gate did not block on these rows.',
+            );
+        }
+        if ($count <= 0) {
+            return;
+        }
+        $message = 'FAIL finalize unresolved: finalize.unresolvable=' . $count
+            . ' live finalize left unresolved CKEditor references; release is blocked until resolved or explicitly classified outside Page-rooted release scope.';
+        $report->warn($message);
+        $report->recordFailure('finalize', 'finalize', 'FinalizeWalker', new \RuntimeException($message));
+        $this->stderr("  {$message}\n", Console::FG_RED);
+    }
+
+    private function transformBlockMarkerPath(string $storageDir): string
+    {
+        return rtrim($storageDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . self::TRANSFORM_BLOCK_MARKER;
+    }
+
+    private function clearTransformBlockMarker(string $storageDir): void
+    {
+        $path = $this->transformBlockMarkerPath($storageDir);
+        if (is_file($path)) {
+            @unlink($path);
+        }
+    }
+
+    private function clearFullPipelineArtifacts(string $storageDir): void
+    {
+        foreach ([$storageDir . '/extracted', $storageDir . '/transformed/entries'] as $path) {
+            if (is_dir($path)) {
+                FileHelper::removeDirectory($path);
+            }
+        }
+    }
+
+    private function writeTransformBlockMarker(string $storageDir, MigrationReport $report): void
+    {
+        $path = $this->transformBlockMarkerPath($storageDir);
+        $dir = dirname($path);
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            $report->warn("Could not create transform block marker directory: {$dir}");
+            return;
+        }
+
+        $payload = [
+            'blocked' => true,
+            'createdAt' => gmdate('c'),
+            'reason' => 'TransformService relation/taxonomy handler failure blocked live load.',
+            'warnings' => array_values(array_filter(
+                $report->warnings,
+                fn (string $warning): bool => $this->isBlockingTransformRelationWarning($warning),
+            )),
+        ];
+        $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($json === false || file_put_contents($path, $json . "\n") === false) {
+            $report->warn("Could not write transform block marker: {$path}");
+        }
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function readTransformBlockMarker(string $storageDir): ?array
+    {
+        $path = $this->transformBlockMarkerPath($storageDir);
+        if (!is_file($path)) {
+            return null;
+        }
+        $raw = file_get_contents($path);
+        if ($raw === false || trim($raw) === '') {
+            return ['path' => $path];
+        }
+        $decoded = json_decode($raw, true);
+        return is_array($decoded)
+            ? ['path' => $path] + $decoded
+            : ['path' => $path];
+    }
+
+    /**
+     * @param array<string, mixed> $marker
+     */
+    private function transformBlockMarkerLoadFailureMessage(array $marker): string
+    {
+        $path = (string) ($marker['path'] ?? self::TRANSFORM_BLOCK_MARKER);
+        return sprintf(
+            'prior transform relation/taxonomy failure marker blocks live load (%s); re-run migrate/transform after fixing transform warnings.',
+            $path,
+        );
     }
 
     /**
@@ -1699,7 +2238,7 @@ class MigrateController extends Controller
         $lines[] = "";
         $lines[] = "| Bucket | Count |";
         $lines[] = "|--------|------:|";
-        $buckets = ['created', 'updated', 'skipped', 'failed', 'finalize.processed', 'finalize.rewritten', 'finalize.unresolvable'];
+        $buckets = ['created', 'updated', 'skipped', 'failed', 'finalize.processed', 'finalize.rewritten', 'finalize.unresolvable', 'relation.unresolved', 'relation.intent.drop', 'relation.intent.out_of_scope', 'relation.promoted'];
         foreach ($buckets as $bucket) {
             $lines[] = "| {$bucket} | " . (int) ($report->counts[$bucket] ?? 0) . " |";
         }
@@ -1761,6 +2300,17 @@ class MigrateController extends Controller
         }
         foreach (self::renderSkippedStagesSection($skippedStageLines) as $sl) {
             $lines[] = $sl;
+        }
+
+        // 3b. Validation-required fallbacks (Phase 10): successful Matrix
+        // native-title and sparse-locale primary-save fallbacks must be visible
+        // to operators without inflating entry/stage failure counts.
+        foreach (self::renderFallbacksSection($report) as $fl) {
+            $lines[] = $fl;
+        }
+
+        foreach (self::renderFinalizeUnresolvedDiagnosticsSection($report->finalizeUnresolvedDiagnostics) as $dl) {
+            $lines[] = $dl;
         }
 
         // 4. Warnings (existing).
@@ -1883,6 +2433,90 @@ class MigrateController extends Controller
         return $out;
     }
 
+    /** @param list<array<string, mixed>> $diagnostics @return list<string> */
+    public static function renderFinalizeUnresolvedDiagnosticsSection(array $diagnostics): array
+    {
+        if ($diagnostics === []) {
+            return [];
+        }
+        $out = [];
+        $out[] = '## Finalize unresolved diagnostics';
+        $out[] = '';
+        $out[] = '| token_family | legacy_id | token | site_id | entry_id | field | reason |';
+        $out[] = '|--------------|----------:|-------|--------:|---------:|-------|--------|';
+        foreach (array_slice($diagnostics, 0, 100) as $row) {
+            $out[] = sprintf(
+                '| %s | %d | `%s` | %d | %d | `%s` | %s |',
+                self::reportCell((string) ($row['tokenFamily'] ?? '')),
+                (int) ($row['legacyId'] ?? 0),
+                self::reportCell((string) ($row['token'] ?? '')),
+                (int) ($row['siteId'] ?? 0),
+                (int) ($row['entryId'] ?? 0),
+                self::reportCell((string) ($row['fieldHandle'] ?? '')),
+                self::reportCell((string) ($row['reason'] ?? '')),
+            );
+        }
+        if (count($diagnostics) > 100) {
+            $out[] = '';
+            $out[] = sprintf('_Showing 100 of %d diagnostics._', count($diagnostics));
+        }
+        $out[] = '';
+        return $out;
+    }
+
+    private static function reportCell(string $value): string
+    {
+        return str_replace('|', '\\|', $value);
+    }
+
+    public static function renderFallbacksSection(MigrationReport $report): array
+    {
+        $fallbackCounts = [];
+        foreach ($report->counts as $bucket => $count) {
+            if (str_starts_with((string) $bucket, 'fallback.')) {
+                $fallbackCounts[(string) $bucket] = (int) $count;
+            }
+        }
+
+        $fallbackWarnings = [];
+        foreach ($report->warnings as $warning) {
+            if (str_contains($warning, 'fallback:')
+                || str_contains($warning, ' fallback')
+                || str_contains($warning, 'Fallback')
+            ) {
+                $fallbackWarnings[] = $warning;
+            }
+        }
+
+        if ($fallbackCounts === [] && $fallbackWarnings === []) {
+            return [];
+        }
+
+        $out = [];
+        $out[] = '## Fallbacks';
+        $out[] = '';
+        $out[] = '| Category | Count |';
+        $out[] = '|----------|------:|';
+        foreach ($fallbackCounts as $bucket => $count) {
+            $out[] = sprintf('| %s | %d |', substr($bucket, strlen('fallback.')), $count);
+        }
+        if ($fallbackCounts === []) {
+            $out[] = '| (warning-only) | 0 |';
+        }
+        $out[] = '';
+
+        if ($fallbackWarnings !== []) {
+            $out[] = '### Fallback details';
+            $out[] = '';
+            foreach ($fallbackWarnings as $warning) {
+                $out[] = '- ' . $warning;
+            }
+            $out[] = '';
+        }
+
+        return $out;
+    }
+
     /**
      * Phase 4.1 / D-26 + D-27 — testable distinct warn-line copy for the CLI
      * --no-seo bypass path (different from Settings-disabled and from
@@ -1948,9 +2582,14 @@ class MigrateController extends Controller
      *
      * @return array<string, mixed>
      */
-    private function buildTransformOptions(): array
+    private function buildTransformOptions(?MigrationReport $report = null): array
     {
-        $opts = [];
+        $opts = [
+            'dryRun' => !$this->live,
+        ];
+        if ($report !== null) {
+            $opts['migrationReport'] = $report;
+        }
         if ($this->limit !== null) {
             $opts['limit'] = (int) $this->limit;
         }
@@ -2033,6 +2672,362 @@ class MigrateController extends Controller
         $parts = explode('\\', trim($fqcn, '\\'));
         $tail = array_slice($parts, -2);
         return implode('\\', $tail);
+    }
+
+    private function migrateMissingPageDependencies(
+        string $storageDir,
+        array $mapping,
+        MigrationFilters $parentFilters,
+        MigrationOptions $opts,
+        MigrationReport $report,
+    ): int {
+        $attempted = [];
+        $loaded = 0;
+
+        for ($pass = 1; $pass <= 5; $pass++) {
+            $dependencies = $this->collectMissingPageRelationDependencies($storageDir, $mapping, $attempted, $report);
+            if ($dependencies === []) {
+                if ($loaded > 0) {
+                    $this->stdout("  OK   dependency pre-pass migrated {$loaded} referenced page entries\n", Console::FG_GREEN);
+                }
+                return ExitCode::OK;
+            }
+
+            $count = array_sum(array_map('count', $dependencies));
+            $this->stdout("  ... dependency pre-pass {$pass}: migrating {$count} referenced page entries\n", Console::FG_YELLOW);
+
+            foreach ($dependencies as $fqcn => $nodeIds) {
+                foreach (array_keys($nodeIds) as $nodeId) {
+                    $attempted[$fqcn . ':' . (int) $nodeId] = true;
+                    try {
+                        Plugin::getInstance()->extractService->run(
+                            $mapping,
+                            new MigrationFilters(
+                                entities: [$fqcn],
+                                locales: $parentFilters->locales,
+                                since: null,
+                                noSeo: $parentFilters->noSeo,
+                                noRetour: $parentFilters->noRetour,
+                                relationGraph: $parentFilters->relationGraph,
+                            ),
+                            [
+                                'onlyNodeClass' => $fqcn,
+                                'onlyId' => (int) $nodeId,
+                            ],
+                        );
+                    } catch (Throwable $e) {
+                        $this->stderr("  FAIL dependency extract {$this->shortFqcn($fqcn)}#{$nodeId}: {$e->getMessage()}\n", Console::FG_RED);
+                        return ExitCode::UNSPECIFIED_ERROR;
+                    }
+                }
+            }
+
+            $transformExit = $this->transformDependencyPayloads($storageDir, $mapping, $parentFilters, $dependencies, $report);
+            if ($transformExit !== ExitCode::OK) {
+                return $transformExit;
+            }
+
+            $dependencyFilters = new MigrationFilters(
+                entities: array_keys($dependencies),
+                locales: $parentFilters->locales,
+                since: null,
+                noSeo: $parentFilters->noSeo,
+                noRetour: $parentFilters->noRetour,
+                relationGraph: $parentFilters->relationGraph,
+            );
+            $loadExit = $this->runLoadFromDisk($storageDir . '/transformed/entries', $opts, $report, $dependencyFilters);
+            if ($loadExit !== ExitCode::OK) {
+                return $loadExit;
+            }
+            $loaded += $count;
+        }
+
+        $report->warn('Dependency pre-pass stopped after 5 passes; possible relation cycle or unresolved dependency.');
+        return ExitCode::OK;
+    }
+
+    /**
+     * @param array<string, true> $attempted
+     * @return array<string, array<int, true>> FQCN => nodeId set
+     */
+    private function collectMissingPageRelationDependencies(
+        string $storageDir,
+        array $mapping,
+        array $attempted,
+        MigrationReport $report,
+    ): array {
+        $nodeClasses = (array) ($mapping['nodeClasses'] ?? []);
+        $stateSourceToFqcn = [];
+        foreach (array_keys($nodeClasses) as $fqcn) {
+            if (is_string($fqcn)) {
+                $stateSourceToFqcn[$this->slugify($fqcn)] = $fqcn;
+                $stateSourceToFqcn[$fqcn] = $fqcn;
+            }
+        }
+
+        $dependencies = [];
+        foreach ($this->streamExtracted($storageDir) as $payload) {
+            $ownerFqcn = (string) ($payload['fqcn'] ?? '');
+            if ($ownerFqcn === '') {
+                continue;
+            }
+            $nodeSpec = $nodeClasses[$ownerFqcn] ?? null;
+            if (!is_array($nodeSpec)) {
+                continue;
+            }
+
+            foreach ((array) ($nodeSpec['fields'] ?? []) as $fieldSpec) {
+                if (!is_array($fieldSpec) || (string) ($fieldSpec['handler'] ?? '') !== 'relation') {
+                    continue;
+                }
+                $options = (array) ($fieldSpec['handlerOptions'] ?? []);
+                $stateSource = (string) ($options['stateSource'] ?? '');
+                $targetFqcn = $stateSourceToFqcn[$stateSource] ?? null;
+                if ($targetFqcn === null || (($options['stateKeyPrefix'] ?? '') !== '')) {
+                    continue;
+                }
+
+                $sourceColumn = (string) ($fieldSpec['source'] ?? '');
+                if ($sourceColumn === '') {
+                    continue;
+                }
+
+                foreach ((array) ($payload['perSite'] ?? []) as $siteData) {
+                    $detail = (array) ($siteData['detail'] ?? []);
+                    $legacyValue = $detail[$sourceColumn] ?? null;
+                    foreach ($this->dependencyStateKeysForRelationValue($legacyValue, $options, $report) as $stateKey) {
+                        if (Plugin::getInstance()->migrationStateService->getTargetId($stateSource, (string) $stateKey) !== null) {
+                            continue;
+                        }
+                        $nodeId = $this->nodeIdForPageRef($targetFqcn, $stateKey);
+                        if ($nodeId === null) {
+                            $report->warn("Could not locate dependency page node for {$targetFqcn} ref {$stateKey}");
+                            continue;
+                        }
+                        if (isset($attempted[$targetFqcn . ':' . $nodeId])) {
+                            continue;
+                        }
+                        $dependencies[$targetFqcn][$nodeId] = true;
+                    }
+                }
+            }
+        }
+
+        return $dependencies;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return list<int>
+     */
+    private function dependencyStateKeysForRelationValue(mixed $legacyValue, array $options, MigrationReport $report): array
+    {
+        $ids = $this->normaliseLegacyIds($legacyValue);
+        if ($ids === []) {
+            return [];
+        }
+
+        if (isset($options['joinTranslation']) && is_array($options['joinTranslation'])) {
+            return $this->translateDependencyKeys($ids, $options['joinTranslation'], $report);
+        }
+
+        if (isset($options['joinTable'], $options['joinLocalColumn'], $options['joinForeignColumn'])) {
+            return $this->joinDependencyKeys($ids, $options, $report);
+        }
+
+        return $ids;
+    }
+
+    /** @return list<int> */
+    private function normaliseLegacyIds(mixed $value): array
+    {
+        if ($value === null || $value === '' || $value === []) {
+            return [];
+        }
+
+        $values = is_array($value) ? $value : [$value];
+        $ids = [];
+        foreach ($values as $item) {
+            $id = (int) $item;
+            if ($id > 0) {
+                $ids[$id] = true;
+            }
+        }
+
+        return array_keys($ids);
+    }
+
+    /**
+     * @param list<int> $ids
+     * @param array<string, mixed> $joinTranslation
+     * @return list<int>
+     */
+    private function translateDependencyKeys(array $ids, array $joinTranslation, MigrationReport $report): array
+    {
+        $table = (string) ($joinTranslation['table'] ?? '');
+        $sourceColumn = (string) ($joinTranslation['sourceColumn'] ?? '');
+        $targetColumn = (string) ($joinTranslation['targetColumn'] ?? '');
+        if (!$this->validLegacyIdentifiers([$table, $sourceColumn, $targetColumn])) {
+            $report->warn('Skipping dependency relation with invalid joinTranslation identifiers.');
+            return [];
+        }
+
+        $sql = sprintf('SELECT %s FROM %s WHERE %s = :id LIMIT 1', $targetColumn, $table, $sourceColumn);
+        $out = [];
+        foreach ($ids as $id) {
+            $row = Plugin::getInstance()->legacyDbService->queryOne($sql, [':id' => $id]);
+            if (is_array($row)) {
+                $mappedId = (int) ($row[$targetColumn] ?? 0);
+                if ($mappedId > 0) {
+                    $out[$mappedId] = true;
+                }
+            }
+        }
+
+        return array_keys($out);
+    }
+
+    /**
+     * @param list<int> $ids
+     * @param array<string, mixed> $options
+     * @return list<int>
+     */
+    private function joinDependencyKeys(array $ids, array $options, MigrationReport $report): array
+    {
+        $table = (string) ($options['joinTable'] ?? '');
+        $localColumn = (string) ($options['joinLocalColumn'] ?? '');
+        $foreignColumn = (string) ($options['joinForeignColumn'] ?? '');
+        $orderBy = isset($options['joinOrderBy']) ? (string) $options['joinOrderBy'] : '';
+        $identifiers = $orderBy === '' ? [$table, $localColumn, $foreignColumn] : [$table, $localColumn, $foreignColumn, $orderBy];
+        if (!$this->validLegacyIdentifiers($identifiers)) {
+            $report->warn('Skipping dependency relation with invalid joinTable identifiers.');
+            return [];
+        }
+
+        $sql = sprintf(
+            'SELECT %s FROM %s WHERE %s = :id%s',
+            $foreignColumn,
+            $table,
+            $localColumn,
+            $orderBy !== '' ? " ORDER BY {$orderBy} ASC" : '',
+        );
+        $out = [];
+        foreach ($ids as $id) {
+            foreach (Plugin::getInstance()->legacyDbService->queryAll($sql, [':id' => $id]) as $row) {
+                $mappedId = (int) ($row[$foreignColumn] ?? 0);
+                if ($mappedId > 0) {
+                    $out[$mappedId] = true;
+                }
+            }
+        }
+
+        return array_keys($out);
+    }
+
+    /** @param list<string> $identifiers */
+    private function validLegacyIdentifiers(array $identifiers): bool
+    {
+        foreach ($identifiers as $identifier) {
+            if ($identifier === '' || !preg_match('/^[A-Za-z0-9_]+$/', $identifier)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function nodeIdForPageRef(string $fqcn, int $refId): ?int
+    {
+        $row = Plugin::getInstance()->legacyDbService->queryOne(
+            <<<'SQL'
+SELECT nt.node_id
+FROM kuma_node_versions nv
+JOIN kuma_node_translations nt ON nt.public_node_version_id = nv.id
+JOIN kuma_nodes n ON n.id = nt.node_id
+WHERE n.ref_entity_name = :fqcn AND nv.ref_id = :refId AND n.deleted = 0
+ORDER BY nt.node_id ASC
+LIMIT 1
+SQL,
+            [':fqcn' => $fqcn, ':refId' => $refId],
+        );
+
+        $nodeId = is_array($row) ? (int) ($row['node_id'] ?? 0) : 0;
+        return $nodeId > 0 ? $nodeId : null;
+    }
+
+    /**
+     * @param array<string, array<int, true>> $dependencies
+     */
+    private function transformDependencyPayloads(
+        string $storageDir,
+        array $mapping,
+        MigrationFilters $parentFilters,
+        array $dependencies,
+        MigrationReport $report,
+    ): int {
+        $plugin = Plugin::getInstance();
+        $transformedDir = $storageDir . '/transformed/entries';
+        $dependencyFilters = new MigrationFilters(
+            entities: array_keys($dependencies),
+            locales: $parentFilters->locales,
+            since: null,
+            noSeo: $parentFilters->noSeo,
+            noRetour: $parentFilters->noRetour,
+            relationGraph: $parentFilters->relationGraph,
+        );
+
+        try {
+            foreach ($plugin->transformService->run(
+                $this->streamExtractedSubset($storageDir, $dependencies),
+                $mapping,
+                $dependencyFilters,
+                ['dryRun' => false, 'migrationReport' => $report],
+            ) as $payload) {
+                if (isset($payload['__report'])) {
+                    $this->mergeTransformReportSentinel($payload, $report);
+                    continue;
+                }
+                $fqcn = (string) ($payload['stateSource'] ?? '');
+                $nodeId = (int) ($payload['kuma_node_id'] ?? 0);
+                if ($fqcn === '' || $nodeId <= 0) {
+                    continue;
+                }
+                $outDir = $transformedDir . '/' . $this->slugify($fqcn);
+                if (!is_dir($outDir) && !@mkdir($outDir, 0775, true) && !is_dir($outDir)) {
+                    throw new \RuntimeException("Cannot create transformed dir: {$outDir}");
+                }
+                $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                if ($json === false || file_put_contents($outDir . '/' . $nodeId . '.json', $json) === false) {
+                    throw new \RuntimeException("Cannot write transformed dependency JSON for {$fqcn}#{$nodeId}");
+                }
+            }
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL dependency transform: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+
+        return ExitCode::OK;
+    }
+
+    /**
+     * @param array<string, array<int, true>> $dependencies
+     * @return iterable<array<string, mixed>>
+     */
+    private function streamExtractedSubset(string $storageDir, array $dependencies): iterable
+    {
+        foreach ($dependencies as $fqcn => $nodeIds) {
+            foreach (array_keys($nodeIds) as $nodeId) {
+                $file = $storageDir . '/extracted/' . $this->slugify($fqcn) . '/' . (int) $nodeId . '.json';
+                $raw = is_file($file) ? file_get_contents($file) : false;
+                if ($raw === false) {
+                    continue;
+                }
+                $payload = json_decode($raw, true);
+                if (is_array($payload)) {
+                    yield $payload;
+                }
+            }
+        }
     }
 
     /** Cheap glob-based count of extracted/<fqcn>/*.json — used as transform denominator. */

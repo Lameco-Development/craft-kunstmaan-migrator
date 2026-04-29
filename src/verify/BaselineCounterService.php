@@ -62,13 +62,13 @@ class BaselineCounterService extends Component
      *
      * @return array<string, mixed>
      */
-    public function capture(?MigrationFilters $filters = null): array
+    public function capture(?MigrationFilters $filters = null, ?array $translatedScope = null): array
     {
         return [
             'format' => 'counts-v1',
             'generatedAt' => gmdate('Y-m-d\TH:i:s\Z'),
             'filterScope' => self::buildFilterScope($filters),
-            'sections' => $this->captureSections($filters),
+            'sections' => $this->captureSections($filters, $translatedScope),
             'assets' => $this->captureAssets(),
             'taxonomies' => $this->captureTaxonomies(),
             'retour' => $this->captureRetour(),
@@ -106,7 +106,7 @@ class BaselineCounterService extends Component
      *
      * @return array<string, array<string, mixed>>
      */
-    private function captureSections(?MigrationFilters $filters = null): array
+    private function captureSections(?MigrationFilters $filters = null, ?array $translatedScope = null): array
     {
         $out = [];
         $sections = Craft::$app->entries->getAllSections();
@@ -115,9 +115,11 @@ class BaselineCounterService extends Component
         foreach ($sections as $section) {
             $handle = (string) $section->handle;
 
-            // D-29: respect entities allow-list — exclude entirely (don't emit
-            // totalCount=0 row, which would later read as a real expected=0 gate).
-            if ($filters !== null && $filters->entities !== [] && !in_array($handle, $filters->entities, true)) {
+            // D-29 / D-17: respect source-entity filters only after they have
+            // been translated to Craft section handles at the controller
+            // boundary. Never compare Kunstmaan source identities directly to
+            // Craft section handles.
+            if (CountGateService::isSectionFilteredOut($handle, $filters, $translatedScope)) {
                 continue;
             }
 

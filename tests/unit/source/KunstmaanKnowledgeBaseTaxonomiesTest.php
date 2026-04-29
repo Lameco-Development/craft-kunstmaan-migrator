@@ -6,7 +6,7 @@ namespace lameco\kunstmaanmigrator\tests\unit\source;
 
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
-use lameco\kunstmaanmigrator\source\KnowledgeBase;
+use lameco\kunstmaanmigrator\source\KunstmaanKnowledgeBase;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -25,7 +25,7 @@ use PHPUnit\Framework\TestCase;
  * minimal entity PHP files under `<tmp>/src/Entity/...` and warm the parser
  * via `sourceCheckoutPath`.
  */
-final class KnowledgeBaseTaxonomiesTest extends TestCase
+final class KunstmaanKnowledgeBaseTaxonomiesTest extends TestCase
 {
     private string $tmpRoot = '';
 
@@ -48,7 +48,7 @@ final class KnowledgeBaseTaxonomiesTest extends TestCase
 
     public function testRendersHeaderEvenWithNoEntities(): void
     {
-        $kb = new KnowledgeBase();
+        $kb = new KunstmaanKnowledgeBase();
         $kb->legacyDb = new TaxonomiesStubLegacyDbService([], []);
 
         $md = $kb->renderTaxonomiesMarkdown(null, new \DateTimeImmutable('2026-01-01T00:00:00Z'));
@@ -95,7 +95,7 @@ final class KnowledgeBaseTaxonomiesTest extends TestCase
         $entityParser = new DoctrineEntityParser();
         $entityParser->sourceCheckoutPath = $this->tmpRoot;
 
-        $kb = new KnowledgeBase();
+        $kb = new KunstmaanKnowledgeBase();
         $kb->legacyDb = new TaxonomiesStubLegacyDbService(
             pageFqcns: ['App\\Entity\\Pages\\NewsPage'],
             rowCounts: ['lameco_websitebundle_category' => 7],
@@ -113,7 +113,7 @@ final class KnowledgeBaseTaxonomiesTest extends TestCase
 
     public function testEntityParserMissingProducesEmptyResultGracefully(): void
     {
-        $kb = new KnowledgeBase();
+        $kb = new KunstmaanKnowledgeBase();
         $kb->legacyDb = new TaxonomiesStubLegacyDbService([], []);
         // entityParser intentionally null.
 

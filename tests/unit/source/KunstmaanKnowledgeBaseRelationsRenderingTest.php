@@ -9,12 +9,12 @@ use lameco\kunstmaanmigrator\source\DoctrineColumnInfo;
 use lameco\kunstmaanmigrator\source\DoctrineEntityInfo;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
 use lameco\kunstmaanmigrator\source\DoctrineRelationInfo;
-use lameco\kunstmaanmigrator\source\KnowledgeBase;
+use lameco\kunstmaanmigrator\source\KunstmaanKnowledgeBase;
 use lameco\kunstmaanmigrator\source\KunstmaanCoreTables;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Phase 8.5 / D-20 — verify KnowledgeBase emits the canonical Relations
+ * Phase 8.5 / D-20 — verify KunstmaanKnowledgeBase emits the canonical Relations
  * summary table for both pages and pageparts. The table is the single
  * source of truth for the LLM proposer when interpreting `_rel:<prop>.<col>`
  * synthetic columns produced by ExtractService::joinManyToOneRelations
@@ -22,7 +22,7 @@ use PHPUnit\Framework\TestCase;
  * column, target table, and target columns inline so no further hops are
  * required.
  */
-final class KnowledgeBaseRelationsRenderingTest extends TestCase
+final class KunstmaanKnowledgeBaseRelationsRenderingTest extends TestCase
 {
     private const PAGE_FQCN     = 'App\\Entity\\Pages\\EmployeePage';
     private const PAGE_TABLE    = 'lameco_websitebundle_employee_pages';
@@ -108,7 +108,7 @@ final class KnowledgeBaseRelationsRenderingTest extends TestCase
     // Helpers
     // -------------------------------------------------------------------------
 
-    private function buildKbWithEmployeePage(): KnowledgeBase
+    private function buildKbWithEmployeePage(): KunstmaanKnowledgeBase
     {
         return $this->buildKb(
             byFqcn: $this->buildEmployeePageFixture(),
@@ -118,7 +118,7 @@ final class KnowledgeBaseRelationsRenderingTest extends TestCase
         );
     }
 
-    private function buildKbWithFakePagePart(): KnowledgeBase
+    private function buildKbWithFakePagePart(): KunstmaanKnowledgeBase
     {
         return $this->buildKb(
             byFqcn: $this->buildEmployeePageFixture(),
@@ -167,7 +167,7 @@ final class KnowledgeBaseRelationsRenderingTest extends TestCase
     /**
      * @param array<string, DoctrineEntityInfo> $byFqcn
      */
-    private function buildKb(array $byFqcn, RelationsRenderingDbStub $db): KnowledgeBase
+    private function buildKb(array $byFqcn, RelationsRenderingDbStub $db): KunstmaanKnowledgeBase
     {
         $parser = new DoctrineEntityParser();
         $rc = new \ReflectionClass(DoctrineEntityParser::class);
@@ -180,7 +180,7 @@ final class KnowledgeBaseRelationsRenderingTest extends TestCase
         }
         $rc->getProperty('byTable')->setValue($parser, $byTableMap);
 
-        $kb = new KnowledgeBase();
+        $kb = new KunstmaanKnowledgeBase();
         $kb->legacyDb = $db;
         $kb->entityParser = $parser;
         return $kb;

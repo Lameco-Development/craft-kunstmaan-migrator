@@ -7,11 +7,18 @@ namespace lameco\kunstmaanmigrator;
 use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
+use craft\events\RegisterComponentTypesEvent;
+use craft\events\RegisterTemplateRootsEvent;
+use craft\services\Utilities;
+use craft\web\View as CraftView;
 use lameco\kunstmaanmigrator\analyze\HeuristicProposer;
 use lameco\kunstmaanmigrator\analyze\LlmClassifier;
 use lameco\kunstmaanmigrator\analyze\ReportBuilder;
-use lameco\kunstmaanmigrator\analyze\SchemaDumper;
+use lameco\kunstmaanmigrator\analyze\KunstmaanSchemaDumper;
+use lameco\kunstmaanmigrator\audit\PageRootedCoverageAuditor;
+use lameco\kunstmaanmigrator\audit\PageRootedSurfaceDiscovery;
 use lameco\kunstmaanmigrator\compile\MappingCompiler;
+use lameco\kunstmaanmigrator\compile\CraftTargetIntrospector;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\extract\ExtractService;
 use lameco\kunstmaanmigrator\fields\FieldHandlerRegistry;
@@ -42,8 +49,10 @@ use lameco\kunstmaanmigrator\models\Settings;
 use lameco\kunstmaanmigrator\source\BodyScanColumnFinder;
 use lameco\kunstmaanmigrator\source\DetailTableResolver;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
-use lameco\kunstmaanmigrator\source\KnowledgeBase;
+use lameco\kunstmaanmigrator\source\KunstmaanKnowledgeBase;
 use lameco\kunstmaanmigrator\source\KunstmaanEnvReader;
+use lameco\kunstmaanmigrator\source\CraftEntryWalker;
+use lameco\kunstmaanmigrator\source\KunstmaanPageWalker;
 use lameco\kunstmaanmigrator\source\KunstmaanPageStructureScanner;
 use lameco\kunstmaanmigrator\source\KunstmaanSourcePathResolver;
 use lameco\kunstmaanmigrator\source\KunstmaanSourceScanner;
@@ -51,12 +60,14 @@ use lameco\kunstmaanmigrator\source\CraftKnowledgeBase;
 use lameco\kunstmaanmigrator\source\MediaFkScanner;
 use lameco\kunstmaanmigrator\source\TopologicalOrderer;
 use lameco\kunstmaanmigrator\transform\TransformService;
+use lameco\kunstmaanmigrator\utilities\KunstmaanMappingUtility;
 use lameco\kunstmaanmigrator\verify\BaselineCounterService;
 use lameco\kunstmaanmigrator\verify\CaptureBaselineHtmlService;
 use lameco\kunstmaanmigrator\verify\CountGateService;
 use lameco\kunstmaanmigrator\verify\SnapshotDiffer;
 use lameco\kunstmaanmigrator\verify\SpotCheckUrlFetcher;
 use PDO;
+use yii\base\Event;
 use yii\db\Connection;
 
 /**
@@ -66,21 +77,26 @@ use yii\db\Connection;
  * @property-read FilterFactory $filterFactory
  * @property-read LocalePreflight $localePreflight
  * @property-read MappingFile $mappingFile
- * @property-read SchemaDumper $schemaDumper
+ * @property-read KunstmaanSchemaDumper $kunstmaanSchemaDumper
  * @property-read HeuristicProposer $heuristicProposer
  * @property-read LlmClassifier $llmClassifier
  * @property-read ReportBuilder $reportBuilder
  * @property-read CoverageAuditor $coverageAuditor
  * @property-read MappingAuditor $mappingAuditor
  * @property-read MappingCompiler $mappingCompiler
+ * @property-read CraftTargetIntrospector $craftTargetIntrospector
+ * @property-read PageRootedSurfaceDiscovery $pageRootedSurfaceDiscovery
+ * @property-read PageRootedCoverageAuditor $pageRootedCoverageAuditor
  * @property-read KunstmaanSourcePathResolver $kunstmaanSourcePathResolver
  * @property-read KunstmaanEnvReader $kunstmaanEnvReader
  * @property-read DoctrineEntityParser $doctrineEntityParser
  * @property-read DetailTableResolver $detailTableResolver
  * @property-read BodyScanColumnFinder $bodyScanColumnFinder
  * @property-read MediaFkScanner $mediaFkScanner
- * @property-read KnowledgeBase $knowledgeBase
+ * @property-read KunstmaanKnowledgeBase $kunstmaanKnowledgeBase
  * @property-read CraftKnowledgeBase $craftKnowledgeBase
+ * @property-read KunstmaanPageWalker $kunstmaanPageWalker
+ * @property-read CraftEntryWalker $craftEntryWalker
  * @property-read KunstmaanPageStructureScanner $kunstmaanPageStructureScanner
  * @property-read KunstmaanSourceScanner $kunstmaanSourceScanner
  * @property-read BlockAvailabilityValidator $blockAvailabilityValidator
@@ -127,21 +143,26 @@ class Plugin extends BasePlugin
                 'filterFactory'     => FilterFactory::class,      // Phase 2 (Plan 01) — D-10 Settings+CLI merge
                 'localePreflight'   => LocalePreflight::class,    // Phase 2 (Plan 01) — LOC-01 detect + LOC-02 ensure
                 'mappingFile'       => MappingFile::class,        // Phase 2 (Plan 02) — D-01/D-04/D-07 status-on-row IO
-                'schemaDumper'      => SchemaDumper::class,       // Phase 2 (Plan 03) — legacy MySQL → schema-dump array
+                'kunstmaanSchemaDumper'      => KunstmaanSchemaDumper::class,       // Phase 2 (Plan 03) — legacy MySQL → kunstmaan-schema array
                 'heuristicProposer' => HeuristicProposer::class,  // Phase 2 (Plan 03) — 9 deterministic heuristics
                 'llmClassifier'     => LlmClassifier::class,      // Phase 2 (Plan 03) — Anthropic Haiku batch caller
                 'reportBuilder'     => ReportBuilder::class,      // Phase 2 (Plan 03) — D-17 paste-ready locales block
                 'coverageAuditor'   => CoverageAuditor::class,    // Phase 2 (Plan 05) — D-14 MAP-06
                 'mappingAuditor'    => MappingAuditor::class,     // Phase 2 (Plan 05) — D-16 MAP-07
                 'mappingCompiler'   => MappingCompiler::class,    // Phase 6 — proposals[] → nodeClasses/sections/sites bridge
+                'craftTargetIntrospector' => CraftTargetIntrospector::class, // Phase 9 — compiled target schema validation
+                'pageRootedSurfaceDiscovery' => PageRootedSurfaceDiscovery::class, // Phase 9 — structural Page-rooted surface discovery
+                'pageRootedCoverageAuditor'  => PageRootedCoverageAuditor::class,  // Phase 9 — deterministic Page-rooted coverage report
                 'kunstmaanSourcePathResolver' => KunstmaanSourcePathResolver::class, // Phase 02.1 (Plan 01) — D-33 source-path resolver
                 'kunstmaanEnvReader'            => KunstmaanEnvReader::class,           // Phase 4.1 / D-05 — .env reader, 2-key whitelist
                 'doctrineEntityParser'          => DoctrineEntityParser::class,         // Phase 02.1 (Plan 02) — D-41 verbatim port
                 'detailTableResolver'           => DetailTableResolver::class,          // Phase 02.1 (Plan 02) — 4-tier FQCN→table
                 'bodyScanColumnFinder'          => BodyScanColumnFinder::class,         // Phase 02.1 (Plan 03) — body-col discovery
                 'mediaFkScanner'                => MediaFkScanner::class,               // Phase 02.1 (Plan 03) — kuma_media FK discovery
-                'knowledgeBase'                 => KnowledgeBase::class,                // Phase 02.1 (Plan 03) — D-42 step 8 KB markdown
+                'kunstmaanKnowledgeBase'                 => KunstmaanKnowledgeBase::class,                // Phase 02.1 (Plan 03) — D-42 step 8 KB markdown
                 'craftKnowledgeBase'            => CraftKnowledgeBase::class,           // Phase 6 — target Craft schema renderer for LLM prompts
+                'kunstmaanPageWalker'           => KunstmaanPageWalker::class,          // Phase 11 — source graph walker
+                'craftEntryWalker'              => CraftEntryWalker::class,             // Phase 11 — target graph walker
                 'kunstmaanPageStructureScanner' => KunstmaanPageStructureScanner::class, // Phase 02.1 (Plan 04) — D-40 right side
                 'kunstmaanSourceScanner'        => KunstmaanSourceScanner::class,        // Phase 02.1 (Plan 05) — D-40 left side orchestrator
                 'blockAvailabilityValidator'    => BlockAvailabilityValidator::class,    // Phase 02.1 (Plan 08) — D-36 fourth finding kind
@@ -211,7 +232,24 @@ class Plugin extends BasePlugin
         // when CFG-01 introduces the real form.
         if (Craft::$app->request->getIsConsoleRequest()) {
             $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\console';
+        } else {
+            $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\controllers';
+            Event::on(
+                Utilities::class,
+                Utilities::EVENT_REGISTER_UTILITIES,
+                static function (RegisterComponentTypesEvent $event): void {
+                    $event->types[] = KunstmaanMappingUtility::class;
+                },
+            );
         }
+
+        Event::on(
+            CraftView::class,
+            CraftView::EVENT_REGISTER_CP_TEMPLATE_ROOTS,
+            static function (RegisterTemplateRootsEvent $event): void {
+                $event->roots['kunstmaan-migrator'] = dirname(__DIR__) . '/templates';
+            },
+        );
 
         // Phase 02.1 follow-up: wire the source-namespace components' sibling
         // dependencies. Plugin::config() registers them as bare class names so
@@ -245,14 +283,21 @@ class Plugin extends BasePlugin
             }
         }
 
-        // KnowledgeBase needs legacyDb for renderPagesMarkdown / renderPagePartsMarkdown
+        // KunstmaanKnowledgeBase needs legacyDb for renderPagesMarkdown / renderPagePartsMarkdown
         // (used by AnalyzeController's LLM classifier step). Without this wire the LLM
         // pass throws LogicException at first KB render.
-        $this->knowledgeBase->legacyDb     = $this->legacyDbService;
-        $this->knowledgeBase->entityParser = $this->doctrineEntityParser;
+        $this->kunstmaanKnowledgeBase->legacyDb     = $this->legacyDbService;
+        $this->kunstmaanKnowledgeBase->entityParser = $this->doctrineEntityParser;
 
         $this->kunstmaanPageStructureScanner->pathResolver  = $this->kunstmaanSourcePathResolver;
         $this->kunstmaanPageStructureScanner->tableResolver = $this->detailTableResolver;
+
+        $this->kunstmaanPageWalker->pathResolver = $this->kunstmaanSourcePathResolver;
+        $this->kunstmaanPageWalker->entityParser = $this->doctrineEntityParser;
+        $this->kunstmaanPageWalker->sourceScanner = $this->kunstmaanSourceScanner;
+        $this->kunstmaanPageWalker->pageStructureScanner = $this->kunstmaanPageStructureScanner;
+        $this->kunstmaanPageWalker->kunstmaanSchemaDumper = $this->kunstmaanSchemaDumper;
+        $this->craftEntryWalker->craftKnowledgeBase = $this->craftKnowledgeBase;
 
         // MappingAuditor's block-availability check (D-36) is inert when the
         // validator stays null. Wire it so the audit step actually fires.
@@ -263,14 +308,17 @@ class Plugin extends BasePlugin
         // bare class registrations in config() leave the public ?Foo $dep = null slots
         // null and produce silent NPEs at first call.
 
-        // Field handler registry — register all 4 PlainTextHandler modes and the 4 other
+        // Field handler registry — register all PlainTextHandler modes and the 4 other
         // typed handlers. PlainTextHandler is parametric on its mode constructor arg
         // ('plain' / 'ckeditor' / 'link' / 'dropdown'); each mode registers under its
         // own id() so the registry can dispatch by handler-name from mapping.yaml.
         $registry = $this->fieldHandlerRegistry;
         $registry->register(new PlainTextHandler('plain'));
+        $registry->register(new PlainTextHandler('date'));
         $registry->register(new PlainTextHandler('ckeditor'));
         $registry->register(new PlainTextHandler('link'));
+        $registry->register(new PlainTextHandler('email'));
+        $registry->register(new PlainTextHandler('url'));
         $registry->register(new PlainTextHandler('dropdown'));
         $registry->register($this->assetHandler);
         $registry->register($this->relationHandler);
@@ -308,6 +356,10 @@ class Plugin extends BasePlugin
         $this->transformService->legacyDb          = $this->legacyDbService;
         $this->transformService->migrationState    = $this->migrationStateService;
         $this->transformService->assetPathResolver = new AssetPathResolver();
+        // Phase 10: page-rooted taxonomy relations delegate lazy state misses
+        // to TaxonomyMigrationService through ResolverContext. The handler
+        // remains read/delegate-only and never owns taxonomy writes.
+        $this->transformService->taxonomyResolver  = $this->taxonomyMigrationService;
 
         // AssetMigrationService deps.
         $this->assetMigrationService->legacyDb       = $this->legacyDbService;

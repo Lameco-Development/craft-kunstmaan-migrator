@@ -49,6 +49,19 @@ final class MigrationReport
     public array $assetRcaRows = [];
 
     /**
+     * Structural diagnostics for unresolved CKEditor finalize tokens.
+     *
+     * Rows are intentionally limited to ids/handles/reasons. They must never
+     * contain CKEditor bodies, samples, or rendered HTML.
+     *
+     * @var list<array<string, mixed>>
+     */
+    public array $finalizeUnresolvedDiagnostics = [];
+
+    /** @var list<array<string, mixed>> */
+    public array $relationCoverageRows = [];
+
+    /**
      * Increment a named bucket by `$by` (default 1). Idempotent: a missing
      * bucket initialises to 0 then accumulates.
      */
@@ -81,6 +94,30 @@ final class MigrationReport
     }
 
     /**
+     * @param list<array<string, mixed>> $coverageRows
+     */
+    public function recordRelationCoverage(array $coverageRows): void
+    {
+        foreach ($coverageRows as $row) {
+            if (!is_array($row) || (string) ($row['surfaceType'] ?? '') !== 'relation') {
+                continue;
+            }
+            $this->relationCoverageRows[] = $row;
+            $category = (string) ($row['category'] ?? '');
+            $reason = (string) ($row['reason'] ?? '');
+            if ($category === 'warning' || str_contains($reason, 'relation.unresolved')) {
+                $this->incr('relation.unresolved');
+            } elseif ($category === 'dropped') {
+                $this->incr('relation.intent.drop');
+            } elseif ($category === 'out_of_scope') {
+                $this->incr('relation.intent.out_of_scope');
+            } elseif (str_contains($reason, 'relation.promoted') || str_contains($reason, 'promoted')) {
+                $this->incr('relation.promoted');
+            }
+        }
+    }
+
+    /**
      * Record a per-entry failure with a 5-frame stack-trace excerpt (D-50).
      *
      * Also increments the `'failed'` bucket so REPORT.md can show a single
@@ -99,6 +136,26 @@ final class MigrationReport
             'trace' => $this->renderTrace($excerpt),
         ];
         $this->incr('failed');
+    }
+
+    /**
+     * Central truth for final command outcome. A run has failed when either
+     * detailed failure rows were recorded or a stage merged a failed-count
+     * bucket without pushing per-entry rows.
+     */
+    public function hasFailures(): bool
+    {
+        return $this->failureCount() > 0;
+    }
+
+    /**
+     * Concise failure count for CLI summaries. Use the larger of the explicit
+     * failures[] rows and the aggregate failed bucket so stage-level merged
+     * reports cannot under-report failures.
+     */
+    public function failureCount(): int
+    {
+        return max(count($this->failures), (int) ($this->counts['failed'] ?? 0));
     }
 
     /**

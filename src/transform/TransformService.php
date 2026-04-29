@@ -5,10 +5,13 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\transform;
 
 use lameco\kunstmaanmigrator\fields\FieldHandlerRegistry;
+use lameco\kunstmaanmigrator\extract\ExtractService;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateReader;
+use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\AssetPathResolver;
+use lameco\kunstmaanmigrator\load\TaxonomyMigrationService;
 use lameco\kunstmaanmigrator\fields\ResolverContext;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use Craft;
@@ -46,6 +49,7 @@ class TransformService extends Component
     public ?LegacyDbService $legacyDb = null;
     public ?MigrationStateReader $migrationState = null;
     public ?AssetPathResolver $assetPathResolver = null;
+    public ?TaxonomyMigrationService $taxonomyResolver = null;
 
     public string $storagePath = '@storage/migration';
 
@@ -96,14 +100,15 @@ class TransformService extends Component
 
         // Build siteMap (legacy-locale → Craft siteId) for ResolverContext construction.
         $siteMap = $this->buildSiteMap($mapping);
+        $dryRun = (bool) ($options['dryRun'] ?? true);
+        $migrationReport = ($options['migrationReport'] ?? null) instanceof MigrationReport
+            ? $options['migrationReport']
+            : null;
 
         $onlyFqcn = isset($options['onlyNodeClass']) ? (string) $options['onlyNodeClass'] : null;
         $limit = isset($options['limit']) ? (int) $options['limit'] : null;
         $processed = 0;
 
-        // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port.
-        // entities allow-list scopes the FQCN dispatch (empty = unbounded).
-        $entitiesFilter = $filters->entities;
         // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port.
         // locales scope the per-site loop in ResolverContext construction (empty = unbounded).
         $localesFilter = $filters->locales;
@@ -126,18 +131,23 @@ class TransformService extends Component
             if ($onProgress !== null) {
                 $onProgress($consumed, $fqcn);
             }
+            if (($extractedRow['kind'] ?? '') === 'promotedTarget') {
+                $payload = $this->transformPromotedTarget($extractedRow, $mapping, $siteMap, $localesFilter, $dryRun, $migrationReport, $report);
+                if ($payload !== null) {
+                    $report['nodesTransformed']++;
+                    $processed++;
+                    yield $payload;
+                }
+                continue;
+            }
             if ($onlyFqcn !== null && $fqcn !== $onlyFqcn) {
                 continue;
             }
 
-            // Phase 2 / D-10 filter piping per FILT-02 — added in v2 port.
-            // entities allow-list (FQCN simple-name match) scopes the FQCN dispatch.
-            if ($entitiesFilter !== []) {
-                $simpleParts = explode('\\', trim($fqcn, '\\'));
-                $simpleName = end($simpleParts);
-                if (!in_array($simpleName, $entitiesFilter, true) && !in_array($fqcn, $entitiesFilter, true)) {
-                    continue;
-                }
+            // Phase 9 / D-16: consume MigrationFilters' source-domain
+            // reachability set instead of re-parsing basename/FQCN lists here.
+            if (!$filters->allows($fqcn)) {
+                continue;
             }
 
             $nodeSpec = $mapping['nodeClasses'][$fqcn] ?? null;
@@ -170,9 +180,10 @@ class TransformService extends Component
                 $siteHandle = (string) ($mapping['sites'][$locale] ?? 'default');
                 $siteId = $siteMap[$locale] ?? 1;
 
-                $ctx = $this->buildContext($siteId, $siteHandle, $siteMap);
+                $ctx = $this->buildContext($siteId, $siteHandle, $siteMap, $dryRun, $migrationReport);
 
                 $fieldValues = $this->transformFields(
+                    $fqcn,
                     (array) $siteData,
                     $nodeSpec,
                     $mapping,
@@ -217,6 +228,81 @@ class TransformService extends Component
     }
 
     /**
+     * @param array<string, mixed> $extractedRow
+     * @param array<string, mixed> $mapping
+     * @param array<string, int> $siteMap
+     * @param list<string> $localesFilter
+     * @param array<string, mixed> $report
+     * @return array<string, mixed>|null
+     */
+    private function transformPromotedTarget(
+        array $extractedRow,
+        array $mapping,
+        array $siteMap,
+        array $localesFilter,
+        bool $dryRun,
+        ?MigrationReport $migrationReport,
+        array &$report,
+    ): ?array {
+        $spec = (array) ($extractedRow['promotedTarget'] ?? []);
+        $stateSource = (string) ($spec['stateSource'] ?? $extractedRow['stateSource'] ?? '');
+        $stateKey = (string) ($extractedRow['stateKey'] ?? $extractedRow['ref_id'] ?? '');
+        if ($stateSource === '' || $stateKey === '') {
+            $report['warnings'][] = 'promoted target skipped: missing stateSource/stateKey';
+            return null;
+        }
+
+        $perSiteOut = [];
+        foreach ((array) ($extractedRow['perSite'] ?? []) as $locale => $siteData) {
+            $locale = (string) $locale;
+            if ($localesFilter !== [] && !in_array($locale, $localesFilter, true)) {
+                continue;
+            }
+
+            $siteHandle = (string) ($mapping['sites'][$locale] ?? 'default');
+            $siteId = $siteMap[$locale] ?? 1;
+            $ctx = $this->buildContext($siteId, $siteHandle, $siteMap, $dryRun, $migrationReport);
+            $nodeSpec = [
+                'fields' => is_array($spec['fields'] ?? null) ? $spec['fields'] : [],
+            ];
+            $fieldValues = $this->transformFields(
+                (string) ($extractedRow['fqcn'] ?? ''),
+                (array) $siteData,
+                $nodeSpec,
+                $mapping,
+                $ctx,
+                $report,
+            );
+
+            $perSiteOut[$siteHandle] = [
+                'siteId' => $siteId,
+                'locale' => $locale,
+                'online' => (bool) ($siteData['online'] ?? true),
+                'title' => (string) ($siteData['title'] ?? ''),
+                'slug' => (string) ($siteData['slug'] ?? ''),
+                'fieldValues' => $fieldValues,
+            ];
+        }
+
+        return [
+            'kind' => 'promotedTarget',
+            'promotedTarget' => true,
+            'kunstmaanSourceId' => $stateSource . ':' . $stateKey,
+            'section' => (string) ($spec['targetSection'] ?? ''),
+            'entryType' => (string) ($spec['targetEntryType'] ?? ''),
+            'kuma_node_id' => (int) $stateKey,
+            'kuma_parent_id' => null,
+            'refIdsByLocale' => (array) ($extractedRow['refIdsByLocale'] ?? []),
+            'perSite' => $perSiteOut,
+            'stateSource' => $stateSource,
+            'stateKey' => $stateKey,
+            'sourceRef' => (string) ($spec['sourceRef'] ?? ''),
+            'targetRef' => (string) ($spec['targetRef'] ?? ''),
+            'relationIntent' => (string) ($spec['relationIntent'] ?? ''),
+        ];
+    }
+
+    /**
      * Build the Craft 5 per-site fieldValues hash for a single extracted site payload.
      *
      * Dispatches legacy values through FieldHandlerRegistry handlers and, for pagePart streams,
@@ -233,6 +319,7 @@ class TransformService extends Component
      * @return array<string, mixed>
      */
     private function transformFields(
+        string $fqcn,
         array $siteData,
         array $nodeSpec,
         array $mapping,
@@ -241,17 +328,43 @@ class TransformService extends Component
     ): array {
         $detail = is_array($siteData['detail'] ?? null) ? (array) $siteData['detail'] : [];
         $detail = $this->hydrateDetailJoins($detail, $nodeSpec, $report);
+        $detail = $this->hydrateMergeRelations($detail, $nodeSpec, $report);
+        $pageParts = (array) ($siteData['pageParts'] ?? []);
+        if ($detail !== []) {
+            $implicitPageParts = ExtractService::buildImplicitContentPageParts($fqcn, $detail, $mapping);
+            if ($implicitPageParts !== []) {
+                $headerSpec = $nodeSpec['headerBlock'] ?? null;
+                $hasHeaderBlock = is_array($headerSpec)
+                    && (string) ($headerSpec['fieldHandle'] ?? '') !== ''
+                    && (string) ($headerSpec['blockType'] ?? '') !== '';
+                $parentTitle = (string) ($siteData['title'] ?? '');
+                if ($hasHeaderBlock || $parentTitle !== '') {
+                    foreach ($implicitPageParts as &$implicitPagePart) {
+                        if (isset($implicitPagePart['row']) && is_array($implicitPagePart['row'])) {
+                            if ($hasHeaderBlock) {
+                                $implicitPagePart['row']['_suppressTitle'] = true;
+                            } elseif ($parentTitle !== '') {
+                                $implicitPagePart['row']['_parentTitle'] = $parentTitle;
+                            }
+                        }
+                    }
+                    unset($implicitPagePart);
+                }
+                $pageParts = array_merge($pageParts, $implicitPageParts);
+            }
+        }
 
         // Inject synthetic _pageParts_{context} columns for pages that use direct
         // field mapping instead of a pageBuilder matrix (pageBuilderHandle: ~).
         // Each synthetic key holds the concatenated HTML from all page parts in
         // that context slot whose row contains a 'content', 'body', or 'text' column.
         // This allows mapping.yaml to say: source: _pageParts_main, handler: ckeditor
-        foreach ($this->buildPagePartColumns((array) ($siteData['pageParts'] ?? [])) as $key => $html) {
+        foreach ($this->buildPagePartColumns($pageParts) as $key => $html) {
             $detail[$key] ??= $html;
         }
 
         $fieldValues = [];
+        $consumedDetailSources = [];
 
         // 1) Scalar/relational detail-table fields per nodeSpec.fields
         $fieldsSpec = (array) ($nodeSpec['fields'] ?? []);
@@ -278,6 +391,9 @@ class TransformService extends Component
 
             try {
                 $fieldValues[$targetHandle] = $handler->resolve($legacyValue, $ctx, $opts);
+                if ($this->sourceValueIsMeaningful($legacyValue)) {
+                    $consumedDetailSources[$source] = true;
+                }
             } catch (Throwable $e) {
                 $report['warnings'][] = "Handler '{$handlerId}' failed on {$targetHandle}: " . $e->getMessage();
             }
@@ -302,7 +418,7 @@ class TransformService extends Component
                 ? null
                 : array_values(array_filter(array_map('trim', (array) $rawCtxs), 'strlen'));
             $blocks = $this->transformPageBuilder(
-                (array) ($siteData['pageParts'] ?? []),
+                $pageParts,
                 $mapping,
                 $ctx,
                 $report,
@@ -328,7 +444,7 @@ class TransformService extends Component
                 ? array_values(array_filter(array_map('strval', $contextFilter), 'strlen'))
                 : null;
             $chunks = [];
-            foreach ((array) ($siteData['pageParts'] ?? []) as $p) {
+            foreach ($pageParts as $p) {
                 if (!is_array($p)) {
                     continue;
                 }
@@ -366,10 +482,15 @@ class TransformService extends Component
             $hFieldsSpec = (array) ($headerSpec['fields'] ?? []);
             $hComposeSpec = (array) ($headerSpec['compose'] ?? []);
             if ($hFieldHandle !== '' && $hBlockType !== '' && ($hFieldsSpec !== [] || $hComposeSpec !== [])) {
+                $hFieldsSpec = $this->normalizeMatrixBlockFieldSpecKeys($hFieldsSpec, $hFieldHandle);
+                $clearedHeaderFields = [];
+                $hFieldsSpec = $this->filterAlreadyConsumedFieldSpecs($hFieldsSpec, $consumedDetailSources, 'headerBlock', $report, $clearedHeaderFields);
+                $hComposeSpec = $this->filterAlreadyConsumedComposeSpecs($hComposeSpec, $consumedDetailSources, 'headerBlock', $report, $clearedHeaderFields);
                 // Resolve declarative handler-based fields first.
                 $resolvedHeaderFields = $hFieldsSpec !== []
                     ? $this->resolveFieldSpecs($hFieldsSpec, $detail, $ctx, $report, $mapping)
                     : [];
+                $resolvedHeaderFields = $clearedHeaderFields + $resolvedHeaderFields;
 
                 // Compose directive (plan 05-05 Option B): synthesize block-field
                 // values from multiple detail columns via HTML template
@@ -470,18 +591,18 @@ class TransformService extends Component
         //          blockType: generalContentBlock
         //          fieldHandle: ckeditorDefault
         //          title: "{title}"        # optional; same {col} substitution
-        //                                  # as headerBlock.title. Default: {title}.
+        //                                  # as headerBlock.title. Default: none.
         $bodyWrapSpec = $nodeSpec['bodyWrapBlock'] ?? null;
         $bodyColumn = (string) ($nodeSpec['bodyColumn'] ?? '');
-        if ($bodyWrapSpec !== null && $bodyColumn !== '' && $pageBuilderHandle !== '') {
+        if ($bodyWrapSpec !== null && $bodyColumn !== '' && $pageBuilderHandle !== '' && !isset($consumedDetailSources[$bodyColumn])) {
             if (is_string($bodyWrapSpec)) {
                 $bwBlockType = $bodyWrapSpec;
                 $bwFieldHandle = 'html';
-                $bwTitleTemplate = '{title}';
+                $bwTitleTemplate = '';
             } elseif (is_array($bodyWrapSpec)) {
                 $bwBlockType = (string) ($bodyWrapSpec['blockType'] ?? '');
                 $bwFieldHandle = (string) ($bodyWrapSpec['fieldHandle'] ?? 'html');
-                $bwTitleTemplate = (string) ($bodyWrapSpec['title'] ?? '{title}');
+                $bwTitleTemplate = (string) ($bodyWrapSpec['title'] ?? '');
             } else {
                 $bwBlockType = '';
                 $bwFieldHandle = '';
@@ -501,27 +622,144 @@ class TransformService extends Component
                     },
                     $bwTitleTemplate,
                 );
-                if ($bwTitle === '' || $bwTitle === null) {
-                    $bwTitle = 'Content';
-                }
-
                 $existing = (array) ($fieldValues[$pageBuilderHandle] ?? []);
                 $nextIndex = count($existing) + 1;
                 $blockKey = 'new' . $nextIndex;
+                $fields = [
+                    $bwFieldHandle => $contentHtml,
+                ];
+                if ($bwTitle === '' || $bwTitle === null) {
+                    $fields['_suppressNativeTitleFallback'] = true;
+                }
                 $existing[$blockKey] = [
                     'type' => $bwBlockType,
                     'enabled' => true,
-                    'title' => $bwTitle,
-                    'fields' => [
-                        $bwFieldHandle => $contentHtml,
-                    ],
+                    'fields' => $fields,
                 ];
+                if ($bwTitle !== '' && $bwTitle !== null) {
+                    $existing[$blockKey]['title'] = $bwTitle;
+                }
                 $fieldValues[$pageBuilderHandle] = $existing;
                 $report['bodyWrapBlocksEmitted'] = ($report['bodyWrapBlocksEmitted'] ?? 0) + 1;
             }
         }
 
         return $fieldValues;
+    }
+
+    /**
+     * @param array<string, mixed> $fields
+     * @return array<string, mixed>
+     */
+    private function normalizeMatrixBlockFieldSpecKeys(array $fields, string $matrixFieldHandle): array
+    {
+        if ($matrixFieldHandle === '') {
+            return $fields;
+        }
+
+        $out = [];
+        foreach ($fields as $handle => $spec) {
+            $handle = (string) $handle;
+            if (str_starts_with($handle, $matrixFieldHandle . '.')) {
+                $handle = substr($handle, strlen($matrixFieldHandle) + 1);
+            }
+            if ($handle !== '') {
+                $out[$handle] = $spec;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param array<string, mixed> $fields
+     * @param array<string, true> $consumedSources
+     * @return array<string, mixed>
+     */
+    private function filterAlreadyConsumedFieldSpecs(
+        array $fields,
+        array $consumedSources,
+        string $surface,
+        array &$report,
+        array &$clearedFields,
+    ): array {
+        foreach ($fields as $handle => $spec) {
+            if (!is_array($spec)) {
+                continue;
+            }
+            $source = (string) ($spec['source'] ?? '');
+            if ($source === '' || !isset($consumedSources[$source])) {
+                continue;
+            }
+            unset($fields[$handle]);
+            $clearedFields[(string) $handle] = $this->emptyValueForFieldSpec($spec);
+            $report['warnings'][] = sprintf(
+                '%s field %s skipped because source column %s is already mapped elsewhere on the entry.',
+                $surface,
+                (string) $handle,
+                $source,
+            );
+        }
+
+        return $fields;
+    }
+
+    /**
+     * @param array<string, mixed> $composeSpecs
+     * @param array<string, true> $consumedSources
+     * @return array<string, mixed>
+     */
+    private function filterAlreadyConsumedComposeSpecs(
+        array $composeSpecs,
+        array $consumedSources,
+        string $surface,
+        array &$report,
+        array &$clearedFields,
+    ): array {
+        foreach ($composeSpecs as $handle => $spec) {
+            if (!is_array($spec)) {
+                continue;
+            }
+            $template = (string) ($spec['template'] ?? '');
+            preg_match_all('/\{([a-zA-Z0-9_]+)\}/', $template, $matches);
+            foreach ($matches[1] ?? [] as $source) {
+                if (isset($consumedSources[(string) $source])) {
+                    unset($composeSpecs[$handle]);
+                    $clearedFields[(string) $handle] = '';
+                    $report['warnings'][] = sprintf(
+                        '%s compose field %s skipped because source column %s is already mapped elsewhere on the entry.',
+                        $surface,
+                        (string) $handle,
+                        (string) $source,
+                    );
+                    continue 2;
+                }
+            }
+        }
+
+        return $composeSpecs;
+    }
+
+    /** @param array<string, mixed> $spec */
+    private function emptyValueForFieldSpec(array $spec): mixed
+    {
+        $handler = (string) ($spec['handler'] ?? 'plain');
+        return in_array($handler, ['asset', 'relation', 'matrix'], true) ? [] : '';
+    }
+
+    private function sourceValueIsMeaningful(mixed $value): bool
+    {
+        if ($value === null || $value === false) {
+            return false;
+        }
+        if (is_string($value)) {
+            return trim($value) !== '';
+        }
+        if (is_array($value)) {
+            return $value !== [];
+        }
+
+        return $value !== 0 && $value !== '0';
     }
 
     /**
@@ -593,6 +831,16 @@ class TransformService extends Component
                     'enabled' => true,
                     'fields'  => $resolvedFields,
                 ];
+                if (str_starts_with($ppFqcn, '__implicit_content__|')) {
+                    if (($row['_suppressTitle'] ?? false) === true) {
+                        $blocks['new' . $blockIndex]['fields']['_suppressNativeTitleFallback'] = true;
+                    } else {
+                        $blockTitle = trim((string) ($row['_parentTitle'] ?? $row['title'] ?? ''));
+                        if ($blockTitle !== '') {
+                            $blocks['new' . $blockIndex]['title'] = $blockTitle;
+                        }
+                    }
+                }
                 $blockIndex++;
                 $report['blocksTransformed']++;
                 continue;
@@ -647,7 +895,7 @@ class TransformService extends Component
      * Resolves a fieldSpec's `target:` shorthand to `handlerOptions.stateSource`,
      * consulting mapping.yaml to translate a Craft entryType handle (e.g.
      * `teamMember`) into the FQCN-slug the state table is keyed by (e.g.
-     * `App_Entity_Pages_EmployeePage`). Accepts a pre-resolved FQCN-slug as-is.
+     * `App_Entity_Pages_TeamPage`). Accepts a pre-resolved FQCN-slug as-is.
      *
      * Without this, every relation mapping using the semantic form
      * `target: teamMember` silently no-ops because RelationHandler requires
@@ -713,12 +961,19 @@ class TransformService extends Component
                 continue;
             }
 
+            if ($this->allDottedMatrixSubFieldsEmpty($subFields)) {
+                foreach (array_keys($subFields) as $sub) {
+                    unset($fieldValues[$matrixHandle . '.' . $sub]);
+                }
+                continue;
+            }
+
             // Build the new block payload.
             $newBlock = [
                 'new1' => [
                     'type'    => $innerType,
                     'enabled' => true,
-                    'fields'  => $subFields,
+                    'fields'  => $subFields + ['_suppressNativeTitleFallback' => true],
                 ],
             ];
 
@@ -747,6 +1002,44 @@ class TransformService extends Component
             }
         }
         return $fieldValues;
+    }
+
+    /**
+     * @param array<string, mixed> $subFields
+     */
+    private function allDottedMatrixSubFieldsEmpty(array $subFields): bool
+    {
+        foreach ($subFields as $value) {
+            if ($this->valueHasMigrationContent($value)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function valueHasMigrationContent(mixed $value): bool
+    {
+        if ($value === null || $value === '') {
+            return false;
+        }
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return true;
+        }
+        if (is_array($value)) {
+            foreach ($value as $item) {
+                if ($this->valueHasMigrationContent($item)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -936,7 +1229,13 @@ class TransformService extends Component
      *
      * @param  array<string, int> $siteMap  locale → craft site id
      */
-    private function buildContext(int $siteId, string $siteHandle, array $siteMap): ResolverContext
+    private function buildContext(
+        int $siteId,
+        string $siteHandle,
+        array $siteMap,
+        bool $dryRun = true,
+        ?MigrationReport $report = null,
+    ): ResolverContext
     {
         return new ResolverContext(
             siteId:     $siteId,
@@ -946,6 +1245,9 @@ class TransformService extends Component
             paths:      $this->resolvePaths(),
             siteMap:    $siteMap,
             legacyDb:   $this->legacyDb,
+            taxonomyResolver: $this->taxonomyResolver,
+            dryRun:     $dryRun,
+            report:     $report,
         );
     }
 
@@ -1083,6 +1385,96 @@ class TransformService extends Component
                     continue;
                 }
                 $detail[$alias . '.' . $col] = $val;
+            }
+        }
+
+        return $detail;
+    }
+
+    /**
+     * Merge selected related Kunstmaan entity rows into the current page entry.
+     *
+     * This covers page-rooted shapes where Kunstmaan splits editorial identity
+     * across a Page entity plus a related domain entity, while Craft has one
+     * entry type with all fields. Example: EmployeePage.employee_id -> Employee,
+     * saved as one Craft teamMember entry.
+     *
+     * Mapping shape:
+     *   mergeRelations:
+     *     employee:
+     *       mode: flatten
+     *       table: lameco_websitebundle_employee_employees
+     *       fk: employee_id
+     *       pk: id
+     *
+     * Joined columns are exposed as `_rel:<alias>.<column>` so existing source
+     * paths such as `_rel:employee.email` work whether the data was expanded at
+     * extract time or explicitly merged at transform time.
+     *
+     * @param array<string, mixed> $detail
+     * @param array<string, mixed> $nodeSpec
+     * @param array<string, mixed> $report
+     * @return array<string, mixed>
+     */
+    private function hydrateMergeRelations(array $detail, array $nodeSpec, array &$report): array
+    {
+        $relations = (array) ($nodeSpec['mergeRelations'] ?? []);
+        if ($relations === []) {
+            return $detail;
+        }
+        if ($this->legacyDb === null) {
+            $report['warnings'][] = 'mergeRelations configured but legacyDb is unavailable; skipped';
+            return $detail;
+        }
+
+        foreach ($relations as $alias => $relationSpec) {
+            if (!is_string($alias) || $alias === '' || !is_array($relationSpec)) {
+                continue;
+            }
+            $mode = (string) ($relationSpec['mode'] ?? 'flatten');
+            if (!in_array($mode, ['flatten', 'merge'], true)) {
+                continue;
+            }
+
+            $table = (string) ($relationSpec['table'] ?? '');
+            $fkCol = (string) ($relationSpec['fk'] ?? $relationSpec['sourceColumn'] ?? '');
+            $pkCol = (string) ($relationSpec['pk'] ?? $relationSpec['targetColumn'] ?? 'id');
+            if ($table === '' || $fkCol === '') {
+                $report['warnings'][] = "mergeRelations alias '{$alias}' missing table/fk; skipped";
+                continue;
+            }
+            if (
+                !preg_match('/^[a-zA-Z0-9_]+$/', $table)
+                || !preg_match('/^[a-zA-Z0-9_]+$/', $pkCol)
+            ) {
+                $report['warnings'][] = "mergeRelations alias '{$alias}' has non-whitelisted identifier; skipped";
+                continue;
+            }
+
+            $fkValue = $detail[$fkCol] ?? null;
+            if ($fkValue === null || $fkValue === '' || $fkValue === 0 || $fkValue === '0') {
+                continue;
+            }
+
+            try {
+                $joined = $this->legacyDb->queryOne(
+                    "SELECT * FROM `{$table}` WHERE `{$pkCol}` = :pk LIMIT 1",
+                    [':pk' => $fkValue],
+                );
+            } catch (Throwable $e) {
+                $report['warnings'][] = "mergeRelations alias '{$alias}' query failed: " . $e->getMessage();
+                continue;
+            }
+            if (!is_array($joined)) {
+                continue;
+            }
+
+            $prefix = '_rel:' . $alias . '.';
+            foreach ($joined as $col => $val) {
+                if (!is_string($col) || $col === '') {
+                    continue;
+                }
+                $detail[$prefix . $col] ??= $val;
             }
         }
 

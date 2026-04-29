@@ -33,6 +33,10 @@ use RuntimeException;
  *                    Array shape: { table: string, sourceColumn: string, targetColumn: string }
  *                    Each legacy id is looked up in `table` WHERE `sourceColumn` = id,
  *                    the `targetColumn` value is used as the real state key.
+ *   taxonomySource   (string, optional) — marks this relation as taxonomy-backed.
+ *                    On non-empty state miss, RelationHandler delegates to
+ *                    TaxonomyMigrationService via ResolverContext. The handler
+ *                    does not create taxonomy entries directly.
  *
  * Input normalisation:
  *   - scalar      → [int $id]
@@ -81,7 +85,7 @@ final class RelationHandler implements FieldHandler
         }
 
         // Dispatch 3 (DEFAULT / BACK-COMPAT): direct-id state lookup as today.
-        return $this->resolveDirect($legacyValue, $ctx, $source);
+        return $this->resolveDirect($legacyValue, $ctx, $source, $options);
     }
 
     /**
@@ -89,7 +93,7 @@ final class RelationHandler implements FieldHandler
      *
      * @return array<int, int>
      */
-    private function resolveDirect(mixed $legacyValue, ResolverContext $ctx, string $source): array
+    private function resolveDirect(mixed $legacyValue, ResolverContext $ctx, string $source, array $options = []): array
     {
         if ($legacyValue === null || $legacyValue === '' || $legacyValue === []) {
             return [];
@@ -109,10 +113,74 @@ final class RelationHandler implements FieldHandler
             }
             if ($targetId !== null) {
                 $out[] = $targetId;
+                continue;
+            }
+
+            $resolvedTaxonomyId = $this->resolveTaxonomyMiss($id, $ctx, $source, $options);
+            if ($resolvedTaxonomyId !== null) {
+                $out[] = $resolvedTaxonomyId;
             }
         }
 
         return array_values(array_unique($out));
+    }
+
+    /**
+     * Delegate a taxonomy-backed non-empty state miss to TaxonomyMigrationService.
+     *
+     * @param array<string, mixed> $options
+     */
+    private function resolveTaxonomyMiss(
+        int $legacyId,
+        ResolverContext $ctx,
+        string $stateSource,
+        array $options,
+    ): ?int {
+        $taxonomySource = $this->taxonomySourceFromOptions($options, $stateSource);
+        if ($taxonomySource === null) {
+            return null;
+        }
+
+        if ($ctx->taxonomyResolver === null) {
+            $ctx->report?->warn(sprintf(
+                'taxonomy relation unresolved: %s id=%d missing taxonomy resolver dependency',
+                $taxonomySource,
+                $legacyId,
+            ));
+            return null;
+        }
+
+        $resolved = $ctx->taxonomyResolver->resolveReferenced(
+            $taxonomySource,
+            $legacyId,
+            new \lameco\kunstmaanmigrator\load\MigrationOptions(dryRun: $ctx->dryRun),
+            $ctx->report,
+        );
+        if ($resolved === null) {
+            $ctx->report?->warn(sprintf(
+                'taxonomy relation unresolved: %s id=%d no Craft target available',
+                $taxonomySource,
+                $legacyId,
+            ));
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function taxonomySourceFromOptions(array $options, string $stateSource): ?string
+    {
+        foreach (['taxonomySource', 'taxonomyFqcn'] as $key) {
+            if (isset($options[$key]) && is_string($options[$key]) && $options[$key] !== '') {
+                return $options[$key];
+            }
+        }
+        if (($options['taxonomy'] ?? false) === true || ($options['taxonomyBacked'] ?? false) === true) {
+            return $stateSource;
+        }
+        return null;
     }
 
     /**

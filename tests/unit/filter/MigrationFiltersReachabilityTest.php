@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\unit\filter;
 
+use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -151,4 +152,33 @@ final class MigrationFiltersReachabilityTest extends TestCase
         self::assertTrue($f->allows('App\\Entity\\NewsPage'));
         self::assertFalse($f->allows('App\\Entity\\NewsCategory'));
     }
+
+    public function testFilterFactoryFromCliAcceptsOptionalRelationGraph(): void
+    {
+        $m = new ReflectionMethod(FilterFactory::class, 'fromCli');
+        $names = array_map(static fn(\ReflectionParameter $p): string => $p->getName(), $m->getParameters());
+
+        self::assertSame(
+            ['entitiesArg', 'localesArg', 'sinceArg', 'noSeo', 'noRetour', 'relationGraph'],
+            $names,
+            'D-15: fromCli must keep existing arguments and append an optional relationGraph seam.',
+        );
+        self::assertTrue($m->getParameters()[5]->isDefaultValueAvailable());
+        self::assertSame([], $m->getParameters()[5]->getDefaultValue());
+    }
+
+    public function testBasenameScopedRootReachesFqcnGraphDependencies(): void
+    {
+        $f = new MigrationFilters(
+            entities: ['NewsPage'],
+            relationGraph: [
+                'App\\Entity\\Pages\\NewsPage' => ['App\\Entity\\Taxonomy\\NewsCategory'],
+            ],
+        );
+
+        self::assertTrue($f->allows('App\\Entity\\Pages\\NewsPage'));
+        self::assertTrue($f->allows('App\\Entity\\Taxonomy\\NewsCategory'));
+        self::assertTrue($f->allows('NewsCategory'));
+    }
+
 }

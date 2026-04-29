@@ -5,16 +5,16 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\source;
 
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\source\KnowledgeBase;
+use lameco\kunstmaanmigrator\source\KunstmaanKnowledgeBase;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Plan 02.1-03 Task 3 smoke test: the partial KnowledgeBase port has many
+ * Plan 02.1-03 Task 3 smoke test: the partial KunstmaanKnowledgeBase port has many
  * transitively-reachable private helpers (loadAllColumns, renderTableColumns,
  * fetchSamples, formatSamples, truncateSample, isSafeIdent, plus the
  * CORE_TABLES + IDENT_RX consts). If any helper is missing from the port,
  * one of the two render methods will hit a fatal Error: Call to undefined
- * method KnowledgeBase::xxx() during execution.
+ * method KunstmaanKnowledgeBase::xxx() during execution.
  *
  * The test:
  *   - constructs a fake LegacyDbService whose queryAll/queryScalar return
@@ -30,11 +30,11 @@ use PHPUnit\Framework\TestCase;
  * the dropped-helpers risk at the orchestration layer, not the per-row layer
  * — Phase 5 / TST-02 owns full corpus characterization).
  */
-final class KnowledgeBaseSmokeTest extends TestCase
+final class KunstmaanKnowledgeBaseSmokeTest extends TestCase
 {
     public function testRenderPagesMarkdownReturnsHeaderedString(): void
     {
-        $kb = $this->buildKnowledgeBase();
+        $kb = $this->buildKunstmaanKnowledgeBase();
 
         $markdown = $kb->renderPagesMarkdown(null, new \DateTimeImmutable('2026-01-01T00:00:00Z'));
 
@@ -44,7 +44,7 @@ final class KnowledgeBaseSmokeTest extends TestCase
 
     public function testRenderPagePartsMarkdownReturnsHeaderedString(): void
     {
-        $kb = $this->buildKnowledgeBase();
+        $kb = $this->buildKunstmaanKnowledgeBase();
 
         $markdown = $kb->renderPagePartsMarkdown(null, new \DateTimeImmutable('2026-01-01T00:00:00Z'));
 
@@ -52,9 +52,9 @@ final class KnowledgeBaseSmokeTest extends TestCase
         self::assertStringStartsWith('# Kunstmaan Page Parts', $markdown, 'renderPagePartsMarkdown header must be present');
     }
 
-    private function buildKnowledgeBase(): KnowledgeBase
+    private function buildKunstmaanKnowledgeBase(): KunstmaanKnowledgeBase
     {
-        $kb = new KnowledgeBase();
+        $kb = new KunstmaanKnowledgeBase();
         $kb->legacyDb = new StubLegacyDbService();
         // entityParser intentionally null — both render methods handle a null
         // parser gracefully (fall back to DB column metadata).
@@ -63,9 +63,9 @@ final class KnowledgeBaseSmokeTest extends TestCase
 }
 
 /**
- * Test stub: subclasses LegacyDbService and overrides every method KnowledgeBase
+ * Test stub: subclasses LegacyDbService and overrides every method KunstmaanKnowledgeBase
  * touches. queryAll/queryScalar return canned shapes; db() is never invoked
- * (KnowledgeBase calls $this->legacyDb->queryScalar('SELECT DATABASE()') after
+ * (KunstmaanKnowledgeBase calls $this->legacyDb->queryScalar('SELECT DATABASE()') after
  * the Plan 02.1-03 Task 3 reshape).
  */
 final class StubLegacyDbService extends LegacyDbService

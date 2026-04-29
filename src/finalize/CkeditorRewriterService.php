@@ -20,11 +20,13 @@ use yii\db\Query;
  *   4. Strip class tokens matching /^kma-/ (drops the class attr entirely when all tokens are kma-*)
  *   5. Remove empty <p></p>, <p>&nbsp;</p>, <p> </p>, <p><br></p>
  *
- * Unresolvable asset refs keep the original URL + HTML comment marker
- *   <!-- MIGRATION:UNRESOLVED source=... -->
- * so editors can grep. HTML Purifier strips comments on save, so rendered
- * pages won't leak them — Plan 09's `kunstmaan-migrator/migrate/check` scans
- * the raw DB column BEFORE the save-pipeline runs through Purifier.
+     * Unresolvable asset refs keep the original URL + HTML comment marker with a
+     * delimiter-safe source payload:
+     *   <!-- MIGRATION:UNRESOLVED sourceB64=... -->
+     * so editors can grep and tooling can recover the source. HTML Purifier
+     * strips comments on save, so rendered pages won't leak them — Plan 09's
+     * `kunstmaan-migrator/migrate/check` scans the raw DB column BEFORE the
+     * save-pipeline runs through Purifier.
  *
  * Ref-token format (Craft 5 CKEditor, imageMode=img):
  *   {asset:<numeric-id>@<siteId>:url}
@@ -83,6 +85,9 @@ class CkeditorRewriterService extends Component
 
     private bool $urlCacheWarm = false;
 
+    /** @var array<string, int> legacy media URL/path → kuma_media.id */
+    private array $urlToKumaMediaIdCache = [];
+
     /** @var array<int, int> kuma_media.id → Craft asset numeric id */
     private array $kumaMediaIdCache = [];
 
@@ -92,6 +97,18 @@ class CkeditorRewriterService extends Component
     private array $ntToEntryCache = [];
 
     private bool $ntCacheWarm = false;
+
+    /** @var list<array<string, mixed>> */
+    private array $unresolvedDiagnostics = [];
+
+    /** @var list<array<string, mixed>> */
+    private array $outOfScopeDiagnostics = [];
+
+    /** @var array<int, string> */
+    private array $outOfScopeNtReasons = [];
+
+    /** @var array<int, string> */
+    private array $outOfScopeMediaReasons = [];
 
     /**
      * Rewrite a legacy CKEditor body HTML string to Craft-native form.
@@ -103,6 +120,8 @@ class CkeditorRewriterService extends Component
         if ($html === null || $html === '') {
             return '';
         }
+
+        $html = $this->stripUnresolvedMarkers($html);
 
         // Step 1 — rewrite <img src="/uploads/media/..."> and <a href="/uploads/media/...">
         $html = $this->rewriteAssetAttributes($html, $siteId);
@@ -148,6 +167,22 @@ class CkeditorRewriterService extends Component
     }
 
     /**
+     * Internal test seam — pre-populate legacy media URL → kuma_media.id lookup
+     * used when finalize encounters raw /uploads/media/... CKEditor URLs that
+     * have not already been materialised into state rows.
+     *
+     * @param array<string, int> $map legacy media URL/path → kuma_media.id
+     *
+     * @internal used by tests
+     */
+    public function seedMediaUrlToKumaMediaIdCache(array $map): void
+    {
+        foreach ($map as $url => $id) {
+            $this->urlToKumaMediaIdCache[$this->normalizeMediaUrlLookupKey((string) $url)] = (int) $id;
+        }
+    }
+
+    /**
      * Internal test seam — pre-populate the kuma_media.id → Craft asset id
      * cache used to resolve [M<id>] placeholders.
      *
@@ -180,6 +215,77 @@ class CkeditorRewriterService extends Component
     }
 
     /**
+     * @param array<int, string> $map kuma_node_translations.id → reason
+     *
+     * @internal used by tests
+     */
+    public function seedOutOfScopeNtReasons(array $map): void
+    {
+        foreach ($map as $ntId => $reason) {
+            $this->outOfScopeNtReasons[(int) $ntId] = (string) $reason;
+        }
+    }
+
+    /**
+     * @param array<int, string> $map kuma_media.id → reason
+     *
+     * @internal used by tests
+     */
+    public function seedOutOfScopeMediaReasons(array $map): void
+    {
+        foreach ($map as $mediaId => $reason) {
+            $this->outOfScopeMediaReasons[(int) $mediaId] = (string) $reason;
+        }
+    }
+
+    /**
+     * Consume reasoned unresolved-token diagnostics for the most recent rewrite
+     * batch. The buffer is reset after consumption so callers can safely attach
+     * field-local context without stale rows leaking into later fields.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function consumeUnresolvedDiagnostics(): array
+    {
+        $rows = $this->unresolvedDiagnostics;
+        $this->unresolvedDiagnostics = [];
+        return $rows;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function consumeOutOfScopeDiagnostics(): array
+    {
+        $rows = $this->outOfScopeDiagnostics;
+        $this->outOfScopeDiagnostics = [];
+        return $rows;
+    }
+
+    /**
+     * Clear per-request lookup caches before a finalize walk.
+     *
+     * Transform handlers may use this same service instance before all entries
+     * and assets have been loaded. Finalize must warm fresh caches from the
+     * completed state table, otherwise broad migrations can keep stale NT/media
+     * misses from earlier transform-time rewrites.
+     */
+    public function resetLookupCaches(): void
+    {
+        $this->urlIdCache = [];
+        $this->urlCacheWarm = false;
+        $this->urlToKumaMediaIdCache = [];
+        $this->kumaMediaIdCache = [];
+        $this->kumaMediaCacheWarm = false;
+        $this->ntToEntryCache = [];
+        $this->ntCacheWarm = false;
+        $this->unresolvedDiagnostics = [];
+        $this->outOfScopeDiagnostics = [];
+        $this->outOfScopeNtReasons = [];
+        $this->outOfScopeMediaReasons = [];
+    }
+
+    /**
      * Rewrite `[M<id>]` Kunstmaan media placeholders to Craft asset ref tokens.
      * Works whether the placeholder sits inside an attribute (`href="[M482]"`)
      * or bare; the regex matches anywhere.
@@ -198,7 +304,13 @@ class CkeditorRewriterService extends Component
                 if ($craftAssetId !== null) {
                     return '{asset:' . $craftAssetId . '@' . $siteId . ':url}';
                 }
-                return $m[0] . '<!-- MIGRATION:UNRESOLVED source=kuma_media:' . $kumaMediaId . ' -->';
+                $outOfScopeReason = $this->outOfScopeKumaMediaReason($kumaMediaId);
+                if ($outOfScopeReason !== null) {
+                    $this->recordOutOfScopeDiagnostic('media', $kumaMediaId, $siteId, (string) $m[0], 'kuma_media:' . $kumaMediaId, $outOfScopeReason);
+                    return (string) $m[0];
+                }
+                $this->recordUnresolvedDiagnostic('media', $kumaMediaId, $siteId, (string) $m[0], 'kuma_media:' . $kumaMediaId, 'no matching Craft asset id');
+                return $m[0] . $this->unresolvedMarker('kuma_media:' . $kumaMediaId);
             },
             $html,
         ) ?? $html;
@@ -222,7 +334,13 @@ class CkeditorRewriterService extends Component
                 if ($craftEntryId !== null) {
                     return '{entry:' . $craftEntryId . '@' . $siteId . ':url}';
                 }
-                return $m[0] . '<!-- MIGRATION:UNRESOLVED source=kuma_node_translation:' . $ntId . ' -->';
+                $outOfScopeReason = $this->outOfScopeNodeTranslationReason($ntId);
+                if ($outOfScopeReason !== null) {
+                    $this->recordOutOfScopeDiagnostic('nt', $ntId, $siteId, (string) $m[0], 'kuma_node_translation:' . $ntId, $outOfScopeReason);
+                    return (string) $m[0];
+                }
+                $this->recordUnresolvedDiagnostic('nt', $ntId, $siteId, (string) $m[0], 'kuma_node_translation:' . $ntId, 'no matching Craft entry id');
+                return $m[0] . $this->unresolvedMarker('kuma_node_translation:' . $ntId);
             },
             $html,
         ) ?? $html;
@@ -380,23 +498,16 @@ class CkeditorRewriterService extends Component
             }
         }
 
-        if (empty($nodeIdToTargetId)) {
-            $this->ntCacheWarm = true;
-            return;
-        }
-
         // Join NT rows from legacy DB to get nt.id → node_id
         try {
             $ntRows = $this->legacyDb->queryAll(
                 'SELECT id AS nt_id, node_id FROM kuma_node_translations WHERE node_id IS NOT NULL',
             );
-            foreach ($ntRows as $r) {
-                $ntId = (int) ($r['nt_id'] ?? 0);
-                $nodeId = (int) ($r['node_id'] ?? 0);
-                if ($ntId > 0 && isset($nodeIdToTargetId[$nodeId])) {
-                    $this->ntToEntryCache[$ntId] = $nodeIdToTargetId[$nodeId];
-                }
-            }
+            $this->ntToEntryCache += self::buildNtToEntryCacheFromRows(
+                $this->stateEntryRows(),
+                $refNodeRows ?? [],
+                $ntRows,
+            );
         } catch (\Throwable $e) {
             Craft::warning(
                 'CkeditorRewriterService: could not warm NT cache: ' . $e->getMessage(),
@@ -405,6 +516,189 @@ class CkeditorRewriterService extends Component
         }
 
         $this->ntCacheWarm = true;
+    }
+
+    /**
+     * Pure NT cache builder used by warmNtCache() and PHPUnit. It maps state rows
+     * to node ids through both sourceKey/ref rows and decoded meta.kumaNodeId,
+     * then maps node translations to Craft entry ids.
+     *
+     * @param list<array<string, mixed>> $stateRows
+     * @param list<array<string, mixed>> $refNodeRows
+     * @param list<array<string, mixed>> $ntRows
+     * @return array<int, int>
+     */
+    private static function buildNtToEntryCacheFromRows(array $stateRows, array $refNodeRows, array $ntRows): array
+    {
+        $refToNodeMap = [];
+        foreach ($refNodeRows as $r) {
+            $fqcn = (string) ($r['ref_entity_name'] ?? $r['source'] ?? '');
+            $refId = (int) ($r['ref_id'] ?? $r['sourceKey'] ?? 0);
+            $nodeId = (int) ($r['node_id'] ?? $r['kumaNodeId'] ?? 0);
+            if ($fqcn !== '' && $refId > 0 && $nodeId > 0) {
+                $refToNodeMap[$fqcn][$refId] = $nodeId;
+                $refToNodeMap[str_replace('\\', '_', $fqcn)][$refId] = $nodeId;
+            }
+        }
+
+        $nodeIdToTargetId = [];
+        foreach ($stateRows as $row) {
+            if (($row['targetType'] ?? null) !== 'entry' || empty($row['targetId'])) {
+                continue;
+            }
+            $source = (string) ($row['source'] ?? '');
+            $fqcn = str_replace('_', '\\', $source);
+            $targetId = (int) $row['targetId'];
+            $sourceKey = (int) ($row['sourceKey'] ?? 0);
+            $mappedNodeId = $sourceKey > 0
+                ? (int) ($refToNodeMap[$fqcn][$sourceKey] ?? $refToNodeMap[$source][$sourceKey] ?? 0)
+                : 0;
+            if ($mappedNodeId > 0) {
+                $nodeIdToTargetId[$mappedNodeId] = $targetId;
+            } elseif ($sourceKey > 0) {
+                $nodeIdToTargetId[$sourceKey] = $targetId;
+            }
+            $meta = $row['meta'] ?? null;
+            if (is_string($meta)) {
+                $meta = json_decode($meta, true);
+            }
+            if (is_array($meta)) {
+                $metaNodeId = (int) ($meta['kumaNodeId'] ?? 0);
+                if ($metaNodeId > 0) {
+                    $nodeIdToTargetId[$metaNodeId] = $targetId;
+                }
+            }
+        }
+
+        $out = [];
+        foreach ($ntRows as $r) {
+            $ntId = (int) ($r['nt_id'] ?? $r['id'] ?? 0);
+            $nodeId = (int) ($r['node_id'] ?? 0);
+            if ($ntId > 0 && isset($nodeIdToTargetId[$nodeId])) {
+                $out[$ntId] = $nodeIdToTargetId[$nodeId];
+            }
+        }
+        ksort($out);
+        return $out;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function stateEntryRows(): array
+    {
+        $rows = [];
+        $sources = array_column(
+            (new Query())
+                ->select('source')
+                ->distinct()
+                ->from('{{%kunstmaanmigrator_state}}')
+                ->where(['targetType' => 'entry'])
+                ->all(),
+            'source',
+        );
+        foreach ($sources as $source) {
+            foreach ($this->migrationState->all((string) $source) as $row) {
+                if (is_array($row)) {
+                    $rows[] = ['source' => (string) $source] + $row;
+                }
+            }
+        }
+        return $rows;
+    }
+
+    private function recordUnresolvedDiagnostic(string $family, int $legacyId, int $siteId, string $token, string $source, string $reason): void
+    {
+        $this->unresolvedDiagnostics[] = [
+            'tokenFamily' => $family,
+            'legacyId' => $legacyId,
+            'siteId' => $siteId,
+            'token' => $token,
+            'source' => $source,
+            'reason' => $reason,
+        ];
+    }
+
+    private function recordOutOfScopeDiagnostic(string $family, int $legacyId, int $siteId, string $token, string $source, string $reason): void
+    {
+        $this->outOfScopeDiagnostics[] = [
+            'tokenFamily' => $family,
+            'legacyId' => $legacyId,
+            'siteId' => $siteId,
+            'token' => $token,
+            'source' => $source,
+            'reason' => $reason,
+        ];
+    }
+
+    private function outOfScopeNodeTranslationReason(int $ntId): ?string
+    {
+        if (isset($this->outOfScopeNtReasons[$ntId])) {
+            return $this->outOfScopeNtReasons[$ntId];
+        }
+        if ($this->legacyDb === null) {
+            return null;
+        }
+
+        try {
+            $row = $this->legacyDb->queryOne(
+                'SELECT t.online AS translation_online, n.deleted AS node_deleted'
+                . ' FROM kuma_node_translations t'
+                . ' LEFT JOIN kuma_nodes n ON n.id = t.node_id'
+                . ' WHERE t.id = :id LIMIT 1',
+                [':id' => $ntId],
+            );
+        } catch (\Throwable $e) {
+            Craft::warning(
+                'CkeditorRewriterService: could not classify NT scope: ' . $e->getMessage(),
+                __METHOD__,
+            );
+            return null;
+        }
+
+        if (!is_array($row)) {
+            return null;
+        }
+        if ((int) ($row['node_deleted'] ?? 0) === 1) {
+            return 'legacy node translation points to a deleted node; classified outside live page-rooted scope';
+        }
+        if ((int) ($row['translation_online'] ?? 1) === 0) {
+            return 'legacy node translation is offline; classified outside live page-rooted scope';
+        }
+
+        return null;
+    }
+
+    private function outOfScopeKumaMediaReason(int $mediaId): ?string
+    {
+        if (isset($this->outOfScopeMediaReasons[$mediaId])) {
+            return $this->outOfScopeMediaReasons[$mediaId];
+        }
+        if ($this->legacyDb === null) {
+            return null;
+        }
+
+        try {
+            $row = $this->legacyDb->queryOne(
+                'SELECT content_type, url FROM kuma_media WHERE id = :id LIMIT 1',
+                [':id' => $mediaId],
+            );
+        } catch (\Throwable $e) {
+            Craft::warning(
+                'CkeditorRewriterService: could not classify kuma_media scope: ' . $e->getMessage(),
+                __METHOD__,
+            );
+            return null;
+        }
+
+        if (!is_array($row)) {
+            return null;
+        }
+        $contentType = strtolower((string) ($row['content_type'] ?? ''));
+        $extension = strtolower((string) pathinfo((string) ($row['url'] ?? ''), PATHINFO_EXTENSION));
+        if ($contentType === 'text/html' || in_array($extension, ['htm', 'html'], true)) {
+            return 'legacy media row is HTML, not a Craft asset import target; classified outside asset scope';
+        }
+
+        return null;
     }
 
     private function rewriteAssetAttributes(string $html, int $siteId): string
@@ -426,9 +720,54 @@ class CkeditorRewriterService extends Component
 
             // Unresolved — emit a marker comment adjacent to the attribute so
             // editors and the check action can grep the raw HTML.
-            $marker = '<!-- MIGRATION:UNRESOLVED source=' . $url . ' -->';
+            $diagnosticUrl = $this->diagnosticMediaUrlToken($url);
+            $this->recordUnresolvedDiagnostic(
+                'media_url',
+                0,
+                $siteId,
+                $diagnosticUrl,
+                $diagnosticUrl,
+                'no matching Craft asset id for legacy media URL',
+            );
+            $marker = $this->unresolvedMarker($url);
             return $attr . '=' . $quote . $url . $quote . $marker;
         }, $html) ?? $html;
+    }
+
+    private function diagnosticMediaUrlToken(string $url): string
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (!is_string($path) || $path === '') {
+            $path = preg_replace('/[?#].*$/', '', $url) ?? $url;
+        }
+
+        $path = preg_replace('/[\x00-\x1F\x7F`|<>]/', '?', $path) ?? $path;
+
+        if (strlen($path) > 255) {
+            return substr($path, 0, 252) . '...';
+        }
+
+        return $path;
+    }
+
+    private function stripUnresolvedMarkers(string $html): string
+    {
+        return preg_replace('/<!-- MIGRATION:UNRESOLVED sourceB64=[A-Za-z0-9_-]+ -->/', '', $html) ?? $html;
+    }
+
+    /**
+     * Build a comment-safe unresolved marker.
+     *
+     * Raw legacy URLs can contain HTML-comment delimiters (`-->`) or markup-like
+     * text. Keep the raw value only in the original attribute/literal and encode
+     * the marker payload using unpadded base64url so it never emits comment or
+     * attribute delimiters such as `+`, `/`, `=`, `<`, `>`, or `--`.
+     */
+    private function unresolvedMarker(string $source): string
+    {
+        $sourceB64 = rtrim(strtr(base64_encode($source), '+/', '-_'), '=');
+
+        return '<!-- MIGRATION:UNRESOLVED sourceB64=' . $sourceB64 . ' -->';
     }
 
     /**
@@ -501,7 +840,78 @@ class CkeditorRewriterService extends Component
             return $this->urlIdCache[$url];
         }
         $stripped = preg_replace('/[?#].*$/', '', $url) ?? $url;
-        return $this->urlIdCache[$stripped] ?? null;
+        if (isset($this->urlIdCache[$stripped])) {
+            return $this->urlIdCache[$stripped];
+        }
+
+        $kumaMediaId = $this->resolveKumaMediaIdForUrl($stripped);
+        if ($kumaMediaId === null) {
+            if ($this->assetResolver !== null && method_exists($this->assetResolver, 'resolveFromLegacyUrl')) {
+                $resolved = $this->assetResolver->resolveFromLegacyUrl($stripped);
+                if ($resolved > 0) {
+                    $this->urlIdCache[$stripped] = $resolved;
+                    $this->urlIdCache['/' . ltrim($stripped, '/')] = $resolved;
+                    return $resolved;
+                }
+            }
+
+            return null;
+        }
+
+        $assetId = $this->resolveKumaMediaId($kumaMediaId);
+        if ($assetId === null) {
+            return null;
+        }
+
+        $this->urlIdCache[$stripped] = $assetId;
+        $this->urlIdCache['/' . ltrim($stripped, '/')] = $assetId;
+        return $assetId;
+    }
+
+    private function resolveKumaMediaIdForUrl(string $url): ?int
+    {
+        $key = $this->normalizeMediaUrlLookupKey($url);
+        if (isset($this->urlToKumaMediaIdCache[$key])) {
+            return $this->urlToKumaMediaIdCache[$key] > 0 ? $this->urlToKumaMediaIdCache[$key] : null;
+        }
+
+        if ($this->legacyDb === null) {
+            return null;
+        }
+
+        $candidates = array_values(array_unique([
+            $key,
+            '/' . ltrim($key, '/'),
+            rawurldecode($key),
+            '/' . ltrim(rawurldecode($key), '/'),
+        ]));
+
+        $placeholders = [];
+        $params = [];
+        foreach ($candidates as $i => $candidate) {
+            $name = ':url' . $i;
+            $placeholders[] = $name;
+            $params[$name] = $candidate;
+        }
+
+        $row = $this->legacyDb->queryOne(
+            'SELECT id FROM kuma_media WHERE url IN (' . implode(', ', $placeholders) . ') ORDER BY deleted ASC, id ASC LIMIT 1',
+            $params,
+        );
+        $id = is_array($row) ? (int) ($row['id'] ?? 0) : 0;
+        $this->urlToKumaMediaIdCache[$key] = $id;
+
+        return $id > 0 ? $id : null;
+    }
+
+    private function normalizeMediaUrlLookupKey(string $url): string
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (!is_string($path) || $path === '') {
+            $path = preg_replace('/[?#].*$/', '', $url) ?? $url;
+        }
+
+        return '/' . ltrim($path, '/');
     }
 
     private function warmUrlCacheFromState(): void

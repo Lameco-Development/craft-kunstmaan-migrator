@@ -7,6 +7,9 @@ namespace lameco\kunstmaanmigrator\console;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
+use lameco\kunstmaanmigrator\audit\PageRootedCoverageAuditor;
+use lameco\kunstmaanmigrator\audit\PageRootedSurfaceDiscovery;
+use lameco\kunstmaanmigrator\compile\GraphCompatibilityValidator;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use Symfony\Component\Yaml\Yaml as SymfonyYaml;
@@ -110,10 +113,39 @@ class CompileController extends Controller
             Console::FG_GREEN,
         );
 
+        // 3.5. Graph compatibility gate. Phase 11 makes these canonical
+        // artifacts versioned graphs; stale/missing versions fail before an
+        // executable mapping can be written.
+        $kunstmaanGraph = $this->loadJsonObject($storageDir . '/kunstmaan-schema.json');
+        $craftGraph = $this->loadJsonObject($storageDir . '/craft-schema.json');
+        $graphCompatibilityRows = (new GraphCompatibilityValidator())->validate($mapping, $kunstmaanGraph, $craftGraph);
+        $graphFatalRows = array_values(array_filter(
+            $graphCompatibilityRows,
+            static fn(array $row): bool => (string) ($row['severity'] ?? '') === 'fatal',
+        ));
+        foreach ($this->summarizeGraphCompatibilityRows($graphCompatibilityRows) as $row) {
+            $line = sprintf(
+                '%s [%s] %s%s%s',
+                strtoupper((string) ($row['severity'] ?? 'warning')),
+                (string) ($row['code'] ?? 'graph_compatibility'),
+                (string) ($row['message'] ?? ''),
+                ((string) ($row['sourceRef'] ?? '')) !== '' ? ' source=' . (string) $row['sourceRef'] : '',
+                ((string) ($row['targetRef'] ?? '')) !== '' ? ' target=' . (string) $row['targetRef'] : '',
+            );
+            if ((string) ($row['severity'] ?? '') === 'fatal') {
+                $this->stderr("  FAIL graph validation: {$line}\n", Console::FG_RED);
+            } else {
+                $this->stdout("  WARN graph validation: {$line}\n", Console::FG_YELLOW);
+            }
+        }
+        if ($graphFatalRows !== []) {
+            return ExitCode::CONFIG;
+        }
+
         // 4. Resolve sites map. Precedence (highest first):
         //    a. existing mapping.yaml `sites:` block (operator-curated)
         //    b. Settings::localeMap (host config)
-        //    c. auto-derived from schema-dump.json legacy locales × Craft sites
+        //    c. auto-derived from kunstmaan-schema.json legacy locales × Craft sites
         //       (language-code match: legacy locale 'nl' → site whose language
         //       starts with 'nl-' or equals 'nl').
         $sites = (array) ($mapping['sites'] ?? []);
@@ -124,7 +156,7 @@ class CompileController extends Controller
         }
         if ($sites === []) {
             $sites = $this->autoDeriveSitesFromLegacyLocales($storageDir);
-            $sitesSource = 'auto-derived (schema-dump locales × Craft sites by language code)';
+            $sitesSource = 'auto-derived (kunstmaan-schema locales × Craft sites by language code)';
         }
         $this->stdout(sprintf(
             "  OK   sites map resolved: %d entries (source: %s)\n",
@@ -263,6 +295,13 @@ class CompileController extends Controller
                 $dataProvidersEmitted,
             ), Console::FG_GREEN);
         }
+        $promotedTargetsEmitted = (int) ($report['promotedTargetsEmitted'] ?? 0);
+        if ($promotedTargetsEmitted > 0) {
+            $this->stdout(sprintf(
+                "  OK   compiled %d promoted relation target(s) into mapping.promotedTargets\n",
+                $promotedTargetsEmitted,
+            ), Console::FG_GREEN);
+        }
 
         // Validate compiled section handles against Craft's actual entry-type
         // catalog. Compiler derives candidate handles from FQCN basenames
@@ -316,8 +355,19 @@ class CompileController extends Controller
                 $this->stdout("        - {$line}\n", Console::FG_YELLOW);
             }
         }
-        foreach ((array) $report['warnings'] as $w) {
+        foreach ($this->summarizeCompileWarnings((array) $report['warnings']) as $w) {
             $this->stdout("  WARN {$w}\n", Console::FG_YELLOW);
+        }
+
+        $targetValidation = $plugin->craftTargetIntrospector->validateWithSeverity($compiled, $this->craftTargetSchema($plugin));
+        foreach ($targetValidation['fatal'] as $w) {
+            $this->stderr("  FAIL target validation: {$w}\n", Console::FG_RED);
+        }
+        foreach ($targetValidation['warnings'] as $w) {
+            $this->stdout("  WARN target validation: {$w}\n", Console::FG_YELLOW);
+        }
+        if ($targetValidation['fatal'] !== []) {
+            return ExitCode::CONFIG;
         }
 
         // 6. Dry-run early exit.
@@ -337,6 +387,7 @@ class CompileController extends Controller
         $pagePartsOut      = (array) ($compiled['pageParts'] ?? []);
         $taxonomiesOut     = (array) ($compiled['taxonomies'] ?? []);
         $dataProvidersOut  = (array) ($compiled['dataProviders'] ?? []);
+        $promotedTargetsOut = (array) ($compiled['promotedTargets'] ?? []);
         $ordered = [
             'sites'       => $compiled['sites'],
             'sections'    => $compiled['sections'],
@@ -350,6 +401,9 @@ class CompileController extends Controller
         }
         if ($dataProvidersOut !== []) {
             $ordered['dataProviders'] = $dataProvidersOut;
+        }
+        if ($promotedTargetsOut !== []) {
+            $ordered['promotedTargets'] = $promotedTargetsOut;
         }
         $ordered['proposals'] = $compiled['proposals'];
         try {
@@ -365,8 +419,183 @@ class CompileController extends Controller
         }
         $this->stdout("  OK   mapping.yaml written → {$mappingPath}\n", Console::FG_GREEN);
 
+        // 8. Page-rooted structural coverage artifacts.
+        // The audit is intentionally structural-only: discovery consumes compiled
+        // mapping/pageStructure/warnings and emits FQCNs, tables, handles, relation
+        // shapes, adapter names, ids, and token types — never source samples.
+        $coverageMapping = $compiled;
+        unset($coverageMapping['_compileReport']);
+        $surfaceDiscovery = $plugin->pageRootedSurfaceDiscovery ?? new PageRootedSurfaceDiscovery();
+        $coverageAuditor = $plugin->pageRootedCoverageAuditor ?? new PageRootedCoverageAuditor();
+        $discoveryRows = $surfaceDiscovery->discover(
+            $coverageMapping,
+            $pageStructure,
+            $this->relationMetadataFromPageStructure($pageStructure),
+        );
+        $coverageRows = $coverageAuditor->audit(
+            $discoveryRows,
+            $coverageMapping,
+            $pageStructure,
+            (array) ($report['warnings'] ?? []),
+        );
+        $coverageJsonPath = $storageDir . '/page-rooted-coverage.json';
+        $coverageMarkdownPath = $storageDir . '/PAGE-ROOTED-COVERAGE.md';
+        if (!$plugin->mappingFile->writeAtomicJson($coverageJsonPath, ['rows' => $coverageRows])) {
+            $this->stderr("  FAIL writeAtomicJson to {$coverageJsonPath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        if (!$plugin->mappingFile->writeAtomic($coverageMarkdownPath, $coverageAuditor->renderMarkdown($coverageRows))) {
+            $this->stderr("  FAIL writeAtomic to {$coverageMarkdownPath}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout("  OK   Page-rooted coverage written → {$coverageJsonPath}\n", Console::FG_GREEN);
+        $this->stdout("  OK   Page-rooted coverage written → {$coverageMarkdownPath}\n", Console::FG_GREEN);
+
         $this->stdout("\nCompile: PASS\n", Console::FG_GREEN);
         return ExitCode::OK;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private function summarizeGraphCompatibilityRows(array $rows): array
+    {
+        $out = [];
+        $relationIntent = [];
+
+        foreach ($rows as $row) {
+            if (
+                (string) ($row['severity'] ?? '') !== 'fatal'
+                && (string) ($row['code'] ?? '') === 'relation_intent_required'
+            ) {
+                $source = (string) ($row['sourceRef'] ?? '');
+                $target = (string) ($row['targetRef'] ?? '');
+                $relationIntent[] = $source . ($target !== '' ? ' -> ' . $target : '');
+                continue;
+            }
+
+            $out[] = $row;
+        }
+
+        if ($relationIntent !== []) {
+            $examples = array_slice($relationIntent, 0, 5);
+            $suffix = count($relationIntent) > count($examples)
+                ? '; examples: ' . implode(', ', $examples) . ', +' . (count($relationIntent) - count($examples)) . ' more'
+                : '; examples: ' . implode(', ', $examples);
+            $out[] = [
+                'severity' => 'warning',
+                'code' => 'relation_intent_required',
+                'message' => count($relationIntent) . ' graph relation(s) have FK evidence but no explicit intent yet (reference, promote, embed, drop, or out_of_scope)' . $suffix,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param list<string> $warnings
+     * @return list<string>
+     */
+    private function summarizeCompileWarnings(array $warnings): array
+    {
+        $out = [];
+        $pageBuilderGroups = [];
+        $deduped = [];
+
+        foreach ($warnings as $warning) {
+            if (!is_string($warning)) {
+                continue;
+            }
+            if (preg_match(
+                '/^(?<fqcn>[^:]+): pageBuilderHandle `(?<matrix>[^`]+)` not propagated for (?<source>.+?) because entry-type `(?<entryType>[^`]+)` does not own that Matrix field(?<tail>.*)$/',
+                $warning,
+                $m,
+            ) === 1) {
+                $hasFallback = str_contains($m['tail'], 'flatPagePartContent');
+                $key = implode('|', [$m['fqcn'], $m['matrix'], $m['entryType'], $hasFallback ? 'fallback' : 'no-fallback']);
+                $pageBuilderGroups[$key]['fqcn'] = $m['fqcn'];
+                $pageBuilderGroups[$key]['matrix'] = $m['matrix'];
+                $pageBuilderGroups[$key]['entryType'] = $m['entryType'];
+                $pageBuilderGroups[$key]['hasFallback'] = $hasFallback;
+                $pageBuilderGroups[$key]['sources'][] = $m['source'];
+                continue;
+            }
+
+            $deduped[$warning] = ($deduped[$warning] ?? 0) + 1;
+        }
+
+        foreach ($deduped as $warning => $count) {
+            $out[] = $count > 1 ? "{$warning} (repeated {$count}x)" : $warning;
+        }
+
+        foreach ($pageBuilderGroups as $group) {
+            $sources = array_values(array_unique((array) $group['sources']));
+            $examples = array_slice($sources, 0, 3);
+            $suffix = count($sources) > count($examples)
+                ? ', +' . (count($sources) - count($examples)) . ' more'
+                : '';
+            $out[] = sprintf(
+                '%s: %d page-part mapping(s) not propagated from pageBuilderHandle `%s` because entry-type `%s` does not own that Matrix field%s; examples: %s%s.',
+                $group['fqcn'],
+                count($sources),
+                $group['matrix'],
+                $group['entryType'],
+                $group['hasFallback']
+                    ? '; content is preserved via flatPagePartContent fallback'
+                    : ' and no flatPagePartContent fallback is available',
+                implode(', ', $examples),
+                $suffix,
+            );
+        }
+
+        return $out;
+    }
+
+    /**
+     * Normalize optional relation metadata embedded by source scanners into the
+     * shape consumed by PageRootedSurfaceDiscovery. Scanners differ by project,
+     * so this accepts common keys and otherwise returns an empty map, which the
+     * discovery service converts into explicit unsupported relation descriptors.
+     *
+     * @param array<string, mixed> $pageStructure
+     * @return array<string, list<array<string, mixed>>>
+     */
+    private function relationMetadataFromPageStructure(array $pageStructure): array
+    {
+        $out = [];
+        foreach ($pageStructure as $fqcn => $record) {
+            if (!is_string($fqcn) || !is_array($record)) {
+                continue;
+            }
+            $relations = [];
+            foreach (['relations', 'relationMetadata', 'doctrineRelations'] as $key) {
+                foreach ((array) ($record[$key] ?? []) as $relation) {
+                    if (is_array($relation)) {
+                        $relations[] = $relation;
+                    }
+                }
+            }
+            if ($relations !== []) {
+                $out[$fqcn] = $relations;
+            }
+        }
+        ksort($out);
+        return $out;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function loadJsonObject(string $path): array
+    {
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $decoded = json_decode((string) file_get_contents($path), true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     /**
@@ -386,6 +615,54 @@ class CompileController extends Controller
             }
         }
         return array_values(array_unique($out));
+    }
+
+    /**
+     * Build the schema facade consumed by CraftTargetIntrospector.
+     *
+     * @return array<string, mixed>
+     */
+    private function craftTargetSchema(Plugin $plugin): array
+    {
+        $sections = [];
+        foreach ($plugin->craftKnowledgeBase->sectionToEntryTypes() as $handle => $entryTypes) {
+            $sections[$handle] = ['entryTypes' => $entryTypes];
+        }
+
+        $entryTypes = [];
+        foreach ($plugin->craftKnowledgeBase->buildFieldIndex() as $entryType => $fields) {
+            $fieldMap = [];
+            foreach ((array) $fields as $field) {
+                if (!is_array($field)) { continue; }
+                $handle = (string) ($field['handle'] ?? '');
+                if ($handle === '' || str_contains($handle, '.')) { continue; }
+                $fieldMap[$handle] = ['type' => strtolower((string) ($field['classification'] ?? $field['type'] ?? 'plain'))];
+                if (isset($field['blocks']) && is_array($field['blocks'])) {
+                    $fieldMap[$handle]['blocks'] = $field['blocks'];
+                }
+            }
+            $entryTypes[(string) $entryType] = ['fields' => $fieldMap];
+        }
+
+        $volumes = [];
+        try {
+            foreach (Craft::$app->volumes->getAllVolumes() as $volume) {
+                $handle = (string) $volume->handle;
+                if ($handle !== '') { $volumes[] = $handle; }
+            }
+        } catch (Throwable) {
+            $volumes = [];
+        }
+
+        return [
+            'sections' => $sections,
+            'entryTypes' => $entryTypes,
+            'volumes' => array_values(array_unique($volumes)),
+            'plugins' => [
+                'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
+                'retour' => Craft::$app->plugins->getPlugin('retour') !== null,
+            ],
+        ];
     }
 
     /**
@@ -426,7 +703,7 @@ class CompileController extends Controller
     }
 
     /**
-     * Derive a candidate locale → siteHandle map from schema-dump.json's
+     * Derive a candidate locale → siteHandle map from kunstmaan-schema.json's
      * `locales` list cross-referenced with Craft's configured sites by
      * language-code prefix. Returns [] when either side is empty or no
      * languages match — operator must then hand-curate Settings::localeMap
@@ -443,9 +720,13 @@ class CompileController extends Controller
      */
     private function autoDeriveSitesFromLegacyLocales(string $storageDir): array
     {
-        $schemaPath = $storageDir . '/schema-dump.json';
+        $schemaPath = $storageDir . '/kunstmaan-schema.json';
         if (!is_file($schemaPath)) {
-            return [];
+            $legacySchemaPath = $storageDir . '/schema-dump.json';
+            if (!is_file($legacySchemaPath)) {
+                return [];
+            }
+            $schemaPath = $legacySchemaPath;
         }
         $raw = (string) file_get_contents($schemaPath);
         $schema = json_decode($raw, true);

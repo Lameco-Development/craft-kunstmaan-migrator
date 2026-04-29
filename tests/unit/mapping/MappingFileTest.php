@@ -59,6 +59,28 @@ final class MappingFileTest extends TestCase
         self::assertCount(3, $row['samples'], 'Samples must be capped at 3.');
     }
 
+    public function testBuildRowPreservesGraphCompatibilityFields(): void
+    {
+        $mf = new MappingFile();
+        $row = $mf->buildRow(
+            [
+                'table' => 'lameco_websitebundle_newspages',
+                'column' => 'employee_id',
+                'targetEntryType' => 'newsPage',
+                'targetHandle' => 'caseTeamMembers',
+                'handler' => 'relation',
+                'sourceRef' => 'kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee',
+                'targetRef' => 'craft.field:newsPage.caseTeamMembers',
+                'relationIntent' => 'promote',
+            ],
+            'accepted',
+        );
+
+        self::assertSame('kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee', $row['sourceRef']);
+        self::assertSame('craft.field:newsPage.caseTeamMembers', $row['targetRef']);
+        self::assertSame('promote', $row['relationIntent']);
+    }
+
     public function testMergePreservesExistingRowsVerbatimOnD04SkipExisting(): void
     {
         $mf = new MappingFile();
@@ -100,6 +122,192 @@ final class MappingFileTest extends TestCase
         self::assertSame('accepted', $merged['proposals'][0]['status']);
         self::assertSame('OPERATOR DECISION', $merged['proposals'][0]['rationale']);
         self::assertSame('body', $merged['proposals'][0]['targetHandle']);
+    }
+
+    public function testMergeBackfillsMissingGraphFieldsOnExistingDecision(): void
+    {
+        $mf = new MappingFile();
+        $existing = ['proposals' => [[
+            'kind' => 'column',
+            'table' => 'lameco_websitebundle_newspages',
+            'column' => 'employee_id',
+            'targetEntryType' => 'newsPage',
+            'targetHandle' => 'caseTeamMembers',
+            'handler' => 'relation',
+            'status' => 'accepted',
+            'rationale' => 'operator-selected',
+        ]]];
+        $incoming = [[
+            'kind' => 'column',
+            'table' => 'lameco_websitebundle_newspages',
+            'column' => 'employee_id',
+            'targetEntryType' => 'newsPage',
+            'targetHandle' => 'differentGuess',
+            'handler' => 'plain',
+            'status' => 'proposed',
+            'sourceRef' => 'kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee',
+            'targetRef' => 'craft.field:newsPage.caseTeamMembers',
+            'relationIntent' => 'reference',
+        ]];
+
+        $merged = $mf->merge($existing, $incoming);
+
+        self::assertCount(1, $merged['proposals']);
+        self::assertSame('caseTeamMembers', $merged['proposals'][0]['targetHandle']);
+        self::assertSame('relation', $merged['proposals'][0]['handler']);
+        self::assertSame('kunstmaan.page:App\\Entity\\Pages\\NewsPage.employee', $merged['proposals'][0]['sourceRef']);
+        self::assertSame('craft.field:newsPage.caseTeamMembers', $merged['proposals'][0]['targetRef']);
+        self::assertSame('reference', $merged['proposals'][0]['relationIntent']);
+    }
+
+    public function testMergeBackfillsHandlerOptionsOnExistingDecision(): void
+    {
+        $mf = new MappingFile();
+        $existing = ['proposals' => [[
+            'kind' => 'column',
+            'table' => 'lameco_websitebundle_case_study_pages',
+            'column' => 'employee_id',
+            'targetEntryType' => 'casePage',
+            'targetHandle' => 'caseTeamMembers',
+            'handler' => 'relation',
+            'status' => 'needs-review',
+        ]]];
+        $incoming = [[
+            'kind' => 'column',
+            'table' => 'lameco_websitebundle_case_study_pages',
+            'column' => 'employee_id',
+            'targetEntryType' => 'casePage',
+            'targetHandle' => 'caseTeamMembers',
+            'handler' => 'relation',
+            'status' => 'proposed',
+            'handlerOptions' => [
+                'stateSource' => 'App\\Entity\\Pages\\EmployeePage',
+                'joinTranslation' => [
+                    'table' => 'lameco_websitebundle_employee_pages',
+                    'sourceColumn' => 'employee_id',
+                    'targetColumn' => 'id',
+                ],
+            ],
+        ]];
+
+        $merged = $mf->merge($existing, $incoming);
+
+        self::assertSame($incoming[0]['handlerOptions'], $merged['proposals'][0]['handlerOptions']);
+        self::assertSame('needs-review', $merged['proposals'][0]['status']);
+    }
+
+    public function testMergeBackfillsEmptyProposedTargetButPreservesAcceptedOperatorTarget(): void
+    {
+        $mf = new MappingFile();
+        $existing = ['proposals' => [
+            [
+                'kind' => 'column',
+                'table' => 'kuma_page',
+                'column' => 'empty_target',
+                'targetEntryType' => 'casePage',
+                'targetHandle' => '',
+                'handler' => '',
+                'status' => 'needs-review',
+            ],
+            [
+                'kind' => 'column',
+                'table' => 'kuma_page',
+                'column' => 'operator_target',
+                'targetEntryType' => 'casePage',
+                'targetHandle' => 'operatorChoice',
+                'handler' => 'plain',
+                'status' => 'accepted',
+            ],
+        ]];
+        $incoming = [
+            [
+                'kind' => 'column',
+                'table' => 'kuma_page',
+                'column' => 'empty_target',
+                'targetEntryType' => 'casePage',
+                'targetHandle' => 'caseIntro.ckeditorDefault',
+                'handler' => 'ckeditor',
+                'status' => 'proposed',
+            ],
+            [
+                'kind' => 'column',
+                'table' => 'kuma_page',
+                'column' => 'operator_target',
+                'targetEntryType' => 'casePage',
+                'targetHandle' => 'freshGuess',
+                'handler' => 'ckeditor',
+                'status' => 'proposed',
+            ],
+        ];
+
+        $merged = $mf->merge($existing, $incoming);
+
+        self::assertSame('caseIntro.ckeditorDefault', $merged['proposals'][0]['targetHandle']);
+        self::assertSame('ckeditor', $merged['proposals'][0]['handler']);
+        self::assertSame('operatorChoice', $merged['proposals'][1]['targetHandle']);
+        self::assertSame('plain', $merged['proposals'][1]['handler']);
+    }
+
+    public function testMergePreservesCompiledAndUnknownTopLevelBlocks(): void
+    {
+        $mf = new MappingFile();
+        $existingRow = [
+            'kind' => 'column',
+            'table' => 'kuma_news_page',
+            'column' => 'body',
+            'targetEntryType' => 'newsArticle',
+            'targetHandle' => 'body',
+            'handler' => 'ckeditor',
+            'status' => 'accepted',
+            'rationale' => 'operator-selected',
+        ];
+        $compiledBlocks = [
+            'nodeClasses' => [
+                'App\\Entity\\Pages\\NewsPage' => [
+                    'sourceTable' => 'kuma_news_page',
+                    'section' => 'news',
+                    'fields' => ['body' => ['source' => 'body', 'handler' => 'ckeditor']],
+                ],
+            ],
+            'sections' => [
+                'newsArticle' => ['entryType' => 'newsArticle', 'section' => 'news'],
+            ],
+            'sites' => ['nl' => 'default'],
+            'pageParts' => [
+                'HeaderPagePart' => ['targetBlockType' => 'header'],
+            ],
+            'taxonomies' => [
+                'App\\Entity\\NewsCategory' => ['sourceTable' => 'news_categories'],
+            ],
+            'dataProviders' => [
+                'App\\Provider\\HomeProvider' => ['target' => 'home'],
+            ],
+            '_compileReport' => ['warnings' => ['operator must review header block']],
+            '_auditTrail' => ['lastCompile' => '2026-04-28T00:00:00Z'],
+        ];
+        $existing = $compiledBlocks + ['proposals' => [$existingRow]];
+
+        $incomingDuplicate = $existingRow;
+        $incomingDuplicate['targetHandle'] = 'bodyRichText';
+        $incomingDuplicate['rationale'] = 'fresh analyze proposal';
+        $incomingNew = [
+            'kind' => 'column',
+            'table' => 'kuma_news_page',
+            'column' => 'subtitle',
+            'targetEntryType' => 'newsArticle',
+            'targetHandle' => 'subtitle',
+            'handler' => 'plain',
+            'status' => 'proposed',
+        ];
+
+        $merged = $mf->merge($existing, [$incomingDuplicate, $incomingNew]);
+
+        foreach ($compiledBlocks as $key => $expected) {
+            self::assertSame($expected, $merged[$key] ?? null, "{$key} top-level block must survive merge verbatim.");
+        }
+        self::assertCount(2, $merged['proposals']);
+        self::assertSame($existingRow, $merged['proposals'][0], 'Existing proposal row must win on identity collision.');
+        self::assertSame($incomingNew, $merged['proposals'][1], 'Unseen incoming proposal rows must append normally.');
     }
 
     public function testMergeAppendsNewTuples(): void

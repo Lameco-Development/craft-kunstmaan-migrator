@@ -22,8 +22,8 @@ use yii\base\Component;
  *    single asset on demand. Called from AssetHandler (state-lookup miss path)
  *    and AtomicMigrationService::ingestAndResolveAssets via the `asset:N`
  *    deferred-token list.
- *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, MigrationFilters)
- *    pre-walks every referenced kuma_media id before the entries loop.
+ *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, MigrationFilters, list<int>)
+ *    pre-walks the in-scope referenced kuma_media ids before the entries loop.
  *    Repurposed from v1's batch-by-default; v2 makes it opt-in only (called
  *    when MigrateController parses --preload-assets).
  *
@@ -52,8 +52,8 @@ use yii\base\Component;
  *  - Namespace flatten: bridge\load → load.
  *  - Drop the v1 asset-scan import — page-driven JIT default per FH-03; assets
  *    discover via the deferred-token resolver per-entry. ingestReferenced()
- *    queries kuma_media directly via LegacyDbService when --preload-assets
- *    is set.
+ *    accepts the current in-scope referenced id set; it never scans all
+ *    kuma_media rows.
  *  - Drop the v1 batch-job import — queue out of scope per PROJECT.md (D-46);
  *    synchronous loop replaces queue.push.
  *  - Drop the v1 serialized-decoder import — replaced with `?object $serializedDecoder`
@@ -147,6 +147,57 @@ class AssetMigrationService extends Component
     }
 
     /**
+     * JIT fallback for raw CKEditor `/uploads/media/...` URLs that exist on
+     * disk but no longer have a matching `kuma_media` row. This preserves live
+     * editor content as the source of truth while keeping the state key distinct
+     * from real `kuma_media:{id}` rows.
+     */
+    public function resolveFromLegacyUrl(string $legacyUrl): int
+    {
+        $path = parse_url($legacyUrl, PHP_URL_PATH);
+        if (!is_string($path) || $path === '') {
+            $path = preg_replace('/[?#].*$/', '', $legacyUrl) ?? $legacyUrl;
+        }
+        $path = '/' . ltrim($path, '/');
+        if ($path === '/' || !str_starts_with($path, '/uploads/media/')) {
+            return 0;
+        }
+
+        $stateKey = 'legacy_url:' . sha1($path);
+        $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
+        if ($existing !== null) {
+            return (int) $existing;
+        }
+
+        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '';
+        $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
+        if ($sourcePath === null) {
+            return 0;
+        }
+
+        $contentType = function_exists('mime_content_type') ? (string) @mime_content_type($sourcePath) : '';
+        $fileSize = @filesize($sourcePath);
+        $opts = new MigrationOptions();
+        $counts = [];
+        $syntheticId = (int) sprintf('%u', crc32($path));
+        $asset = $this->ingestRow([
+            'id' => $syntheticId > 0 ? $syntheticId : 1,
+            'url' => $path,
+            'name' => pathinfo($path, PATHINFO_FILENAME),
+            'content_type' => $contentType !== '' ? $contentType : 'application/octet-stream',
+            'created_at' => date('Y-m-d H:i:s', (int) (filemtime($sourcePath) ?: time())),
+            'filesize' => $fileSize !== false ? $fileSize : null,
+        ], $rootDir, $opts, $counts, $stateKey);
+
+        if ($asset instanceof Asset) {
+            return (int) $asset->id;
+        }
+
+        $resolved = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
+        return $resolved !== null ? (int) $resolved : 0;
+    }
+
+    /**
      * FH-03 opt-in: only called when MigrateController parses --preload-assets.
      * JIT default (resolveFromLegacyId) handles the rest.
      *
@@ -156,8 +207,11 @@ class AssetMigrationService extends Component
      * via Craft::warning and accumulates counters in a local $counts array.
      * Plan 03-13 will reinstate the MigrationReport VO; Plan 03-14 re-wires
      * consumers.
+     *
+     * @param list<int> $referencedIds in-scope kuma_media ids collected from
+     *                                 transformed/extracted payload references
      */
-    public function ingestReferenced(MigrationOptions $opts, MigrationFilters $filters): void
+    public function ingestReferenced(MigrationOptions $opts, MigrationFilters $filters, array $referencedIds = []): void
     {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
@@ -171,28 +225,14 @@ class AssetMigrationService extends Component
             return;
         }
 
-        // Phase 2 / D-10 filter piping per FILT-02.
-        // v1 pre-scan service dropped intentionally — page-driven JIT default per FH-03.
-        // Replacement: query kuma_media directly via LegacyDbService. When --preload-assets
-        // is set, the operator opts into a full pre-walk; locale scoping is best-effort
-        // (kuma_media has no direct locale FK — locale narrowing happens at the entry
-        // discovery layer in v2). The $filters argument is threaded for future use
-        // (e.g. --since on kuma_media.created_at).
-        $sql = 'SELECT id FROM kuma_media';
-        $params = [];
-        if ($filters->since !== null && $filters->since !== '') {
-            $sql .= ' WHERE created_at >= :since';
-            $params[':since'] = $filters->since;
-        }
-
-        try {
-            $rows = $this->legacyDb->queryAll($sql, $params);
-        } catch (Throwable $e) {
-            Craft::warning("Asset preload lookup failed: {$e->getMessage()}", __METHOD__);
-            return;
-        }
-
-        $ids = array_map(static fn (array $r): int => (int) $r['id'], $rows);
+        // Phase 9 / D-20: --preload-assets must stay page-driven. The current
+        // payload set already embodies --entities and --since scoping, so this
+        // method accepts that referenced-id set and explicitly avoids the old
+        // full-table `SELECT id FROM kuma_media` prewalk. Empty referenced set
+        // means there is nothing to preload; JIT resolution still handles any
+        // asset token encountered during load.
+        unset($filters);
+        $ids = self::normalizeReferencedIds($referencedIds);
         $total = count($ids);
 
         if ($opts->verbosity > 0) {
@@ -303,6 +343,24 @@ class AssetMigrationService extends Component
     }
 
     /**
+     * @param list<int> $ids
+     * @return list<int>
+     */
+    private static function normalizeReferencedIds(array $ids): array
+    {
+        $out = [];
+        foreach ($ids as $id) {
+            $id = (int) $id;
+            if ($id > 0) {
+                $out[$id] = true;
+            }
+        }
+        $normalized = array_keys($out);
+        sort($normalized, SORT_NUMERIC);
+        return array_map('intval', $normalized);
+    }
+
+    /**
      * Ingests a single kuma_media row by id. Used by CKEditor rewrites that
      * encounter a media reference not captured by the scanner (fallback path)
      * and by the JIT entry point resolveFromLegacyId().
@@ -333,9 +391,10 @@ class AssetMigrationService extends Component
         string $rootDir,
         MigrationOptions $opts,
         array &$counts,
+        ?string $stateKey = null,
     ): ?Asset {
         $mediaId = (int) $row['id'];
-        $key = 'kuma_media:' . $mediaId;
+        $key = $stateKey ?? 'kuma_media:' . $mediaId;
 
         // D-08-20 fast-path: `--skip-assets` (CLI: options['skipAssets']=true)
         // short-circuits BEFORE any kuma_media payload read, FS stat, or
@@ -468,18 +527,19 @@ class AssetMigrationService extends Component
         // Filename derived from the legacy URL (basename), then sanitized.
         $originalFilename = basename((string) ($row['url'] ?? 'asset-' . $mediaId));
         $safeName = AssetPathResolver::sanitizeFilename($originalFilename);
-
-        // Skip files whose extension is not in Craft's allowedFileExtensions
-        // list (config/general.php). These are legacy-editorial artefacts
-        // (.psd, .html, .jfif, etc.) that Craft will refuse to save, producing
-        // a validation error. Emitting a clean 'skipped' here keeps the
-        // failure count honest — these rows genuinely cannot migrate and are
-        // editorial garbage rather than migrator bugs.
-        $extension = strtolower((string) pathinfo($safeName, PATHINFO_EXTENSION));
         $allowed = array_map(
             'strtolower',
             (array) Craft::$app->getConfig()->getGeneral()->allowedFileExtensions,
         );
+        $safeName = self::normalizeLegacyFilenameForCraft($safeName, $contentType, $allowed);
+
+        // Skip files whose extension is not in Craft's allowedFileExtensions
+        // list (config/general.php). These are legacy-editorial artefacts
+        // (.psd, .html, etc.) that Craft will refuse to save, producing
+        // a validation error. Emitting a clean 'skipped' here keeps the
+        // failure count honest — these rows genuinely cannot migrate and are
+        // editorial garbage rather than migrator bugs.
+        $extension = strtolower((string) pathinfo($safeName, PATHINFO_EXTENSION));
         if ($extension === '' || !in_array($extension, $allowed, true)) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
@@ -589,6 +649,29 @@ class AssetMigrationService extends Component
         // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
         $counts['created'] = ($counts['created'] ?? 0) + 1;
         return $asset;
+    }
+
+    /**
+     * Normalize legacy image filenames that are valid browser/media content but
+     * often not present in Craft's default allowedFileExtensions. Kunstmaan
+     * sites can contain JPEG files named .jfif; importing them as .jpg preserves
+     * the asset bytes while satisfying Craft's extension gate.
+     *
+     * @param list<string> $allowedExtensions lower-case Craft allowed extensions
+     */
+    private static function normalizeLegacyFilenameForCraft(string $safeName, string $contentType, array $allowedExtensions): string
+    {
+        $extension = strtolower((string) pathinfo($safeName, PATHINFO_EXTENSION));
+        if (
+            $extension === 'jfif'
+            && !in_array('jfif', $allowedExtensions, true)
+            && in_array('jpg', $allowedExtensions, true)
+            && strtolower($contentType) === 'image/jpeg'
+        ) {
+            return preg_replace('/\.jfif$/i', '.jpg', $safeName) ?? $safeName;
+        }
+
+        return $safeName;
     }
 
     /**

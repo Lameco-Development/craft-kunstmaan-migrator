@@ -278,6 +278,165 @@ final class TaxonomyMigrationTest extends TestCase
         );
     }
 
+    public function testCompiledMappingSiteHandlesResolveFromMappingValues(): void
+    {
+        $method = new \ReflectionMethod(TaxonomyMigrationService::class, 'siteHandleFromMappingSite');
+        $svc = new TaxonomyMigrationService();
+
+        $compiledSites = ['nl' => 'default', 'en' => 'enUs'];
+
+        self::assertSame('default', $method->invoke($svc, 'nl', $compiledSites['nl']));
+        self::assertSame('enUs', $method->invoke($svc, 'en', $compiledSites['en']));
+    }
+
+    public function testArrayMappingSiteHandleCompatibilityUsesExplicitSiteHandle(): void
+    {
+        $method = new \ReflectionMethod(TaxonomyMigrationService::class, 'siteHandleFromMappingSite');
+        $svc = new TaxonomyMigrationService();
+
+        self::assertSame('enUs', $method->invoke($svc, 'en', ['siteHandle' => 'enUs']));
+    }
+
+    public function testArrayMappingSiteHandleCompatibilityFallsBackToLegacyLocale(): void
+    {
+        $method = new \ReflectionMethod(TaxonomyMigrationService::class, 'siteHandleFromMappingSite');
+        $svc = new TaxonomyMigrationService();
+
+        self::assertSame('en', $method->invoke($svc, 'en', ['language' => 'en-US']));
+    }
+
+    public function testLocalizedTaxonomySaveFailureMessageIncludesOperatorContextAndErrors(): void
+    {
+        $method = new \ReflectionMethod(TaxonomyMigrationService::class, 'localizedTaxonomySaveFailureMessage');
+        $svc = new TaxonomyMigrationService();
+        $element = new class {
+            public function getErrorSummary(bool $showAllErrors): array
+            {
+                return $showAllErrors ? ['Title cannot be blank.', 'Slug is invalid.'] : [];
+            }
+        };
+
+        $message = $method->invoke(
+            $svc,
+            'App_Entity_NewsCategory',
+            42,
+            'enUs',
+            'en',
+            $element,
+        );
+
+        self::assertSame(
+            'localized taxonomy saveElement failed for App_Entity_NewsCategory id=42 site=enUs locale=en: Title cannot be blank.; Slug is invalid.',
+            $message,
+        );
+    }
+
+    public function testLazyResolverReusesExistingStateRowWithoutCraftLookup(): void
+    {
+        $mappingFile = $this->createStub(MappingFile::class);
+        $mappingFile->method('load')->willReturn([
+            'taxonomies' => [
+                'App\\Entity\\TopicTaxonomy' => [
+                    'sourceTable' => 'topic_taxonomies',
+                    'targetSection' => 'topicTaxonomies',
+                    'targetEntryType' => 'topicTaxonomy',
+                    'fields' => ['name' => 'title'],
+                ],
+            ],
+        ]);
+
+        $legacyDb = $this->createMock(LegacyDbService::class);
+        $legacyDb->expects($this->never())->method('queryOne');
+
+        $stateService = $this->createMock(MigrationStateService::class);
+        $stateService->expects($this->once())
+            ->method('getTargetId')
+            ->with('App_Entity_TopicTaxonomy', '42', null)
+            ->willReturn(1234);
+        $stateService->expects($this->never())->method('record');
+
+        $report = new MigrationReport();
+        $svc = new TaxonomyMigrationService();
+        $svc->mappingFile = $mappingFile;
+        $svc->legacyDb = $legacyDb;
+        $svc->migrationState = $stateService;
+
+        $result = $svc->resolveReferenced('App\\Entity\\TopicTaxonomy', 42, new MigrationOptions(dryRun: false), $report);
+
+        $this->assertSame(1234, $result);
+        $this->assertSame(1, (int) ($report->counts['taxonomy.linkedExisting'] ?? 0));
+    }
+
+    public function testLazyResolverDryRunReportsWouldCreateAndDoesNotWriteState(): void
+    {
+        $mappingFile = $this->createStub(MappingFile::class);
+        $mappingFile->method('load')->willReturn([
+            'taxonomies' => [
+                'App\\Entity\\TopicTaxonomy' => [
+                    'sourceTable' => 'topic_taxonomies',
+                    'targetSection' => 'topicTaxonomies',
+                    'targetEntryType' => 'topicTaxonomy',
+                    'fields' => ['name' => 'title'],
+                ],
+            ],
+        ]);
+
+        $legacyDb = $this->createMock(LegacyDbService::class);
+        $legacyDb->expects($this->once())
+            ->method('queryOne')
+            ->with('SELECT * FROM topic_taxonomies WHERE id = :id LIMIT 1', [':id' => 42])
+            ->willReturn(['id' => 42, 'name' => 'Generic taxonomy']);
+
+        $stateService = $this->createMock(MigrationStateService::class);
+        $stateService->method('getTargetId')->willReturn(null);
+        $stateService->expects($this->never())->method('record');
+
+        $report = new MigrationReport();
+        $svc = new TaxonomyMigrationService();
+        $svc->mappingFile = $mappingFile;
+        $svc->legacyDb = $legacyDb;
+        $svc->migrationState = $stateService;
+
+        $result = $svc->resolveReferenced('App_Entity_TopicTaxonomy', 42, new MigrationOptions(dryRun: true), $report);
+
+        $this->assertNull($result);
+        $this->assertSame(1, (int) ($report->counts['taxonomy.wouldCreate'] ?? 0));
+        $this->assertSame(1, (int) ($report->counts['taxonomy.wouldLink'] ?? 0));
+        $this->assertStringContainsString('would-create', implode("\n", $report->warnings));
+    }
+
+    public function testLazyResolverMissingSourceRowIsVisible(): void
+    {
+        $mappingFile = $this->createStub(MappingFile::class);
+        $mappingFile->method('load')->willReturn([
+            'taxonomies' => [
+                'App\\Entity\\TopicTaxonomy' => [
+                    'sourceTable' => 'topic_taxonomies',
+                    'targetSection' => 'topicTaxonomies',
+                    'targetEntryType' => 'topicTaxonomy',
+                    'fields' => ['name' => 'title'],
+                ],
+            ],
+        ]);
+
+        $legacyDb = $this->createStub(LegacyDbService::class);
+        $legacyDb->method('queryOne')->willReturn(null);
+
+        $stateService = $this->createStub(MigrationStateService::class);
+        $stateService->method('getTargetId')->willReturn(null);
+
+        $report = new MigrationReport();
+        $svc = new TaxonomyMigrationService();
+        $svc->mappingFile = $mappingFile;
+        $svc->legacyDb = $legacyDb;
+        $svc->migrationState = $stateService;
+
+        $result = $svc->resolveReferenced('App\\Entity\\TopicTaxonomy', 404, new MigrationOptions(dryRun: true), $report);
+
+        $this->assertNull($result);
+        $this->assertStringContainsString('source row not found', implode("\n", $report->warnings));
+    }
+
     /**
      * D-03 regression guard — taxonomies stage MUST run before load stage in
      * MigrateController::actionIndex. Pure source-string scan; no Craft

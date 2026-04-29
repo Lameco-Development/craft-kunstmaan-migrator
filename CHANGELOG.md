@@ -6,10 +6,11 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 1.0.0 — <release-date>
 
-Clean rewrite of the v1.x plugin. The migration pipeline retains v1.x's five
-stages (extract → transform → load → finalize → verify) but resharps the
-operator surface, mapping persistence, and adapter strategy based on lessons
-from cqm/simac/enreach pilots.
+Clean rewrite of the v1.x plugin. The operator workflow is now explicit:
+`doctor -> analyze -> map -> compile -> migrate --dry-run -> migrate --live -> verify`.
+Internally the migration pipeline still runs extract → transform → load →
+finalize → verify, but reviewed mapping must be compiled before migration so
+runtime blocks and release audit artifacts are present.
 
 ### Added
 
@@ -32,17 +33,25 @@ from cqm/simac/enreach pilots.
   (`--no-seo`, `--no-retour`) override.
 - **Atomic-always-on** — per-entry atomic load is the only mode. No
   `--atomic` flag.
-- **JIT asset ingestion** — opt-in `--preload-assets` for stakeholders who
-  want every legacy asset preloaded; default is per-entry JIT.
+- **JIT asset ingestion** — default is per-entry JIT. Opt-in
+  `--preload-assets` preloads only assets referenced by the current in-scope
+  transformed payloads; it does not import every legacy `kuma_media` row or
+  orphan media by default.
 - **`migrate sync-assets` recovery command** — re-ingests every `kuma_media`
   row a prior atomic run referenced but skipped (filesystem_404 /
   mime_mismatch / too_large / etc.). Idempotent. Permanently-failed assets
   get a terminal-state marker (`meta.terminalState='permanently_failed'`)
   that prevents retry loops.
-- **`kunstmaan-migrator/doctor`** — 10 deterministic boot checks: every Yii
-  Component DI, every adapter presence check, env source detection, locale
-  Rung 0 alignment. Used as the CI smoke gate (`./craft kunstmaan-migrator/doctor`
-  exit 0 in `.github/workflows/ci.yml smoke` job).
+- **`kunstmaan-migrator/doctor`** — deterministic boot checks for local
+  operator configuration before analyze/compile/migrate. CI scratch-Craft
+  smoke verifies plugin install/load semantics without pretending a full
+  migration workflow is configured.
+- **`kunstmaan-migrator/compile`** — converts reviewed `mapping.yaml` rows into
+  runtime blocks and writes Page-rooted coverage evidence before migration.
+- **Page-rooted coverage report** —
+  `storage/migration/PAGE-ROOTED-COVERAGE.md` accounts for Kunstmaan Page-owned
+  surfaces as `migrated`, `dropped`, `out_of_scope`, `unsupported`, or
+  `warning` so release review can reject silent omissions.
 - **`kunstmaan-migrator/rehearsal/check`** — read-only mechanical gate
   against committed rehearsal artifacts under
   `.planning/rehearsal/v1.0/{cqm,simac,enreach}/`. Three gates: counts
@@ -65,7 +74,7 @@ from cqm/simac/enreach pilots.
   `tools/check-coverage.php`.
 - **CI workflow** — `.github/workflows/ci.yml` splits into `unit`
   (composer validate + phpunit + coverage gate) and `smoke` (scratch-Craft
-  install + plugin path-repo + doctor exit 0). PHP 8.3 only.
+  install + plugin path-repo + plugin-load/config-absence check). PHP 8.3 only.
 - **Configuration via `config/kunstmaan-migrator.php`** — full operator
   example shipped at `config/kunstmaan-migrator.example.php`. Settings
   auto-fill blank `legacyDb*` from `DATABASE_URL` when present.
@@ -112,6 +121,19 @@ from cqm/simac/enreach pilots.
   zero outbound LLM calls — only the `analyze` stage talks to Anthropic.
 - **Anthropic API calls only during `analyze`** — no runtime AI in the
   ETL path; no API key required to run `migrate`.
+
+### Release evidence
+
+- **CQM executable rehearsal** — CQM is the configured Craft rehearsal target
+  for v1.0 release evidence.
+- **Simac and Enreach structural samples** — Simac and Enreach are source-shape
+  samples only unless an operator explicitly configures separate Craft targets.
+  They are used to catch CQM-only assumptions, not as mandatory runnable
+  migration targets.
+- **Page-rooted and source-shape audit evidence** — release review includes
+  `PAGE-ROOTED-COVERAGE` plus structural source-shape audit output; proprietary
+  source bodies, row data, and content samples are not committed as part of
+  genericity evidence.
 
 ### Known omissions in v1.0
 

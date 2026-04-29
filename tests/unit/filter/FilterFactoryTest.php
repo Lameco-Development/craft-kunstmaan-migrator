@@ -36,9 +36,9 @@ final class FilterFactoryTest extends TestCase
         $rc = new ReflectionClass(FilterFactory::class);
         self::assertTrue($rc->hasMethod('fromCli'));
         $m = new ReflectionMethod(FilterFactory::class, 'fromCli');
-        self::assertCount(5, $m->getParameters(), 'fromCli takes 5 args: entitiesArg, localesArg, sinceArg, noSeo, noRetour.');
+        self::assertCount(6, $m->getParameters(), 'fromCli takes 6 args: entitiesArg, localesArg, sinceArg, noSeo, noRetour, relationGraph.');
         $names = array_map(static fn(ReflectionParameter $p): string => $p->getName(), $m->getParameters());
-        self::assertSame(['entitiesArg', 'localesArg', 'sinceArg', 'noSeo', 'noRetour'], $names);
+        self::assertSame(['entitiesArg', 'localesArg', 'sinceArg', 'noSeo', 'noRetour', 'relationGraph'], $names);
         self::assertSame(
             MigrationFilters::class,
             (string) $m->getReturnType(),
@@ -76,6 +76,7 @@ final class FilterFactoryTest extends TestCase
         self::assertStringContainsString('defaultLocales', $source);
         self::assertStringContainsString('defaultSince', $source);
         self::assertStringContainsString('Plugin::getInstance()->getSettings()', $source);
+        self::assertStringContainsString('relationGraph: $relationGraph', $source);
     }
 
     public function testReturnsNewMigrationFilters(): void
@@ -87,4 +88,37 @@ final class FilterFactoryTest extends TestCase
             'fromCli must construct and return a MigrationFilters.',
         );
     }
+
+    public function testNormalizesSourceEntityFiltersDeterministically(): void
+    {
+        self::assertSame(
+            ['NewsPage', 'App\\Entity\\Pages\\CaseStudyPage', 'CaseStudyPage', 'App\\Entity\\NewsPage'],
+            FilterFactory::normalizeEntityFilters([
+                ' NewsPage ',
+                'App\\Entity\\Pages\\CaseStudyPage',
+                'NewsPage',
+                '',
+                'App\\Entity\\NewsPage',
+            ]),
+            'D-14: entity filters are source identities, keep exact FQCNs, add basenames, and de-dupe deterministically.',
+        );
+    }
+
+    public function testExplicitEntityFiltersMatchSourceFqcnAndBasenameForms(): void
+    {
+        $fqcnScoped = new MigrationFilters(
+            entities: FilterFactory::normalizeEntityFilters(['App\\Entity\\Pages\\CaseStudyPage']),
+        );
+        self::assertTrue($fqcnScoped->allows('App\\Entity\\Pages\\CaseStudyPage'));
+        self::assertTrue($fqcnScoped->allows('CaseStudyPage'));
+        self::assertFalse($fqcnScoped->allows('caseStudy'), 'D-14: Craft-style handles are not source entity identities.');
+
+        $basenameScoped = new MigrationFilters(
+            entities: FilterFactory::normalizeEntityFilters(['NewsPage']),
+        );
+        self::assertTrue($basenameScoped->allows('NewsPage'));
+        self::assertTrue($basenameScoped->allows('App\\Entity\\Pages\\NewsPage'));
+        self::assertFalse($basenameScoped->allows('news'), 'D-14: do not infer Craft handles from source entity filters.');
+    }
+
 }

@@ -30,11 +30,11 @@ These are locked decisions (see `PROJECT.md` Key Decisions). Don't casually reve
 - **Optional SEOmatic / Retour adapters.** Detect at runtime via `Craft::$app->plugins->getPlugin(...)`. Don't add either to composer `require`.
 - **Filter spec from day one.** A `MigrationFilters` value object piped through every stage. v1 surface: entity allow-list, locale subset, `--since=YYYY-MM-DD`, `--max-per-entity=N`.
 - **Plugin-owned legacy DB connection.** No Yii `legacyDb` component required in the consumer site's `config/app.php`. Connection comes from env vars + plugin settings.
-- **CLI-only operator surface.** No CP "Migration Pipeline" runner utility, no inline mapping editor in the CP. CLI is canonical.
+- **CP-first mapping review.** The operator mapping-review surface is a Craft CP utility backed by the single `mapping.yaml`; CLI commands remain useful fallback/automation surfaces. Do not add a CP pipeline runner that performs migration stages without the existing dev/staging guards.
 - **Atomic-always-on.** No `--atomic` flag. Per-entry atomic load is the default and only mode.
 - **JIT assets.** `--preload-assets` is opt-in. Don't silently revert to always-preload.
 - **Runtime-zero-AI.** Anthropic is called only during `analyze`. Every other stage must be deterministic.
-- **No `.claude/skills/` bundle.** The rubber-stamp loop is just a CLI command — `kunstmaan-migrator/map`.
+- **No `.claude/skills/` bundle.** Mapping review lives in the plugin's CP utility with `kunstmaan-migrator/map` as a CLI fallback; consumers don't need copied skill files.
 - **`NeverProductionTrait`** gates every legacy-reading and destructive command.
 
 ## Test discipline

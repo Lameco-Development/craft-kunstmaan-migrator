@@ -60,4 +60,30 @@ final class AssetMigrationServiceRcaTest extends TestCase
         $this->assertSame('deferred_unresolved', $this->classify(new RuntimeException('something else')));
         $this->assertSame('deferred_unresolved', $this->classify(new RuntimeException('')));
     }
+
+    public function testJfifJpegFilenameNormalizesToJpgWhenCraftDoesNotAllowJfif(): void
+    {
+        $svc = new AssetMigrationService();
+        $m = new ReflectionMethod($svc, 'normalizeLegacyFilenameForCraft');
+
+        $this->assertSame(
+            'portrait.jpg',
+            $m->invoke(null, 'portrait.jfif', 'image/jpeg', ['jpg', 'jpeg', 'png']),
+        );
+    }
+
+    public function testJfifFilenameIsPreservedWhenAllowedOrNotJpegContent(): void
+    {
+        $svc = new AssetMigrationService();
+        $m = new ReflectionMethod($svc, 'normalizeLegacyFilenameForCraft');
+
+        $this->assertSame(
+            'portrait.jfif',
+            $m->invoke(null, 'portrait.jfif', 'image/jpeg', ['jpg', 'jfif']),
+        );
+        $this->assertSame(
+            'portrait.jfif',
+            $m->invoke(null, 'portrait.jfif', 'application/octet-stream', ['jpg', 'jpeg']),
+        );
+    }
 }

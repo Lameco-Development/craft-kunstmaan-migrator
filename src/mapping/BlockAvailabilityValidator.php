@@ -38,7 +38,7 @@ final class BlockAvailabilityValidator extends Component
      * against ALL nodeClasses (broader, more false-positives).
      *
      * @param array<string, mixed>                       $mapping              Raw mapping.yaml
-     * @param array<string, array<string, list<string>>> $matrixIndex          From KnowledgeBase::buildMatrixAvailabilityIndex()
+     * @param array<string, array<string, list<string>>> $matrixIndex          From KunstmaanKnowledgeBase::buildMatrixAvailabilityIndex()
      * @param array<string, list<string>>                $pagePartToNodeClasses pagePart FQCN → list of nodeClass FQCNs (optional)
      * @return list<string> Validation errors (empty = all OK)
      */

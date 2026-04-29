@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\mapping;
 
 use Craft;
+use lameco\kunstmaanmigrator\compile\GraphCompatibilityValidator;
 use yii\base\Component;
 
 /**
@@ -32,6 +33,8 @@ final class MappingAuditor extends Component
      * set via Yii component injection.
      */
     public ?BlockAvailabilityValidator $blockAvailabilityValidator = null;
+
+    public ?GraphCompatibilityValidator $graphCompatibilityValidator = null;
 
     /** Handles that bypass the FieldLayout check (port verbatim from v1 lines 1794-1802). */
     private const EXCLUDED_HANDLES = [
@@ -74,7 +77,7 @@ final class MappingAuditor extends Component
      * Phase 02.1 / D-36 adds a fourth finding kind 'block-availability' (delegated
      * to BlockAvailabilityValidator). The validator runs against a v1-shaped
      * mapping adapter built from v2's flat proposals[] (see buildV1ShapedMapping).
-     * In v1.0 the matrix-availability index is empty (KnowledgeBase port deferred
+     * In v1.0 the matrix-availability index is empty (KunstmaanKnowledgeBase port deferred
      * to Plan 09 reconciliation), so the validator is effectively a no-op until
      * the index lights up; the wiring is correct regardless.
      *
@@ -274,7 +277,7 @@ final class MappingAuditor extends Component
         // Phase 02.1 / D-36: block-availability finding kind via BlockAvailabilityValidator.
         // Build v1-shaped mapping from v2's flat proposals[] (kind=pagePart rows only).
         // matrixIndex is empty in v1.0 — Plan 09 reconciliation may port
-        // KnowledgeBase::buildMatrixAvailabilityIndex if the rule-by-rule audit surfaces
+        // KunstmaanKnowledgeBase::buildMatrixAvailabilityIndex if the rule-by-rule audit surfaces
         // it as accidentally-dropped. Until then, the validator is wired but inert.
         if ($this->blockAvailabilityValidator !== null) {
             $v1ShapedMapping = $this->buildV1ShapedMapping($mappingProposals);
@@ -290,6 +293,37 @@ final class MappingAuditor extends Component
                     'detail'          => (string) $errorMessage,
                 ];
             }
+        }
+
+        return $findings;
+    }
+
+    /**
+     * Convert GraphCompatibilityValidator rows into the operator-facing audit
+     * shape used by MAPPING-AUDIT.md. Relation decisions marked drop or
+     * out_of_scope should arrive as non-fatal/absent validator rows; unresolved
+     * relation evidence remains explicit here.
+     *
+     * @param list<array{severity: string, code: string, sourceRef: string, targetRef: string, message: string}> $graphRows
+     * @return list<array{table: string, column: string, targetEntryType: string, targetHandle: string, kind: string, detail: string}>
+     */
+    public function graphCompatibilityFindings(array $graphRows): array
+    {
+        $findings = [];
+        foreach ($graphRows as $row) {
+            $severity = (string) ($row['severity'] ?? '');
+            $code = (string) ($row['code'] ?? 'graph_compatibility');
+            $sourceRef = (string) ($row['sourceRef'] ?? '');
+            $targetRef = (string) ($row['targetRef'] ?? '');
+            $message = (string) ($row['message'] ?? '');
+            $findings[] = [
+                'table' => $sourceRef,
+                'column' => '',
+                'targetEntryType' => '',
+                'targetHandle' => $targetRef,
+                'kind' => 'graph-compatibility:' . $code,
+                'detail' => strtoupper($severity !== '' ? $severity : 'warning') . ': ' . $message,
+            ];
         }
 
         return $findings;

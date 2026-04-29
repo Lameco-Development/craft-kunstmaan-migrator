@@ -8,6 +8,8 @@ use Craft;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\RequestException;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\source\CraftGraphContract;
+use lameco\kunstmaanmigrator\source\KunstmaanGraphContract;
 use Psr\Http\Message\ResponseInterface;
 use Throwable;
 use yii\base\Component;
@@ -60,7 +62,7 @@ final class LlmClassifier extends Component
 
     private const KNOWN_HANDLERS = [
         'asset', 'ckeditor', 'date', 'dropdown', 'email', 'link',
-        'matrix', 'plain', 'plainText', 'relation', 'seomatic', 'url',
+        'matrix', 'plain', 'plainText', 'relation', 'seomatic', 'splitName', 'url',
     ];
 
     /**
@@ -107,8 +109,16 @@ final class LlmClassifier extends Component
         array $craftFieldIndex,
         string $legacyKbMarkdown,
         string $targetKbMarkdown,
+        array|callable $kunstmaanGraph = [],
+        array $craftGraph = [],
         ?callable $onChunk = null,
     ): array {
+        if (is_callable($kunstmaanGraph)) {
+            $onChunk = $kunstmaanGraph;
+            $kunstmaanGraph = [];
+            $craftGraph = [];
+        }
+
         if ($residual === []) {
             return [];
         }
@@ -172,7 +182,7 @@ final class LlmClassifier extends Component
                 $startedAt = microtime(true);
                 $proposals = $this->proposeOneChunk(
                     $chunk, $craftFieldIndex, $legacyKbMarkdown, $targetKbMarkdown,
-                    $client, $apiKey, $model, $timeout,
+                    $kunstmaanGraph, $craftGraph, $client, $apiKey, $model, $timeout,
                 );
                 $all = array_merge($all, $proposals);
                 if ($onChunk !== null) {
@@ -706,7 +716,7 @@ final class LlmClassifier extends Component
      * status=needs-review.
      *
      * @param  array<string, array<string, mixed>> $pageStructure  pageStructure.json (FQCN-keyed).
-     * @param  array<string, list<string>>         $matrixCatalog  entryTypeHandle => list<blockHandle> (from CraftKnowledgeBase::matrixFieldCatalog()).
+     * @param  array<string, list<string>>         $matrixCatalog  matrixFieldHandle => list<blockHandle> (from CraftKnowledgeBase::matrixFieldCatalog()).
      * @param  string                              $kbLegacyMd     Kunstmaan KB markdown.
      * @param  string                              $kbCraftMd      Craft KB markdown.
      * @param  (callable(int $chunkIndex, int $chunkTotal, int $entitiesInChunk, int $proposalsReturned, float $durationSec): void)|null $onChunk
@@ -738,7 +748,25 @@ final class LlmClassifier extends Component
             if (!is_string($fqcn) || !is_array($info)) { continue; }
             $handle = (string) ($info['targetEntryType'] ?? $info['entryTypeHandle'] ?? '');
             if ($handle === '') { continue; }
-            $blockHandles = (array) ($matrixCatalog[$handle] ?? []);
+            $matrixFields = [];
+            try {
+                $ownedMatrixFields = Plugin::getInstance()->craftKnowledgeBase->matrixFieldsForEntryType($handle);
+            } catch (Throwable) {
+                $ownedMatrixFields = [];
+            }
+            $catalogSlice = $ownedMatrixFields !== []
+                ? array_intersect_key($matrixCatalog, array_fill_keys($ownedMatrixFields, true))
+                : $matrixCatalog;
+            $blockHandles = [];
+            foreach ($catalogSlice as $matrixField => $blocks) {
+                $matrixField = (string) $matrixField;
+                if ($matrixField === '') { continue; }
+                $matrixFields[$matrixField] = array_values(array_map(static fn($x): string => (string) $x, (array) $blocks));
+                foreach ((array) $blocks as $block) {
+                    $blockHandles[] = (string) $block;
+                }
+            }
+            $blockHandles = array_values(array_unique(array_filter($blockHandles, static fn(string $s): bool => $s !== '')));
             $hasHeaderShape = false;
             $hasWrapShape   = false;
             foreach ($blockHandles as $bh) {
@@ -754,6 +782,7 @@ final class LlmClassifier extends Component
                 'sourceTable'     => (string) ($info['tableName'] ?? ''),
                 'targetEntryType' => $handle,
                 'matrixBlocks'    => array_values(array_map(static fn($x): string => (string) $x, $blockHandles)),
+                'matrixFields'     => $matrixFields,
             ];
         }
         if ($triggered === []) {
@@ -788,7 +817,7 @@ final class LlmClassifier extends Component
      * {@see proposeNodeClassChunk()}'s HTTP + parse + alignment shape but with
      * the per-fqcn (headerBlock, bodyWrapBlock, bodyColumn) slot schema.
      *
-     * @param  list<array{fqcn: string, sourceTable: string, targetEntryType: string, matrixBlocks: list<string>}> $chunk
+     * @param  list<array{fqcn: string, sourceTable: string, targetEntryType: string, matrixBlocks: list<string>, matrixFields: array<string, list<string>>}> $chunk
      * @return list<array<string, mixed>>
      */
     private function proposeLayoutBlocksChunk(
@@ -861,16 +890,26 @@ final class LlmClassifier extends Component
             ];
 
             $hasOutOfCatalog = false;
-            foreach (['headerBlock', 'bodyWrapBlock', 'bodyColumn'] as $slot) {
-                $blockHandle = (string) ($p[$slot] ?? '');
-                if ($blockHandle === '') {
+            $matrixFields = is_array($entry['matrixFields'] ?? null) ? $entry['matrixFields'] : [];
+            foreach (['headerBlock', 'bodyWrapBlock'] as $slot) {
+                $block = $this->sanitiseLayoutBlockSpec(
+                    $p[$slot] ?? null,
+                    $matrixFields,
+                    $slot === 'headerBlock',
+                    $slot === 'headerBlock',
+                );
+                if ($block === null) {
+                    if (($p[$slot] ?? null) !== null && ($p[$slot] ?? null) !== '') {
+                        $hasOutOfCatalog = true;
+                    }
                     continue;
                 }
-                if (!in_array($blockHandle, $allowedBlocks, true)) {
-                    // Out-of-catalog block — keep value visible but flag for review.
-                    $hasOutOfCatalog = true;
-                }
-                $row[$slot] = $blockHandle;
+                $row[$slot] = $block;
+            }
+
+            $bodyColumn = (string) ($p['bodyColumn'] ?? '');
+            if ($bodyColumn !== '') {
+                $row['bodyColumn'] = $bodyColumn;
             }
 
             if ($hasOutOfCatalog) {
@@ -895,24 +934,28 @@ final class LlmClassifier extends Component
      * Build the layout-blocks prompt — per-fqcn matrix-block list rendered
      * inline so the LLM has the precise closed set per row.
      *
-     * @param  list<array{fqcn: string, sourceTable: string, targetEntryType: string, matrixBlocks: list<string>}> $chunk
+     * @param  list<array{fqcn: string, sourceTable: string, targetEntryType: string, matrixBlocks: list<string>, matrixFields: array<string, list<string>>}> $chunk
      * @return array{0: string, 1: string} [system, user]
      */
     private function buildLayoutBlocksPrompt(array $chunk, string $kbLegacyMd, string $kbCraftMd): array
     {
         $system = 'You are a Kunstmaan-to-Craft page-builder layout-block assistant. For '
             . 'each Kunstmaan node class with these legacy columns and these Craft Matrix '
-            . 'blocks available on its entry-type, propose which block fills three layout '
+            . 'fields/blocks available on its entry-type, propose which block fills three layout '
             . 'slots: headerBlock (page header/hero/banner), bodyWrapBlock (body wrapper / '
-            . 'container / section), and bodyColumn (column inside the body wrap). Return '
+            . 'container / section), and bodyColumn (legacy column inside the body wrap). Return '
             . 'null or empty string for any slot with no obvious fit — do NOT force a '
-            . 'mapping. You may NOT invent block handles; pick from the per-row '
-            . 'matrixBlocks list exactly.' . "\n\n"
+            . 'mapping. You may NOT invent Matrix fields or block handles; pick from the per-row '
+            . 'matrixFields catalog exactly.' . "\n\n"
             . 'Reply ONLY with a JSON object of the form {"proposals": [...]}. Each proposal:' . "\n"
-            . '{"fqcn": "...", "headerBlock": "<one of matrixBlocks, or empty>", '
-            . '"bodyWrapBlock": "<one of matrixBlocks, or empty>", '
-            . '"bodyColumn": "<one of matrixBlocks, or empty>", '
+            . '{"fqcn": "...", '
+            . '"headerBlock": {"fieldHandle":"<Matrix field>", "blockType":"<block in that Matrix>", "title":"{title}", "fields":{"<blockSubField>":{"source":"<legacyColumn>", "handler":"<handler>"}}} or null, '
+            . '"bodyWrapBlock": {"blockType":"<block>", "fieldHandle":"<rich text sub-field>", "title":"{source_column_or_empty}"} or null, '
+            . '"bodyColumn": "<legacy rich-text column used by bodyWrapBlock, or empty>", '
             . '"confidence": "<high|medium|low>", "rationale": "<one sentence>"}' . "\n\n"
+            . 'For headerBlock, include field mappings for obvious source columns such as image_id -> image (handler asset) and summary/intro/subtitle -> ckeditorDefault (handler ckeditor). '
+            . 'Use title="{title}" when the header block should display the page title as H1. '
+            . 'For bodyWrapBlock, leave title empty unless the title is source-backed with a {column} placeholder; never invent literal labels such as "Content" or "Details".' . "\n\n"
             . 'confidence rules:' . "\n"
             . '- "high": clear semantic + structural fit for ALL filled slots' . "\n"
             . '- "medium": reasonable fit, some ambiguity' . "\n"
@@ -921,14 +964,19 @@ final class LlmClassifier extends Component
 
         $entryLines = [];
         foreach ($chunk as $entry) {
-            $blocks = $entry['matrixBlocks'];
-            sort($blocks);
+            $fieldParts = [];
+            foreach ((array) ($entry['matrixFields'] ?? []) as $fieldHandle => $blocks) {
+                $bs = array_values(array_map(static fn($x): string => (string) $x, (array) $blocks));
+                sort($bs);
+                $fieldParts[] = $fieldHandle . ':[' . implode('|', $bs) . ']';
+            }
+            sort($fieldParts);
             $entryLines[] = sprintf(
-                '- fqcn=%s, targetEntryType=%s, sourceTable=%s, matrixBlocks=[%s]',
+                '- fqcn=%s, targetEntryType=%s, sourceTable=%s, matrixFields={%s}',
                 $entry['fqcn'],
                 $entry['targetEntryType'],
                 $entry['sourceTable'],
-                implode(', ', $blocks),
+                implode(', ', $fieldParts),
             );
         }
 
@@ -943,6 +991,89 @@ final class LlmClassifier extends Component
             . $this->truncate($kbCraftMd, 6000) . "\n```";
 
         return [$system, implode("\n", $userParts)];
+    }
+
+    /**
+     * @param mixed $value
+     * @param array<string, list<string>> $matrixFields
+     * @return array<string, mixed>|null
+     */
+    private function sanitiseLayoutBlockSpec(
+        mixed $value,
+        array $matrixFields,
+        bool $requiresMatrixField,
+        bool $allowLiteralTitle,
+    ): ?array
+    {
+        if (!is_array($value) || $value === []) {
+            return null;
+        }
+
+        $blockType = (string) ($value['blockType'] ?? '');
+        if ($blockType === '') {
+            return null;
+        }
+
+        $fieldHandle = (string) ($value['fieldHandle'] ?? '');
+        if ($requiresMatrixField) {
+            if ($fieldHandle === '' || !isset($matrixFields[$fieldHandle])) {
+                return null;
+            }
+            if (!in_array($blockType, $matrixFields[$fieldHandle], true)) {
+                return null;
+            }
+        } else {
+            $knownBlock = false;
+            foreach ($matrixFields as $blocks) {
+                if (in_array($blockType, $blocks, true)) {
+                    $knownBlock = true;
+                    break;
+                }
+            }
+            if (!$knownBlock) {
+                return null;
+            }
+        }
+
+        $out = [
+            'blockType' => $blockType,
+        ];
+        if ($fieldHandle !== '') {
+            $out['fieldHandle'] = $fieldHandle;
+        }
+        $title = (string) ($value['title'] ?? '');
+        if ($title !== '') {
+            if ($allowLiteralTitle || preg_match('/\{[a-zA-Z0-9_]+\}/', $title)) {
+                $out['title'] = $title;
+            }
+        }
+
+        $fields = [];
+        foreach ((array) ($value['fields'] ?? []) as $targetHandle => $spec) {
+            if (!is_string($targetHandle) || $targetHandle === '' || !is_array($spec)) {
+                continue;
+            }
+            if ($fieldHandle !== '' && str_starts_with($targetHandle, $fieldHandle . '.')) {
+                $targetHandle = substr($targetHandle, strlen($fieldHandle) + 1);
+            }
+            if ($targetHandle === '') {
+                continue;
+            }
+            $source = (string) ($spec['source'] ?? '');
+            $handler = (string) ($spec['handler'] ?? '');
+            if ($source === '' || $handler === '' || !in_array($handler, self::KNOWN_HANDLERS, true)) {
+                continue;
+            }
+            $fields[$targetHandle] = [
+                'source' => $source,
+                'handler' => $handler,
+            ];
+        }
+        if ($fields !== []) {
+            $out['fields'] = $fields;
+        }
+
+        return $out;
     }
 
     /**
@@ -1627,15 +1758,7 @@ final class LlmClassifier extends Component
         if ($inner === '') {
             throw new MappingProposalException('Anthropic response missing content[0].text.');
         }
-        $innerTrim = trim($inner);
-        if (preg_match('/^```(?:json)?\s*(.*?)\s*```$/s', $innerTrim, $m)) {
-            $innerTrim = trim($m[1]);
-        }
-        try {
-            $decoded = json_decode($innerTrim, true, flags: JSON_THROW_ON_ERROR);
-        } catch (Throwable) {
-            throw new MappingProposalException('Failed to parse LLM page-part fields response. Raw (truncated): ' . $this->truncate($inner, 400));
-        }
+        $decoded = $this->decodeLlmJsonPayload($inner, 'LLM page-part fields response');
         $proposals = is_array($decoded) && isset($decoded['proposals']) && is_array($decoded['proposals'])
             ? $decoded['proposals']
             : $decoded;
@@ -1654,7 +1777,7 @@ final class LlmClassifier extends Component
 
         // Allowed handlers — same closed set the residual-column proposer
         // uses (LlmClassifier::buildBatchPrompt). Mirrors the prompt rule.
-        $allowedHandlers = ['asset', 'ckeditor', 'date', 'dropdown', 'email', 'link', 'matrix', 'plain', 'plainText', 'relation', 'seomatic', 'url'];
+        $allowedHandlers = ['asset', 'ckeditor', 'date', 'dropdown', 'email', 'link', 'matrix', 'plain', 'plainText', 'relation', 'seomatic', 'splitName', 'url'];
 
         $out = [];
         foreach ($chunk as $row) {
@@ -1764,8 +1887,8 @@ final class LlmClassifier extends Component
      */
     private function sanitiseHandlerOptions(array $opts): array
     {
-        $identKeys = ['joinTable', 'joinLocalColumn', 'joinForeignColumn', 'joinOrderBy', 'stateSource'];
-        $stringKeys = ['stateKeyPrefix'];
+        $identKeys = ['joinTable', 'joinLocalColumn', 'joinForeignColumn', 'joinOrderBy', 'stateSource', 'taxonomySource'];
+        $stringKeys = ['stateKeyPrefix', 'part'];
         $intKeys = ['maxResults'];
         $out = [];
         foreach ($identKeys as $k) {
@@ -1787,6 +1910,25 @@ final class LlmClassifier extends Component
             $v = (int) $opts[$k];
             if ($v > 0) {
                 $out[$k] = $v;
+            }
+        }
+        foreach (['taxonomy', 'taxonomyBacked'] as $k) {
+            if (isset($opts[$k]) && is_bool($opts[$k])) {
+                $out[$k] = $opts[$k];
+            }
+        }
+        if (isset($opts['joinTranslation']) && is_array($opts['joinTranslation'])) {
+            $jt = (array) $opts['joinTranslation'];
+            $clean = [];
+            foreach (['table', 'sourceColumn', 'targetColumn'] as $k) {
+                if (!isset($jt[$k])) { continue; }
+                $v = (string) $jt[$k];
+                if ($v !== '' && preg_match('/^[A-Za-z0-9_]+$/', $v) === 1) {
+                    $clean[$k] = $v;
+                }
+            }
+            if (isset($clean['table'], $clean['sourceColumn'], $clean['targetColumn'])) {
+                $out['joinTranslation'] = $clean;
             }
         }
 
@@ -1879,12 +2021,12 @@ final class LlmClassifier extends Component
             . '{"pagePartClass": "...", "parentPageClass": "...", "context": "...", '
             . '"fields": [{"sourceColumn": "<name from sourceColumns OR `id` for relation handler>", '
             . '"targetField": "<handle from allowedBlockFields>", '
-            . '"handler": "<one of: asset|ckeditor|date|dropdown|email|link|matrix|plain|plainText|relation|seomatic|url>", '
+            . '"handler": "<one of: asset|ckeditor|date|dropdown|email|link|matrix|plain|plainText|relation|seomatic|splitName|url>", '
             . '"handlerOptions": {<see relation rules below>} (optional), '
             . '"confidence": "<high|medium|low>", "rationale": "<one sentence>"}, ...]}' . "\n\n"
             . 'Rules:' . "\n"
             . '- `sourceColumn` MUST be one of that row\'s sourceColumns (or `id` when handler=relation with joinTable). `targetField` MUST be one of that row\'s allowedBlockFields. Closed sets — no invention.' . "\n"
-            . '- Pick a handler whose semantics match the source column type (e.g. ckeditor for longtext/HTML body, asset for *_id columns referencing Media, plain for short strings, url for URL columns, date for datetime columns).' . "\n"
+            . '- Pick a handler whose semantics match the source column type (e.g. ckeditor for longtext/HTML body, asset for *_id columns referencing Media, plain for short strings, url for URL columns, date for datetime columns, splitName for full personal names feeding firstName/infix/lastName/prefix/suffix).' . "\n"
             . '- Drop columns that have no good target. Do not force-map. Omit them from `fields[]` instead.' . "\n"
             . '- Each sourceColumn maps to AT MOST one targetField. Each targetField gets AT MOST one sourceColumn.' . "\n"
             . '- Phase 8.6 / D-28: each `allowedBlockFields` entry now carries TYPE-SPECIFIC METADATA after the type. Use it to validate fit:' . "\n"
@@ -1997,12 +2139,21 @@ final class LlmClassifier extends Component
         array $craftFieldIndex,
         string $legacyKbMarkdown,
         string $targetKbMarkdown,
+        array $kunstmaanGraph,
+        array $craftGraph,
         object $client,
         string $apiKey,
         string $model,
         int $timeout,
     ): array {
-        [$system, $user] = $this->buildBatchPrompt($chunk, $craftFieldIndex, $legacyKbMarkdown, $targetKbMarkdown);
+        [$system, $user] = $this->buildBatchPrompt(
+            $chunk,
+            $craftFieldIndex,
+            $legacyKbMarkdown,
+            $targetKbMarkdown,
+            $kunstmaanGraph,
+            $craftGraph,
+        );
 
         $response = $this->callWithBackoff($client, $apiKey, $model, $system, $user, $timeout);
         $rawBody = $this->readResponseBody($response);
@@ -2057,6 +2208,12 @@ final class LlmClassifier extends Component
             $targetHandle = (string) ($p['targetHandle'] ?? '');
             $handler = (string) ($p['handler'] ?? '');
             $rationale = (string) ($p['rationale'] ?? '');
+            $handlerOptions = is_array($p['handlerOptions'] ?? null)
+                ? $this->sanitiseHandlerOptions((array) $p['handlerOptions'])
+                : [];
+            $graphFields = $this->normaliseGraphProposalFields($p);
+            $graphFields = $this->fallbackGraphProposalFields($graphFields, $v, $entryType, $targetHandle, $decision, $handler);
+            $graphFields = $this->filterKnownGraphProposalFields($graphFields, $kunstmaanGraph, $craftGraph);
 
             // Read confidence from LLM response; validate and default.
             $confidence = (string) ($p['confidence'] ?? '');
@@ -2076,7 +2233,7 @@ final class LlmClassifier extends Component
             }
 
             if ($decision === 'drop') {
-                $out[] = [
+                $out[] = array_merge([
                     'table' => $v['table'],
                     'column' => $v['column'],
                     'targetEntryType' => $entryType,
@@ -2088,11 +2245,13 @@ final class LlmClassifier extends Component
                     'fillRate' => (float) ($v['fillRate'] ?? 0),
                     'sqlType' => (string) ($v['sqlType'] ?? ''),
                     'samples' => (array) ($v['samples'] ?? []),
-                ];
+                ], $graphFields);
                 continue;
             }
             if ($targetHandle === '' || $targetHandle === 'NEEDS_FIELD') {
-                $out[] = [
+                $graphFields = $this->fallbackGraphProposalFields($graphFields, $v, $entryType, '', 'drop', '');
+                $graphFields = $this->filterKnownGraphProposalFields($graphFields, $kunstmaanGraph, $craftGraph);
+                $out[] = array_merge([
                     'table' => $v['table'],
                     'column' => $v['column'],
                     'targetEntryType' => $entryType,
@@ -2104,11 +2263,13 @@ final class LlmClassifier extends Component
                     'fillRate' => (float) ($v['fillRate'] ?? 0),
                     'sqlType' => (string) ($v['sqlType'] ?? ''),
                     'samples' => (array) ($v['samples'] ?? []),
-                ];
+                ], $graphFields);
                 continue;
             }
             if ($allowed !== [] && !in_array($targetHandle, $allowed, true)) {
-                $out[] = [
+                $graphFields = $this->fallbackGraphProposalFields($graphFields, $v, $entryType, '', 'drop', '');
+                $graphFields = $this->filterKnownGraphProposalFields($graphFields, $kunstmaanGraph, $craftGraph);
+                $out[] = array_merge([
                     'table' => $v['table'],
                     'column' => $v['column'],
                     'targetEntryType' => $entryType,
@@ -2120,13 +2281,13 @@ final class LlmClassifier extends Component
                     'fillRate' => (float) ($v['fillRate'] ?? 0),
                     'sqlType' => (string) ($v['sqlType'] ?? ''),
                     'samples' => (array) ($v['samples'] ?? []),
-                ];
+                ], $graphFields);
                 continue;
             }
             if (!in_array($handler, self::KNOWN_HANDLERS, true)) {
                 $rationale = "[unknown-handler:$handler] " . $rationale;
             }
-            $out[] = [
+            $proposal = array_merge([
                 'table' => $v['table'],
                 'column' => $v['column'],
                 'targetEntryType' => $entryType,
@@ -2138,7 +2299,11 @@ final class LlmClassifier extends Component
                 'fillRate' => (float) ($v['fillRate'] ?? 0),
                 'sqlType' => (string) ($v['sqlType'] ?? ''),
                 'samples' => (array) ($v['samples'] ?? []),
-            ];
+            ], $graphFields);
+            if ($handlerOptions !== []) {
+                $proposal['handlerOptions'] = $handlerOptions;
+            }
+            $out[] = $proposal;
         }
         return $out;
     }
@@ -2191,6 +2356,116 @@ final class LlmClassifier extends Component
     }
 
     /**
+     * @param array<string, mixed> $proposal
+     * @return array<string, string>
+     */
+    private function normaliseGraphProposalFields(array $proposal): array
+    {
+        $out = [];
+        foreach (['sourceRef', 'targetRef'] as $key) {
+            $value = trim((string) ($proposal[$key] ?? ''));
+            if ($value !== '') {
+                $out[$key] = $value;
+            }
+        }
+
+        $intent = trim((string) ($proposal['relationIntent'] ?? ''));
+        if (in_array($intent, ['reference', 'promote', 'embed', 'drop', 'out_of_scope'], true)) {
+            $out['relationIntent'] = $intent;
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param array<string, string> $graphFields
+     * @param array<string, mixed> $inputRow
+     * @return array<string, string>
+     */
+    private function fallbackGraphProposalFields(
+        array $graphFields,
+        array $inputRow,
+        string $entryType,
+        string $targetHandle,
+        string $decision,
+        string $handler,
+    ): array {
+        $sourceRef = trim((string) ($inputRow['sourceRef'] ?? ''));
+        if ($sourceRef !== '' && !isset($graphFields['sourceRef'])) {
+            $graphFields['sourceRef'] = $sourceRef;
+        }
+
+        if (!isset($graphFields['targetRef']) && $entryType !== '' && $targetHandle !== '' && $targetHandle !== 'NEEDS_FIELD') {
+            $graphFields['targetRef'] = CraftGraphContract::craftFieldRef($entryType, $targetHandle);
+        }
+
+        if ($sourceRef !== '' && !isset($graphFields['relationIntent'])) {
+            if ($decision === 'drop') {
+                $graphFields['relationIntent'] = 'drop';
+            } elseif (in_array($handler, ['asset', 'relation'], true)) {
+                $graphFields['relationIntent'] = 'reference';
+            } elseif ($handler === 'matrix') {
+                $graphFields['relationIntent'] = 'embed';
+            }
+        }
+
+        return $graphFields;
+    }
+
+    /**
+     * @param array<string, string> $graphFields
+     * @param array<string, mixed> $kunstmaanGraph
+     * @param array<string, mixed> $craftGraph
+     * @return array<string, string>
+     */
+    private function filterKnownGraphProposalFields(array $graphFields, array $kunstmaanGraph, array $craftGraph): array
+    {
+        $sourceRef = (string) ($graphFields['sourceRef'] ?? '');
+        if ($sourceRef !== '' && !$this->graphHasRef($kunstmaanGraph, [
+            KunstmaanGraphContract::KEY_ROOTS,
+            KunstmaanGraphContract::KEY_ENTITIES,
+            KunstmaanGraphContract::KEY_RELATIONS,
+            KunstmaanGraphContract::KEY_PAGEPARTS,
+            KunstmaanGraphContract::KEY_PAGEPART_USAGES,
+            KunstmaanGraphContract::KEY_ASSETS,
+            KunstmaanGraphContract::KEY_SAMPLES,
+        ], $sourceRef)) {
+            unset($graphFields['sourceRef'], $graphFields['relationIntent']);
+        }
+
+        $targetRef = (string) ($graphFields['targetRef'] ?? '');
+        if ($targetRef !== '' && !$this->graphHasRef($craftGraph, [
+            CraftGraphContract::KEY_ROOTS,
+            CraftGraphContract::KEY_ENTRY_TYPES,
+            CraftGraphContract::KEY_FIELDS,
+            CraftGraphContract::KEY_MATRIX_BLOCK_TYPES,
+            CraftGraphContract::KEY_MATRIX_USAGES,
+            CraftGraphContract::KEY_RELATION_TARGETS,
+            CraftGraphContract::KEY_ASSET_VOLUMES,
+        ], $targetRef)) {
+            unset($graphFields['targetRef']);
+        }
+
+        return $graphFields;
+    }
+
+    /**
+     * @param array<string, mixed> $graph
+     * @param list<string> $registryKeys
+     */
+    private function graphHasRef(array $graph, array $registryKeys, string $ref): bool
+    {
+        foreach ($registryKeys as $registryKey) {
+            $registry = $graph[$registryKey] ?? [];
+            if (is_array($registry) && array_key_exists($ref, $registry)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Build [systemPreamble, userPrompt] for a batched proposal call.
      * Includes SQL type in residual lines and requests confidence from
      * the LLM.
@@ -2199,15 +2474,27 @@ final class LlmClassifier extends Component
      * @param array<string, list<array{handle: string, type: string, classification?: string}>> $craftFieldIndex
      * @return array{0: string, 1: string}
      */
-    private function buildBatchPrompt(array $residual, array $craftFieldIndex, string $legacyKb, string $targetKb): array
+    private function buildBatchPrompt(
+        array $residual,
+        array $craftFieldIndex,
+        string $legacyKb,
+        string $targetKb,
+        array $kunstmaanGraph = [],
+        array $craftGraph = [],
+    ): array
     {
         $system = 'You are a Kunstmaan-to-Craft mapping assistant. The Craft schema is LEADING — '
             . 'never propose adding new Craft fields. If no existing Craft field fits, DROP the column.' . "\n"
             . 'Reply ONLY with a JSON object of the form {"proposals": [...]}. Each proposal has this shape:' . "\n"
             . '{"table": "...", "column": "...", "decision": "<map|drop>", "confidence": "<high|medium|low>", '
+            . '"sourceRef": "<stable Kunstmaan graph ref when known>", "targetRef": "<stable Craft graph ref when known>", '
+            . '"relationIntent": "<reference|promote|embed|drop|out_of_scope when mapping relation evidence>", '
             . '"targetHandle": "<allowed handle, or empty when decision=drop>", '
-            . '"handler": "<one of: asset|ckeditor|date|dropdown|email|link|matrix|plain|plainText|relation|seomatic|url, or empty when decision=drop>", '
+            . '"handler": "<one of: asset|ckeditor|date|dropdown|email|link|matrix|plain|plainText|relation|seomatic|splitName|url, or empty when decision=drop>", '
+            . '"handlerOptions": {<optional handler config>}, '
             . '"rationale": "<one sentence — for drops, say why no Craft field fits>"}' . "\n\n"
+            . 'When mapping relation targets, use stable graph refs from the kunstmaanGraph and craftGraph sections. '
+            . 'Use relationIntent exactly one of: reference, promote, embed, drop, out_of_scope.' . "\n\n"
             . 'confidence rules:' . "\n"
             . '- "high": clear semantic fit (name + type both align), you are certain' . "\n"
             . '- "medium": reasonable guess but not obvious (name or type aligns, not both)' . "\n"
@@ -2220,6 +2507,9 @@ final class LlmClassifier extends Component
             . 'via Doctrine ManyToOne FK (see the Relations subsection in the Kunstmaan schema). They may '
             . 'map to ANY field on the parent\'s Craft entry-type — pick the best semantic fit from the '
             . '`allowed=[…]` hint just like a native column.' . "\n"
+            . '- Use handler="splitName" with handlerOptions.part when a source full-name column maps to firstName, infix, lastName, prefix, or suffix.' . "\n"
+            . '- Use handlerOptions for relation handlers when direct id lookup is not enough. Allowed keys include stateSource, joinTable, joinLocalColumn, joinForeignColumn, joinOrderBy, stateKeyPrefix, taxonomySource, taxonomy, and joinTranslation.' . "\n"
+            . '- If a relation FK points at an entity that is migrated through a Kunstmaan Page wrapper (for example CaseStudyPage.employee_id -> Employee, while Craft relates to EmployeePage/team member entries), use the wrapper page stateSource and joinTranslation: {"stateSource":"App_Entity_Pages_EmployeePage","joinTranslation":{"table":"<employee_pages_table>","sourceColumn":"employee_id","targetColumn":"id"}}.' . "\n"
             . '- Phase 8.6 / D-28: each `allowed=[…]` entry now carries TYPE-SPECIFIC METADATA after the type. Use it to validate fit:' . "\n"
             . '  * `Dropdown(opts: a|b|c)` — source value must be one of `a`, `b`, `c`. If not, set decision="drop". Do NOT match by name (e.g. "title" → "titleLevel") — they\'re different concepts.' . "\n"
             . '  * `Matrix(blocks: x|y)` — Matrix expects structured sub-blocks. A scalar source CANNOT map directly. Use decision="drop" unless the source is itself a list of structured rows.' . "\n"
@@ -2254,12 +2544,15 @@ final class LlmClassifier extends Component
             );
             $sqlType = (string) ($v['sqlType'] ?? '');
             $sqlTypePart = $sqlType !== '' ? sprintf(', sqlType=%s', $sqlType) : '';
+            $sourceRef = (string) ($v['sourceRef'] ?? '');
+            $sourceRefPart = $sourceRef !== '' ? sprintf(', sourceRef=%s', $sourceRef) : '';
             $residualLines[] = sprintf(
-                '- %s.%s (fill=%s%%%s, entryType=%s, allowed=[%s], samples=[%s])',
+                '- %s.%s (fill=%s%%%s%s, entryType=%s, allowed=[%s], samples=[%s])',
                 (string) ($v['table'] ?? '?'),
                 (string) ($v['column'] ?? '?'),
                 (string) ($v['fillRate'] ?? '?'),
                 $sqlTypePart,
+                $sourceRefPart,
                 $entryType,
                 implode(', ', $allowedHints),
                 implode(' | ', $samples),
@@ -2279,6 +2572,15 @@ final class LlmClassifier extends Component
         $userParts[] = "\n## Unmapped columns\n<unmapped_columns>\n"
             . implode("\n", $residualLines)
             . "\n</unmapped_columns>";
+        if ($kunstmaanGraph !== [] || $craftGraph !== []) {
+            $userParts[] = "\n## Graph pair (normalized, fenced)\n"
+                . "<kunstmaanGraph>\n```json\n"
+                . $this->truncate($this->jsonForPrompt($kunstmaanGraph), 12000)
+                . "\n```\n</kunstmaanGraph>\n"
+                . "<craftGraph>\n```json\n"
+                . $this->truncate($this->jsonForPrompt($craftGraph), 12000)
+                . "\n```\n</craftGraph>";
+        }
         $userParts[] = "\n## Kunstmaan schema (page-reachable, fenced)\n```\n"
             . $this->truncate($legacyKb, 8000) . "\n```";
         $userParts[] = "\n## Craft schema (mapping-scoped, fenced)\n```\n"
@@ -2358,6 +2660,51 @@ final class LlmClassifier extends Component
     {
         if (strlen($s) <= $limit) { return $s; }
         return substr($s, 0, $limit) . '…';
+    }
+
+    /**
+     * @return mixed
+     */
+    private function decodeLlmJsonPayload(string $inner, string $label): mixed
+    {
+        $candidates = [trim($inner)];
+        if (preg_match('/```(?:json)?\s*(.*?)\s*```/is', trim($inner), $m)) {
+            $candidates[] = trim($m[1]);
+        }
+
+        $trimmed = trim($inner);
+        foreach ([['{', '}'], ['[', ']']] as [$open, $close]) {
+            $start = strpos($trimmed, $open);
+            $end = strrpos($trimmed, $close);
+            if ($start !== false && $end !== false && $end > $start) {
+                $candidates[] = substr($trimmed, $start, $end - $start + 1);
+            }
+        }
+
+        foreach (array_unique($candidates) as $candidate) {
+            if ($candidate === '') {
+                continue;
+            }
+            try {
+                return json_decode($candidate, true, flags: JSON_THROW_ON_ERROR);
+            } catch (Throwable) {
+                continue;
+            }
+        }
+
+        throw new MappingProposalException('Failed to parse ' . $label . '. Raw (truncated): ' . $this->truncate($inner, 400));
+    }
+
+    /**
+     * @param array<string, mixed> $value
+     */
+    private function jsonForPrompt(array $value): string
+    {
+        if ($value === []) {
+            return '{}';
+        }
+
+        return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     }
 
     private function sanitiseErrorMessage(string $msg, string $apiKey): string

@@ -8,6 +8,8 @@ use lameco\kunstmaanmigrator\load\MigrationStateReader;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\load\AssetPathResolver;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
+use lameco\kunstmaanmigrator\load\MigrationReport;
+use lameco\kunstmaanmigrator\load\TaxonomyMigrationService;
 
 /**
  * Immutable per-call context passed to every FieldHandler::resolve().
@@ -18,8 +20,11 @@ use lameco\kunstmaanmigrator\db\LegacyDbService;
  *  - CKEditor rewriter (for CKEditor + Matrix-of-CKEditor cases)
  *  - asset path resolver (for handlers that materialise file refs)
  *  - siteMap (legacy-locale → Craft siteId) for cross-site lookups
- *  - optional LegacyDbService for handlers that need sibling-row reads
- *    (MatrixHandler streams child rows via this)
+     *  - optional LegacyDbService for handlers that need sibling-row reads
+     *    (MatrixHandler streams child rows via this)
+     *  - optional TaxonomyMigrationService/report/dryRun triplet for page-rooted
+     *    taxonomy relation misses. RelationHandler delegates to the service;
+     *    the handler never writes taxonomy entries directly.
  *
  * All properties are readonly — constructing a new context is the only
  * way to target a different site or swap dependencies during a run.
@@ -37,6 +42,9 @@ final class ResolverContext
         public readonly AssetPathResolver $paths,
         public readonly array $siteMap,
         public readonly ?LegacyDbService $legacyDb = null,
+        public readonly ?TaxonomyMigrationService $taxonomyResolver = null,
+        public readonly bool $dryRun = true,
+        public readonly ?MigrationReport $report = null,
     ) {
     }
 }
