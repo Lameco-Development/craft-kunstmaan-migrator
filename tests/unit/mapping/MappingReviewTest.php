@@ -198,4 +198,29 @@ final class MappingReviewTest extends TestCase
             self::assertStringContainsString("'{$viewVariable}'", $source);
         }
     }
+
+    public function testMappingControllerBatchActionUsesAdminPostValidationAndCanonicalUpdates(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 3) . '/src/controllers/MappingController.php');
+        self::assertIsString($source);
+
+        self::assertStringContainsString('function actionBatch', $source);
+        $batchStart = strpos($source, 'function actionBatch');
+        self::assertIsInt($batchStart);
+        $batchSource = substr($source, $batchStart, 2600);
+
+        foreach (['requireCpRequest', 'requirePostRequest', 'requireAdmin'] as $guard) {
+            self::assertStringContainsString('$this->' . $guard . '();', $batchSource);
+        }
+        foreach (['accept', 'needs-review', 'drop', 'accept-warnings'] as $batchAction) {
+            self::assertStringContainsString("'{$batchAction}'", $batchSource);
+        }
+        foreach (['DROP SELECTED', 'ACCEPT WARNINGS'] as $phrase) {
+            self::assertStringContainsString($phrase, $batchSource);
+        }
+
+        self::assertStringContainsString('updateRow($plugin->mappingFile->resolvePath()', $batchSource);
+        self::assertStringNotContainsString('mapping-draft', $source);
+        self::assertStringNotContainsString('file_put_contents', $source);
+    }
 }
