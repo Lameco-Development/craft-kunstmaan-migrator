@@ -548,66 +548,93 @@ class SeoMigrationService extends Component
             return [null, 0];
         }
 
-        // Entry-pipeline state rows use the legacy FQCN (slug form, underscores
-        // instead of backslashes) as the `source` column and the legacy entity's
-        // ref_id as `sourceKey`. That matches kuma_seo's (ref_entity_name, ref_id)
-        // composite key directly — no kuma_nodes lookup required.
-        //
-        // Example: source="App_Entity_Pages_EmployeePage", sourceKey=424 resolves
-        // to class="App\\Entity\\Pages\\EmployeePage", ref_id=424. Without this
-        // branch the fallback below would query kuma_nodes WHERE id=424, which
-        // would return a different node (or nothing), producing wrong SEO or an
-        // "unresolved legacy ref" warning.
-        if (preg_match('/^App[\\\\_]Entity[\\\\_]/', $source) && ctype_digit((string) $sourceKey)) {
-            $legacyClass = str_replace('_', '\\', $source);
-            return [$legacyClass, (int) $sourceKey];
-        }
-
         // Fallback: sourceKey is a kuma_node_id; query for ref_id + class
         if (!ctype_digit((string) $sourceKey)) {
             return [null, 0];
         }
 
+        $row = $this->legacyRefRowForNode((int) $sourceKey);
+        if ($row === null || empty($row['class']) || empty($row['ref_id'])) {
+            return [null, 0];
+        }
+        return [(string) $row['class'], (int) $row['ref_id']];
+    }
+
+    /**
+     * @return array{class: mixed, ref_id: mixed}|null
+     */
+    private function legacyRefRowForNode(int $kumaNodeId): ?array
+    {
         // v2 MigrationFilters is {entities, locales, since} only — v1's includeDrafts /
         // includeDeleted / includeOffline / cutoffAfter / cutoffBefore are dropped per
         // D-09..D-13. v2 defaults: published versions only (public_node_version_id),
-        // exclude deleted nodes, require either-language online, single since floor.
+        // exclude deleted nodes, require the selected locale row to be online,
+        // single since floor.
         $versionCol = 'public_node_version_id';
 
         $whereParts = [
             'n.id = :id',
             'n.deleted = 0',
-            '(nt_nl.online = 1 OR nt_en.online = 1)',
+            'nt.online = 1',
         ];
         $params = [
-            ':id' => (int) $sourceKey,
-            ':langNl' => 'nl',
-            ':langEn' => 'en',
+            ':id' => $kumaNodeId,
         ];
+        $localePlaceholders = [];
+        foreach ($this->legacyLocales() as $i => $locale) {
+            $placeholder = ':locale' . $i;
+            $localePlaceholders[] = $placeholder;
+            $params[$placeholder] = $locale;
+        }
+        if ($localePlaceholders !== []) {
+            $whereParts[] = 'nt.lang IN (' . implode(', ', $localePlaceholders) . ')';
+        }
 
         if ($this->filters !== null && $this->filters->since !== null && $this->filters->since !== '') {
-            // NL is canonical creation timestamp (CQM is NL-primary per Phase 5 D-03).
-            $whereParts[] = 'nt_nl.created >= :since';
+            $whereParts[] = 'nt.created >= :since';
             $params[':since'] = $this->filters->since;
         }
 
-        $row = $this->legacyDb->queryOne(
+        return $this->legacyDb->queryOne(
             'SELECT'
-            . ' COALESCE(nv_nl.ref_entity_name, nv_en.ref_entity_name) AS class,'
-            . ' COALESCE(nv_nl.ref_id, nv_en.ref_id) AS ref_id'
+            . ' nv.ref_entity_name AS class,'
+            . ' nv.ref_id AS ref_id'
             . ' FROM kuma_nodes n'
-            . ' LEFT JOIN kuma_node_translations nt_nl ON nt_nl.node_id = n.id AND nt_nl.lang = :langNl'
-            . ' LEFT JOIN kuma_node_versions nv_nl ON nv_nl.id = nt_nl.' . $versionCol
-            . ' LEFT JOIN kuma_node_translations nt_en ON nt_en.node_id = n.id AND nt_en.lang = :langEn'
-            . ' LEFT JOIN kuma_node_versions nv_en ON nv_en.id = nt_en.' . $versionCol
-            . ' WHERE ' . implode(' AND ', $whereParts) . ' LIMIT 1',
+            . ' INNER JOIN kuma_node_translations nt ON nt.node_id = n.id'
+            . ' INNER JOIN kuma_node_versions nv ON nv.id = nt.' . $versionCol
+            . ' WHERE ' . implode(' AND ', $whereParts)
+            . ' ORDER BY ' . $this->legacyLocaleOrderSql()
+            . ' LIMIT 1',
             $params,
         );
+    }
 
-        if ($row === null || empty($row['class']) || empty($row['ref_id'])) {
-            return [null, 0];
+    /**
+     * @return list<string>
+     */
+    private function legacyLocales(): array
+    {
+        $locales = [];
+        foreach (array_keys($this->sites) as $locale) {
+            if (is_string($locale) && $locale !== '' && !in_array($locale, $locales, true)) {
+                $locales[] = $locale;
+            }
         }
-        return [(string) $row['class'], (int) $row['ref_id']];
+
+        return $locales;
+    }
+
+    private function legacyLocaleOrderSql(): string
+    {
+        $cases = [];
+        foreach ($this->legacyLocales() as $i => $locale) {
+            $cases[] = "WHEN '" . str_replace("'", "''", $locale) . "' THEN " . $i;
+        }
+        if ($cases === []) {
+            return 'nt.lang ASC';
+        }
+
+        return 'CASE nt.lang ' . implode(' ', $cases) . ' ELSE 999 END';
     }
 
     /**

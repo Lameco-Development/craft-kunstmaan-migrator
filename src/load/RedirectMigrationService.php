@@ -96,9 +96,6 @@ class RedirectMigrationService extends Component
 
     private const STATE_SOURCE = 'redirect';
 
-    /** Sources whose entries trigger a section-move 301 audit. */
-    private const SECTION_MOVE_SOURCES = ['team', 'news', 'cases'];
-
     /**
      * Import every legacy redirects row into Retour and compute section-move
      * 301s for migrated entries whose URL changed.
@@ -294,60 +291,17 @@ class RedirectMigrationService extends Component
      */
     private function lookupNewUrlByLegacyUrl(string $path): ?string
     {
-        // Strip leading "/{lang}/" prefix from the legacy URL so it matches
-        // the per-language `kuma_node_translations.url` value (which is
-        // language-relative, e.g. "fields/data-science").
-        $stripped = $path;
-        $lang = null;
-        if (preg_match('#^/(nl|en)/(.*)$#', $path, $m) === 1) {
-            $lang = $m[1];
-            $stripped = $m[2];
-        } else {
-            $stripped = ltrim($path, '/');
-        }
+        // Strip a configured leading "/{legacy-locale}/" prefix from the URL
+        // so it matches kuma_node_translations.url. Locale codes come from the
+        // operator's locale map rather than hardcoded nl/en assumptions.
+        [$stripped, $lang] = $this->stripLegacyLocalePrefix($path);
 
         if ($stripped === '') {
             return null;
         }
 
-        // v2 reshape: MigrationFilters is {entities, locales, since} only —
-        // v1's includeDrafts / includeDeleted / includeOffline / cutoffAfter /
-        // cutoffBefore are dropped per D-09..D-13. Defaults hardcoded.
-        $versionCol = 'public_node_version_id';
-
-        $whereParts = [
-            'nt.url = :url',
-            'n.deleted = 0',
-            '(nt_nl.online = 1 OR nt_en.online = 1)',
-        ];
-        $params = [
-            ':url' => $stripped,
-            ':langNl' => 'nl',
-            ':langEn' => 'en',
-        ];
-        if ($lang !== null) {
-            $whereParts[] = 'nt.lang = :lang';
-            $params[':lang'] = $lang;
-        }
-        if ($this->filters !== null && $this->filters->since !== null && $this->filters->since !== '') {
-            // NL is canonical creation timestamp (CQM is NL-primary per Phase 5 D-03).
-            $whereParts[] = 'nt_nl.created >= :since';
-            $params[':since'] = $this->filters->since;
-        }
-
         try {
-            $row = $this->legacyDb->queryOne(
-                'SELECT n.id AS kuma_node_id, COALESCE(nv_nl.ref_entity_name, nv_en.ref_entity_name) AS class'
-                . ' FROM kuma_nodes n'
-                . ' LEFT JOIN kuma_node_translations nt ON nt.node_id = n.id'
-                . ' LEFT JOIN kuma_node_translations nt_nl ON nt_nl.node_id = n.id AND nt_nl.lang = :langNl'
-                . ' LEFT JOIN kuma_node_versions nv_nl ON nv_nl.id = nt_nl.' . $versionCol
-                . ' LEFT JOIN kuma_node_translations nt_en ON nt_en.node_id = n.id AND nt_en.lang = :langEn'
-                . ' LEFT JOIN kuma_node_versions nv_en ON nv_en.id = nt_en.' . $versionCol
-                . ' WHERE ' . implode(' AND ', $whereParts)
-                . ' LIMIT 1',
-                $params,
-            );
+            $row = $this->legacyNodeRowForUrl($stripped, $lang);
         } catch (\Throwable) {
             return null;
         }
@@ -357,7 +311,7 @@ class RedirectMigrationService extends Component
         }
 
         $kumaNodeId = (int) $row['kuma_node_id'];
-        $entryId = $this->resolveEntryIdForLegacyNode($kumaNodeId);
+        $entryId = $this->resolveEntryIdForLegacyNode($kumaNodeId, (string) $row['class']);
         if ($entryId === null) {
             return null;
         }
@@ -393,13 +347,117 @@ class RedirectMigrationService extends Component
     }
 
     /**
-     * Find the migrated Craft entry id for a legacy kuma_node_id by walking
-     * each entry-producing state source.
+     * Strip the configured legacy locale prefix from a path.
+     *
+     * @return array{0: string, 1: string|null} [language-relative path, locale]
      */
-    private function resolveEntryIdForLegacyNode(int $kumaNodeId): ?int
+    private function stripLegacyLocalePrefix(string $path): array
     {
-        foreach (['news', 'cases', 'page', 'singleton'] as $source) {
-            $id = $this->stateService->getTargetId($source, (string) $kumaNodeId);
+        $stripped = ltrim($path, '/');
+        foreach ($this->legacyLocales() as $locale) {
+            $prefix = $locale . '/';
+            if ($stripped === $locale) {
+                return ['', $locale];
+            }
+            if (str_starts_with($stripped, $prefix)) {
+                return [substr($stripped, strlen($prefix)), $locale];
+            }
+        }
+
+        return [$stripped, null];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function legacyLocales(): array
+    {
+        $locales = [];
+        foreach (array_keys($this->sites) as $locale) {
+            if (is_string($locale) && $locale !== '' && !in_array($locale, $locales, true)) {
+                $locales[] = $locale;
+            }
+        }
+
+        return $locales;
+    }
+
+    /**
+     * @return array{kuma_node_id: mixed, class: mixed}|null
+     */
+    private function legacyNodeRowForUrl(string $strippedUrl, ?string $lang): ?array
+    {
+        // v2 reshape: MigrationFilters is {entities, locales, since} only —
+        // v1's includeDrafts / includeDeleted / includeOffline / cutoffAfter /
+        // cutoffBefore are dropped per D-09..D-13. Defaults hardcoded.
+        $versionCol = 'public_node_version_id';
+
+        $whereParts = [
+            'nt.url = :url',
+            'n.deleted = 0',
+            'nt.online = 1',
+        ];
+        $params = [
+            ':url' => $strippedUrl,
+        ];
+        if ($lang !== null) {
+            $whereParts[] = 'nt.lang = :lang';
+            $params[':lang'] = $lang;
+        } else {
+            $localePlaceholders = [];
+            foreach ($this->legacyLocales() as $i => $locale) {
+                $placeholder = ':locale' . $i;
+                $localePlaceholders[] = $placeholder;
+                $params[$placeholder] = $locale;
+            }
+            if ($localePlaceholders !== []) {
+                $whereParts[] = 'nt.lang IN (' . implode(', ', $localePlaceholders) . ')';
+            }
+        }
+        if ($this->filters !== null && $this->filters->since !== null && $this->filters->since !== '') {
+            $whereParts[] = 'nt.created >= :since';
+            $params[':since'] = $this->filters->since;
+        }
+
+        return $this->legacyDb->queryOne(
+            'SELECT n.id AS kuma_node_id, nv.ref_entity_name AS class'
+            . ' FROM kuma_nodes n'
+            . ' INNER JOIN kuma_node_translations nt ON nt.node_id = n.id'
+            . ' INNER JOIN kuma_node_versions nv ON nv.id = nt.' . $versionCol
+            . ' WHERE ' . implode(' AND ', $whereParts)
+            . ' ORDER BY ' . $this->legacyLocaleOrderSql()
+            . ' LIMIT 1',
+            $params,
+        );
+    }
+
+    private function legacyLocaleOrderSql(): string
+    {
+        $cases = [];
+        foreach ($this->legacyLocales() as $i => $locale) {
+            $cases[] = "WHEN '" . str_replace("'", "''", $locale) . "' THEN " . $i;
+        }
+        if ($cases === []) {
+            return 'nt.lang ASC';
+        }
+
+        return 'CASE nt.lang ' . implode(' ', $cases) . ' ELSE 999 END';
+    }
+
+    /**
+     * Find the migrated Craft entry id for a legacy kuma_node_id.
+     */
+    private function resolveEntryIdForLegacyNode(int $kumaNodeId, ?string $legacyClass = null): ?int
+    {
+        $candidateSources = [];
+        if ($legacyClass !== null && $legacyClass !== '') {
+            $candidateSources[] = str_replace('\\', '_', trim($legacyClass, '\\'));
+        }
+        // Legacy compatibility for pre-FQCN state rows.
+        array_push($candidateSources, 'news', 'cases', 'page', 'singleton');
+
+        foreach (array_unique($candidateSources) as $source) {
+            $id = $this->stateService->getTargetId((string) $source, (string) $kumaNodeId);
             if ($id !== null) {
                 return $id;
             }
@@ -413,28 +471,33 @@ class RedirectMigrationService extends Component
 
     private function emitSectionMoveRedirects(MigrationOptions $opts, MigrationReport $report): void
     {
-        foreach (self::SECTION_MOVE_SOURCES as $source) {
-            foreach ($this->stateService->all($source) as $stateRow) {
-                $entryId = (int) ($stateRow['targetId'] ?? 0);
-                $sourceKey = (string) ($stateRow['sourceKey'] ?? '');
-                if ($entryId === 0 || ($stateRow['targetType'] ?? '') !== 'entry') {
-                    continue;
-                }
+        foreach ($this->stateService->entryRows() as $stateRow) {
+            $entryId = (int) ($stateRow['targetId'] ?? 0);
+            $source = (string) ($stateRow['source'] ?? '');
+            $sourceKey = (string) ($stateRow['sourceKey'] ?? '');
+            if ($entryId === 0 || $source === '' || $sourceKey === '') {
+                continue;
+            }
 
-                try {
-                    $this->emitSectionMoveForOne($source, $sourceKey, $entryId, $opts, $report);
-                } catch (\Throwable $e) {
-                    $report->incr('failed');
-                    $report->warn(
-                        sprintf(
-                            'section-move 301 failed for %s:%s entryId=%d — %s',
-                            $source,
-                            $sourceKey,
-                            $entryId,
-                            $e->getMessage(),
-                        ),
-                    );
-                }
+            // SEO writes also record targetType=entry state rows; redirects
+            // should only consider rows produced by the entry migration stage.
+            if ($source === 'seo_meta' || str_contains($sourceKey, ':')) {
+                continue;
+            }
+
+            try {
+                $this->emitSectionMoveForOne($source, $sourceKey, $entryId, $opts, $report);
+            } catch (\Throwable $e) {
+                $report->incr('failed');
+                $report->warn(
+                    sprintf(
+                        'section-move 301 failed for %s:%s entryId=%d — %s',
+                        $source,
+                        $sourceKey,
+                        $entryId,
+                        $e->getMessage(),
+                    ),
+                );
             }
         }
     }
@@ -446,19 +509,13 @@ class RedirectMigrationService extends Component
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
-        // Team source-keys are the legacy employee_id; everything else is
-        // the kuma_node_id. Only the kuma_node-keyed sources have legacy
-        // URLs to compare against.
-        if ($source === 'team') {
-            $kumaNodeId = $this->kumaNodeIdForEmployee((int) $sourceKey);
-            if ($kumaNodeId === null) {
-                return;
-            }
-        } else {
-            if (!ctype_digit($sourceKey)) {
-                return;
-            }
-            $kumaNodeId = (int) $sourceKey;
+        if (!ctype_digit($sourceKey)) {
+            return;
+        }
+
+        $kumaNodeId = (int) $sourceKey;
+        if ($kumaNodeId <= 0) {
+            return;
         }
 
         $legacyUrls = $this->legacyUrlsForNode($kumaNodeId);
@@ -535,53 +592,6 @@ class RedirectMigrationService extends Component
             }
         }
         return $out;
-    }
-
-    /**
-     * Look up the kuma_node_id that hosts an EmployeePage with a given
-     * legacy employee_id. Used to convert team state-keys (employee id)
-     * back into a node id so we can fetch translations.
-     */
-    private function kumaNodeIdForEmployee(int $employeeId): ?int
-    {
-        // v2 reshape: MigrationFilters is {entities, locales, since} only —
-        // v1's includeDrafts / includeDeleted / includeOffline / cutoffAfter /
-        // cutoffBefore are dropped per D-09..D-13. Defaults hardcoded.
-        $versionCol = 'public_node_version_id';
-
-        $whereParts = [
-            'COALESCE(nv_nl.ref_entity_name, nv_en.ref_entity_name) = :class',
-            'COALESCE(nv_nl.ref_id, nv_en.ref_id) = :rid',
-            'n.deleted = 0',
-            '(nt_nl.online = 1 OR nt_en.online = 1)',
-        ];
-        $params = [
-            ':langNl' => 'nl',
-            ':langEn' => 'en',
-            ':class' => 'App\\Entity\\Pages\\EmployeePage',
-            ':rid' => $employeeId,
-        ];
-        if ($this->filters !== null && $this->filters->since !== null && $this->filters->since !== '') {
-            $whereParts[] = 'nt_nl.created >= :since';
-            $params[':since'] = $this->filters->since;
-        }
-
-        try {
-            $row = $this->legacyDb->queryOne(
-                'SELECT n.id AS kuma_node_id'
-                . ' FROM kuma_nodes n'
-                . ' LEFT JOIN kuma_node_translations nt_nl ON nt_nl.node_id = n.id AND nt_nl.lang = :langNl'
-                . ' LEFT JOIN kuma_node_versions nv_nl ON nv_nl.id = nt_nl.' . $versionCol
-                . ' LEFT JOIN kuma_node_translations nt_en ON nt_en.node_id = n.id AND nt_en.lang = :langEn'
-                . ' LEFT JOIN kuma_node_versions nv_en ON nv_en.id = nt_en.' . $versionCol
-                . ' WHERE ' . implode(' AND ', $whereParts)
-                . ' LIMIT 1',
-                $params,
-            );
-        } catch (\Throwable) {
-            return null;
-        }
-        return $row !== null ? (int) ($row['kuma_node_id'] ?? 0) : null;
     }
 
     // --------------------------------------------------------------------------

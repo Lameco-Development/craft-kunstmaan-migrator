@@ -358,6 +358,31 @@ class MigrationStateService extends Component implements MigrationStateReader
     }
 
     /**
+     * Stream every entry-producing state row, regardless of source alias.
+     *
+     * The migration pipeline now records entries under FQCN-derived source
+     * names, so consumers that operate across all migrated entries should not
+     * depend on historic section aliases such as news/cases/team.
+     *
+     * @return Generator<int, array<string, mixed>>
+     */
+    public function entryRows(): Generator
+    {
+        $reader = $this->db()->createCommand(
+            'SELECT * FROM ' . $this->db()->schema->quoteTableName($this->table())
+            . ' WHERE targetType = :targetType',
+            [':targetType' => 'entry'],
+        )->query();
+        try {
+            foreach ($reader as $row) {
+                yield $row;
+            }
+        } finally {
+            $reader->close();
+        }
+    }
+
+    /**
      * Executes `$callback` only if `(source, key, siteId)` has not already
      * been recorded. The callback must return an array with keys
      * `targetType` + `targetId`, optionally `targetUid` + `meta`.
