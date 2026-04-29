@@ -291,7 +291,9 @@ class AnalyzeController extends Controller
         );
 
         try {
-            $craftTargetSchema = $plugin->craftKnowledgeBase->dumpTargetSchema();
+            $craftTargetSchema = $plugin->craftKnowledgeBase->dumpTargetSchema(
+                (array) ($plugin->getSettings()->genericContentBlockOverrides ?? []),
+            );
             $plugin->craftEntryWalker->targetSchemaSnapshot = $craftTargetSchema;
             $craftGraph = $plugin->craftEntryWalker->walk($this->candidateEntryTypeHandles(
                 $existing,
@@ -612,7 +614,9 @@ class AnalyzeController extends Controller
                 // step. Append the Matrix catalog markdown so the LLM sees the
                 // canonical (matrixField → blocks) listing in addition to the
                 // entry-type catalog.
-                $kbCraftWithMatrixMd = $kbCraftMd . "\n\n" . $plugin->craftKnowledgeBase->renderMatrixCatalogMarkdown();
+                $kbCraftWithMatrixMd = $kbCraftMd . "\n\n" . $plugin->craftKnowledgeBase->renderMatrixCatalogMarkdown(
+                    (array) ($plugin->getSettings()->genericContentBlockOverrides ?? []),
+                );
 
                 // Phase 8.6 — build parent-aware Matrix scoping map. For each
                 // accepted nodeClass proposal (page entity → entry-type), look

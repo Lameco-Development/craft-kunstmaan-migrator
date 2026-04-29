@@ -107,6 +107,7 @@ final class MappingCompiler extends Component
         array $matrixFieldCatalog = [],
         array $flatPagePartCandidates = [],
         array $entryTypeFlatHandles = [],
+        array $genericContentBlockCandidates = [],
     ): array {
         $proposals = (array) ($mapping['proposals'] ?? []);
 
@@ -669,6 +670,7 @@ final class MappingCompiler extends Component
             $defaultBlockType,
             $matrixFieldCatalog,
             $entryTypeFlatHandles,
+            $genericContentBlockCandidates,
         );
         $this->removeFabricatedBodyWrapTitles($nodeClasses);
 
@@ -1474,6 +1476,7 @@ final class MappingCompiler extends Component
      * @param list<array<string, mixed>> $proposals
      * @param array<string, list<string>> $matrixFieldCatalog
      * @param array<string, list<string>> $entryTypeFlatHandles
+     * @param array<string, array<string, mixed>> $genericContentBlockCandidates
      */
     private function applyFallbackBodyContent(
         array &$nodeClasses,
@@ -1482,6 +1485,7 @@ final class MappingCompiler extends Component
         ?string $defaultBlockType,
         array $matrixFieldCatalog,
         array $entryTypeFlatHandles,
+        array $genericContentBlockCandidates,
     ): void {
         if ($defaultEntryType === null || $defaultEntryType === '') {
             return;
@@ -1523,23 +1527,30 @@ final class MappingCompiler extends Component
             }
 
             if (!is_array($bodyWrap) || (string) ($bodyWrap['blockType'] ?? '') === '') {
-                $blockType = $this->fallbackBodyBlockType(
+                $fallbackBlock = $this->fallbackBodyBlock(
                     $matrixFieldCatalog,
+                    $genericContentBlockCandidates,
                     $pageBuilderHandle,
                     $defaultBlockType,
                 );
-                if ($blockType === null) {
+                if ($fallbackBlock === null) {
                     continue;
                 }
                 $bodyWrap = [
-                    'blockType' => $blockType,
-                    'fieldHandle' => 'ckeditorDefault',
+                    'blockType' => $fallbackBlock['blockType'],
+                    'fieldHandle' => $fallbackBlock['fieldHandle'],
                 ];
-                $declaredFieldHandle = 'ckeditorDefault';
+                $declaredFieldHandle = $fallbackBlock['fieldHandle'];
             }
 
             if ($declaredFieldHandle === '' || $declaredFieldHandle === $pageBuilderHandle) {
-                $bodyWrap['fieldHandle'] = 'ckeditorDefault';
+                $candidate = $genericContentBlockCandidates[$pageBuilderHandle] ?? null;
+                $bodyWrapBlockType = (string) ($bodyWrap['blockType'] ?? '');
+                $bodyWrap['fieldHandle'] = is_array($candidate)
+                    && (string) ($candidate['blockType'] ?? '') === $bodyWrapBlockType
+                    && (string) ($candidate['fieldHandle'] ?? '') !== ''
+                        ? (string) $candidate['fieldHandle']
+                        : 'ckeditorDefault';
             }
 
             $nodeClass['pageBuilderHandle'] = $pageBuilderHandle;
@@ -1612,24 +1623,44 @@ final class MappingCompiler extends Component
 
     /**
      * @param array<string, list<string>> $matrixFieldCatalog
+     * @param array<string, array<string, mixed>> $genericContentBlockCandidates
+     * @return array{blockType: string, fieldHandle: string}|null
      */
-    private function fallbackBodyBlockType(
+    private function fallbackBodyBlock(
         array $matrixFieldCatalog,
+        array $genericContentBlockCandidates,
         string $matrixHandle,
         ?string $defaultBlockType,
-    ): ?string {
+    ): ?array {
         $blocks = $matrixFieldCatalog[$matrixHandle] ?? [];
         if ($blocks === []) {
             return null;
         }
 
+        $candidate = $genericContentBlockCandidates[$matrixHandle] ?? null;
+        if (is_array($candidate)
+            && in_array((string) ($candidate['blockType'] ?? ''), $blocks, true)
+            && (string) ($candidate['fieldHandle'] ?? '') !== ''
+        ) {
+            return [
+                'blockType' => (string) $candidate['blockType'],
+                'fieldHandle' => (string) $candidate['fieldHandle'],
+            ];
+        }
+
         foreach (array_filter([(string) $defaultBlockType, 'generalContentBlock', 'textContentBlock']) as $candidate) {
             if (in_array($candidate, $blocks, true)) {
-                return $candidate;
+                return [
+                    'blockType' => $candidate,
+                    'fieldHandle' => 'ckeditorDefault',
+                ];
             }
         }
 
-        return (string) $blocks[0];
+        return [
+            'blockType' => (string) $blocks[0],
+            'fieldHandle' => 'ckeditorDefault',
+        ];
     }
 
     /**

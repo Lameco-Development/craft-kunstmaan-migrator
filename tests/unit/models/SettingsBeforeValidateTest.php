@@ -111,6 +111,29 @@ final class SettingsBeforeValidateTest extends TestCase
         self::assertSame(3306, $settings->legacyDbPort); // default untouched
     }
 
+    public function testGenericContentBlockOverridesAreOperatorConfigurable(): void
+    {
+        $settings = $this->makeSettingsWithEnv(null);
+        $settings->genericContentBlockOverrides = [
+            'pageBuilder' => [
+                'blockType' => 'richTextBlock',
+                'fieldHandle' => 'bodyCopy',
+            ],
+        ];
+
+        $safeRule = array_values(array_filter(
+            $settings->rules(),
+            static fn(array $rule): bool => ($rule[1] ?? null) === 'safe'
+                && in_array('genericContentBlockOverrides', (array) ($rule[0] ?? []), true),
+        ));
+
+        self::assertNotEmpty($safeRule);
+        self::assertSame(
+            'bodyCopy',
+            $settings->genericContentBlockOverrides['pageBuilder']['fieldHandle'],
+        );
+    }
+
     public function testNoOpWhenDsnNonMysql(): void
     {
         // Reader exposes raw DSN (postgres) but parsed components are null per D-09.

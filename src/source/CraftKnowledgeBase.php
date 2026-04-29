@@ -40,7 +40,7 @@ final class CraftKnowledgeBase extends Component
      *
      * @return array<string, mixed>
      */
-    public function dumpTargetSchema(): array
+    public function dumpTargetSchema(array $genericContentBlockOverrides = []): array
     {
         $volumes = [];
         try {
@@ -61,6 +61,7 @@ final class CraftKnowledgeBase extends Component
             'entryTypeFlatHandles' => $this->entryTypeFlatHandles(),
             'flatPagePartCandidates' => $this->flatPagePartCandidates(),
             'matrixFields' => $this->matrixFieldCatalog(),
+            'genericContentBlocks' => $this->genericContentBlockCandidates($genericContentBlockOverrides),
             'volumes' => array_values(array_unique($volumes)),
             'plugins' => [
                 'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
@@ -424,12 +425,13 @@ final class CraftKnowledgeBase extends Component
      * line per (matrixField → blockTypes) pair so prompt token cost stays
      * bounded as projects grow.
      */
-    public function renderMatrixCatalogMarkdown(): string
+    public function renderMatrixCatalogMarkdown(array $genericContentBlockOverrides = []): string
     {
         $catalog = $this->matrixFieldCatalog();
         if ($catalog === []) {
             return '_No Matrix fields configured in this Craft install._';
         }
+        $genericContentBlocks = $this->genericContentBlockCandidates($genericContentBlockOverrides);
         $out = [];
         $out[] = '# Craft Matrix-field block catalog';
         $out[] = '';
@@ -437,9 +439,107 @@ final class CraftKnowledgeBase extends Component
         $out[] = '';
         foreach ($catalog as $matrixHandle => $blocks) {
             sort($blocks);
-            $out[] = sprintf('- **%s**: %s', $matrixHandle, implode(', ', $blocks));
+            $line = sprintf('- **%s**: %s', $matrixHandle, implode(', ', $blocks));
+            $candidate = $genericContentBlocks[$matrixHandle] ?? null;
+            if (is_array($candidate)) {
+                $line .= sprintf(
+                    ' _(generic rich text: %s.%s)_',
+                    (string) ($candidate['blockType'] ?? ''),
+                    (string) ($candidate['fieldHandle'] ?? ''),
+                );
+            }
+            $out[] = $line;
         }
         return implode("\n", $out);
+    }
+
+    /**
+     * Discover the best generic WYSIWYG/content block per Matrix field.
+     *
+     * This keeps graceful fallback portable across Craft projects: CQM's
+     * `pageBuilder.generalContentBlock.ckeditorDefault` and
+     * `pageBuilderCondensed.textContentBlock.ckeditorDefault` are examples of
+     * the same structural pattern, not plugin constants.
+     *
+     * @return array<string, array{blockType: string, fieldHandle: string, score: int, rationale: string}>
+     */
+    public function genericContentBlockCandidates(array $overrides = []): array
+    {
+        $out = [];
+        foreach (Craft::$app->fields->getAllFields() as $field) {
+            if (!($field instanceof \craft\fields\Matrix)) {
+                continue;
+            }
+            $matrixHandle = (string) $field->handle;
+            if ($matrixHandle === '') {
+                continue;
+            }
+
+            $candidates = [];
+            foreach ($field->getEntryTypes() as $blockType) {
+                $blockHandle = (string) $blockType->handle;
+                if ($blockHandle === '') {
+                    continue;
+                }
+                $layout = $blockType->getFieldLayout();
+                if ($layout === null) {
+                    continue;
+                }
+
+                foreach ($layout->getCustomFields() as $subField) {
+                    if (!$this->isRichTextField($subField)) {
+                        continue;
+                    }
+                    $fieldHandle = (string) $subField->handle;
+                    if ($fieldHandle === '') {
+                        continue;
+                    }
+                    $candidates[] = [
+                        'blockType' => $blockHandle,
+                        'fieldHandle' => $fieldHandle,
+                        'score' => $this->genericContentBlockScore($blockHandle) + $this->genericContentFieldScore($fieldHandle),
+                    ];
+                }
+            }
+
+            if ($candidates === []) {
+                continue;
+            }
+
+            usort(
+                $candidates,
+                static fn(array $a, array $b): int => ($b['score'] <=> $a['score'])
+                    ?: strcmp((string) $a['blockType'], (string) $b['blockType'])
+                    ?: strcmp((string) $a['fieldHandle'], (string) $b['fieldHandle']),
+            );
+            $pick = $candidates[0];
+            $out[$matrixHandle] = [
+                'blockType' => (string) $pick['blockType'],
+                'fieldHandle' => (string) $pick['fieldHandle'],
+                'score' => (int) $pick['score'],
+                'rationale' => 'Best-scored rich-text block/sub-field in this Matrix field.',
+            ];
+        }
+
+        foreach ($overrides as $matrixHandle => $override) {
+            if (!is_string($matrixHandle) || $matrixHandle === '' || !is_array($override)) {
+                continue;
+            }
+            $blockType = (string) ($override['blockType'] ?? '');
+            $fieldHandle = (string) ($override['fieldHandle'] ?? '');
+            if ($blockType === '' || $fieldHandle === '') {
+                continue;
+            }
+            $out[$matrixHandle] = [
+                'blockType' => $blockType,
+                'fieldHandle' => $fieldHandle,
+                'score' => 1000,
+                'rationale' => 'Operator override from Settings::genericContentBlockOverrides.',
+            ];
+        }
+
+        ksort($out);
+        return $out;
     }
 
     /**
@@ -617,6 +717,63 @@ final class CraftKnowledgeBase extends Component
         }
 
         return $out;
+    }
+
+    private function isRichTextField(\craft\base\FieldInterface $field): bool
+    {
+        $class = strtolower(get_class($field));
+        $short = strtolower($this->shortClassName(get_class($field)));
+
+        return str_contains($class, 'ckeditor')
+            || str_contains($class, 'redactor')
+            || str_contains($class, 'richtext')
+            || str_contains($class, 'wysiwyg')
+            || in_array($short, ['ckeditor', 'redactor', 'richtext', 'wysiwyg'], true);
+    }
+
+    private function genericContentBlockScore(string $blockHandle): int
+    {
+        $handle = strtolower($blockHandle);
+        $score = 0;
+
+        if (str_contains($handle, 'content')) {
+            $score += 30;
+        }
+        if (str_contains($handle, 'text')) {
+            $score += 25;
+        }
+        if (str_contains($handle, 'general')) {
+            $score += 20;
+        }
+        if (str_contains($handle, 'rich') || str_contains($handle, 'wysiwyg')) {
+            $score += 20;
+        }
+        if (str_contains($handle, 'media') || str_contains($handle, 'image')) {
+            $score -= 15;
+        }
+        if (str_contains($handle, 'cta') || str_contains($handle, 'calltoaction')) {
+            $score -= 20;
+        }
+        if (str_contains($handle, 'carousel') || str_contains($handle, 'grid') || str_contains($handle, 'list')) {
+            $score -= 25;
+        }
+
+        return $score;
+    }
+
+    private function genericContentFieldScore(string $fieldHandle): int
+    {
+        $handle = strtolower($fieldHandle);
+        $preferred = [
+            'ckeditordefault' => 50,
+            'content' => 45,
+            'body' => 40,
+            'text' => 35,
+            'html' => 30,
+            'ckeditorsimple' => 25,
+        ];
+
+        return $preferred[$handle] ?? 10;
     }
 
     /** Trim Craft\\fields\\PlainText → PlainText for compact prompt formatting. */

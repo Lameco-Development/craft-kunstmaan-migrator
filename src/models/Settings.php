@@ -70,6 +70,21 @@ class Settings extends Model
     public ?string $defaultEntryType     = null;
     public ?string $defaultBlockType     = null;
 
+    /**
+     * Optional operator overrides for generic rich-text fallback blocks.
+     *
+     * Shape:
+     * [
+     *   'pageBuilder' => ['blockType' => 'generalContentBlock', 'fieldHandle' => 'ckeditorDefault'],
+     * ]
+     *
+     * Intended for config/kunstmaan-migrator.php when a site's Craft schema has
+     * ambiguous Matrix block names and the introspection heuristic needs a hint.
+     *
+     * @var array<string, array{blockType?: string, fieldHandle?: string}>
+     */
+    public array $genericContentBlockOverrides = [];
+
     // Phase 4 / D-60 — verify-stage tolerances. Defaults: ±1% count tolerance,
     // 5% URL-diff threshold. CLI `--count-tolerance` overrides at controller seam.
     public float $verifyCountTolerance = 0.01;
@@ -239,7 +254,7 @@ class Settings extends Model
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince', 'kunstmaanSourcePath', 'defaultEntryType', 'defaultBlockType'], 'string'],
             [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
-            [['defaultEntities', 'defaultLocales', 'localeMap'], 'safe'],
+            [['defaultEntities', 'defaultLocales', 'localeMap', 'genericContentBlockOverrides'], 'safe'],
             [['dryRunDefault'], 'boolean'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             // Phase 8 / D-14 — AI proposer scope gates (proposeLayout, proposeProviders).

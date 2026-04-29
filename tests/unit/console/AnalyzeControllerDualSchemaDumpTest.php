@@ -14,7 +14,7 @@ final class AnalyzeControllerDualSchemaDumpTest extends TestCase
 
         self::assertStringContainsString("'/kunstmaan-schema.json'", $source);
         self::assertStringContainsString("'/craft-schema.json'", $source);
-        self::assertStringContainsString('->dumpTargetSchema()', $source);
+        self::assertStringContainsString('->dumpTargetSchema(', $source);
         self::assertStringContainsString(
             "(array) (\$sourceScan['entities'] ?? [])",
             $source,

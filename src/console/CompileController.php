@@ -193,6 +193,12 @@ class CompileController extends Controller
             // doesn't exist on the chosen entry-type (silent-empty
             // prevention).
             $plugin->craftKnowledgeBase->entryTypeFlatHandles(),
+            // Portable fallback content resolver: per Matrix field, the best
+            // generic rich-text block/sub-field discovered from Craft's live
+            // schema. Avoids CQM-only assumptions like `ckeditorDefault`.
+            $plugin->craftKnowledgeBase->genericContentBlockCandidates(
+                (array) ($settings->genericContentBlockOverrides ?? []),
+            ),
         );
         $report = $compiled['_compileReport'];
 
