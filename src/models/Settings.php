@@ -136,6 +136,26 @@ class Settings extends Model
     // helper columns are opt-in for operator/debug workflows.
     public bool $joinFkRelations = false;
 
+    // Phase 12 / Plan 05 — stable CP execution knobs. Queue-backed safe stages
+    // are allowed by default, but live queued migration must be explicitly
+    // enabled by the operator and remains behind downstream live gates.
+    public bool $allowCpQueueActions = true;
+    public bool $allowCpLiveQueueAction = false;
+
+    // Phase 12 / Plan 05 — run/log artifact retention defaults for future CP
+    // cleanup surfaces. Defaults are intentionally conservative and site-safe.
+    public int $runRecordRetentionDays = 30;
+    public int $artifactRetentionDays = 30;
+
+    /**
+     * Stable CP defaults for workflow filters. Advanced mapping/project-shape
+     * hints stay in config-only fields such as genericContentBlockOverrides and
+     * relationMirrorRules.
+     *
+     * @var array<string, mixed>
+     */
+    public array $defaultFilters = [];
+
     // Phase 10 — full taxonomy vocabulary import is opt-in. Default false keeps
     // canonical migration page-driven/referenced-only; CLI
     // --include-unreferenced-taxonomies can enable it per run.
@@ -275,13 +295,14 @@ class Settings extends Model
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince', 'kunstmaanSourcePath', 'defaultEntryType', 'defaultBlockType'], 'string'],
-            [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
-            [['defaultEntities', 'defaultLocales', 'localeMap', 'genericContentBlockOverrides', 'relationMirrorRules'], 'safe'],
+            [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity', 'runRecordRetentionDays', 'artifactRetentionDays'], 'integer'],
+            [['defaultEntities', 'defaultLocales', 'localeMap', 'defaultFilters', 'genericContentBlockOverrides', 'relationMirrorRules'], 'safe'],
             [['dryRunDefault'], 'boolean'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             // Phase 8 / D-14 — AI proposer scope gates (proposeLayout, proposeProviders).
             // Phase 8.5 / D-24 — joinFkRelations (Doctrine ManyToOne join gate).
-            [['seoEnabled', 'retourEnabled', 'proposeLayout', 'proposeProviders', 'joinFkRelations', 'includeUnreferencedTaxonomies'], 'boolean'],
+            // Phase 12 / Plan 05 — CP queue/action gates.
+            [['seoEnabled', 'retourEnabled', 'proposeLayout', 'proposeProviders', 'joinFkRelations', 'allowCpQueueActions', 'allowCpLiveQueueAction', 'includeUnreferencedTaxonomies'], 'boolean'],
             // Phase 4 / D-60 — verify-stage tolerances pinned to [0, 1].
             [['verifyCountTolerance', 'verifyUrlDiffThreshold'], 'number', 'min' => 0, 'max' => 1],
             // Phase 4 / D-57 — adapter source-table overrides.
