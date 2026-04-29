@@ -477,7 +477,7 @@ Plans:
 - [x] `12-06-PLAN.md` — Safety and live gates for CP/job production guards, readiness, dry-run, compile, analyze, and strict live gate contracts — completed.
 - [x] `12-07-PLAN.md` — Plugin wiring for Phase 12 run, safety, gate, and workflow service components while preserving Utility-only CP registration — completed.
 - [x] `12-08-PLAN.md` — Queue jobs for serialization-safe analyze/compile/verify stages plus staged dry-run/live migration batches with job production re-checks and run-record progress/chaining — completed.
-- [ ] `12-09-PLAN.md`
+- [x] `12-09-PLAN.md` — CP controller and Utility shell with migration console view model plus admin-only queue actions for analyze/compile/verify/dry-run/live dispatch — completed.
 - [ ] `12-10-PLAN.md`
 
 ---
