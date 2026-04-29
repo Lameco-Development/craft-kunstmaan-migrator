@@ -158,6 +158,11 @@ class MigrationStageJob extends BaseJob
     private function label(string $suffix): string
     {
         $suffix = trim(preg_replace('/\s+/', ' ', $suffix) ?? $suffix);
-        return sprintf('%s/%s: %s', $this->stage, $this->mode, $suffix);
+        return $this->truncateLabel(sprintf('%s/%s: %s', $this->stage, $this->mode, $suffix));
+    }
+
+    private function truncateLabel(string $label): string
+    {
+        return strlen($label) > 180 ? substr($label, 0, 177) . '...' : $label;
     }
 }

@@ -261,6 +261,11 @@ class MigrationPipelineJob extends BaseJob
     private function label(string $suffix): string
     {
         $suffix = trim(preg_replace('/\s+/', ' ', $suffix) ?? $suffix);
-        return sprintf('%s batch %d-%d: %s', $this->mode, $this->batchOffset, $this->batchLimit, $suffix);
+        return $this->truncateLabel(sprintf('%s batch %d-%d: %s', $this->mode, $this->batchOffset, $this->batchLimit, $suffix));
+    }
+
+    private function truncateLabel(string $label): string
+    {
+        return strlen($label) > 180 ? substr($label, 0, 177) . '...' : $label;
     }
 }

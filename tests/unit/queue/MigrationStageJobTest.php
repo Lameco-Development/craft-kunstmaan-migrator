@@ -88,6 +88,9 @@ final class MigrationStageJobTest extends TestCase
             "'compile' => ['overwrite', 'dryRun']",
             "'analyze' => ['entities', 'locales', 'since'",
             "'verify' => ['baseline', 'urlSpotCheck'",
+            'truncateLabel',
+            'strlen($label) > 180',
+            'substr($label, 0, 177) . \'...\'',
         ] as $needle) {
             self::assertStringContainsString($needle, $source);
         }

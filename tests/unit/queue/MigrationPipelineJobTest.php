@@ -75,6 +75,8 @@ final class MigrationPipelineJobTest extends TestCase
             'filterWorkflowOptions',
             "'limit'",
             "'maxPerEntity'",
+            'truncateLabel',
+            'strlen($label) > 180',
         ] as $needle) {
             self::assertStringContainsString($needle, $source);
         }
