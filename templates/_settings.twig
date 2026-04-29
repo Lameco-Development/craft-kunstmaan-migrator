@@ -3,8 +3,9 @@
    Adapters, Retention. Advanced project-shape hints remain in
    config/kunstmaan-migrator.php rather than CP Settings.
 
-   Rendering contract: hasCpSettings = true + Plugin::settingsHtml() point
-   at this template. Craft's settings/plugins/_settings.twig (cms vendor)
+   Rendering contract: hasCpSettings = true + Plugin::settingsHtml() renders
+   this template through the registered kunstmaan-migrator CP template root.
+   Craft's settings/plugins/_settings.twig (cms vendor)
    already inherits the CP layout, opens fullPageForm, injects
    actionInput/pluginHandle/redirectInput, then dumps `settingsHtml|raw`
    inside its own content block. This template is therefore an HTML

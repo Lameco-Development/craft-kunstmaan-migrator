@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class SettingsHtmlTest extends TestCase
 {
-    private const TWIG_PATH = __DIR__ . '/../../../src/templates/_settings.twig';
+    private const TWIG_PATH = __DIR__ . '/../../../templates/_settings.twig';
     private const PLUGIN_PATH = __DIR__ . '/../../../src/Plugin.php';
 
     private const STABLE_SETTINGS_FIELDS = [
@@ -125,6 +125,8 @@ final class SettingsHtmlTest extends TestCase
     public function testPluginSettingsHtmlPayloadIncludesDropdownOptions(): void
     {
         $body = file_get_contents(self::PLUGIN_PATH);
+        self::assertStringContainsString("\$event->roots['kunstmaan-migrator'] = dirname(__DIR__) . '/templates'", $body);
+        self::assertStringContainsString("'kunstmaan-migrator/_settings.twig'", $body);
         self::assertStringContainsString("'localeOptions' =>", $body);
         self::assertStringContainsString("'siteHandleOptions' =>", $body);
         self::assertStringContainsString('private function resolveLocaleOptions', $body);

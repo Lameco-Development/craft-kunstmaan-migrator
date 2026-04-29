@@ -189,11 +189,12 @@ class MigrationGateService extends Component
 
     protected function adminStatus(): ?bool
     {
-        if (!class_exists('Craft')) {
+        $app = $this->craftApp();
+        if ($app === null) {
             return null;
         }
 
-        $user = Craft::$app?->user ?? null;
+        $user = $app->user ?? null;
         $identity = $user?->identity ?? null;
         if ($identity === null) {
             return null;
@@ -204,11 +205,12 @@ class MigrationGateService extends Component
 
     protected function elevatedSessionStatus(): ?bool
     {
-        if (!class_exists('Craft')) {
+        $app = $this->craftApp();
+        if ($app === null) {
             return null;
         }
 
-        $user = Craft::$app?->user ?? null;
+        $user = $app->user ?? null;
         if ($user === null || !method_exists($user, 'getHasElevatedSession')) {
             return null;
         }
@@ -233,11 +235,12 @@ class MigrationGateService extends Component
 
     protected function storageMigrationWritable(): ?bool
     {
-        if (!class_exists('Craft')) {
+        $app = $this->craftApp();
+        if ($app === null) {
             return null;
         }
 
-        $storagePath = Craft::$app?->path?->getStoragePath();
+        $storagePath = $app->path?->getStoragePath();
         if (!is_string($storagePath) || $storagePath === '') {
             return null;
         }
@@ -306,11 +309,12 @@ class MigrationGateService extends Component
 
     protected function queueCanAcceptJobs(): ?bool
     {
-        if (!class_exists('Craft')) {
+        $app = $this->craftApp();
+        if ($app === null) {
             return null;
         }
 
-        return Craft::$app?->has('queue', true) === true;
+        return $app->has('queue', true) === true;
     }
 
     protected function queueWorkerReady(): ?bool
@@ -349,8 +353,9 @@ class MigrationGateService extends Component
             return $settingsPath;
         }
 
-        if (class_exists('Craft')) {
-            $storagePath = Craft::$app?->path?->getStoragePath();
+        $app = $this->craftApp();
+        if ($app !== null) {
+            $storagePath = $app->path?->getStoragePath();
             if (is_string($storagePath) && $storagePath !== '') {
                 return $storagePath . '/migration/mapping.yaml';
             }
@@ -377,6 +382,15 @@ class MigrationGateService extends Component
         }
 
         return null;
+    }
+
+    private function craftApp(): ?object
+    {
+        if (!class_exists('Craft') || !isset(Craft::$app)) {
+            return null;
+        }
+
+        return Craft::$app;
     }
 
     private function queueWorkerGate(): array

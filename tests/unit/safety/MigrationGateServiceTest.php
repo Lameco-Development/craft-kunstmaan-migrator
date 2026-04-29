@@ -189,8 +189,8 @@ final class MigrationGateServiceTest extends TestCase
         $settings ??= $this->settings();
 
         return new TestableMigrationGateService(
-            settings: $settings,
-            safety: new TestMigrationSafety(),
+            testSettings: $settings,
+            testSafety: new TestMigrationSafety(),
             adminStatus: true,
             elevatedSessionStatus: true,
             mappingFileExists: true,
@@ -263,8 +263,8 @@ final class TestableMigrationGateService extends MigrationGateService
      * @param array<string, int> $mappingCoverage
      */
     public function __construct(
-        private readonly Settings $settings,
-        private readonly MigrationSafety $safety,
+        private readonly Settings $testSettings,
+        private readonly MigrationSafety $testSafety,
         private readonly ?bool $adminStatus,
         private readonly ?bool $elevatedSessionStatus,
         private readonly bool $mappingFileExists,
@@ -279,12 +279,12 @@ final class TestableMigrationGateService extends MigrationGateService
 
     protected function settings(): Settings
     {
-        return $this->settings;
+        return $this->testSettings;
     }
 
     protected function safety(): MigrationSafety
     {
-        return $this->safety;
+        return $this->testSafety;
     }
 
     protected function adminStatus(): ?bool
