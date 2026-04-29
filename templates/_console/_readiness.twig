@@ -37,7 +37,8 @@
         <h3>Dry-run gates</h3>
         <ul class="km-console-gates">
             {% for gateId in ['non-production', 'admin', 'mapping-file-exists', 'recent-compile-exists', 'no-fatal-compile-warnings', 'filters-options-valid', 'queue-can-accept-jobs'] %}
-                {% set gate = (dryRunGates|filter(g => (g.id ?? '') == gateId)|first) ?? null %}
+                {% set matchingDryRunGates = dryRunGates|filter(g => (g.id ?? '') == gateId) %}
+                {% set gate = matchingDryRunGates|first|default(null) %}
                 <li class="km-console-gate" data-gate="{{ gateId }}">
                     <strong>{{ gate.label ?? gateId }}</strong>
                     <span class="km-console-status km-console-status--{{ gate.status ?? 'unknown' }}">{{ (gate.status ?? 'unknown')|title }}</span>

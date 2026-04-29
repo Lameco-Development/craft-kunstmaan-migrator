@@ -158,4 +158,16 @@ final class MigrationRunServiceTest extends TestCase
         self::assertStringContainsString('ARTIFACT_ROOT', $serviceSource);
         self::assertStringContainsString('normalizeArtifactPath', $serviceSource);
     }
+
+    public function testRunServiceHandlesMissingRunTableForReadSideConsoleRendering(): void
+    {
+        $source = $this->serviceSource();
+
+        self::assertStringContainsString('private function runsTableExists()', $source);
+        self::assertStringContainsString('private function assertRunsTableExists()', $source);
+        self::assertMatchesRegularExpression('/function latest[^{]+{\\s*if \\(!\\$this->runsTableExists\\(\\)\\)/s', $source);
+        self::assertMatchesRegularExpression('/function find[^{]+{\\s*if \\(!\\$this->runsTableExists\\(\\)\\)/s', $source);
+        self::assertMatchesRegularExpression('/function list[^{]+{\\s*if \\(!\\$this->runsTableExists\\(\\)\\)/s', $source);
+        self::assertStringContainsString('Run Craft pending migrations', $source);
+    }
 }

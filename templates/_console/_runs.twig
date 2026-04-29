@@ -5,7 +5,8 @@
 {% set runActions = runActions ?? {} %}
 {% set liveBlocked = (liveGates|filter(g => (g.blocking ?? false) or (g.status ?? '') in ['blocked', 'unknown'])|length) > 0 %}
 {% set runId = craft.app.request.getQueryParam('runId') ?? null %}
-{% set selectedRun = runId ? ((runs|filter(r => (r.id ?? '') == runId)|first) ?? null) : null %}
+{% set matchingRuns = runId ? (runs|filter(r => (r.id ?? '') == runId)) : [] %}
+{% set selectedRun = matchingRuns|first|default(null) %}
 {% if selectedRun is empty and runId and latestRun and (latestRun.id ?? '') == runId %}
     {% set selectedRun = latestRun %}
 {% endif %}

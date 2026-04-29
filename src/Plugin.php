@@ -142,8 +142,8 @@ use yii\db\Connection;
  */
 class Plugin extends BasePlugin
 {
-    // D-08: v2 declares 1.0.0 (NOT v1.x's 2.0.0).
-    public string $schemaVersion = '1.0.0';
+    // D-08: v2 starts below v1.x's 2.0.0; Phase 12 bumps for run-record migrations.
+    public string $schemaVersion = '1.1.0';
 
     // D-16: enables CP Settings page; placeholder template ships with this plan,
     // real form lives in Phase 4 / CFG-01.

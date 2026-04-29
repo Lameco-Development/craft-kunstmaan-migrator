@@ -48,6 +48,8 @@ class MigrationRunService extends Component
         ?int $initiatedByUserId,
         ?array $gateSnapshot = null,
     ): MigrationRunRecord {
+        $this->assertRunsTableExists();
+
         $now = $this->now();
         $record = new MigrationRunRecord();
         $record->stage = $stage;
@@ -173,6 +175,10 @@ class MigrationRunService extends Component
      */
     public function latest(?string $stage = null, ?string $mode = null): ?array
     {
+        if (!$this->runsTableExists()) {
+            return null;
+        }
+
         $query = $this->baseQuery();
         if ($stage !== null) {
             $query->andWhere(['stage' => $stage]);
@@ -194,6 +200,10 @@ class MigrationRunService extends Component
      */
     public function find(int $id): ?array
     {
+        if (!$this->runsTableExists()) {
+            return null;
+        }
+
         $row = $this->baseQuery()
             ->where(['id' => $id])
             ->one($this->db());
@@ -206,6 +216,10 @@ class MigrationRunService extends Component
      */
     public function list(int $limit = 50): array
     {
+        if (!$this->runsTableExists()) {
+            return [];
+        }
+
         $limit = max(1, min(500, $limit));
         $rows = $this->baseQuery()
             ->orderBy(['dateCreated' => SORT_DESC, 'id' => SORT_DESC])
@@ -236,6 +250,22 @@ class MigrationRunService extends Component
     private function baseQuery(): Query
     {
         return (new Query())->from(MigrationRunRecord::tableName());
+    }
+
+    private function runsTableExists(): bool
+    {
+        return $this->db()->tableExists(MigrationRunRecord::tableName());
+    }
+
+    private function assertRunsTableExists(): void
+    {
+        if ($this->runsTableExists()) {
+            return;
+        }
+
+        throw new RuntimeException(
+            'The Kunstmaan migrator run-record table is missing. Run Craft pending migrations via the Control Panel updates screen or `php craft migrate/all` before queueing migration actions.',
+        );
     }
 
     /**

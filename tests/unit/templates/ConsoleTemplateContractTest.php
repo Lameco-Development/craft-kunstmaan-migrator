@@ -140,6 +140,18 @@ final class ConsoleTemplateContractTest extends TestCase
         self::assertStringNotContainsString('method="post"', file_get_contents(dirname(__DIR__, 3) . '/templates/_console/_danger-zone.twig'));
     }
 
+    public function testConsoleTemplatesAvoidInvalidCoalesceOnComplexTwigExpressions(): void
+    {
+        $source = $this->consoleSource([
+            '_readiness.twig',
+            '_runs.twig',
+        ]);
+
+        self::assertStringNotContainsString('|first) ??', $source);
+        self::assertStringNotContainsString(')) ??', $source);
+        self::assertStringContainsString('|first|default(null)', $source);
+    }
+
     /**
      * @param list<string> $files
      */
