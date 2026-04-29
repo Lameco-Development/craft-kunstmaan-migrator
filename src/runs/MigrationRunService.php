@@ -28,6 +28,7 @@ class MigrationRunService extends Component
     public const STATUS_FAILED = 'failed';
     public const STATUS_CANCELLED = 'cancelled';
     public const STATUS_BLOCKED = 'blocked';
+    public const ARTIFACT_ROOT = 'storage/migration';
 
     private function db(): Connection
     {
@@ -59,7 +60,7 @@ class MigrationRunService extends Component
         $record->queueJobId = null;
         $record->queueJobIds = [];
         $record->progress = 0;
-        $record->logPath = null;
+        $record->logPath = self::ARTIFACT_ROOT . '/runs/' . $this->safePathSegment($stage) . '-' . $this->safePathSegment($mode) . '-' . gmdate('YmdHis') . '.log';
         $record->artifactPaths = [];
         $record->summary = null;
         $record->failure = null;
@@ -219,6 +220,7 @@ class MigrationRunService extends Component
 
     public function appendArtifact(int $id, string $path): void
     {
+        $path = $this->normalizeArtifactPath($path);
         $run = $this->requireRun($id);
         $artifactPaths = $this->jsonList($run['artifactPaths'] ?? null);
         if (!in_array($path, $artifactPaths, true)) {
@@ -261,6 +263,24 @@ class MigrationRunService extends Component
     private function normalizeQueueJobId(string|int $queueJobId): string
     {
         return (string) $queueJobId;
+    }
+
+    private function normalizeArtifactPath(string $path): string
+    {
+        $path = trim($path);
+        if ($path === '') {
+            throw new RuntimeException('Artifact path cannot be empty.');
+        }
+        if ($path !== self::ARTIFACT_ROOT && !str_starts_with($path, self::ARTIFACT_ROOT . '/')) {
+            throw new RuntimeException('Artifact path must be under storage/migration.');
+        }
+        return $path;
+    }
+
+    private function safePathSegment(string $value): string
+    {
+        $segment = preg_replace('/[^a-zA-Z0-9_-]+/', '-', $value) ?: 'run';
+        return trim($segment, '-') ?: 'run';
     }
 
     private function clampProgress(float $progress): float

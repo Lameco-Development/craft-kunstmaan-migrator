@@ -137,4 +137,25 @@ final class MigrationRunServiceTest extends TestCase
         self::assertStringContainsString('appendQueueJobId', $source);
         self::assertMatchesRegularExpression('/queueJobId.*=.*\\$queueJobId/s', $source);
     }
+
+    public function testRunContractsExposeJsonLogAndArtifactFields(): void
+    {
+        $migrationSource = $this->migrationSource();
+        $recordSource = $this->recordSource();
+        $serviceSource = $this->serviceSource();
+
+        foreach ([
+            'gateSnapshot',
+            'queueJobIds',
+            'artifactPaths',
+            'logPath',
+        ] as $field) {
+            self::assertStringContainsString($field, $migrationSource);
+            self::assertStringContainsString($field, $recordSource . $serviceSource);
+        }
+
+        self::assertStringContainsString('storage/migration', $serviceSource);
+        self::assertStringContainsString('ARTIFACT_ROOT', $serviceSource);
+        self::assertStringContainsString('normalizeArtifactPath', $serviceSource);
+    }
 }
