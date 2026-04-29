@@ -14,13 +14,13 @@ source:
   - 12-10-SUMMARY.md
   - 12-UI-SPEC.md
 started: 2026-04-29T11:36:47Z
-updated: 2026-04-29T12:10:16Z
+updated: 2026-04-29T13:55:27Z
 ---
 
 ## Current Test
 
 complete: true
-result: "UAT checklist complete: 7 passed, 2 fixed minor gaps, 1 blocked verification."
+result: "UAT checklist complete: 8 passed, 2 fixed minor gaps."
 
 ## Tests
 
@@ -60,9 +60,9 @@ result: pass
 
 ### 8. CP queue actions create jobs, not inline workflows
 expected: Queue analyze, compile, verify/report, dry-run, and live actions are CP POST/admin-only, create a run record, push a Craft queue job, store the queue job ID, redirect back to the console Runs/detail context, and do not execute long migration workflows inline during the web request.
-result: blocked
+result: pass
 reported: "Yes, however not able to queue anything since we have blocking items."
-reason: "Queue-submit path could not be exercised because readiness gates correctly prevented queueing."
+note: "Initially blocked from verification. Fixed Analyze checkbox pre-submit gating, queued workflow option sanitization, CP compile overwrite intent, and queue progress-label truncation. Confirmed CP Compile created run #3 with queue job #20654 and completed successfully."
 
 ### 9. Live migration is strictly gated
 expected: The live migration panel is visually separated from dry run and blocks live queueing unless non-production, admin, elevated session, MIGRATE LIVE typed phrase, successful same-options dry run, recent no-fatal compile, queue worker readiness, backup acknowledgement, warning/unsupported acceptance, CP live opt-in, and job production hard-block gates all pass. Unverifiable queue readiness blocks CP live and points to CLI remediation.
@@ -75,11 +75,11 @@ result: pass
 ## Summary
 
 total: 10
-passed: 7
+passed: 8
 issues: 2
 pending: 0
 skipped: 0
-blocked: 1
+blocked: 0
 
 ## Gaps
 
