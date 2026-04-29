@@ -144,10 +144,80 @@ final class MappingController extends Controller
         return $this->redirectBackToUtility();
     }
 
+    public function actionBatch(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePostRequest();
+        $this->requireAdmin();
+
+        $request = Craft::$app->getRequest();
+        $action = (string) $request->getRequiredBodyParam('batchAction');
+        if (!in_array($action, ['accept', 'needs-review', 'drop', 'accept-warnings'], true)) {
+            $this->setFailFlash('Invalid batch mapping action.');
+            return $this->redirectBackToUtility();
+        }
+
+        $selectedRows = $this->selectedRowIndexes((array) $request->getBodyParam('selectedRows', []));
+        if ($selectedRows === []) {
+            $this->setFailFlash('Select at least one mapping row.');
+            return $this->redirectBackToUtility();
+        }
+
+        $confirmation = trim((string) $request->getBodyParam('confirmation', ''));
+        if ($action === 'drop' && $confirmation !== 'DROP SELECTED') {
+            $this->setFailFlash('Type DROP SELECTED to drop selected mapping rows.');
+            return $this->redirectBackToUtility();
+        }
+        if ($action === 'accept-warnings' && $confirmation !== 'ACCEPT WARNINGS') {
+            $this->setFailFlash('Type ACCEPT WARNINGS to accept selected warning rows.');
+            return $this->redirectBackToUtility();
+        }
+
+        $changes = match ($action) {
+            'accept' => ['status' => 'accepted'],
+            'needs-review' => ['status' => 'needs-review'],
+            'drop' => [
+                'status' => 'dropped',
+                'rationale' => trim((string) $request->getBodyParam('rationale', 'Batch dropped from CP mapping review.')),
+            ],
+            'accept-warnings' => [
+                'status' => 'accepted',
+                'warningAccepted' => true,
+                'rationale' => trim((string) $request->getBodyParam('rationale', 'Warnings explicitly accepted from CP mapping review.')),
+            ],
+        };
+
+        $plugin = Plugin::getInstance();
+        $updated = 0;
+        foreach ($selectedRows as $rowIndex) {
+            if ($plugin->mappingFile->updateRow($plugin->mappingFile->resolvePath(), $rowIndex, $changes)) {
+                $updated++;
+            }
+        }
+
+        if ($updated === count($selectedRows)) {
+            $this->setSuccessFlash(sprintf('Updated %d mapping rows.', $updated));
+        } elseif ($updated > 0) {
+            $this->setFailFlash(sprintf('Updated %d of %d selected mapping rows.', $updated, count($selectedRows)));
+        } else {
+            $this->setFailFlash('Could not update selected mapping rows.');
+        }
+
+        return $this->redirectBackToUtility();
+    }
+
     private function redirectBackToUtility(): Response
     {
-        $entity = trim((string) Craft::$app->getRequest()->getBodyParam('entity', ''));
-        return $this->redirect(UrlHelper::cpUrl('utilities/kunstmaan-mapping', $entity !== '' ? ['entity' => $entity] : []));
+        $request = Craft::$app->getRequest();
+        $params = [];
+        foreach (['entity', 'status', 'kind', 'finding', 'q'] as $key) {
+            $value = trim((string) $request->getBodyParam($key, ''));
+            if ($value !== '') {
+                $params[$key] = $value;
+            }
+        }
+
+        return $this->redirect(UrlHelper::cpUrl('utilities/kunstmaan-mapping', $params));
     }
 
     /**
@@ -239,5 +309,24 @@ final class MappingController extends Controller
         $out = array_keys($set);
         sort($out, SORT_NATURAL | SORT_FLAG_CASE);
         return $out;
+    }
+
+    /**
+     * @param list<mixed> $selectedRows
+     * @return list<int>
+     */
+    private function selectedRowIndexes(array $selectedRows): array
+    {
+        $out = [];
+        foreach ($selectedRows as $rowIndex) {
+            if (!is_numeric($rowIndex)) {
+                continue;
+            }
+            $out[(int) $rowIndex] = true;
+        }
+
+        $indexes = array_keys($out);
+        sort($indexes, SORT_NUMERIC);
+        return $indexes;
     }
 }
