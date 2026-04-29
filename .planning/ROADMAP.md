@@ -470,7 +470,7 @@ Plans:
 
 Plans:
 - [x] `12-01-PLAN.md` — Run records and file-backed artifacts — completed.
-- [ ] `12-02-PLAN.md`
+- [x] `12-02-PLAN.md` — Analyze and compile workflow extraction — completed.
 - [ ] `12-03-PLAN.md`
 - [ ] `12-04-PLAN.md`
 - [ ] `12-05-PLAN.md`

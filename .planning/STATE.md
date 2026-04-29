@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Executing Phase 12
-stopped_at: Completed 12-01-PLAN.md
-last_updated: "2026-04-29T07:47:11Z"
+stopped_at: Completed 12-02-PLAN.md
+last_updated: "2026-04-29T10:07:07Z"
 progress:
   total_phases: 12
   completed_phases: 11
   total_plans: 109
-  completed_plans: 100
-  percent: 92
+  completed_plans: 101
+  percent: 93
 ---
 
 # State
@@ -42,7 +42,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 12: CP Migration Console & Queue Workflow — executing.** Phase directory: `.planning/phases/12-cp-migration-console-queue-workflow/`. Context: `12-CONTEXT.md`; UI contract: `12-UI-SPEC.md`; pattern map: `12-PATTERNS.md`. Plan `12-01` completed first-class durable run records: `{{%kunstmaanmigrator_runs}}`, `MigrationRunRecord`, and `MigrationRunService` lifecycle/progress/queue/artifact APIs with source-level PHPUnit contracts. Next step: continue with Plan `12-02` to wire the run service into the next CP/queue slice.
+**Phase 12: CP Migration Console & Queue Workflow — executing.** Phase directory: `.planning/phases/12-cp-migration-console-queue-workflow/`. Context: `12-CONTEXT.md`; UI contract: `12-UI-SPEC.md`; pattern map: `12-PATTERNS.md`. Plan `12-01` completed first-class durable run records: `{{%kunstmaanmigrator_runs}}`, `MigrationRunRecord`, and `MigrationRunService` lifecycle/progress/queue/artifact APIs with source-level PHPUnit contracts. Plan `12-02` extracted reusable analyze and compile workflow services (`AnalyzeWorkflow`, `CompileWorkflow`) so CLI, CP, and queue jobs can share deterministic orchestration without shelling out or duplicating controller bodies. Next step: continue with Plan `12-03`.
 
 ## Historical Phase Notes
 
@@ -83,6 +83,8 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 - 2026-04-26: Phase 02.1 (Kunstmaan Source Introspection) inserted between Phase 2 and Phase 3. Driver: Phase 2 UAT against ~/Sites/cqm-craft-website revealed `SchemaDumper`'s hardcoded `WHERE TABLE_NAME LIKE 'kuma\_%'` scans only Kunstmaan vendor scaffolding (kuma_node, kuma_users, kuma_acl_*) and silently misses project content tables (`lameco_websitebundle_*`) AND M2M join tables (`case_study_pages_categories`, `lameco_websitebundle_field_pages_method_pages`, `documents_categories`, `news_pages_categories`, `users_document_categories`). Mitigation = `KunstmaanSourceScanner` reads Doctrine `#[ORM\Table]` + `#[ORM\JoinTable]` + `#[ORM\ManyToMany]` from `KUNSTMAAN_SOURCE_PATH` (e.g. `~/Sites/cqm-website`); `SchemaDumper` consumes the discovered table list (greenfield-friendly fallback to `kuma_*` when source path unset); `HeuristicProposer` + `LlmClassifier` enriched with class-level signal; doctor gains a 5th check.
 
 ## Recent Activity
+
+- 2026-04-29: Phase 12 / Plan 02 (Analyze and Compile workflow extraction) executed. 2 TDD tasks, 4 task commits (`24cd6eb`, `7076b6f`, `0cc9d32`, `835da9a`). Four files created: `src/workflow/AnalyzeWorkflow.php` (shared analyze orchestration with structured status/filter/artifact/summary/failure result), `src/workflow/CompileWorkflow.php` (shared compile orchestration with artifact paths, fatal/warning counts, compiledAt, and failure result), `tests/unit/workflow/AnalyzeWorkflowTest.php`, and `tests/unit/workflow/CompileWorkflowTest.php`. Two console controllers modified: `src/console/AnalyzeController.php` and `src/console/CompileController.php` now keep the `NeverProductionTrait` gate and delegate to workflows as adapters. Verification: workflow PHPUnit suite passed 6 tests / 45 assertions; PHP lint clean for both workflows and controllers; acceptance greps found analyze contract count 28, compile contract count 19, controller delegation count 2 each, and shell-out counts 0 in both workflows. Runtime-zero-AI preserved: Anthropic/API-key access remains analyze-only, and compile workflow has no LLM/Anthropic surface. Rule 1 deviations: fixed test-position assertions to inspect action bodies and removed stale controller `options()` methods from workflow services. `gsd-sdk` was unavailable in the shell, so state/roadmap updates were applied manually.
 
 - 2026-04-29: Phase 12 / Plan 01 (Run records and file-backed artifacts) executed. 3 tasks, 5 task commits (`13dc3b2`, `6edd293`, `4e53e9c`, `84142f8`, `9c9ab82`). Four files created: `src/migrations/m260429_000001_create_migration_runs.php` (idempotent `{{%kunstmaanmigrator_runs}}` table with status/stage-mode/queue/date indexes and no-op `safeDown()` preserving audit history), `src/records/MigrationRunRecord.php` (ActiveRecord table seam), `src/runs/MigrationRunService.php` (createRun, queued/running/succeeded/failed/progress/latest/find/list/appendArtifact APIs with first/current `queueJobId` plus plural `queueJobIds`), and `tests/unit/runs/MigrationRunServiceTest.php` (source-level contract tests for schema fields, lifecycle methods, statuses, JSON fields, log/artifact fields, and `storage/migration` rooting). Verification: PHP lint clean for all four files; `vendor/bin/phpunit tests/unit/runs/MigrationRunServiceTest.php --testdox` passed 7 tests / 74 assertions with one pre-existing-style warning that no coverage driver is available. Rule 2 deviation: artifact paths are now guarded under `storage/migration` and new run log paths default there, satisfying Phase 12's file-backed audit trail truth. `gsd-sdk` was unavailable in the shell, so state/roadmap updates were applied manually.
 
@@ -244,9 +246,9 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 ## Last Session
 
-- **Last:** 2026-04-28T12:33:42Z
-- **Stopped at:** Phase 12 UI-SPEC approved
-- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-UI-SPEC.md
+- **Last:** 2026-04-29T10:07:07Z
+- **Stopped at:** Completed 12-02-PLAN.md
+- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-02-SUMMARY.md
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-9 have something to match against; Phase 02.1 / Plan 07 heuristic 1.5 entity-aware match should fire repeatedly once Plan 09 reconciliation lands and accepted column rows seed acceptedRows).
 
