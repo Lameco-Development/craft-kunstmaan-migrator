@@ -10,6 +10,7 @@ use lameco\kunstmaanmigrator\safety\MigrationGateService;
 use lameco\kunstmaanmigrator\safety\MigrationSafety;
 use lameco\kunstmaanmigrator\models\Settings;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
 
 final class MigrationGateServiceTest extends TestCase
 {
@@ -102,7 +103,7 @@ final class MigrationGateServiceTest extends TestCase
 
     public function testDryRunGatesExposeLockedIdsAndSettingsBlock(): void
     {
-        $settings = new Settings();
+        $settings = $this->settings();
         $settings->allowCpQueueActions = false;
         $service = $this->makeGateService(settings: $settings);
 
@@ -145,7 +146,7 @@ final class MigrationGateServiceTest extends TestCase
 
     public function testLiveGatesExposeLockedIdsAndStrictBlockingSemantics(): void
     {
-        $settings = new Settings();
+        $settings = $this->settings();
         $settings->allowCpLiveQueueAction = false;
         $service = $this->makeGateService(settings: $settings, queueWorkerReady: null);
 
@@ -185,8 +186,7 @@ final class MigrationGateServiceTest extends TestCase
 
     private function makeGateService(?Settings $settings = null, ?bool $queueWorkerReady = true): TestableMigrationGateService
     {
-        $settings ??= new Settings();
-        $settings->allowCpQueueActions = $settings->allowCpQueueActions ?? true;
+        $settings ??= $this->settings();
 
         return new TestableMigrationGateService(
             settings: $settings,
@@ -216,6 +216,14 @@ final class MigrationGateServiceTest extends TestCase
             queueCanAcceptJobs: true,
             queueWorkerReady: $queueWorkerReady,
         );
+    }
+
+    private function settings(): Settings
+    {
+        $reflection = new ReflectionClass(Settings::class);
+        /** @var Settings $settings */
+        $settings = $reflection->newInstanceWithoutConstructor();
+        return $settings;
     }
 
     /**
