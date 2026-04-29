@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Phase 11 executed; scoped CQM NewsPage/HomePage dry-run proof passed
-stopped_at: Phase 12 context gathered
-last_updated: "2026-04-29T07:07:16.949Z"
+stopped_at: Phase 12 UI-SPEC approved
+last_updated: "2026-04-29T07:15:40.316Z"
 progress:
   total_phases: 12
   completed_phases: 11
@@ -243,8 +243,8 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 ## Last Session
 
 - **Last:** 2026-04-28T12:33:42Z
-- **Stopped at:** Phase 12 context gathered
-- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-CONTEXT.md
+- **Stopped at:** Phase 12 UI-SPEC approved
+- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-UI-SPEC.md
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-9 have something to match against; Phase 02.1 / Plan 07 heuristic 1.5 entity-aware match should fire repeatedly once Plan 09 reconciliation lands and accepted column rows seed acceptedRows).
 
