@@ -463,13 +463,22 @@ Plans:
 
 ### Phase 12: CP Migration Console & Queue Workflow
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Add a Craft Control Panel operator cockpit for readiness, insights, run records, queue-backed safe actions, and guarded dry-run/live execution while keeping CLI execution canonical and safety gates strict.
+**Requirements**: Phase 12 context decisions D-01..D-25
 **Depends on:** Phase 11
-**Plans:** 0 plans
+**Plans:** 10 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 12 to break down)
+- [x] `12-01-PLAN.md` — Run records and file-backed artifacts — completed.
+- [ ] `12-02-PLAN.md`
+- [ ] `12-03-PLAN.md`
+- [ ] `12-04-PLAN.md`
+- [ ] `12-05-PLAN.md`
+- [ ] `12-06-PLAN.md`
+- [ ] `12-07-PLAN.md`
+- [ ] `12-08-PLAN.md`
+- [ ] `12-09-PLAN.md`
+- [ ] `12-10-PLAN.md`
 
 ---
 
