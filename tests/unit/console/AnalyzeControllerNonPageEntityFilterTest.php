@@ -67,11 +67,11 @@ final class AnalyzeControllerNonPageEntityFilterTest extends TestCase
 
     private function step77BodySource(): string
     {
-        $controller = new ReflectionClass(\lameco\kunstmaanmigrator\console\AnalyzeController::class);
-        $file = (string) $controller->getFileName();
-        $this->assertNotSame('', $file, 'AnalyzeController source path must resolve.');
+        $workflow = new ReflectionClass(\lameco\kunstmaanmigrator\workflow\AnalyzeWorkflow::class);
+        $file = (string) $workflow->getFileName();
+        $this->assertNotSame('', $file, 'AnalyzeWorkflow source path must resolve.');
         $source = (string) file_get_contents($file);
-        $this->assertNotSame('', $source, 'AnalyzeController source must be readable.');
+        $this->assertNotSame('', $source, 'AnalyzeWorkflow source must be readable.');
 
         // Slice the file from `$nonPageEntityIndex = []` to the closing `}` of
         // the foreach. Bounding window keeps the assertions targeted to the

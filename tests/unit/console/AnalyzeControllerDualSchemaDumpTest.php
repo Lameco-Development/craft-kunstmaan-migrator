@@ -10,7 +10,7 @@ final class AnalyzeControllerDualSchemaDumpTest extends TestCase
 {
     public function testAnalyzePersistsCraftTargetSchemaBesideSourceSchema(): void
     {
-        $source = $this->controllerSource();
+        $source = $this->workflowSource();
 
         self::assertStringContainsString("'/kunstmaan-schema.json'", $source);
         self::assertStringContainsString("'/craft-schema.json'", $source);
@@ -22,11 +22,11 @@ final class AnalyzeControllerDualSchemaDumpTest extends TestCase
         );
     }
 
-    private function controllerSource(): string
+    private function workflowSource(): string
     {
-        $file = dirname(__DIR__, 3) . '/src/console/AnalyzeController.php';
+        $file = dirname(__DIR__, 3) . '/src/workflow/AnalyzeWorkflow.php';
         $source = (string) file_get_contents($file);
-        self::assertNotSame('', $source, 'AnalyzeController source must be readable.');
+        self::assertNotSame('', $source, 'AnalyzeWorkflow source must be readable.');
 
         return $source;
     }

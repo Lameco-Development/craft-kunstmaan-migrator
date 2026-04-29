@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\console;
 
 use lameco\kunstmaanmigrator\console\MigrateController;
+use lameco\kunstmaanmigrator\workflow\MigrateWorkflow;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
@@ -84,7 +85,7 @@ final class MigrateControllerCompilePreflightTest extends TestCase
     public function testMigrateIndexAndLoadCallCompiledMappingPreflight(): void
     {
         $source = (string) file_get_contents(
-            (new ReflectionClass(MigrateController::class))->getFileName(),
+            (new ReflectionClass(MigrateWorkflow::class))->getFileName(),
         );
 
         self::assertGreaterThanOrEqual(

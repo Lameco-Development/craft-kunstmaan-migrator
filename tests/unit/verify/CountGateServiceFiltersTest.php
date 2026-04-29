@@ -94,7 +94,7 @@ final class CountGateServiceFiltersTest extends TestCase
 
     public function testVerifyControllerLoadsCompiledMappingForEntityFilterTranslation(): void
     {
-        $source = (string) file_get_contents(__DIR__ . '/../../../src/console/VerifyController.php');
+        $source = (string) file_get_contents(__DIR__ . '/../../../src/workflow/VerifyWorkflow.php');
 
         self::assertStringContainsString('MappingFilterTranslator', $source);
         self::assertStringContainsString('loadTranslatedScopeForEntityFilters', $source);

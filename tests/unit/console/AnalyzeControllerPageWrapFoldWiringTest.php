@@ -28,7 +28,7 @@ final class AnalyzeControllerPageWrapFoldWiringTest extends TestCase
 {
     public function testActionIndexCallsTheSyntheticEmitter(): void
     {
-        $source = $this->controllerSource();
+        $source = $this->workflowSource();
 
         self::assertStringContainsString(
             'self::emitPageWrapSyntheticColumns(',
@@ -39,7 +39,7 @@ final class AnalyzeControllerPageWrapFoldWiringTest extends TestCase
 
     public function testActionIndexAppendsSyntheticRowsToResidual(): void
     {
-        $source = $this->controllerSource();
+        $source = $this->workflowSource();
 
         self::assertMatchesRegularExpression(
             '#\$residual\s*=\s*array_merge\(\s*\$residual\s*,\s*\$pageWrapSyntheticRows\s*\)#',
@@ -50,7 +50,7 @@ final class AnalyzeControllerPageWrapFoldWiringTest extends TestCase
 
     public function testActionIndexForceDropsFoldedTaxonomies(): void
     {
-        $source = $this->controllerSource();
+        $source = $this->workflowSource();
 
         // The force-drop loop sets reason=superseded-by-page on taxonomy
         // proposals whose FQCN is in the folded set. Both the marker string
@@ -69,7 +69,7 @@ final class AnalyzeControllerPageWrapFoldWiringTest extends TestCase
 
     public function testF1MarkerCommentIsPresentForGreppability(): void
     {
-        $source = $this->controllerSource();
+        $source = $this->workflowSource();
 
         // Require the explicit decision marker so the wiring is greppable
         // alongside the helper definition.
@@ -80,13 +80,13 @@ final class AnalyzeControllerPageWrapFoldWiringTest extends TestCase
         );
     }
 
-    private function controllerSource(): string
+    private function workflowSource(): string
     {
-        $controller = new ReflectionClass(\lameco\kunstmaanmigrator\console\AnalyzeController::class);
-        $file = (string) $controller->getFileName();
-        self::assertNotSame('', $file, 'AnalyzeController source path must resolve.');
+        $workflow = new ReflectionClass(\lameco\kunstmaanmigrator\workflow\AnalyzeWorkflow::class);
+        $file = (string) $workflow->getFileName();
+        self::assertNotSame('', $file, 'AnalyzeWorkflow source path must resolve.');
         $source = (string) file_get_contents($file);
-        self::assertNotSame('', $source, 'AnalyzeController source must be readable.');
+        self::assertNotSame('', $source, 'AnalyzeWorkflow source must be readable.');
         return $source;
     }
 }
