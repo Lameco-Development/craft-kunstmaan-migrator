@@ -197,6 +197,18 @@ final class MappingReviewTest extends TestCase
         foreach (['statusFilter', 'kindFilter', 'findingFilter', 'searchQuery'] as $viewVariable) {
             self::assertStringContainsString("'{$viewVariable}'", $source);
         }
+
+        self::assertStringContainsString("\$params = ['tab' => 'mapping'];", $source);
+    }
+
+    public function testMappingTwigPreservesConsoleMappingTabAcrossFiltersAndPosts(): void
+    {
+        $source = file_get_contents(dirname(__DIR__, 3) . '/templates/_mapping/index.twig');
+        self::assertIsString($source);
+
+        self::assertStringContainsString("url('utilities/kunstmaan-mapping', {tab: 'mapping'})", $source);
+        self::assertStringContainsString("hiddenInput('tab', 'mapping')", $source);
+        self::assertGreaterThanOrEqual(2, substr_count($source, "hiddenInput('tab', 'mapping')"));
     }
 
     public function testMappingControllerBatchActionUsesAdminPostValidationAndCanonicalUpdates(): void

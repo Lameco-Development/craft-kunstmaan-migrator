@@ -14,15 +14,15 @@ source:
   - 12-10-SUMMARY.md
   - 12-UI-SPEC.md
 started: 2026-04-29T11:36:47Z
-updated: 2026-04-29T11:43:19Z
+updated: 2026-04-29T11:47:54Z
 ---
 
 ## Current Test
 
-number: 2
-name: Utility opens the migration console
+number: 5
+name: Mapping tab supports canonical review
 expected: |
-  Open Craft Utilities and choose the Kunstmaan Migration Console. It remains under Utilities, not a top-level CP nav item, and shows the title "Kunstmaan Migration Console", the CLI-canonical subtitle, and tabs in this order: Readiness, Analyze, Mapping, Compile, Runs, Reports, Danger Zone.
+  The Mapping tab exposes URL-preserved filters for entity/page, status, kind, finding severity, and search; rows show source, target, handler, status, finding, and rationale before edit controls; batch actions support accept, needs-review, drop, and warning acceptance with typed confirmations for high-risk actions while updating the canonical mapping.yaml only.
 awaiting: user response
 
 ## Tests
@@ -35,17 +35,18 @@ severity: minor
 
 ### 2. Utility opens the migration console
 expected: Open Craft Utilities and choose the Kunstmaan Migration Console. It remains under Utilities, not a top-level CP nav item, and shows the title "Kunstmaan Migration Console", the CLI-canonical subtitle, and tabs in this order: Readiness, Analyze, Mapping, Compile, Runs, Reports, Danger Zone.
-result: issue
-reported: "SQLSTATE[42S02]: Base table or view not found: 1146 Table 'craft_starter_kit.kunstmaanmigrator_runs' doesn't exist; after fixing the run-table read path, Twig reported: The \"defined\" test only works with simple variables in \"kunstmaan-migrator/_console/_readiness\" at line 40."
-severity: blocker
+result: pass
+note: "Initially failed on missing run-record table and invalid Twig coalesce expression; fixed in 9d433da and confirmed by user."
 
 ### 3. Readiness tab summarizes gates
 expected: The Readiness tab shows Environment, Connectivity, Mapping & Compile, Queue, and Latest run cards with text status labels such as Passed, Warning, Blocked, or Unknown. Blocked/unknown items include remediation copy, and Queue dry run is only available when dry-run gates pass.
-result: [pending]
+result: pass
 
 ### 4. Analyze tab is AI-explicit and queued
 expected: The Analyze tab has entity, locale, and since filters, an AI confirmation checkbox, the required Anthropic missing-key disabled copy when no key is configured, an equivalent CLI command, and Queue analyze only becomes usable after the safety/API/AI confirmation gates pass. Submitting queues a job and does not run analyze inline.
-result: [pending]
+result: issue
+reported: "Yes it does. Anything we can do about the text fields? Could they just be dropdowns or something?"
+severity: minor
 
 ### 5. Mapping tab supports canonical review
 expected: The Mapping tab exposes URL-preserved filters for entity/page, status, kind, finding severity, and search; rows show source, target, handler, status, finding, and rationale before edit controls; batch actions support accept, needs-review, drop, and warning acceptance with typed confirmations for high-risk actions while updating the canonical mapping.yaml only.
@@ -74,9 +75,9 @@ result: [pending]
 ## Summary
 
 total: 10
-passed: 0
+passed: 2
 issues: 2
-pending: 8
+pending: 6
 skipped: 0
 blocked: 0
 
@@ -91,23 +92,19 @@ blocked: 0
   artifacts: []
   missing: []
   debug_session: ""
-- truth: "The Kunstmaan Migration Console should open even before any migration run records exist."
+- truth: "Analyze filters should use guided controls where values are knowable instead of plain comma-separated text fields."
   status: failed
-  reason: "User reported: SQLSTATE[42S02]: Base table or view not found: 1146 Table 'craft_starter_kit.kunstmaanmigrator_runs' doesn't exist; after fixing the run-table read path, Twig reported: The \"defined\" test only works with simple variables in \"kunstmaan-migrator/_console/_readiness\" at line 40."
-  severity: blocker
-  test: 2
-  root_cause: "MigrationRunService::latest() and list() queried {{%kunstmaanmigrator_runs}} unconditionally from the Utility view model before the plugin migration had created the run-record table. The console templates also used Twig null-coalescing on filtered/parenthesized expressions, which compiles through Twig's defined test and is invalid for complex expressions."
+  reason: "User reported: Yes it does. Anything we can do about the text fields? Could they just be dropdowns or something?"
+  severity: minor
+  test: 4
+  root_cause: "The Analyze tab currently renders entity and locale filters as free-text inputs even though entities can often be derived from source introspection/mapping context and locales can reuse existing locale option discovery."
   artifacts:
-    - path: "src/runs/MigrationRunService.php"
-      issue: "Read-side run queries do not guard a missing run-record table."
+    - path: "templates/_console/_analyze.twig"
+      issue: "Entity and locale filters are plain text fields."
     - path: "src/controllers/MigrationConsoleController.php"
-      issue: "Utility view model calls latestRun()/runs() during console render."
-    - path: "templates/_console/_readiness.twig"
-      issue: "Dry-run gate lookup used null coalescing on a filtered expression."
-    - path: "templates/_console/_runs.twig"
-      issue: "Selected run lookup used null coalescing on a filtered expression."
+      issue: "View model does not yet expose analyze filter option lists."
   missing:
-    - "Guard run-record read methods so missing tables return empty run state instead of crashing the CP."
-    - "Keep run-record mutations loud with a clear run-migrations error before queueing actions."
-    - "Use explicit temporary variables plus default(null) for filtered Twig lookups."
+    - "Expose available entity and locale options in the console view model when discoverable."
+    - "Render entity/locale filters as select/multi-select controls with text fallback when options are unavailable."
+    - "Keep since as a date/text date field."
   debug_session: ""

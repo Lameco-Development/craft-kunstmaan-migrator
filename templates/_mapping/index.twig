@@ -1,5 +1,5 @@
 {% set title = 'Kunstmaan Mapping' %}
-{% set selectedUrl = url('utilities/kunstmaan-mapping') %}
+{% set selectedUrl = url('utilities/kunstmaan-mapping', {tab: 'mapping'}) %}
 
 <style>
     .km-map-summary {
@@ -84,6 +84,7 @@
 </style>
 
 <form method="get" action="{{ selectedUrl }}" class="km-map-filter-grid">
+    {{ hiddenInput('tab', 'mapping') }}
     <div class="field">
         <div class="heading">
             <label for="km-entity">Kunstmaan page entity</label>
@@ -199,6 +200,7 @@
         {{ hiddenInput('kind', kindFilter) }}
         {{ hiddenInput('finding', findingFilter) }}
         {{ hiddenInput('q', searchQuery) }}
+        {{ hiddenInput('tab', 'mapping') }}
 
         <div class="km-map-actions">
             <div>

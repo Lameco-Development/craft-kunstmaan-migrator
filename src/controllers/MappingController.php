@@ -209,7 +209,7 @@ final class MappingController extends Controller
     private function redirectBackToUtility(): Response
     {
         $request = Craft::$app->getRequest();
-        $params = [];
+        $params = ['tab' => 'mapping'];
         foreach (['entity', 'status', 'kind', 'finding', 'q'] as $key) {
             $value = trim((string) $request->getBodyParam($key, $request->getBodyParam('filter' . ucfirst($key), '')));
             if ($value !== '') {
