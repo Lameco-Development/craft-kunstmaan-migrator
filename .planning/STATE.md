@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
-status: Executing Phase 12
-stopped_at: Completed 12-09-PLAN.md
-last_updated: "2026-04-29T11:18:48Z"
+status: Completed Phase 12
+stopped_at: Completed 12-10-PLAN.md
+last_updated: "2026-04-29T11:29:54Z"
 progress:
   total_phases: 12
-  completed_phases: 11
+  completed_phases: 12
   total_plans: 109
-  completed_plans: 108
-  percent: 99
+  completed_plans: 109
+  percent: 100
 ---
 
 # State
@@ -42,7 +42,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 12: CP Migration Console & Queue Workflow — executing.** Phase directory: `.planning/phases/12-cp-migration-console-queue-workflow/`. Context: `12-CONTEXT.md`; UI contract: `12-UI-SPEC.md`; pattern map: `12-PATTERNS.md`. Plan `12-01` completed first-class durable run records: `{{%kunstmaanmigrator_runs}}`, `MigrationRunRecord`, and `MigrationRunService` lifecycle/progress/queue/artifact APIs with source-level PHPUnit contracts. Plan `12-02` extracted reusable analyze and compile workflow services (`AnalyzeWorkflow`, `CompileWorkflow`) so CLI, CP, and queue jobs can share deterministic orchestration without shelling out or duplicating controller bodies. Plan `12-03` extracted migrate and verify workflows (`MigrateWorkflow`, `VerifyWorkflow`) with CLI adapters, report/log artifact metadata, dry-run/live safety, filters, verify capture modes, and queue-ready `batchOffset`/`batchLimit`/`nextBatchOffset` support. Plan `12-04` improved the CP mapping review UX with URL-driven status/kind/finding/search filters, visible source/target/handler/finding/rationale row metadata, and admin-only typed-confirmation batch actions that update canonical `mapping.yaml` only through `MappingFile::updateRow()`. Plan `12-05` tightened the CP Settings boundary to stable site-safe groups, added CP queue/live allowance plus retention/default-filter Settings fields, defaulted live CP queue execution off, and kept advanced project-shape hints config-only. Plan `12-06` added CP/job-safe production hard-blocks plus structured readiness, analyze, compile, dry-run, and strict live migration gates with settings enforcement and blocking unknown queue-readiness remediation. Plan `12-07` registered Phase 12 run, safety, gate, and workflow services as plugin components, wired `MigrationGateService` to the shared run/mapping/settings/safety siblings, and locked the Utility-only CP surface with source-level integration tests. Plan `12-08` added serialization-safe Craft queue jobs for analyze/compile/verify stages and staged dry-run/live migration batches, with worker-side production re-checks, live gate-snapshot blocking, run record progress/success/failure/artifact updates, and queue chaining via `nextBatchOffset` plus `appendQueueJobId()`. Plan `12-09` expanded the existing Utility into the Kunstmaan Migration Console shell, added `MigrationConsoleController::utilityVariables()` with Phase 12 tab/gate/run/report/mapping/copy data, and added admin-only CP queue actions for analyze, compile, verify/report, dry-run, and live migration with CP production hard-blocks, settings gates, elevated live confirmation, warning acceptance wiring, run-record creation, queue push, and no inline workflow execution. Next step: continue with Plan `12-10`.
+**Phase 12: CP Migration Console & Queue Workflow — completed.** Phase directory: `.planning/phases/12-cp-migration-console-queue-workflow/`. Context: `12-CONTEXT.md`; UI contract: `12-UI-SPEC.md`; pattern map: `12-PATTERNS.md`. Plan `12-01` completed first-class durable run records: `{{%kunstmaanmigrator_runs}}`, `MigrationRunRecord`, and `MigrationRunService` lifecycle/progress/queue/artifact APIs with source-level PHPUnit contracts. Plan `12-02` extracted reusable analyze and compile workflow services (`AnalyzeWorkflow`, `CompileWorkflow`) so CLI, CP, and queue jobs can share deterministic orchestration without shelling out or duplicating controller bodies. Plan `12-03` extracted migrate and verify workflows (`MigrateWorkflow`, `VerifyWorkflow`) with CLI adapters, report/log artifact metadata, dry-run/live safety, filters, verify capture modes, and queue-ready `batchOffset`/`batchLimit`/`nextBatchOffset` support. Plan `12-04` improved the CP mapping review UX with URL-driven status/kind/finding/search filters, visible source/target/handler/finding/rationale row metadata, and admin-only typed-confirmation batch actions that update canonical `mapping.yaml` only through `MappingFile::updateRow()`. Plan `12-05` tightened the CP Settings boundary to stable site-safe groups, added CP queue/live allowance plus retention/default-filter Settings fields, defaulted live CP queue execution off, and kept advanced project-shape hints config-only. Plan `12-06` added CP/job-safe production hard-blocks plus structured readiness, analyze, compile, dry-run, and strict live migration gates with settings enforcement and blocking unknown queue-readiness remediation. Plan `12-07` registered Phase 12 run, safety, gate, and workflow services as plugin components, wired `MigrationGateService` to the shared run/mapping/settings/safety siblings, and locked the Utility-only CP surface with source-level integration tests. Plan `12-08` added serialization-safe Craft queue jobs for analyze/compile/verify stages and staged dry-run/live migration batches, with worker-side production re-checks, live gate-snapshot blocking, run record progress/success/failure/artifact updates, and queue chaining via `nextBatchOffset` plus `appendQueueJobId()`. Plan `12-09` expanded the existing Utility into the Kunstmaan Migration Console shell, added `MigrationConsoleController::utilityVariables()` with Phase 12 tab/gate/run/report/mapping/copy data, and added admin-only CP queue actions for analyze, compile, verify/report, dry-run, and live migration with CP production hard-blocks, settings gates, elevated live confirmation, warning acceptance wiring, run-record creation, queue push, and no inline workflow execution. Plan `12-10` completed the Craft CP-native tabbed console templates for readiness, analyze, mapping, compile, runs, reports, and Danger Zone using the approved UI contract, including CSRF/actionInput queue forms, exact safety copy, gated live controls, and disabled/deferred reset/cleanup panels.
 
 ## Historical Phase Notes
 
@@ -258,9 +258,9 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 ## Last Session
 
-- **Last:** 2026-04-29T10:47:13Z
-- **Stopped at:** Completed 12-07-PLAN.md
-- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-07-SUMMARY.md
+- **Last:** 2026-04-29T11:29:54Z
+- **Stopped at:** Completed 12-10-PLAN.md
+- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-10-SUMMARY.md
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-9 have something to match against; Phase 02.1 / Plan 07 heuristic 1.5 entity-aware match should fire repeatedly once Plan 09 reconciliation lands and accepted column rows seed acceptedRows).
 

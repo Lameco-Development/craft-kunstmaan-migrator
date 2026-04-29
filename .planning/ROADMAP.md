@@ -478,7 +478,7 @@ Plans:
 - [x] `12-07-PLAN.md` — Plugin wiring for Phase 12 run, safety, gate, and workflow service components while preserving Utility-only CP registration — completed.
 - [x] `12-08-PLAN.md` — Queue jobs for serialization-safe analyze/compile/verify stages plus staged dry-run/live migration batches with job production re-checks and run-record progress/chaining — completed.
 - [x] `12-09-PLAN.md` — CP controller and Utility shell with migration console view model plus admin-only queue actions for analyze/compile/verify/dry-run/live dispatch — completed.
-- [ ] `12-10-PLAN.md`
+- [x] `12-10-PLAN.md` — CP-native tabbed console templates for readiness, analyze, mapping, compile, runs, reports, and Danger Zone with exact UI-SPEC copy, queue forms, gated live controls, and disabled/deferred reset/cleanup panels — completed.
 
 ---
 
