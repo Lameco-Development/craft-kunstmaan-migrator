@@ -72,6 +72,9 @@ final class MigrationPipelineJobTest extends TestCase
             'appendQueueJobId',
             'markSucceeded',
             'setProgress',
+            'filterWorkflowOptions',
+            "'limit'",
+            "'maxPerEntity'",
         ] as $needle) {
             self::assertStringContainsString($needle, $source);
         }

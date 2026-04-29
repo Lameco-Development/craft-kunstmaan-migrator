@@ -177,11 +177,50 @@ class MigrationPipelineJob extends BaseJob
      */
     private function workflowOptions(): array
     {
-        return array_merge($this->filters, $this->options, [
+        $options = array_merge($this->filters, $this->options, [
             'live' => $this->mode === 'live',
             'batchOffset' => $this->batchOffset,
             'batchLimit' => $this->batchLimit,
         ]);
+        if (($options['maxPerEntity'] ?? null) !== null && !isset($options['limit'])) {
+            $options['limit'] = $options['maxPerEntity'];
+        }
+
+        return $this->filterWorkflowOptions($options, [
+            'live',
+            'confirm',
+            'preloadAssets',
+            'force',
+            'entities',
+            'locales',
+            'since',
+            'noSeo',
+            'noRetour',
+            'noRelJoin',
+            'includeUnreferencedTaxonomies',
+            'limit',
+            'onlyId',
+            'verbose',
+            'batchOffset',
+            'batchLimit',
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param list<string> $allowed
+     * @return array<string, mixed>
+     */
+    private function filterWorkflowOptions(array $options, array $allowed): array
+    {
+        $out = [];
+        foreach ($allowed as $key) {
+            if (array_key_exists($key, $options) && $options[$key] !== null) {
+                $out[$key] = $options[$key];
+            }
+        }
+
+        return $out;
     }
 
     /**

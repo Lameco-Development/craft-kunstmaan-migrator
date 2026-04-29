@@ -104,7 +104,32 @@ class MigrationStageJob extends BaseJob
      */
     private function workflowOptions(): array
     {
-        return array_merge($this->filters, $this->options);
+        $options = array_merge($this->filters, $this->options);
+        $allowed = match ($this->stage) {
+            'analyze' => ['entities', 'locales', 'since', 'noAi', 'autoAcceptHigh', 'auditStrict', 'sourceStrict', 'noLayout', 'noProviders'],
+            'compile' => ['overwrite', 'dryRun'],
+            'verify' => ['baseline', 'urlSpotCheck', 'baselineDir', 'countTolerance', 'urlDiffThreshold', 'entities', 'locales', 'since', 'captureBaseline', 'captureBaselineHtml', 'output', 'outputDir'],
+            default => [],
+        };
+
+        return $this->filterWorkflowOptions($options, $allowed);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @param list<string> $allowed
+     * @return array<string, mixed>
+     */
+    private function filterWorkflowOptions(array $options, array $allowed): array
+    {
+        $out = [];
+        foreach ($allowed as $key) {
+            if (array_key_exists($key, $options) && $options[$key] !== null) {
+                $out[$key] = $options[$key];
+            }
+        }
+
+        return $out;
     }
 
     /**

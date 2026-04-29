@@ -84,6 +84,10 @@ final class MigrationStageJobTest extends TestCase
             'artifactPaths',
             'failure',
             'Unsupported migration stage',
+            'filterWorkflowOptions',
+            "'compile' => ['overwrite', 'dryRun']",
+            "'analyze' => ['entities', 'locales', 'since'",
+            "'verify' => ['baseline', 'urlSpotCheck'",
         ] as $needle) {
             self::assertStringContainsString($needle, $source);
         }
