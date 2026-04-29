@@ -22,6 +22,11 @@ class MigrationGateService extends Component
     public const LIVE_CONFIRMATION_PHRASE = 'MIGRATE LIVE';
     public const QUEUE_UNKNOWN_REMEDIATION = 'Queue readiness could not be verified. Live migration is blocked from the Control Panel; use the CLI after confirming a worker is running.';
 
+    public ?MigrationRunService $migrationRunService = null;
+    public ?MappingFile $mappingFile = null;
+    public ?Settings $settings = null;
+    public ?MigrationSafety $migrationSafety = null;
+
     /** @return list<array<string, mixed>> */
     public function readiness(): array
     {
@@ -163,6 +168,10 @@ class MigrationGateService extends Component
 
     protected function settings(): Settings
     {
+        if ($this->settings instanceof Settings) {
+            return $this->settings;
+        }
+
         $plugin = Plugin::getInstance();
         if ($plugin instanceof Plugin) {
             /** @var Settings $settings */
@@ -175,7 +184,7 @@ class MigrationGateService extends Component
 
     protected function safety(): MigrationSafety
     {
-        return new MigrationSafety();
+        return $this->migrationSafety ?? new MigrationSafety();
     }
 
     protected function adminStatus(): ?bool
@@ -249,7 +258,7 @@ class MigrationGateService extends Component
             return ['total' => 0, 'accepted' => 0, 'warning' => 0, 'unsupported' => 0];
         }
 
-        $data = (new MappingFile())->load($this->mappingPath());
+        $data = ($this->mappingFile ?? new MappingFile())->load($this->mappingPath());
         $coverage = ['total' => 0, 'accepted' => 0, 'warning' => 0, 'unsupported' => 0];
         foreach ((array) ($data['proposals'] ?? []) as $row) {
             if (!is_array($row)) {
@@ -352,6 +361,10 @@ class MigrationGateService extends Component
 
     private function runService(): ?MigrationRunService
     {
+        if ($this->migrationRunService instanceof MigrationRunService) {
+            return $this->migrationRunService;
+        }
+
         if (!class_exists('Yii')) {
             return null;
         }

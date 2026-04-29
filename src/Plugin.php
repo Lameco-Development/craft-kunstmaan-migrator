@@ -432,6 +432,17 @@ class Plugin extends BasePlugin
 
         // D-57: Settings table-name overrides wired here so adapter services pick them up.
         $settings = $this->getSettings();
+
+        // Phase 12 CP console / queue workflow wiring.
+        // MigrationGateService is consumed by future CP controllers and queue
+        // dispatchers, so it must share the same run repository, mapping file,
+        // settings model, and production safety helper as the rest of the
+        // plugin graph instead of constructing detached fallback instances.
+        $this->migrationGateService->migrationRunService = $this->migrationRunService;
+        $this->migrationGateService->mappingFile = $this->mappingFile;
+        $this->migrationGateService->settings = $settings;
+        $this->migrationGateService->migrationSafety = $this->migrationSafety;
+
         if (is_string($settings->seoTableName) && $settings->seoTableName !== '') {
             $this->seoMigrationService->seoTableName = $settings->seoTableName;
         }
