@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Executing Phase 12
-stopped_at: Completed 12-03-PLAN.md
-last_updated: "2026-04-29T10:14:36Z"
+stopped_at: Completed 12-04-PLAN.md
+last_updated: "2026-04-29T10:25:49Z"
 progress:
   total_phases: 12
   completed_phases: 11
   total_plans: 109
-  completed_plans: 102
-  percent: 94
+  completed_plans: 103
+  percent: 95
 ---
 
 # State
@@ -42,7 +42,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 12: CP Migration Console & Queue Workflow — executing.** Phase directory: `.planning/phases/12-cp-migration-console-queue-workflow/`. Context: `12-CONTEXT.md`; UI contract: `12-UI-SPEC.md`; pattern map: `12-PATTERNS.md`. Plan `12-01` completed first-class durable run records: `{{%kunstmaanmigrator_runs}}`, `MigrationRunRecord`, and `MigrationRunService` lifecycle/progress/queue/artifact APIs with source-level PHPUnit contracts. Plan `12-02` extracted reusable analyze and compile workflow services (`AnalyzeWorkflow`, `CompileWorkflow`) so CLI, CP, and queue jobs can share deterministic orchestration without shelling out or duplicating controller bodies. Plan `12-03` extracted migrate and verify workflows (`MigrateWorkflow`, `VerifyWorkflow`) with CLI adapters, report/log artifact metadata, dry-run/live safety, filters, verify capture modes, and queue-ready `batchOffset`/`batchLimit`/`nextBatchOffset` support. Next step: continue with Plan `12-04`.
+**Phase 12: CP Migration Console & Queue Workflow — executing.** Phase directory: `.planning/phases/12-cp-migration-console-queue-workflow/`. Context: `12-CONTEXT.md`; UI contract: `12-UI-SPEC.md`; pattern map: `12-PATTERNS.md`. Plan `12-01` completed first-class durable run records: `{{%kunstmaanmigrator_runs}}`, `MigrationRunRecord`, and `MigrationRunService` lifecycle/progress/queue/artifact APIs with source-level PHPUnit contracts. Plan `12-02` extracted reusable analyze and compile workflow services (`AnalyzeWorkflow`, `CompileWorkflow`) so CLI, CP, and queue jobs can share deterministic orchestration without shelling out or duplicating controller bodies. Plan `12-03` extracted migrate and verify workflows (`MigrateWorkflow`, `VerifyWorkflow`) with CLI adapters, report/log artifact metadata, dry-run/live safety, filters, verify capture modes, and queue-ready `batchOffset`/`batchLimit`/`nextBatchOffset` support. Plan `12-04` improved the CP mapping review UX with URL-driven status/kind/finding/search filters, visible source/target/handler/finding/rationale row metadata, and admin-only typed-confirmation batch actions that update canonical `mapping.yaml` only through `MappingFile::updateRow()`. Next step: continue with Plan `12-05`.
 
 ## Historical Phase Notes
 
@@ -127,6 +127,9 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 ## Decisions
 
+- Phase 12 / Plan 04 mapping canonicality: batch mapping actions update selected rows only through `MappingFile::updateRow()` against the single `mapping.yaml`; no draft files or DB mapping source were introduced.
+- Phase 12 / Plan 04 warning acceptance: explicit warning/unsupported acceptance is stored as canonical row metadata (`status: accepted`, `warningAccepted: true`, rationale), keeping operator intent visible in mapping.yaml.
+- Phase 12 / Plan 04 mapping review UI pattern: filters remain GET/query-param driven for reload/bookmark behavior, while row and batch POST forms preserve filter context through redirect fallback parameters.
 - Phase 12 / Plan 03 migrate/verify workflow boundary: CLI controllers keep the first-statement `NeverProductionTrait` gate and stream progress, while `MigrateWorkflow` and `VerifyWorkflow` own orchestration and structured result metadata for CP/queue consumers.
 - Phase 12 / Plan 03 batch execution seam: queued migration batches are represented by `batchOffset`, `batchLimit`, and `nextBatchOffset` at the workflow load loop, preserving null/default full-run CLI behavior.
 - Phase 12 / Plan 03 verify capture modes: `captureBaseline` and `captureBaselineHtml` are workflow options, not shell commands, so future queue jobs can reuse deterministic baseline/report orchestration without invoking `php craft`.

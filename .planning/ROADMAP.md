@@ -472,7 +472,7 @@ Plans:
 - [x] `12-01-PLAN.md` — Run records and file-backed artifacts — completed.
 - [x] `12-02-PLAN.md` — Analyze and compile workflow extraction — completed.
 - [x] `12-03-PLAN.md` — Migrate and verify workflow extraction — completed.
-- [ ] `12-04-PLAN.md`
+- [x] `12-04-PLAN.md` — Mapping review UX filters, visible findings, and safe batch actions — completed.
 - [ ] `12-05-PLAN.md`
 - [ ] `12-06-PLAN.md`
 - [ ] `12-07-PLAN.md`
