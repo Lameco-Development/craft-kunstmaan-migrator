@@ -218,31 +218,31 @@ class VerifyController extends Controller
         if (($gate = $this->enforceNeverProduction()) !== null) {
             return $gate;
         }
-        $this->stdout("Verify (capture-baseline): light counts → baseline.json\n", Console::FG_CYAN);
 
-        $plugin = Plugin::getInstance();
+        $result = (new VerifyWorkflow())->run([
+            'baseline' => $this->baseline,
+            'urlSpotCheck' => $this->urlSpotCheck,
+            'baselineDir' => $this->baselineDir,
+            'countTolerance' => $this->countTolerance,
+            'urlDiffThreshold' => $this->urlDiffThreshold,
+            'entities' => $this->entities,
+            'locales' => $this->locales,
+            'since' => $this->since,
+            'captureBaseline' => true,
+            'captureBaselineHtml' => false,
+            'output' => $this->output,
+            'outputDir' => $this->outputDir,
+        ], function (array $event): void {
+            $stream = (string) ($event['stream'] ?? 'stdout');
+            $message = (string) ($event['message'] ?? '');
+            if ($stream === 'stderr') {
+                $this->stderr($message);
+                return;
+            }
+            $this->stdout($message);
+        });
 
-        // Phase 4.1 / VER-04: $filters flows into capture() — the snapshot embeds a
-        // filterScope JSON header (entities / locales / since) so a later doctor 8th
-        // check can detect filter-scope drift between capture and verify (D-30).
-        $filters = $this->buildRuntimeFilters($plugin);
-        try {
-            $translatedScope = $this->loadTranslatedScopeForEntityFilters($filters, $plugin);
-        } catch (Throwable $e) {
-            $this->stderr("  FAIL {$e->getMessage()}\n", Console::FG_RED);
-            return ExitCode::CONFIG;
-        }
-        $snapshot = $plugin->baselineCounterService->capture($filters, $translatedScope);
-
-        $path = $this->output ?? Craft::$app->path->getStoragePath() . '/migration/baseline.json';
-        // Phase 2 / D-07 atomic write seam.
-        if (!$plugin->mappingFile->writeAtomicJson($path, $snapshot)) {
-            $this->stderr("  FAIL could not write {$path}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-
-        $this->stdout("  OK   baseline.json written to {$path}\n", Console::FG_GREEN);
-        return ExitCode::OK;
+        return (int) ($result['summary']['exitCode'] ?? ExitCode::UNSPECIFIED_ERROR);
     }
 
     /**
@@ -255,26 +255,31 @@ class VerifyController extends Controller
         if (($gate = $this->enforceNeverProduction()) !== null) {
             return $gate;
         }
-        $this->stdout("Verify (capture-baseline-html): URL spot-check fetches\n", Console::FG_CYAN);
 
-        $plugin = Plugin::getInstance();
+        $result = (new VerifyWorkflow())->run([
+            'baseline' => $this->baseline,
+            'urlSpotCheck' => $this->urlSpotCheck,
+            'baselineDir' => $this->baselineDir,
+            'countTolerance' => $this->countTolerance,
+            'urlDiffThreshold' => $this->urlDiffThreshold,
+            'entities' => $this->entities,
+            'locales' => $this->locales,
+            'since' => $this->since,
+            'captureBaseline' => false,
+            'captureBaselineHtml' => true,
+            'output' => $this->output,
+            'outputDir' => $this->outputDir,
+        ], function (array $event): void {
+            $stream = (string) ($event['stream'] ?? 'stdout');
+            $message = (string) ($event['message'] ?? '');
+            if ($stream === 'stderr') {
+                $this->stderr($message);
+                return;
+            }
+            $this->stdout($message);
+        });
 
-        // Criterion 5: filter flags accepted for CLI uniformity. spot-check-urls.txt is
-        // operator-curated, so URL-list scoping is already operator-controlled; $filters parsed
-        // but unused at v1.0.
-        $filters = $this->buildRuntimeFilters($plugin);
-        unset($filters);
-
-        $urlList = $this->urlSpotCheck ?? Craft::$app->path->getStoragePath() . '/migration/spot-check-urls.txt';
-        $outDir  = $this->outputDir   ?? Craft::$app->path->getStoragePath() . '/migration/baseline';
-        try {
-            $count = $plugin->captureBaselineHtmlService->capture($urlList, $outDir);
-        } catch (Throwable $e) {
-            $this->stderr("  FAIL {$e->getMessage()}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-        $this->stdout("  OK   {$count} baseline HTML files written to {$outDir}\n", Console::FG_GREEN);
-        return ExitCode::OK;
+        return (int) ($result['summary']['exitCode'] ?? ExitCode::UNSPECIFIED_ERROR);
     }
 
     /**
