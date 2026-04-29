@@ -8,10 +8,13 @@ use Craft;
 use craft\helpers\UrlHelper;
 use craft\web\Controller;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\queue\jobs\MigrationPipelineJob;
+use lameco\kunstmaanmigrator\queue\jobs\MigrationStageJob;
 use lameco\kunstmaanmigrator\runs\MigrationRunService;
 use lameco\kunstmaanmigrator\safety\MigrationGateService;
 use lameco\kunstmaanmigrator\safety\MigrationSafety;
 use Throwable;
+use yii\web\Response;
 
 /**
  * Control Panel migration console adapter.
@@ -23,6 +26,93 @@ use Throwable;
 final class MigrationConsoleController extends Controller
 {
     protected array|bool|int $allowAnonymous = self::ALLOW_ANONYMOUS_NEVER;
+
+    public function actionQueueAnalyze(): Response
+    {
+        $plugin = $this->validatedQueueRequest();
+        $filters = $this->requestFilters();
+        $options = $this->requestOptions();
+        $aiConfirmed = (string) Craft::$app->getRequest()->getBodyParam('aiConfirmed', '') === '1';
+        $gates = $plugin->migrationGateService->analyzeGates($aiConfirmed);
+        if ($this->hasBlockingGate($gates)) {
+            $this->setFailFlash(self::copy()['gateFailure']);
+            return $this->redirectBackToConsole('analyze');
+        }
+
+        return $this->queueStage($plugin, 'analyze', 'analyze', $filters, $options, $gates);
+    }
+
+    public function actionQueueCompile(): Response
+    {
+        $plugin = $this->validatedQueueRequest();
+        $filters = $this->requestFilters();
+        $options = $this->requestOptions();
+        $compileGates = $plugin->migrationGateService->compileGates();
+        $gates = array_values((array) ($compileGates['compileReadiness'] ?? []));
+        if ($this->hasBlockingGate($gates)) {
+            $this->setFailFlash(self::copy()['gateFailure']);
+            return $this->redirectBackToConsole('compile');
+        }
+
+        return $this->queueStage($plugin, 'compile', 'compile', $filters, $options, $gates);
+    }
+
+    public function actionQueueVerify(): Response
+    {
+        $plugin = $this->validatedQueueRequest();
+        $filters = $this->requestFilters();
+        $options = $this->requestOptions();
+
+        return $this->queueStage($plugin, 'verify', 'report', $filters, $options, []);
+    }
+
+    public function actionQueueDryRun(): Response
+    {
+        $plugin = $this->validatedQueueRequest();
+        $filters = $this->requestFilters();
+        $options = $this->requestOptions();
+        $gates = $plugin->migrationGateService->dryRunGates($filters, $options);
+        if ($this->hasBlockingGate($gates)) {
+            $this->setFailFlash(self::copy()['gateFailure']);
+            return $this->redirectBackToConsole('runs');
+        }
+
+        return $this->queuePipeline($plugin, 'dryRun', $filters, $options, $gates);
+    }
+
+    public function actionQueueLive(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePostRequest();
+        $this->requireAdmin();
+        $this->requireElevatedSession();
+
+        $plugin = Plugin::getInstance();
+        $plugin->migrationSafety->assertNotProductionForCp();
+        $this->assertCpQueueActionsAllowed($plugin);
+        $this->assertCpLiveQueueActionAllowed($plugin);
+
+        $request = Craft::$app->getRequest();
+        $filters = $this->requestFilters();
+        $options = $this->requestOptions();
+        $backupAcknowledged = (string) $request->getBodyParam('backupAcknowledged', '') === '1';
+        $typedPhrase = trim((string) $request->getBodyParam('confirmation', '')); // Required phrase: MIGRATE LIVE
+        $warningsAccepted = (string) $request->getBodyParam('warningsAccepted', '') === '1';
+        $gates = $plugin->migrationGateService->liveGates(
+            filters: $filters,
+            options: $options,
+            backupAcknowledged: $backupAcknowledged,
+            typedPhrase: $typedPhrase,
+            warningsAccepted: $warningsAccepted,
+        );
+
+        if ($typedPhrase !== MigrationGateService::LIVE_CONFIRMATION_PHRASE || $this->hasBlockingGate($gates)) {
+            $this->setFailFlash(self::copy()['gateFailure']);
+            return $this->redirectBackToConsole('runs');
+        }
+
+        return $this->queuePipeline($plugin, 'live', $filters, $options, $gates);
+    }
 
     /** @return array<string, mixed> */
     public static function utilityVariables(): array
@@ -59,6 +149,169 @@ final class MigrationConsoleController extends Controller
             'cliCommands' => self::cliCommands(),
             'copy' => $copy,
         ];
+    }
+
+    private function validatedQueueRequest(): Plugin
+    {
+        $this->requireCpRequest();
+        $this->requirePostRequest();
+        $this->requireAdmin();
+
+        $plugin = Plugin::getInstance();
+        $plugin->migrationSafety->assertNotProductionForCp();
+        $this->assertCpQueueActionsAllowed($plugin);
+
+        return $plugin;
+    }
+
+    private function assertCpQueueActionsAllowed(Plugin $plugin): void
+    {
+        if (!$plugin->getSettings()->allowCpQueueActions) {
+            $this->setFailFlash('Control Panel queue actions are disabled in plugin settings.');
+            throw new \yii\web\ForbiddenHttpException('Control Panel queue actions are disabled.');
+        }
+    }
+
+    private function assertCpLiveQueueActionAllowed(Plugin $plugin): void
+    {
+        if (!$plugin->getSettings()->allowCpLiveQueueAction) {
+            $this->setFailFlash('Control Panel live queue action is disabled in plugin settings.');
+            throw new \yii\web\ForbiddenHttpException('Control Panel live queue action is disabled.');
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @param array<string, mixed> $options
+     * @param list<array<string, mixed>> $gateSnapshot
+     */
+    private function queueStage(Plugin $plugin, string $stage, string $mode, array $filters, array $options, array $gateSnapshot): Response
+    {
+        $run = $plugin->migrationRunService->createRun(
+            stage: $stage,
+            mode: $mode,
+            filters: $filters,
+            options: $options,
+            initiatedByUserId: $this->currentUserId(),
+            gateSnapshot: $gateSnapshot,
+        );
+        $runId = (int) $run->id;
+        $queueJobId = Craft::$app->queue->push(new MigrationStageJob([
+            'runId' => $runId,
+            'stage' => $stage,
+            'mode' => $mode,
+            'filters' => $filters,
+            'options' => $options,
+        ]));
+        $plugin->migrationRunService->markQueued($runId, $queueJobId);
+        $plugin->migrationRunService->appendQueueJobId($runId, $queueJobId);
+        $this->setSuccessFlash(self::copy()['successfulQueue']);
+
+        return $this->redirectToRun($runId);
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @param array<string, mixed> $options
+     * @param list<array<string, mixed>> $gateSnapshot
+     */
+    private function queuePipeline(Plugin $plugin, string $mode, array $filters, array $options, array $gateSnapshot): Response
+    {
+        $run = $plugin->migrationRunService->createRun(
+            stage: 'migrate',
+            mode: $mode,
+            filters: $filters,
+            options: $options,
+            initiatedByUserId: $this->currentUserId(),
+            gateSnapshot: $gateSnapshot,
+        );
+        $runId = (int) $run->id;
+        $queueJobId = Craft::$app->queue->push(new MigrationPipelineJob([
+            'runId' => $runId,
+            'mode' => $mode,
+            'filters' => $filters,
+            'options' => $options,
+            'gateSnapshot' => $gateSnapshot,
+            'batchOffset' => 0,
+            'batchLimit' => (int) Craft::$app->getRequest()->getBodyParam('batchLimit', 50),
+        ]));
+        $plugin->migrationRunService->markQueued($runId, $queueJobId);
+        $plugin->migrationRunService->appendQueueJobId($runId, $queueJobId);
+        $this->setSuccessFlash(self::copy()['successfulQueue']);
+
+        return $this->redirectToRun($runId);
+    }
+
+    /** @return array<string, mixed> */
+    private function requestFilters(): array
+    {
+        $request = Craft::$app->getRequest();
+
+        return [
+            'entities' => $this->normalizeList($request->getBodyParam('entities', '')),
+            'locales' => $this->normalizeList($request->getBodyParam('locales', '')),
+            'since' => trim((string) $request->getBodyParam('since', '')),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function requestOptions(): array
+    {
+        $request = Craft::$app->getRequest();
+
+        return [
+            'source' => 'cp',
+            'maxPerEntity' => $this->nullableInt($request->getBodyParam('maxPerEntity', null)),
+            'overwrite' => (string) $request->getBodyParam('overwrite', '') === '1',
+        ];
+    }
+
+    /** @return list<string> */
+    private function normalizeList(mixed $value): array
+    {
+        $items = is_array($value) ? $value : explode(',', (string) $value);
+
+        return array_values(array_filter(array_map(
+            static fn (mixed $item): string => trim((string) $item),
+            $items,
+        )));
+    }
+
+    private function nullableInt(mixed $value): ?int
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return is_numeric($value) ? (int) $value : null;
+    }
+
+    /** @param list<array<string, mixed>> $gates */
+    private function hasBlockingGate(array $gates): bool
+    {
+        foreach ($gates as $gate) {
+            if ((bool) ($gate['blocking'] ?? false)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function currentUserId(): ?int
+    {
+        $id = Craft::$app->getUser()->getId();
+        return is_numeric($id) ? (int) $id : null;
+    }
+
+    private function redirectBackToConsole(string $tab): Response
+    {
+        return $this->redirect(UrlHelper::cpUrl('utilities/kunstmaan-mapping', ['tab' => $tab]));
+    }
+
+    private function redirectToRun(int $runId): Response
+    {
+        return $this->redirect(UrlHelper::cpUrl('utilities/kunstmaan-mapping', ['tab' => 'runs', 'runId' => $runId]));
     }
 
     private static function activeTab(): string
