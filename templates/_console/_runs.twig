@@ -5,9 +5,13 @@
 {% set runActions = runActions ?? {} %}
 {% set liveBlocked = (liveGates|filter(g => (g.blocking ?? false) or (g.status ?? '') in ['blocked', 'unknown'])|length) > 0 %}
 {% set runId = craft.app.request.getQueryParam('runId') ?? null %}
+{% set selectedRun = runId ? ((runs|filter(r => (r.id ?? '') == runId)|first) ?? null) : null %}
+{% if selectedRun is empty and runId and latestRun and (latestRun.id ?? '') == runId %}
+    {% set selectedRun = latestRun %}
+{% endif %}
 
-{% if runId and latestRun and (latestRun.id ?? '') == runId %}
-    {% include 'kunstmaan-migrator/_console/_run-detail' with {run: latestRun, copy: copy ?? {}, cliCommands: cliCommands} only %}
+{% if selectedRun %}
+    {% include 'kunstmaan-migrator/_console/_run-detail' with {run: selectedRun, copy: copy ?? {}, cliCommands: cliCommands} only %}
 {% else %}
     <section class="pane">
         <h2>Runs</h2>
