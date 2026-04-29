@@ -67,6 +67,8 @@ final class MappingCompiler extends Component
      * @param ?string               $defaultBlockType  Phase 6 fallback — Settings::defaultBlockType. (Reserved for
      *                                                 page-part fallback; not used in this signature today but
      *                                                 surfaced in the compile report for symmetry / operator visibility.)
+     * @param list<array<string, mixed>> $relationMirrorRules Project-specific rules for copying an accepted relation field
+     *                                                         into an additional Craft-native target field.
      * @return array{
      *   proposals: list<array<string, mixed>>,
      *   nodeClasses: array<string, array<string, mixed>>,
@@ -108,6 +110,7 @@ final class MappingCompiler extends Component
         array $flatPagePartCandidates = [],
         array $entryTypeFlatHandles = [],
         array $genericContentBlockCandidates = [],
+        array $relationMirrorRules = [],
     ): array {
         $proposals = (array) ($mapping['proposals'] ?? []);
 
@@ -168,6 +171,7 @@ final class MappingCompiler extends Component
         // Build nodeClasses[]: one entry per FQCN in pageStructure that has
         // at least one accepted column row whose source table matches.
         $nodeClasses = [];
+        $relationMirrorsApplied = 0;
         $skipped = [];
         $warnings = [];
         $fieldsPerSection = [];
@@ -495,7 +499,12 @@ final class MappingCompiler extends Component
                 }
                 $fields[$targetHandle] = $compiled;
             }
-            $this->maybeAddContactCtaTeamMemberField($fields, $sectionKey, $allowedHandles);
+            $relationMirrorsApplied += $this->applyRelationMirrorRules(
+                $fields,
+                $sectionKey,
+                $allowedHandles,
+                $relationMirrorRules,
+            );
             ksort($fields);
 
             // Stub un-derived keys so operator sees the gaps.
@@ -715,6 +724,7 @@ final class MappingCompiler extends Component
                 'implicitBlocksEmitted'     => $implicitEmitted,
                 'taxonomiesEmitted'         => $taxonomiesEmitted,
                 'layoutBlocksEmitted'       => $layoutBlocksEmitted,
+                'relationMirrorsApplied'    => $relationMirrorsApplied,
                 'dataProvidersEmitted'      => $dataProvidersEmitted,
                 'promotedTargetsEmitted'    => $promotedTargetsEmitted,
                 'warnings'                  => $warnings,
@@ -1426,44 +1436,140 @@ final class MappingCompiler extends Component
     }
 
     /**
-     * If a Craft entry type exposes a top-level contactCta Matrix and the
-     * legacy page already maps an employee/team relation, mirror that relation
-     * into contactCta.teamMember. This is a presentation-specific native Craft
-     * structure, not a second legacy source decision, so it is derived during
-     * compile instead of requiring operators to hand-edit mapping.yaml.
+     * Apply project-configured relation mirror rules.
+     *
+     * Relation mirrors are for Craft-native presentation structures that should
+     * intentionally receive a copy of an already accepted relation. They are
+     * explicit config, not global heuristics, so client-specific handles such as
+     * CTA block names do not leak into every migration.
      *
      * @param array<string, array<string, mixed>> $fields
      * @param list<string>|null $allowedHandles
+     * @param list<array<string, mixed>> $rules
      */
-    private function maybeAddContactCtaTeamMemberField(array &$fields, string $entryType, ?array $allowedHandles): void
+    private function applyRelationMirrorRules(
+        array &$fields,
+        string $entryType,
+        ?array $allowedHandles,
+        array $rules,
+    ): int {
+        $applied = 0;
+
+        foreach ($rules as $rule) {
+            if (!is_array($rule) || !$this->relationMirrorRuleHasMatcher($rule)) {
+                continue;
+            }
+
+            $targetField = (string) ($rule['targetField'] ?? '');
+            if ($targetField === '' || isset($fields[$targetField])) {
+                continue;
+            }
+            if (!$this->relationMirrorTargetAllowed($targetField, $allowedHandles)) {
+                continue;
+            }
+            if (!$this->matchesOptionalList((string) $entryType, $rule['entryTypes'] ?? null)) {
+                continue;
+            }
+
+            foreach ($fields as $handle => $spec) {
+                if (!is_array($spec) || (string) ($spec['handler'] ?? '') !== 'relation') {
+                    continue;
+                }
+                if (!$this->relationMirrorSpecMatches($rule, (string) $handle, $spec)) {
+                    continue;
+                }
+
+                $fields[$targetField] = $spec;
+                $applied++;
+                break;
+            }
+        }
+
+        return $applied;
+    }
+
+    /**
+     * @param array<string, mixed> $rule
+     */
+    private function relationMirrorTargetAllowed(string $targetField, ?array $allowedHandles): bool
     {
-        unset($entryType);
-        if ($allowedHandles !== null && !in_array('contactCta', $allowedHandles, true)) {
-            return;
-        }
-        if (isset($fields['contactCta.teamMember'])) {
-            return;
+        if ($allowedHandles === null) {
+            return true;
         }
 
-        foreach ($fields as $handle => $spec) {
-            if (!is_array($spec) || (string) ($spec['handler'] ?? '') !== 'relation') {
-                continue;
-            }
-            $source = strtolower((string) ($spec['source'] ?? ''));
-            $stateSource = strtolower((string) (($spec['handlerOptions'] ?? [])['stateSource'] ?? ''));
-            $handleLower = strtolower((string) $handle);
-            $looksLikeTeamMember =
-                str_contains($handleLower, 'teammember')
-                || str_contains($handleLower, 'employee')
-                || str_contains($source, 'employee')
-                || str_contains($stateSource, 'employee');
-            if (!$looksLikeTeamMember) {
-                continue;
-            }
+        $topLevel = explode('.', $targetField, 2)[0] ?? '';
+        return $topLevel !== '' && in_array($topLevel, $allowedHandles, true);
+    }
 
-            $fields['contactCta.teamMember'] = $spec;
-            return;
+    /**
+     * @param array<string, mixed> $rule
+     */
+    private function relationMirrorRuleHasMatcher(array $rule): bool
+    {
+        foreach ([
+            'entryTypes',
+            'sourceField',
+            'sourceFieldContains',
+            'sourceColumn',
+            'sourceColumnContains',
+            'stateSource',
+            'stateSourceContains',
+        ] as $key) {
+            if (array_key_exists($key, $rule) && $rule[$key] !== null && $rule[$key] !== '' && $rule[$key] !== []) {
+                return true;
+            }
         }
+
+        return false;
+    }
+
+    /**
+     * @param array<string, mixed> $rule
+     * @param array<string, mixed> $spec
+     */
+    private function relationMirrorSpecMatches(array $rule, string $handle, array $spec): bool
+    {
+        $source = (string) ($spec['source'] ?? '');
+        $stateSource = (string) (($spec['handlerOptions'] ?? [])['stateSource'] ?? '');
+
+        return $this->matchesOptionalList($handle, $rule['sourceField'] ?? null)
+            && $this->containsOptionalNeedle($handle, $rule['sourceFieldContains'] ?? null)
+            && $this->matchesOptionalList($source, $rule['sourceColumn'] ?? null)
+            && $this->containsOptionalNeedle($source, $rule['sourceColumnContains'] ?? null)
+            && $this->matchesOptionalList($stateSource, $rule['stateSource'] ?? null)
+            && $this->containsOptionalNeedle($stateSource, $rule['stateSourceContains'] ?? null);
+    }
+
+    private function matchesOptionalList(string $value, mixed $expected): bool
+    {
+        if ($expected === null || $expected === '' || $expected === []) {
+            return true;
+        }
+        $expectedList = is_array($expected) ? $expected : [$expected];
+        foreach ($expectedList as $item) {
+            if ((string) $item === $value) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function containsOptionalNeedle(string $value, mixed $needles): bool
+    {
+        if ($needles === null || $needles === '' || $needles === []) {
+            return true;
+        }
+        $needleList = is_array($needles) ? $needles : [$needles];
+        $haystack = strtolower($value);
+        foreach ($needleList as $needle) {
+            $needle = strtolower((string) $needle);
+            if ($needle !== '' && str_contains($haystack, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

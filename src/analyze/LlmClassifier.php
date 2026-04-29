@@ -953,7 +953,7 @@ final class LlmClassifier extends Component
             . '"bodyWrapBlock": {"blockType":"<block>", "fieldHandle":"<rich text sub-field>", "title":"{source_column_or_empty}"} or null, '
             . '"bodyColumn": "<legacy rich-text column used by bodyWrapBlock, or empty>", '
             . '"confidence": "<high|medium|low>", "rationale": "<one sentence>"}' . "\n\n"
-            . 'For headerBlock, include field mappings for obvious source columns such as image_id -> image (handler asset) and summary/intro/subtitle -> ckeditorDefault (handler ckeditor). '
+            . 'For headerBlock, include field mappings for obvious source columns such as image_id -> an image asset field (handler asset) and summary/intro/subtitle -> the best available rich-text sub-field from the per-row catalog (handler ckeditor). '
             . 'Use title="{title}" when the header block should display the page title as H1. '
             . 'For bodyWrapBlock, leave title empty unless the title is source-backed with a {column} placeholder; never invent literal labels such as "Content" or "Details".' . "\n\n"
             . 'confidence rules:' . "\n"
@@ -1612,9 +1612,8 @@ final class LlmClassifier extends Component
      *
      * Without this step, page-part rows compile with `fields: {}` and the
      * Craft Matrix block ends up empty even when the right block-type
-     * landed. CQM HomePage symptom: `targetBlockType: textContentBlock`
-     * (wrong) AND `fields: {}` (empty). Phase 8.6/D-25 fixed the first
-     * half; this method fixes the second.
+     * landed. Earlier rehearsals exposed both wrong block-type choices and
+     * empty `fields: {}` payloads; this method fixes the second half.
      *
      * Per-row scoping: each row's user-prompt line carries
      * `allowedBlockFields=[handle:type, ...]` for the chosen block-type
@@ -2045,8 +2044,8 @@ final class LlmClassifier extends Component
             . '    "handlerOptions": {"joinTable": "<childTable>", "joinLocalColumn": "<backRef>", "joinForeignColumn": "<the_id_col>", "stateSource": "<section_handle>"}' . "\n"
             . '  CRITICAL — `joinForeignColumn` MUST end with `_id`. It is the FK to the target asset/entry. Never pick `weight`/`position`/`sequence`/`text`/scalar columns — those are payload, not FKs. If childCols has no `_id` column, DROP the relation mapping (operator must hand-curate).' . "\n"
             . '  Use `joinOrderBy` (set to a `weight`/`position`/`sequence` column when present) to preserve ordering — this is OPTIONAL and DIFFERENT from `joinForeignColumn`.' . "\n"
-            . '  Worked example (ClientsPagePart → clientLogosBlock with logos:Assets(kinds: image) and OneToMany clientItems → ClientItem; childTable=lameco_websitebundle_client_item; backRef=clients_pp_id; childCols=logo_id|weight|text|link|link_new_window):' . "\n"
-            . '    {"sourceColumn": "id", "targetField": "logos", "handler": "relation", "handlerOptions": {"joinTable": "lameco_websitebundle_client_item", "joinLocalColumn": "clients_pp_id", "joinForeignColumn": "logo_id", "joinOrderBy": "weight", "stateSource": "media", "stateKeyPrefix": "kuma_media:"}, "confidence": "high", "rationale": "..."}' . "\n"
+            . '  Worked example (BrandLogosPagePart → logoGridBlock with logos:Assets(kinds: image) and OneToMany logoItems → LogoItem; childTable=<project_prefix>_brand_logo_item; backRef=brand_logos_pp_id; childCols=logo_id|weight|text|link|link_new_window):' . "\n"
+            . '    {"sourceColumn": "id", "targetField": "logos", "handler": "relation", "handlerOptions": {"joinTable": "<project_prefix>_brand_logo_item", "joinLocalColumn": "brand_logos_pp_id", "joinForeignColumn": "logo_id", "joinOrderBy": "weight", "stateSource": "media", "stateKeyPrefix": "kuma_media:"}, "confidence": "high", "rationale": "..."}' . "\n"
             . '- Do not output prose outside the JSON object.';
 
         $partLines = [];
@@ -2509,7 +2508,7 @@ final class LlmClassifier extends Component
             . '`allowed=[…]` hint just like a native column.' . "\n"
             . '- Use handler="splitName" with handlerOptions.part when a source full-name column maps to firstName, infix, lastName, prefix, or suffix.' . "\n"
             . '- Use handlerOptions for relation handlers when direct id lookup is not enough. Allowed keys include stateSource, joinTable, joinLocalColumn, joinForeignColumn, joinOrderBy, stateKeyPrefix, taxonomySource, taxonomy, and joinTranslation.' . "\n"
-            . '- If a relation FK points at an entity that is migrated through a Kunstmaan Page wrapper (for example CaseStudyPage.employee_id -> Employee, while Craft relates to EmployeePage/team member entries), use the wrapper page stateSource and joinTranslation: {"stateSource":"App_Entity_Pages_EmployeePage","joinTranslation":{"table":"<employee_pages_table>","sourceColumn":"employee_id","targetColumn":"id"}}.' . "\n"
+            . '- If a relation FK points at an entity that is migrated through a Kunstmaan Page wrapper (for example ProjectPage.owner_id -> Person, while Craft relates to PersonPage entries), use the wrapper page stateSource and joinTranslation: {"stateSource":"App_Entity_Pages_PersonPage","joinTranslation":{"table":"<person_pages_table>","sourceColumn":"person_id","targetColumn":"id"}}.' . "\n"
             . '- Phase 8.6 / D-28: each `allowed=[…]` entry now carries TYPE-SPECIFIC METADATA after the type. Use it to validate fit:' . "\n"
             . '  * `Dropdown(opts: a|b|c)` — source value must be one of `a`, `b`, `c`. If not, set decision="drop". Do NOT match by name (e.g. "title" → "titleLevel") — they\'re different concepts.' . "\n"
             . '  * `Matrix(blocks: x|y)` — Matrix expects structured sub-blocks. A scalar source CANNOT map directly. Use decision="drop" unless the source is itself a list of structured rows.' . "\n"

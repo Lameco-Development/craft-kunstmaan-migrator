@@ -34,9 +34,9 @@ use yii\base\Component;
  * entire pass is skipped with a warning — never a hard error. Consuming
  * projects that don't use SEOmatic simply see the skip log line.
  *
- * Table-name override: the legacy SEO table defaults to `kuma_seo` (CQM's
- * name) but is exposed as `$seoTableName` so host projects with a different
- * Kunstmaan schema flavour can override via Settings::$seoTableName (D-57).
+ * Table-name override: the legacy SEO table defaults to the canonical
+ * `kuma_seo` name but is exposed as `$seoTableName` so host projects with a
+ * different Kunstmaan schema flavour can override via Settings::$seoTableName.
  */
 class SeoMigrationService extends Component
 {

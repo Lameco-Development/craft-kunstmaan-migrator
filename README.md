@@ -56,6 +56,12 @@ Plugin Settings (Settings → Plugins → Kunstmaan Migrator) override env vars
 when set. The Settings UI ships in Phase 4; until then, env vars are the
 canonical configuration surface.
 
+Advanced project-shape hints live in `config/kunstmaan-migrator.php`; see
+`config/kunstmaan-migrator.example.php`. Use these only for schema-specific
+decisions the generic analyze/compile flow cannot infer, such as ambiguous
+rich-text fallback blocks or explicit relation mirrors into Craft presentation
+fields.
+
 ## Operator workflow
 
 Kunstmaan **Page** entities are the source root. Each accepted Page mapping

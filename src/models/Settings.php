@@ -63,9 +63,8 @@ class Settings extends Model
      * Both null by default → keeps the existing fail-loud behavior. Set to a
      * real Craft entry-type / block-type handle to opt in to graceful fallback.
      *
-     * Typical values for cqm-style projects: defaultEntryType="contentPage",
-     * defaultBlockType="textContentBlock" (or whatever generic catch-all the
-     * project's Craft schema provides).
+     * Typical values are a generic catch-all entry type and rich-text block
+     * handle from the project's Craft schema.
      */
     public ?string $defaultEntryType     = null;
     public ?string $defaultBlockType     = null;
@@ -75,7 +74,7 @@ class Settings extends Model
      *
      * Shape:
      * [
-     *   'pageBuilder' => ['blockType' => 'generalContentBlock', 'fieldHandle' => 'ckeditorDefault'],
+     *   'pageBuilder' => ['blockType' => 'richTextBlock', 'fieldHandle' => 'bodyCopy'],
      * ]
      *
      * Intended for config/kunstmaan-migrator.php when a site's Craft schema has
@@ -85,12 +84,35 @@ class Settings extends Model
      */
     public array $genericContentBlockOverrides = [];
 
+    /**
+     * Optional relation mirror rules for Craft-native presentation fields.
+     *
+     * Use this when a project intentionally stores the same migrated relation
+     * in a second nested Matrix field, e.g. copying an accepted page-level
+     * relation into a CTA block. The compiler copies the first relation field
+     * matching the rule into `targetField`; it never invents source data.
+     *
+     * Shape:
+     * [
+     *   [
+     *     'targetField' => 'ctaPanel.primaryContact',
+     *     'sourceField' => 'relatedContacts',
+     *   ],
+     * ]
+     *
+     * Supported matchers: entryTypes, sourceField, sourceFieldContains,
+     * sourceColumn, sourceColumnContains, stateSource, stateSourceContains.
+     *
+     * @var list<array<string, mixed>>
+     */
+    public array $relationMirrorRules = [];
+
     // Phase 4 / D-60 — verify-stage tolerances. Defaults: ±1% count tolerance,
     // 5% URL-diff threshold. CLI `--count-tolerance` overrides at controller seam.
     public float $verifyCountTolerance = 0.01;
     public float $verifyUrlDiffThreshold = 0.05;
 
-    // Phase 4 / D-57 — adapter source-table overrides for non-CQM Kunstmaan
+    // Phase 4 / D-57 — adapter source-table overrides for variant Kunstmaan
     // flavours. Defaults match the canonical kuma_* schema; operators flip via
     // env vars or config/kunstmaan-migrator.php when the legacy DB diverges.
     public string $seoTableName = 'kuma_seo';
@@ -254,7 +276,7 @@ class Settings extends Model
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince', 'kunstmaanSourcePath', 'defaultEntryType', 'defaultBlockType'], 'string'],
             [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity'], 'integer'],
-            [['defaultEntities', 'defaultLocales', 'localeMap', 'genericContentBlockOverrides'], 'safe'],
+            [['defaultEntities', 'defaultLocales', 'localeMap', 'genericContentBlockOverrides', 'relationMirrorRules'], 'safe'],
             [['dryRunDefault'], 'boolean'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             // Phase 8 / D-14 — AI proposer scope gates (proposeLayout, proposeProviders).

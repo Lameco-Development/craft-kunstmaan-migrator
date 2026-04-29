@@ -199,6 +199,7 @@ class CompileController extends Controller
             $plugin->craftKnowledgeBase->genericContentBlockCandidates(
                 (array) ($settings->genericContentBlockOverrides ?? []),
             ),
+            (array) ($settings->relationMirrorRules ?? []),
         );
         $report = $compiled['_compileReport'];
 

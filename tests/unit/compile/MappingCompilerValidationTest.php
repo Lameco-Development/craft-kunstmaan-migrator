@@ -110,7 +110,54 @@ final class MappingCompilerValidationTest extends TestCase
         self::assertSame('date', $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['postDate']['handler']);
     }
 
-    public function testEmployeeRelationAlsoFeedsContactCtaTeamMemberWhenCraftEntryTypeSupportsIt(): void
+    public function testConfiguredRelationMirrorFeedsNestedTargetWhenCraftEntryTypeSupportsIt(): void
+    {
+        $compiled = (new MappingCompiler())->compile(
+            $this->mapping([
+                $this->column('employee_id', 'caseTeamMembers', 'relation', [
+                    'handlerOptions' => ['stateSource' => 'App_Entity_Pages_EmployeePage'],
+                ]),
+            ]),
+            $this->pageStructure(),
+            ['nl' => 'default'],
+            entryTypeFlatHandles: ['articlePage' => ['title', 'caseTeamMembers', 'contactCta']],
+            relationMirrorRules: [[
+                'targetField' => 'contactCta.teamMember',
+                'sourceField' => 'caseTeamMembers',
+            ]],
+        );
+
+        self::assertSame(
+            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['caseTeamMembers'],
+            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['contactCta.teamMember'],
+        );
+        self::assertSame(1, $compiled['_compileReport']['relationMirrorsApplied']);
+    }
+
+    public function testRelationMirrorDoesNotFeedNestedTargetWhenCraftEntryTypeDoesNotOwnTopLevelField(): void
+    {
+        $compiled = (new MappingCompiler())->compile(
+            $this->mapping([
+                $this->column('employee_id', 'caseTeamMembers', 'relation', [
+                    'handlerOptions' => ['stateSource' => 'App_Entity_Pages_EmployeePage'],
+                ]),
+            ]),
+            $this->pageStructure(),
+            ['nl' => 'default'],
+            entryTypeFlatHandles: ['articlePage' => ['title', 'caseTeamMembers']],
+            relationMirrorRules: [[
+                'targetField' => 'contactCta.teamMember',
+                'sourceField' => 'caseTeamMembers',
+            ]],
+        );
+
+        self::assertArrayNotHasKey(
+            'contactCta.teamMember',
+            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields'],
+        );
+    }
+
+    public function testRelationMirrorIsNotAppliedImplicitlyByCqmHandleNames(): void
     {
         $compiled = (new MappingCompiler())->compile(
             $this->mapping([
@@ -123,28 +170,34 @@ final class MappingCompilerValidationTest extends TestCase
             entryTypeFlatHandles: ['articlePage' => ['title', 'caseTeamMembers', 'contactCta']],
         );
 
-        self::assertSame(
-            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['caseTeamMembers'],
-            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['contactCta.teamMember'],
+        self::assertArrayNotHasKey(
+            'contactCta.teamMember',
+            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields'],
         );
+        self::assertSame(0, $compiled['_compileReport']['relationMirrorsApplied']);
     }
 
-    public function testEmployeeRelationDoesNotFeedContactCtaWhenCraftEntryTypeDoesNotOwnIt(): void
+    public function testRelationMirrorSupportsNonCqmHandlesAndStateSourceMatching(): void
     {
         $compiled = (new MappingCompiler())->compile(
             $this->mapping([
-                $this->column('employee_id', 'caseTeamMembers', 'relation', [
-                    'handlerOptions' => ['stateSource' => 'App_Entity_Pages_EmployeePage'],
+                $this->column('advisor_id', 'relatedAdvisors', 'relation', [
+                    'handlerOptions' => ['stateSource' => 'App_Entity_Pages_AdvisorPage'],
                 ]),
             ]),
             $this->pageStructure(),
             ['nl' => 'default'],
-            entryTypeFlatHandles: ['articlePage' => ['title', 'caseTeamMembers']],
+            entryTypeFlatHandles: ['articlePage' => ['title', 'relatedAdvisors', 'conversionPanel']],
+            relationMirrorRules: [[
+                'targetField' => 'conversionPanel.featuredAdvisor',
+                'sourceFieldContains' => 'advisor',
+                'stateSourceContains' => 'AdvisorPage',
+            ]],
         );
 
-        self::assertArrayNotHasKey(
-            'contactCta.teamMember',
-            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields'],
+        self::assertSame(
+            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['relatedAdvisors'],
+            $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['conversionPanel.featuredAdvisor'],
         );
     }
 

@@ -134,6 +134,27 @@ final class SettingsBeforeValidateTest extends TestCase
         );
     }
 
+    public function testRelationMirrorRulesAreOperatorConfigurable(): void
+    {
+        $settings = $this->makeSettingsWithEnv(null);
+        $settings->relationMirrorRules = [[
+            'targetField' => 'contactCta.teamMember',
+            'sourceField' => 'caseTeamMembers',
+        ]];
+
+        $safeRule = array_values(array_filter(
+            $settings->rules(),
+            static fn(array $rule): bool => ($rule[1] ?? null) === 'safe'
+                && in_array('relationMirrorRules', (array) ($rule[0] ?? []), true),
+        ));
+
+        self::assertNotEmpty($safeRule);
+        self::assertSame(
+            'contactCta.teamMember',
+            $settings->relationMirrorRules[0]['targetField'],
+        );
+    }
+
     public function testNoOpWhenDsnNonMysql(): void
     {
         // Reader exposes raw DSN (postgres) but parsed components are null per D-09.
