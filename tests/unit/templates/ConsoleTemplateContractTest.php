@@ -107,6 +107,39 @@ final class ConsoleTemplateContractTest extends TestCase
         }
     }
 
+    public function testDryRunLiveAndDangerZoneContract(): void
+    {
+        $source = $this->consoleSource([
+            '_readiness.twig',
+            '_runs.twig',
+            '_danger-zone.twig',
+        ]);
+
+        foreach ([
+            'Queue dry run',
+            'Queue live migration',
+            'MIGRATE LIVE',
+            'I have a restorable database and asset backup for this environment.',
+            'I understand selected warning/unsupported mapping rows may be skipped, dropped, or migrated imperfectly.',
+            'warningsAccepted',
+            'RESET MIGRATION STATE',
+            'DELETE ARTIFACTS',
+            'km-console-',
+            'mapping-file-exists',
+            'recent-compile-exists',
+            'no-fatal-compile-warnings',
+            'filters-options-valid',
+            'queue-can-accept-jobs',
+            'This action cannot start because one or more safety gates failed. Review the failed gates below, fix the issue, then try again or use the shown CLI command.',
+            'Queue readiness could not be verified. Live migration is blocked from the Control Panel; use the CLI after confirming a worker is running.',
+            'deferred until deletion boundaries are specified',
+        ] as $needle) {
+            self::assertStringContainsString($needle, $source);
+        }
+
+        self::assertStringNotContainsString('method="post"', file_get_contents(dirname(__DIR__, 3) . '/templates/_console/_danger-zone.twig'));
+    }
+
     /**
      * @param list<string> $files
      */
