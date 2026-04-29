@@ -1,0 +1,68 @@
+{% set readiness = readiness ?? [] %}
+{% set dryRunGates = dryRunGates ?? [] %}
+{% set runActions = runActions ?? {} %}
+{% set cliCommands = cliCommands ?? {} %}
+{% set latestRun = latestRun ?? null %}
+{% set groups = {
+    'Environment': ['environment-name', 'production-status', 'admin-status', 'elevated-session-status'],
+    'Connectivity': ['legacy-db-reachability', 'anthropic-api-key-presence', 'kunstmaan-source-path-validity', 'storage-migration-writable'],
+    'Mapping & Compile': ['mapping-file-path', 'mapping-coverage-summary', 'unsupported-warning-row-counts', 'latest-compile-timestamp', 'fatal-compile-warning-count'],
+    'Queue': ['queue-component-availability', 'queue-worker-readiness', 'cp-queue-actions-enabled'],
+    'Latest run': ['latest-run-details']
+} %}
+{% set statusLabels = {'passed': 'Passed', 'warning': 'Warning', 'blocked': 'Blocked', 'unknown': 'Unknown'} %}
+{% set dryRunBlocked = (dryRunGates|filter(g => g.blocking ?? false)|length) > 0 %}
+
+<section class="km-console-readiness">
+    <div class="pane km-console-card">
+        <div class="km-console-card__heading">
+            <div>
+                <h2>Readiness</h2>
+                <p class="km-console-muted">Review Environment, Connectivity, Mapping & Compile, Queue, and Latest run status before queueing migration work.</p>
+            </div>
+            {% if dryRunBlocked %}
+                <span class="km-console-status km-console-status--blocked">Blocked</span>
+            {% else %}
+                <span class="km-console-status km-console-status--passed">Passed</span>
+            {% endif %}
+        </div>
+
+        <form method="post" class="km-console-actions">
+            {{ csrfInput() }}
+            {{ actionInput(runActions.dryRun.action ?? 'kunstmaan-migrator/migration-console/queue-dry-run') }}
+            <button type="submit" class="btn submit"{{ dryRunBlocked ? ' disabled' }}>{{ runActions.dryRun.label ?? 'Queue dry run' }}</button>
+            <span class="instructions">Equivalent CLI: <code>{{ cliCommands.dryRun ?? './craft kunstmaan-migrator/migrate --dry-run' }}</code></span>
+        </form>
+    </div>
+
+    <div class="km-console-grid">
+        {% for groupName, ids in groups %}
+            <section class="pane km-console-card">
+                <h2>{{ groupName }}</h2>
+                <ul class="km-console-gates">
+                    {% for gate in readiness|filter(g => (g.id ?? '') in ids and (g.blocking ?? false)) %}
+                        {% set status = gate.status ?? 'unknown' %}
+                        <li class="km-console-gate">
+                            <strong>{{ gate.label }}</strong>
+                            <span class="km-console-status km-console-status--{{ status }}">{{ statusLabels[status] ?? status|title }}</span>
+                            <div>{{ gate.message ?? '' }}</div>
+                            {% if gate.remediation ?? '' %}<p class="instructions">{{ gate.remediation }}</p>{% endif %}
+                        </li>
+                    {% endfor %}
+                    {% for gate in readiness|filter(g => (g.id ?? '') in ids and not (g.blocking ?? false)) %}
+                        {% set status = gate.status ?? 'unknown' %}
+                        <li class="km-console-gate">
+                            <strong>{{ gate.label }}</strong>
+                            <span class="km-console-status km-console-status--{{ status }}">{{ statusLabels[status] ?? status|title }}</span>
+                            <div>{{ gate.message ?? '' }}</div>
+                            {% if gate.remediation ?? '' %}<p class="instructions">{{ gate.remediation }}</p>{% endif %}
+                        </li>
+                    {% endfor %}
+                </ul>
+                {% if groupName == 'Latest run' and latestRun %}
+                    <p><a href="?tab=runs&amp;runId={{ latestRun.id ?? '' }}">View latest run details</a></p>
+                {% endif %}
+            </section>
+        {% endfor %}
+    </div>
+</section>

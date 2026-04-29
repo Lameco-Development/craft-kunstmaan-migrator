@@ -1,0 +1,43 @@
+{% set copy = copy ?? {} %}
+{% set analyzeGates = analyzeGates ?? [] %}
+{% set runActions = runActions ?? {} %}
+{% set cliCommands = cliCommands ?? {} %}
+{% set filters = filters ?? {} %}
+{% set analyzeBlocked = (analyzeGates|filter(g => g.blocking ?? false)|length) > 0 %}
+{% set missingKey = (analyzeGates|filter(g => (g.id ?? '') == 'anthropic-api-key-presence' and (g.status ?? '') != 'passed')|length) > 0 %}
+
+<section class="pane">
+    <h2>Analyze</h2>
+    <p>Queue analyze after confirming AI usage. Analyze may send schema and mapping context to Anthropic; no other stage uses runtime AI.</p>
+
+    {% if missingKey %}
+        <p class="error">{{ copy.analyzeUnavailable ?? 'Analyze is unavailable because no Anthropic API key is configured. Add an API key in plugin settings or run the CLI with an approved environment.' }}</p>
+    {% endif %}
+
+    <form method="post">
+        {{ csrfInput() }}
+        {{ actionInput(runActions.analyze.action ?? 'kunstmaan-migrator/migration-console/queue-analyze') }}
+        <div class="km-console-form-grid">
+            <div class="field">
+                <div class="heading"><label for="km-console-analyze-entities">Entity filter</label></div>
+                <div class="input ltr"><input id="km-console-analyze-entities" class="text fullwidth" name="entities" value="{{ filters.entities|default([])|join(',') }}"></div>
+            </div>
+            <div class="field">
+                <div class="heading"><label for="km-console-analyze-locales">Locale filter</label></div>
+                <div class="input ltr"><input id="km-console-analyze-locales" class="text fullwidth" name="locales" value="{{ filters.locales|default([])|join(',') }}"></div>
+            </div>
+            <div class="field">
+                <div class="heading"><label for="km-console-analyze-since">Since date filter</label></div>
+                <div class="input ltr"><input id="km-console-analyze-since" class="text fullwidth" name="since" placeholder="YYYY-MM-DD" value="{{ filters.since|default('') }}"></div>
+            </div>
+        </div>
+        <label>
+            <input type="checkbox" name="aiConfirmed" value="1">
+            {{ copy.aiConfirmation ?? 'I understand analyze may send schema and mapping context to Anthropic.' }}
+        </label>
+        <div class="km-console-actions">
+            <button type="submit" class="btn submit"{{ analyzeBlocked ? ' disabled' }}>{{ runActions.analyze.label ?? 'Queue analyze' }}</button>
+            <span class="instructions">Equivalent CLI: <code>{{ cliCommands.analyze ?? './craft kunstmaan-migrator/analyze' }}</code></span>
+        </div>
+    </form>
+</section>

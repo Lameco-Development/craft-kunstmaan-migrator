@@ -145,6 +145,8 @@ final class MigrationConsoleController extends Controller
             'reports' => self::reports(),
             'mapping' => self::mappingVariables(),
             'compileSummary' => self::compileSummary($compileGates),
+            'filters' => $filters,
+            'options' => $options,
             'runActions' => self::runActions($copy),
             'cliCommands' => self::cliCommands(),
             'copy' => $copy,
