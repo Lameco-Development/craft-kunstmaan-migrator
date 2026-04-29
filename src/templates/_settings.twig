@@ -1,10 +1,7 @@
-{# Phase 4.1 / CFG-05 — slimmed CP Settings form (9 fields, two H2 groups).
-   Decisions: D-14 (Connectivity / Mapping H2 split), D-15 (14 advanced fields
-   moved to config/kunstmaan-migrator.example.php), D-18 (no tabs), D-19
-   (preserve Phase 4 G-01 fragment-shape + G-03 passwordField masking),
-   D-21 (legacy locale column: select when DB reachable, free-text fallback),
-   D-22 (Craft site handle column: always select), D-23 (option arrays
-   pre-computed in Plugin::settingsHtml()).
+{# Phase 12 / Plan 05 — concise CP Settings boundary.
+   Groups stay site-safe and stable: Connectivity, Mapping, Execution,
+   Adapters, Retention. Advanced project-shape hints remain in
+   config/kunstmaan-migrator.php rather than CP Settings.
 
    Rendering contract: hasCpSettings = true + Plugin::settingsHtml() point
    at this template. Craft's settings/plugins/_settings.twig (cms vendor)
@@ -64,12 +61,13 @@
 }) }}
 
 {# G-03 fix preserved (D-19) — passwordField macro masks display. #}
-{{ forms.passwordField({
+{{ forms.textField({
     label: 'Anthropic API key'|t('kunstmaan-migrator'),
     id: 'anthropicApiKey',
-    name: 'anthropicApiKey',
-    value: settings.anthropicApiKey,
-    instructions: 'Type `$ANTHROPIC_API_KEY` (env reference, recommended) or paste a raw key. Required for `analyze`. Never logged — `doctor` reports presence only.'|t('kunstmaan-migrator'),
+    name: 'anthropicApiKeyMasked',
+    value: settings.anthropicApiKey ? '•••••••• configured' : 'Not configured',
+    readonly: true,
+    instructions: 'Read-only presence display. Configure the key through `ANTHROPIC_API_KEY` or config/kunstmaan-migrator.php; raw keys are never rendered in the Control Panel.'|t('kunstmaan-migrator'),
 }) }}
 
 <h2>{{ 'Mapping'|t('kunstmaan-migrator') }}</h2>
@@ -117,6 +115,27 @@
     allowDelete: true,
 }) }}
 
+{{ forms.editableTableField({
+    label: 'Default filters'|t('kunstmaan-migrator'),
+    instructions: 'Optional site-safe defaults for CP queued actions, such as entities, locales, or since. CLI flags still override per run.'|t('kunstmaan-migrator'),
+    id: 'defaultFilters',
+    name: 'defaultFilters',
+    cols: {
+        key: {
+            heading: 'Filter'|t('kunstmaan-migrator'),
+            type: 'singleline',
+        },
+        value: {
+            heading: 'Value'|t('kunstmaan-migrator'),
+            type: 'singleline',
+        },
+    },
+    rows: settings.defaultFilters|default([]),
+    addRowLabel: 'Add default filter'|t('kunstmaan-migrator'),
+    allowAdd: true,
+    allowDelete: true,
+}) }}
+
 {# Phase 8.5 / D-24 — optional Doctrine ManyToOne FK relation expansion.
    Defaults OFF so extracted JSON stays source-faithful: raw FK columns such
    as employee_id are present, while synthetic `_rel:<prop>.<col>` helper keys
@@ -130,47 +149,60 @@
     instructions: 'When OFF, extracted JSON keeps only factual source values such as `employee_id`. When ON, page and page-part rows also carry related entity columns under `_rel:<property>.<column>` keys for debugging or hand-curated mappings. CLI --no-rel-join bypasses per-run.'|t('kunstmaan-migrator'),
 }) }}
 
-<h2>{{ 'AI'|t('kunstmaan-migrator') }}</h2>
+<h2>{{ 'Execution'|t('kunstmaan-migrator') }}</h2>
 
-{# Phase 8 / D-14 — AI proposer scope gates. Defaults to ON (proposers run);
-   flip OFF to disable per Settings persistence. CLI --no-layout / --no-providers
-   bypass per-run. The blanket --no-ai flag still disables every LLM call. #}
 {{ forms.lightswitchField({
-    label: 'Propose page-builder layout (header / body-wrap / body-column)'|t('kunstmaan-migrator'),
-    id: 'proposeLayout',
-    name: 'proposeLayout',
-    on: settings.proposeLayout,
-    instructions: 'When ON, analyze proposes Matrix layout slots (headerBlock / bodyWrapBlock / bodyColumn) for each accepted nodeClass. Heuristic-gated by Matrix catalog. CLI --no-layout bypasses per-run.'|t('kunstmaan-migrator'),
+    label: 'Allow CP queue actions'|t('kunstmaan-migrator'),
+    id: 'allowCpQueueActions',
+    name: 'allowCpQueueActions',
+    on: settings.allowCpQueueActions,
+    instructions: 'When ON, the Control Panel may queue safe migration stages. Long-running stages still run through Craft queue jobs, not inline web requests.'|t('kunstmaan-migrator'),
 }) }}
 
 {{ forms.lightswitchField({
-    label: 'Propose dataProviders (orphan page-parts)'|t('kunstmaan-migrator'),
-    id: 'proposeProviders',
-    name: 'proposeProviders',
-    on: settings.proposeProviders,
-    instructions: 'When ON, analyze proposes mapping.dataProviders rows for orphan page-parts (no kuma_page_part_refs row + sourceTable not joined to kuma_node_versions). CLI --no-providers bypasses per-run.'|t('kunstmaan-migrator'),
+    label: 'Allow CP live queue action'|t('kunstmaan-migrator'),
+    id: 'allowCpLiveQueueAction',
+    name: 'allowCpLiveQueueAction',
+    on: settings.allowCpLiveQueueAction,
+    instructions: 'Default OFF. Live migration from the Control Panel remains blocked unless this is enabled and every live gate passes.'|t('kunstmaan-migrator'),
 }) }}
 
-<h2>{{ 'Fallback'|t('kunstmaan-migrator') }}</h2>
+<h2>{{ 'Adapters'|t('kunstmaan-migrator') }}</h2>
 
-{# Phase 6 — graceful fallback for AI-uncertain mappings. Three-state via the
-   "(no fallback — skip)" sentinel option pre-pended to each dropdown. The
-   compiler reads these settings and routes unmatched FQCNs / page-parts to
-   the chosen handle (or skips them when no fallback is selected). #}
-{{ forms.selectField({
-    label: 'Default entry type (Pages)'|t('kunstmaan-migrator'),
-    instructions: 'When the AI cannot confidently map a Kunstmaan Page to a Craft entry type, route it here instead of dropping it. Pick "(no fallback — skip)" to keep the legacy fail-loud behavior.'|t('kunstmaan-migrator'),
-    id: 'defaultEntryType',
-    name: 'defaultEntryType',
-    options: entryTypeFallbackOptions,
-    value: settings.defaultEntryType ?? '',
+{{ forms.lightswitchField({
+    label: 'Enable SEOmatic adapter'|t('kunstmaan-migrator'),
+    id: 'seoEnabled',
+    name: 'seoEnabled',
+    on: settings.seoEnabled,
+    instructions: 'When OFF, SEOmatic migration is skipped even if the plugin is installed. CLI --no-seo can still bypass per run.'|t('kunstmaan-migrator'),
 }) }}
 
-{{ forms.selectField({
-    label: 'Default block type (PageParts)'|t('kunstmaan-migrator'),
-    instructions: 'When the AI cannot confidently map a Kunstmaan PagePart to a Craft Matrix block type, route it here. Status flips to accepted automatically. Pick "(no fallback — skip)" to keep page-parts as needs-review for hand-fill via map.'|t('kunstmaan-migrator'),
-    id: 'defaultBlockType',
-    name: 'defaultBlockType',
-    options: blockTypeFallbackOptions,
-    value: settings.defaultBlockType ?? '',
+{{ forms.lightswitchField({
+    label: 'Enable Retour adapter'|t('kunstmaan-migrator'),
+    id: 'retourEnabled',
+    name: 'retourEnabled',
+    on: settings.retourEnabled,
+    instructions: 'When OFF, Retour redirect migration is skipped even if the plugin is installed. CLI --no-retour can still bypass per run.'|t('kunstmaan-migrator'),
+}) }}
+
+<h2>{{ 'Retention'|t('kunstmaan-migrator') }}</h2>
+
+{{ forms.textField({
+    label: 'Run record retention days'|t('kunstmaan-migrator'),
+    id: 'runRecordRetentionDays',
+    name: 'runRecordRetentionDays',
+    type: 'number',
+    value: settings.runRecordRetentionDays,
+    min: 1,
+    instructions: 'Default number of days to keep CP migration run records before future cleanup actions.'|t('kunstmaan-migrator'),
+}) }}
+
+{{ forms.textField({
+    label: 'Artifact retention days'|t('kunstmaan-migrator'),
+    id: 'artifactRetentionDays',
+    name: 'artifactRetentionDays',
+    type: 'number',
+    value: settings.artifactRetentionDays,
+    min: 1,
+    instructions: 'Default number of days to keep migration logs and artifacts under storage/migration before future cleanup actions.'|t('kunstmaan-migrator'),
 }) }}
