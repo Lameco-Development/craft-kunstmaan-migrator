@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: "| # | Phase | Goal | Requirements | Success Criteria | UI hint |"
 status: Executing Phase 12
-stopped_at: Completed 12-05-PLAN.md
-last_updated: "2026-04-29T10:27:28Z"
+stopped_at: Completed 12-06-PLAN.md
+last_updated: "2026-04-29T10:41:33Z"
 progress:
   total_phases: 12
   completed_phases: 11
   total_plans: 109
-  completed_plans: 104
-  percent: 95
+  completed_plans: 105
+  percent: 96
 ---
 
 # State
@@ -42,7 +42,7 @@ Milestone table now includes the original 5 phases, Phase 02.1, Phase 8, decimal
 
 ## Current Phase
 
-**Phase 12: CP Migration Console & Queue Workflow — executing.** Phase directory: `.planning/phases/12-cp-migration-console-queue-workflow/`. Context: `12-CONTEXT.md`; UI contract: `12-UI-SPEC.md`; pattern map: `12-PATTERNS.md`. Plan `12-01` completed first-class durable run records: `{{%kunstmaanmigrator_runs}}`, `MigrationRunRecord`, and `MigrationRunService` lifecycle/progress/queue/artifact APIs with source-level PHPUnit contracts. Plan `12-02` extracted reusable analyze and compile workflow services (`AnalyzeWorkflow`, `CompileWorkflow`) so CLI, CP, and queue jobs can share deterministic orchestration without shelling out or duplicating controller bodies. Plan `12-03` extracted migrate and verify workflows (`MigrateWorkflow`, `VerifyWorkflow`) with CLI adapters, report/log artifact metadata, dry-run/live safety, filters, verify capture modes, and queue-ready `batchOffset`/`batchLimit`/`nextBatchOffset` support. Plan `12-04` improved the CP mapping review UX with URL-driven status/kind/finding/search filters, visible source/target/handler/finding/rationale row metadata, and admin-only typed-confirmation batch actions that update canonical `mapping.yaml` only through `MappingFile::updateRow()`. Plan `12-05` tightened the CP Settings boundary to stable site-safe groups, added CP queue/live allowance plus retention/default-filter Settings fields, defaulted live CP queue execution off, and kept advanced project-shape hints config-only. Next step: continue with Plan `12-06`.
+**Phase 12: CP Migration Console & Queue Workflow — executing.** Phase directory: `.planning/phases/12-cp-migration-console-queue-workflow/`. Context: `12-CONTEXT.md`; UI contract: `12-UI-SPEC.md`; pattern map: `12-PATTERNS.md`. Plan `12-01` completed first-class durable run records: `{{%kunstmaanmigrator_runs}}`, `MigrationRunRecord`, and `MigrationRunService` lifecycle/progress/queue/artifact APIs with source-level PHPUnit contracts. Plan `12-02` extracted reusable analyze and compile workflow services (`AnalyzeWorkflow`, `CompileWorkflow`) so CLI, CP, and queue jobs can share deterministic orchestration without shelling out or duplicating controller bodies. Plan `12-03` extracted migrate and verify workflows (`MigrateWorkflow`, `VerifyWorkflow`) with CLI adapters, report/log artifact metadata, dry-run/live safety, filters, verify capture modes, and queue-ready `batchOffset`/`batchLimit`/`nextBatchOffset` support. Plan `12-04` improved the CP mapping review UX with URL-driven status/kind/finding/search filters, visible source/target/handler/finding/rationale row metadata, and admin-only typed-confirmation batch actions that update canonical `mapping.yaml` only through `MappingFile::updateRow()`. Plan `12-05` tightened the CP Settings boundary to stable site-safe groups, added CP queue/live allowance plus retention/default-filter Settings fields, defaulted live CP queue execution off, and kept advanced project-shape hints config-only. Plan `12-06` added CP/job-safe production hard-blocks plus structured readiness, analyze, compile, dry-run, and strict live migration gates with settings enforcement and blocking unknown queue-readiness remediation. Next step: continue with Plan `12-07`.
 
 ## Historical Phase Notes
 
@@ -255,9 +255,9 @@ Plan 10 (`src/console/MigrateController.php` 1189 LOC + `src/load/AssetMigration
 
 ## Last Session
 
-- **Last:** 2026-04-29T10:27:28Z
-- **Stopped at:** Completed 12-05-PLAN.md
-- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-05-SUMMARY.md
+- **Last:** 2026-04-29T10:41:33Z
+- **Stopped at:** Completed 12-06-PLAN.md
+- **Resume file:** .planning/phases/12-cp-migration-console-queue-workflow/12-06-SUMMARY.md
 - **Blockers:** None.
 - **Carry-over UAT debt:** UAT 2 (interactive `map` loop — operator-driven TTY, can drive against the populated mapping.yaml at any time); UAT 3 (60% heuristic threshold against CQM — re-measure during Phase 5 rehearsal once cqm-craft-website provisions its target entry types so heuristics 2-9 have something to match against; Phase 02.1 / Plan 07 heuristic 1.5 entity-aware match should fire repeatedly once Plan 09 reconciliation lands and accepted column rows seed acceptedRows).
 

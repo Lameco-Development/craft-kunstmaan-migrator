@@ -474,7 +474,7 @@ Plans:
 - [x] `12-03-PLAN.md` — Migrate and verify workflow extraction — completed.
 - [x] `12-04-PLAN.md` — Mapping review UX filters, visible findings, and safe batch actions — completed.
 - [x] `12-05-PLAN.md` — Stable CP settings boundary for queue/live allowance, retention, adapters, default filters, and config-only project-shape hints — completed.
-- [ ] `12-06-PLAN.md`
+- [x] `12-06-PLAN.md` — Safety and live gates for CP/job production guards, readiness, dry-run, compile, analyze, and strict live gate contracts — completed.
 - [ ] `12-07-PLAN.md`
 - [ ] `12-08-PLAN.md`
 - [ ] `12-09-PLAN.md`
