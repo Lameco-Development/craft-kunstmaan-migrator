@@ -14,7 +14,7 @@ use yii\base\Component;
  *
  * Composes the seven Phase 02.1 source-namespace classes
  * (DoctrineEntityParser + DetailTableResolver + BodyScanColumnFinder +
- * MediaFkScanner + KnowledgeBase via Plugin wiring + KunstmaanPageStructureScanner
+ * MediaFkScanner + KunstmaanKnowledgeBase via Plugin wiring + KunstmaanPageStructureScanner
  * sibling — the page-structure scanner is its own orchestrator entry point and
  * is not invoked here) into a single structured `scan()` accessor that
  * AnalyzeController step 3 (D-42) consumes.
@@ -47,7 +47,7 @@ use yii\base\Component;
  * bound PDO parameters (`:db`); never string-concatenate operator-supplied DB
  * names into SQL literals. T-02.1-05-02: scan output contains structured
  * table-name + column-name metadata only (no row data — samples live in
- * KnowledgeBase output, scoped by SAMPLE_MAX_LEN).
+ * KunstmaanKnowledgeBase output, scoped by SAMPLE_MAX_LEN).
  */
 final class KunstmaanSourceScanner extends Component
 {

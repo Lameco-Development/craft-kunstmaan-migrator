@@ -678,8 +678,11 @@ class EntryMigrationService extends Component
                 $sourceRef = isset($block['fields']['_sourcePartRef'])
                     ? (string) $block['fields']['_sourcePartRef']
                     : null;
-                // Strip the hidden ref tag.
+                $suppressNativeTitleFallback = ($block['fields']['_suppressNativeTitleFallback'] ?? false) === true;
+
+                // Strip hidden migration-only tags before assigning Matrix fields.
                 unset($block['fields']['_sourcePartRef']);
+                unset($block['fields']['_suppressNativeTitleFallback']);
 
                 // Lift native-property keys from fields → peer.
                 // Prefer existing peer-level value if the caller already set one.
@@ -694,7 +697,9 @@ class EntryMigrationService extends Component
                     }
                 }
 
-                if (!$this->hasNonEmptyString($block['title'] ?? null)) {
+                if ($suppressNativeTitleFallback && !$this->hasNonEmptyString($block['title'] ?? null)) {
+                    $block['title'] = '';
+                } elseif (!$this->hasNonEmptyString($block['title'] ?? null)) {
                     $block['title'] = $this->synthesiseMatrixBlockTitle($block, $position, $sourceRef);
                     $this->recordFallback(
                         $report,

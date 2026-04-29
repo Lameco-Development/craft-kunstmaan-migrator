@@ -34,7 +34,8 @@ final class GraphCompatibilityValidator extends Component
             $sourceRef = (string) ($proposal['sourceRef'] ?? '');
             $targetRef = (string) ($proposal['targetRef'] ?? '');
             if ($sourceRef !== '' && !isset($sourceRefs[$sourceRef])) {
-                $rows[] = $this->row('fatal', 'unknown_source_ref', $sourceRef, $targetRef, "Unknown sourceRef '{$sourceRef}'.");
+                $severity = $this->sourceRefLooksOutOfScope($sourceRef, $kunstmaanGraph) ? 'warning' : 'fatal';
+                $rows[] = $this->row($severity, 'unknown_source_ref', $sourceRef, $targetRef, "Unknown sourceRef '{$sourceRef}'.");
             }
             if ($targetRef !== '' && !isset($targetRefs[$targetRef])) {
                 $rows[] = $this->row('fatal', 'unknown_target_ref', $sourceRef, $targetRef, "Unknown targetRef '{$targetRef}'.");
@@ -238,6 +239,39 @@ final class GraphCompatibilityValidator extends Component
         }
 
         return $relationRef !== '' && ($relation['fkColumn'] ?? null) !== null;
+    }
+
+    /**
+     * Scoped analyze runs intentionally produce a Kunstmaan graph for only the
+     * requested root pages. Existing mapping rows for other page roots should
+     * not hard-block compile in that case; typos inside the scoped graph should.
+     *
+     * @param array<string, mixed> $kunstmaanGraph
+     */
+    private function sourceRefLooksOutOfScope(string $sourceRef, array $kunstmaanGraph): bool
+    {
+        $rootOrEntityRef = $this->rootOrEntityRef($sourceRef);
+        if ($rootOrEntityRef === '') {
+            return false;
+        }
+
+        $knownRoots = (array) ($kunstmaanGraph[KunstmaanGraphContract::KEY_ROOTS] ?? []);
+        $knownEntities = (array) ($kunstmaanGraph[KunstmaanGraphContract::KEY_ENTITIES] ?? []);
+
+        return !isset($knownRoots[$rootOrEntityRef]) && !isset($knownEntities[$rootOrEntityRef]);
+    }
+
+    private function rootOrEntityRef(string $sourceRef): string
+    {
+        foreach (['kunstmaan.page:', 'kunstmaan.entity:'] as $prefix) {
+            if (!str_starts_with($sourceRef, $prefix)) {
+                continue;
+            }
+            $propertyPos = strpos($sourceRef, '.', strlen($prefix));
+            return $propertyPos === false ? $sourceRef : substr($sourceRef, 0, $propertyPos);
+        }
+
+        return '';
     }
 
     /**

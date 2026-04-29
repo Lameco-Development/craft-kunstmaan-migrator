@@ -60,7 +60,10 @@ final class SplitNameHandler implements FieldHandler
     ];
 
     /** Trailing generational markers. Case-insensitive match. */
-    private const SUFFIX_TOKENS = ['jr', 'jr.', 'sr', 'sr.', 'i', 'ii', 'iii', 'iv', 'v'];
+    private const SUFFIX_TOKENS = [
+        'jr', 'jr.', 'sr', 'sr.', 'i', 'ii', 'iii', 'iv', 'v',
+        'ba', 'bsc', 'msc', 'ma', 'mba', 'phd', 'ph.d.', 'bc', 'ing',
+    ];
 
     private const VALID_PARTS = ['firstName', 'infix', 'lastName', 'prefix', 'suffix'];
 

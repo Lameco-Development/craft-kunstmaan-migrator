@@ -8,6 +8,7 @@ use Craft;
 use craft\console\Controller;
 use craft\db\MigrationManager;
 use craft\helpers\Console;
+use craft\helpers\FileHelper;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
@@ -240,6 +241,12 @@ class MigrateController extends Controller
             }
             return ExitCode::CONFIG;
         }
+        $this->clearFullPipelineArtifacts($storageDir);
+        $opts = new MigrationOptions(
+            dryRun: !$this->live,
+            force: $this->force,
+            skipAssets: false,
+        );
 
         // Step 3: extract (writes storage/migration/extracted/<fqcn-slug>/<node-id>.json).
         $extractProgress = $this->makeExtractProgress();
@@ -257,6 +264,14 @@ class MigrateController extends Controller
             "  OK   extract complete ({$extractedNodes} nodes → {$storageDir}/extracted/)\n",
             Console::FG_GREEN,
         );
+
+        if ($this->live) {
+            $dependencyExit = $this->migrateMissingPageDependencies($storageDir, $mapping, $filters, $opts, $report);
+            if ($dependencyExit !== ExitCode::OK) {
+                return $dependencyExit;
+            }
+            $extractedNodes = $this->countExtractedFiles($storageDir);
+        }
 
         // Step 4: transform — stream extracted/*.json through TransformService and persist
         // each yielded payload to transformed/entries/<fqcn-slug>/<node-id>.json so the
@@ -323,12 +338,6 @@ class MigrateController extends Controller
         // before the per-entry loop. Default JIT materialises inside migrateOneEntry().
         // Hoisted above the load step so the SEO + Retour bolt-ons (D-55) downstream
         // can re-use the same MigrationOptions instance without redeclaring.
-        $opts = new MigrationOptions(
-            dryRun: !$this->live,
-            force: $this->force,
-            skipAssets: false,
-        );
-
         // Step 4.5 (Phase 10): default taxonomy mode is page-rooted and
         // referenced-only. The full pre-load migrateAll() import runs only when
         // operators explicitly opt in via CLI/settings; the standalone
@@ -1605,6 +1614,9 @@ class MigrateController extends Controller
                 $handle = (string) ($field['handle'] ?? '');
                 if ($handle === '' || str_contains($handle, '.')) { continue; }
                 $fieldMap[$handle] = ['type' => strtolower((string) ($field['classification'] ?? $field['type'] ?? 'plain'))];
+                if (isset($field['blocks']) && is_array($field['blocks'])) {
+                    $fieldMap[$handle]['blocks'] = $field['blocks'];
+                }
             }
             $entryTypes[(string) $entryType] = ['fields' => $fieldMap];
         }
@@ -1948,6 +1960,13 @@ class MigrateController extends Controller
                 $report->finalizeUnresolvedDiagnostics[] = $row;
             }
         }
+        $outOfScopeCount = count((array) ($finalizeCounts['outOfScopeDiagnostics'] ?? []));
+        if ($outOfScopeCount > 0) {
+            $report->warn(
+                'finalize classified ' . $outOfScopeCount
+                . ' CKEditor references outside live page-rooted scope; release gate did not block on these rows.',
+            );
+        }
         if ($count <= 0) {
             return;
         }
@@ -1968,6 +1987,15 @@ class MigrateController extends Controller
         $path = $this->transformBlockMarkerPath($storageDir);
         if (is_file($path)) {
             @unlink($path);
+        }
+    }
+
+    private function clearFullPipelineArtifacts(string $storageDir): void
+    {
+        foreach ([$storageDir . '/extracted', $storageDir . '/transformed/entries'] as $path) {
+            if (is_dir($path)) {
+                FileHelper::removeDirectory($path);
+            }
         }
     }
 
@@ -2644,6 +2672,362 @@ class MigrateController extends Controller
         $parts = explode('\\', trim($fqcn, '\\'));
         $tail = array_slice($parts, -2);
         return implode('\\', $tail);
+    }
+
+    private function migrateMissingPageDependencies(
+        string $storageDir,
+        array $mapping,
+        MigrationFilters $parentFilters,
+        MigrationOptions $opts,
+        MigrationReport $report,
+    ): int {
+        $attempted = [];
+        $loaded = 0;
+
+        for ($pass = 1; $pass <= 5; $pass++) {
+            $dependencies = $this->collectMissingPageRelationDependencies($storageDir, $mapping, $attempted, $report);
+            if ($dependencies === []) {
+                if ($loaded > 0) {
+                    $this->stdout("  OK   dependency pre-pass migrated {$loaded} referenced page entries\n", Console::FG_GREEN);
+                }
+                return ExitCode::OK;
+            }
+
+            $count = array_sum(array_map('count', $dependencies));
+            $this->stdout("  ... dependency pre-pass {$pass}: migrating {$count} referenced page entries\n", Console::FG_YELLOW);
+
+            foreach ($dependencies as $fqcn => $nodeIds) {
+                foreach (array_keys($nodeIds) as $nodeId) {
+                    $attempted[$fqcn . ':' . (int) $nodeId] = true;
+                    try {
+                        Plugin::getInstance()->extractService->run(
+                            $mapping,
+                            new MigrationFilters(
+                                entities: [$fqcn],
+                                locales: $parentFilters->locales,
+                                since: null,
+                                noSeo: $parentFilters->noSeo,
+                                noRetour: $parentFilters->noRetour,
+                                relationGraph: $parentFilters->relationGraph,
+                            ),
+                            [
+                                'onlyNodeClass' => $fqcn,
+                                'onlyId' => (int) $nodeId,
+                            ],
+                        );
+                    } catch (Throwable $e) {
+                        $this->stderr("  FAIL dependency extract {$this->shortFqcn($fqcn)}#{$nodeId}: {$e->getMessage()}\n", Console::FG_RED);
+                        return ExitCode::UNSPECIFIED_ERROR;
+                    }
+                }
+            }
+
+            $transformExit = $this->transformDependencyPayloads($storageDir, $mapping, $parentFilters, $dependencies, $report);
+            if ($transformExit !== ExitCode::OK) {
+                return $transformExit;
+            }
+
+            $dependencyFilters = new MigrationFilters(
+                entities: array_keys($dependencies),
+                locales: $parentFilters->locales,
+                since: null,
+                noSeo: $parentFilters->noSeo,
+                noRetour: $parentFilters->noRetour,
+                relationGraph: $parentFilters->relationGraph,
+            );
+            $loadExit = $this->runLoadFromDisk($storageDir . '/transformed/entries', $opts, $report, $dependencyFilters);
+            if ($loadExit !== ExitCode::OK) {
+                return $loadExit;
+            }
+            $loaded += $count;
+        }
+
+        $report->warn('Dependency pre-pass stopped after 5 passes; possible relation cycle or unresolved dependency.');
+        return ExitCode::OK;
+    }
+
+    /**
+     * @param array<string, true> $attempted
+     * @return array<string, array<int, true>> FQCN => nodeId set
+     */
+    private function collectMissingPageRelationDependencies(
+        string $storageDir,
+        array $mapping,
+        array $attempted,
+        MigrationReport $report,
+    ): array {
+        $nodeClasses = (array) ($mapping['nodeClasses'] ?? []);
+        $stateSourceToFqcn = [];
+        foreach (array_keys($nodeClasses) as $fqcn) {
+            if (is_string($fqcn)) {
+                $stateSourceToFqcn[$this->slugify($fqcn)] = $fqcn;
+                $stateSourceToFqcn[$fqcn] = $fqcn;
+            }
+        }
+
+        $dependencies = [];
+        foreach ($this->streamExtracted($storageDir) as $payload) {
+            $ownerFqcn = (string) ($payload['fqcn'] ?? '');
+            if ($ownerFqcn === '') {
+                continue;
+            }
+            $nodeSpec = $nodeClasses[$ownerFqcn] ?? null;
+            if (!is_array($nodeSpec)) {
+                continue;
+            }
+
+            foreach ((array) ($nodeSpec['fields'] ?? []) as $fieldSpec) {
+                if (!is_array($fieldSpec) || (string) ($fieldSpec['handler'] ?? '') !== 'relation') {
+                    continue;
+                }
+                $options = (array) ($fieldSpec['handlerOptions'] ?? []);
+                $stateSource = (string) ($options['stateSource'] ?? '');
+                $targetFqcn = $stateSourceToFqcn[$stateSource] ?? null;
+                if ($targetFqcn === null || (($options['stateKeyPrefix'] ?? '') !== '')) {
+                    continue;
+                }
+
+                $sourceColumn = (string) ($fieldSpec['source'] ?? '');
+                if ($sourceColumn === '') {
+                    continue;
+                }
+
+                foreach ((array) ($payload['perSite'] ?? []) as $siteData) {
+                    $detail = (array) ($siteData['detail'] ?? []);
+                    $legacyValue = $detail[$sourceColumn] ?? null;
+                    foreach ($this->dependencyStateKeysForRelationValue($legacyValue, $options, $report) as $stateKey) {
+                        if (Plugin::getInstance()->migrationStateService->getTargetId($stateSource, (string) $stateKey) !== null) {
+                            continue;
+                        }
+                        $nodeId = $this->nodeIdForPageRef($targetFqcn, $stateKey);
+                        if ($nodeId === null) {
+                            $report->warn("Could not locate dependency page node for {$targetFqcn} ref {$stateKey}");
+                            continue;
+                        }
+                        if (isset($attempted[$targetFqcn . ':' . $nodeId])) {
+                            continue;
+                        }
+                        $dependencies[$targetFqcn][$nodeId] = true;
+                    }
+                }
+            }
+        }
+
+        return $dependencies;
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return list<int>
+     */
+    private function dependencyStateKeysForRelationValue(mixed $legacyValue, array $options, MigrationReport $report): array
+    {
+        $ids = $this->normaliseLegacyIds($legacyValue);
+        if ($ids === []) {
+            return [];
+        }
+
+        if (isset($options['joinTranslation']) && is_array($options['joinTranslation'])) {
+            return $this->translateDependencyKeys($ids, $options['joinTranslation'], $report);
+        }
+
+        if (isset($options['joinTable'], $options['joinLocalColumn'], $options['joinForeignColumn'])) {
+            return $this->joinDependencyKeys($ids, $options, $report);
+        }
+
+        return $ids;
+    }
+
+    /** @return list<int> */
+    private function normaliseLegacyIds(mixed $value): array
+    {
+        if ($value === null || $value === '' || $value === []) {
+            return [];
+        }
+
+        $values = is_array($value) ? $value : [$value];
+        $ids = [];
+        foreach ($values as $item) {
+            $id = (int) $item;
+            if ($id > 0) {
+                $ids[$id] = true;
+            }
+        }
+
+        return array_keys($ids);
+    }
+
+    /**
+     * @param list<int> $ids
+     * @param array<string, mixed> $joinTranslation
+     * @return list<int>
+     */
+    private function translateDependencyKeys(array $ids, array $joinTranslation, MigrationReport $report): array
+    {
+        $table = (string) ($joinTranslation['table'] ?? '');
+        $sourceColumn = (string) ($joinTranslation['sourceColumn'] ?? '');
+        $targetColumn = (string) ($joinTranslation['targetColumn'] ?? '');
+        if (!$this->validLegacyIdentifiers([$table, $sourceColumn, $targetColumn])) {
+            $report->warn('Skipping dependency relation with invalid joinTranslation identifiers.');
+            return [];
+        }
+
+        $sql = sprintf('SELECT %s FROM %s WHERE %s = :id LIMIT 1', $targetColumn, $table, $sourceColumn);
+        $out = [];
+        foreach ($ids as $id) {
+            $row = Plugin::getInstance()->legacyDbService->queryOne($sql, [':id' => $id]);
+            if (is_array($row)) {
+                $mappedId = (int) ($row[$targetColumn] ?? 0);
+                if ($mappedId > 0) {
+                    $out[$mappedId] = true;
+                }
+            }
+        }
+
+        return array_keys($out);
+    }
+
+    /**
+     * @param list<int> $ids
+     * @param array<string, mixed> $options
+     * @return list<int>
+     */
+    private function joinDependencyKeys(array $ids, array $options, MigrationReport $report): array
+    {
+        $table = (string) ($options['joinTable'] ?? '');
+        $localColumn = (string) ($options['joinLocalColumn'] ?? '');
+        $foreignColumn = (string) ($options['joinForeignColumn'] ?? '');
+        $orderBy = isset($options['joinOrderBy']) ? (string) $options['joinOrderBy'] : '';
+        $identifiers = $orderBy === '' ? [$table, $localColumn, $foreignColumn] : [$table, $localColumn, $foreignColumn, $orderBy];
+        if (!$this->validLegacyIdentifiers($identifiers)) {
+            $report->warn('Skipping dependency relation with invalid joinTable identifiers.');
+            return [];
+        }
+
+        $sql = sprintf(
+            'SELECT %s FROM %s WHERE %s = :id%s',
+            $foreignColumn,
+            $table,
+            $localColumn,
+            $orderBy !== '' ? " ORDER BY {$orderBy} ASC" : '',
+        );
+        $out = [];
+        foreach ($ids as $id) {
+            foreach (Plugin::getInstance()->legacyDbService->queryAll($sql, [':id' => $id]) as $row) {
+                $mappedId = (int) ($row[$foreignColumn] ?? 0);
+                if ($mappedId > 0) {
+                    $out[$mappedId] = true;
+                }
+            }
+        }
+
+        return array_keys($out);
+    }
+
+    /** @param list<string> $identifiers */
+    private function validLegacyIdentifiers(array $identifiers): bool
+    {
+        foreach ($identifiers as $identifier) {
+            if ($identifier === '' || !preg_match('/^[A-Za-z0-9_]+$/', $identifier)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function nodeIdForPageRef(string $fqcn, int $refId): ?int
+    {
+        $row = Plugin::getInstance()->legacyDbService->queryOne(
+            <<<'SQL'
+SELECT nt.node_id
+FROM kuma_node_versions nv
+JOIN kuma_node_translations nt ON nt.public_node_version_id = nv.id
+JOIN kuma_nodes n ON n.id = nt.node_id
+WHERE n.ref_entity_name = :fqcn AND nv.ref_id = :refId AND n.deleted = 0
+ORDER BY nt.node_id ASC
+LIMIT 1
+SQL,
+            [':fqcn' => $fqcn, ':refId' => $refId],
+        );
+
+        $nodeId = is_array($row) ? (int) ($row['node_id'] ?? 0) : 0;
+        return $nodeId > 0 ? $nodeId : null;
+    }
+
+    /**
+     * @param array<string, array<int, true>> $dependencies
+     */
+    private function transformDependencyPayloads(
+        string $storageDir,
+        array $mapping,
+        MigrationFilters $parentFilters,
+        array $dependencies,
+        MigrationReport $report,
+    ): int {
+        $plugin = Plugin::getInstance();
+        $transformedDir = $storageDir . '/transformed/entries';
+        $dependencyFilters = new MigrationFilters(
+            entities: array_keys($dependencies),
+            locales: $parentFilters->locales,
+            since: null,
+            noSeo: $parentFilters->noSeo,
+            noRetour: $parentFilters->noRetour,
+            relationGraph: $parentFilters->relationGraph,
+        );
+
+        try {
+            foreach ($plugin->transformService->run(
+                $this->streamExtractedSubset($storageDir, $dependencies),
+                $mapping,
+                $dependencyFilters,
+                ['dryRun' => false, 'migrationReport' => $report],
+            ) as $payload) {
+                if (isset($payload['__report'])) {
+                    $this->mergeTransformReportSentinel($payload, $report);
+                    continue;
+                }
+                $fqcn = (string) ($payload['stateSource'] ?? '');
+                $nodeId = (int) ($payload['kuma_node_id'] ?? 0);
+                if ($fqcn === '' || $nodeId <= 0) {
+                    continue;
+                }
+                $outDir = $transformedDir . '/' . $this->slugify($fqcn);
+                if (!is_dir($outDir) && !@mkdir($outDir, 0775, true) && !is_dir($outDir)) {
+                    throw new \RuntimeException("Cannot create transformed dir: {$outDir}");
+                }
+                $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                if ($json === false || file_put_contents($outDir . '/' . $nodeId . '.json', $json) === false) {
+                    throw new \RuntimeException("Cannot write transformed dependency JSON for {$fqcn}#{$nodeId}");
+                }
+            }
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL dependency transform: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+
+        return ExitCode::OK;
+    }
+
+    /**
+     * @param array<string, array<int, true>> $dependencies
+     * @return iterable<array<string, mixed>>
+     */
+    private function streamExtractedSubset(string $storageDir, array $dependencies): iterable
+    {
+        foreach ($dependencies as $fqcn => $nodeIds) {
+            foreach (array_keys($nodeIds) as $nodeId) {
+                $file = $storageDir . '/extracted/' . $this->slugify($fqcn) . '/' . (int) $nodeId . '.json';
+                $raw = is_file($file) ? file_get_contents($file) : false;
+                if ($raw === false) {
+                    continue;
+                }
+                $payload = json_decode($raw, true);
+                if (is_array($payload)) {
+                    yield $payload;
+                }
+            }
+        }
     }
 
     /** Cheap glob-based count of extracted/<fqcn>/*.json — used as transform denominator. */

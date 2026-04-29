@@ -86,7 +86,7 @@ final class AnalyzeControllerPageWrapFoldTest extends TestCase
         ];
         $pageTableToEntryType = ['employee_pages' => 'teamMember'];
 
-        [$rows, $folded] = AnalyzeController::emitPageWrapSyntheticColumns(
+        [$rows, $folded, $mergeProposals] = AnalyzeController::emitPageWrapSyntheticColumns(
             $pageStructure,
             $entityIndex,
             $columnsByTable,
@@ -107,6 +107,11 @@ final class AnalyzeControllerPageWrapFoldTest extends TestCase
         self::assertSame(['a@b.nl'], $emailRow['samples']);
 
         self::assertSame(['App\\Entity\\Employee'], $folded);
+        self::assertCount(1, $mergeProposals);
+        self::assertSame('App\\Entity\\Pages\\EmployeePage', $mergeProposals[0]['fqcn']);
+        self::assertSame('employees', $mergeProposals[0]['mergeRelations']['employee']['table']);
+        self::assertSame('employee_id', $mergeProposals[0]['mergeRelations']['employee']['fk']);
+        self::assertSame('flatten', $mergeProposals[0]['mergeRelations']['employee']['mode']);
     }
 
     public function testTargetTaxonomyManyToOneIsSkippedByNameMismatch(): void

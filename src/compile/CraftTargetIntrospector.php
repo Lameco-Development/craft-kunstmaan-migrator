@@ -69,6 +69,9 @@ final class CraftTargetIntrospector extends Component
                     continue;
                 }
                 $target = (string) $targetHandle;
+                if ($this->isNativeEntryProperty($target)) {
+                    continue;
+                }
                 if (str_contains($target, '.')) {
                     $this->validateMatrixTarget($warnings, (string) $fqcn, $entryType, $target, $fieldSpec, $fields);
                     continue;
@@ -112,13 +115,25 @@ final class CraftTargetIntrospector extends Component
         $blockType = (string) ($fieldSpec['blockType'] ?? $fieldSpec['handlerOptions']['blockType'] ?? '');
         $blocks = (array) ($matrix['blocks'] ?? []);
         if ($blockType === '') {
-            $blockType = (string) array_key_first($blocks);
+            foreach ($blocks as $candidateHandle => $candidate) {
+                $candidateFields = (array) (($candidate['fields'] ?? null) ?: []);
+                if (in_array($subHandle, $candidateFields, true)) {
+                    $blockType = (string) $candidateHandle;
+                    break;
+                }
+            }
+            if ($blockType === '') {
+                $blockType = (string) array_key_first($blocks);
+            }
         }
         if ($blockType === '' || !isset($blocks[$blockType])) {
             $warnings[] = sprintf('%s Matrix target `%s` references missing block type `%s`.', $fqcn, $target, $blockType !== '' ? $blockType : '∅');
             return;
         }
         $blockFields = (array) ($blocks[$blockType]['fields'] ?? []);
+        if ($this->isNativeEntryProperty($subHandle)) {
+            return;
+        }
         if (!in_array($subHandle, $blockFields, true)) {
             $warnings[] = sprintf('%s Matrix target `%s` missing block field `%s` on block `%s`.', $fqcn, $target, $subHandle, $blockType);
         }
@@ -164,5 +179,10 @@ final class CraftTargetIntrospector extends Component
         if (!$enabled) {
             $warnings[] = sprintf('%s adapter target present but %s plugin is not enabled; target validation skipped as out-of-scope.', $label, $label);
         }
+    }
+
+    private function isNativeEntryProperty(string $handle): bool
+    {
+        return in_array($handle, ['title', 'slug', 'postDate', 'expiryDate', 'enabled', 'authorId', 'parentId'], true);
     }
 }

@@ -11,7 +11,7 @@ use DateTimeInterface;
 use yii\base\Component;
 
 /**
- * KnowledgeBase — Markdown KB generator for LLM prompts.
+ * KunstmaanKnowledgeBase — Markdown KB generator for LLM prompts.
  *
  * Single entry point for emitting the two page-reachable schema documents
  * consumed by LlmClassifier (Plan 6 wiring will replace the current
@@ -32,7 +32,7 @@ use yii\base\Component;
  *   - The full Craft-side KB (project-config readers, matrix-availability
  *     index) — out of scope for this phase.
  *
- * 8000-char truncation contract: KnowledgeBase emits FULL text. The
+ * 8000-char truncation contract: KunstmaanKnowledgeBase emits FULL text. The
  * LlmClassifier::batchPropose call site already truncates internally via
  * wasTruncated($legacyKbMarkdown, 8000). Do NOT add truncation here.
  *
@@ -43,7 +43,7 @@ use yii\base\Component;
  *   - DoctrineEntityParser import points at v2 sibling.
  *   - Drop KnowledgeBasePaths (file-path helper irrelevant for in-memory output).
  */
-final class KnowledgeBase extends Component
+final class KunstmaanKnowledgeBase extends Component
 {
     // ---- Kunstmaan side -------------------------------------------------
 
@@ -83,7 +83,7 @@ final class KnowledgeBase extends Component
     public function renderPagePartsMarkdown(?array $mapping, DateTimeInterface $now): string
     {
         if ($this->legacyDb === null) {
-            throw new \LogicException('KnowledgeBase requires legacyDb service.');
+            throw new \LogicException('KunstmaanKnowledgeBase requires legacyDb service.');
         }
 
         // Optional mapping overlay for annotations.
@@ -359,7 +359,7 @@ final class KnowledgeBase extends Component
      *     is present on the column object (defensive feature-detect via
      *     `property_exists` so this plan can land independently of 08-02).
      *
-     * Truncation contract: emits the FULL string. The KnowledgeBase docblock
+     * Truncation contract: emits the FULL string. The KunstmaanKnowledgeBase docblock
      * (lines 36-37) and the `must_haves.truths` row both pin the convention
      * that LlmClassifier::batchPropose handles truncation downstream — adding
      * truncation here would diverge from the existing two render methods.
@@ -379,7 +379,7 @@ final class KnowledgeBase extends Component
     public function renderTaxonomiesMarkdown(?array $mapping, DateTimeInterface $now): string
     {
         if ($this->legacyDb === null) {
-            throw new \LogicException('KnowledgeBase requires legacyDb service for renderTaxonomiesMarkdown().');
+            throw new \LogicException('KunstmaanKnowledgeBase requires legacyDb service for renderTaxonomiesMarkdown().');
         }
 
         $out   = [];
@@ -511,7 +511,7 @@ final class KnowledgeBase extends Component
     public function renderPagesMarkdown(?array $mapping, DateTimeInterface $now): string
     {
         if ($this->legacyDb === null) {
-            throw new \LogicException('KnowledgeBase requires legacyDb service for renderPagesMarkdown().');
+            throw new \LogicException('KunstmaanKnowledgeBase requires legacyDb service for renderPagesMarkdown().');
         }
 
         $allColumns = $this->loadAllColumns();

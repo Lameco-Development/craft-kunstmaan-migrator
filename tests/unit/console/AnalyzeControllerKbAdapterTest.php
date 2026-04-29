@@ -10,11 +10,11 @@ use PHPUnit\Framework\TestCase;
 /**
  * B2 fix verification (Phase 02.1 / Plan 07): asserts AnalyzeController::buildKbMappingAdapter
  * reshapes v2's flat `proposals[]` array into the v1-shaped nested mapping that
- * KnowledgeBase::renderPagesMarkdown / renderPagePartsMarkdown read.
+ * KunstmaanKnowledgeBase::renderPagesMarkdown / renderPagePartsMarkdown read.
  *
  * Without this adapter, every per-row annotation would be silently lost — the LLM
  * call would replace the empty-string KB placeholders, but the rendered KB markdown
- * would carry no mapping overlay (KnowledgeBase reads $mapping['pageParts'] /
+ * would carry no mapping overlay (KunstmaanKnowledgeBase reads $mapping['pageParts'] /
  * ['nodeClasses'] / ['sections'] nested keys, but v2 stores rows flat).
  *
  * The adapter is a public static helper specifically so this test can exercise it

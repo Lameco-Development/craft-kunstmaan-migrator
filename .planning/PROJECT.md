@@ -37,8 +37,8 @@ Headline scope:
 ### Out of Scope (v1)
 
 - **Building a Craft site from scratch using `~/Sites/craft-starter-kit`** — Roadmapped as a future milestone (v2.0). Today the plugin assumes Craft sections/fields already exist.
-- **A Control Panel pipeline runner UI** — The existing plugin's "Migration Pipeline" CP utility is dropped. CLI is the only operator surface in v1. A read-only CP status mirror may land later if it pulls its weight.
-- **Inline mapping authoring in the CP** — No editor in the CP utility. CLI is canonical (the v1 plugin's "reviewer-only CP utility" decision is preserved, but we don't ship a CP utility at all in v1.0).
+- **A Control Panel pipeline runner UI** — The existing plugin's "Migration Pipeline" CP utility remains out of scope. The CP may review/edit mapping decisions, but stage execution stays behind the existing CLI/dev/staging guards.
+- **Full Feed Me-style mapping authoring in the CP** — Deferred beyond the first CP utility. v1 starts with a simple mapping review/editor that writes to the single `mapping.yaml`; richer fetched-row editing can grow from that surface.
 - **The `.claude/skills/` skill bundle** — Dropped. The rubber-stamp loop is just a CLI command; consumers don't need to copy skill files.
 - **Multi-provider AI** — Anthropic only for now. Abstraction can land later if a real need surfaces.
 - **Production-environment migration** — `NeverProductionTrait` hard-blocks `CRAFT_ENVIRONMENT=production`. Plugin is a dev-host tool only.
@@ -68,13 +68,13 @@ Headline scope:
 ### What changes
 
 - **Source layout:** flatter, by stage and concern, not by direction-of-data-flow tier. Deptrac retired.
-- **CLI surface:** ~5 commands (`doctor`, `analyze`, `map`, `migrate`, `verify`) instead of 20+.
+- **Operator surface:** CP-first mapping review/editing backed by `mapping.yaml`, plus ~5 CLI commands (`doctor`, `analyze`, `map`, `migrate`, `verify`) instead of 20+.
 - **Mapping persistence:** single `mapping.yaml` with per-row `status:` field. Anthropic proposes into it; the rubber-stamp loop edits in place.
 - **DB connection:** plugin owns it from env vars + plugin settings. No `legacyDb` Yii component leaks into consumer `config/app.php`.
 - **SEOmatic / Retour:** optional adapters, detected at runtime. Plugin installs cleanly on hosts that have neither.
 - **Filter spec:** `MigrationFilters` model piped through every stage from day one. v1 surface is entity allow-list, locale subset, `--since=YYYY-MM-DD`. Designed to grow.
 - **Tests:** PHPUnit 11 from day one, with characterization fixtures on the Transform stage. No "tests deliberately skipped in 1.0" this time.
-- **No skill bundle.** No CP runner utility. No Phase 8 D-08-XX traceability tables in user-facing docs.
+- **No skill bundle.** No CP pipeline runner utility. No Phase 8 D-08-XX traceability tables in user-facing docs.
 
 ### Migration model
 
@@ -83,6 +83,7 @@ The migration is **page-driven**. Entries are the unit of work; assets, taxonomi
 - **Faster, more predictable runs.** We never iterate the full legacy media table; we only touch the rows actually used by entries that pass the filter spec.
 - **Orphan media is expected.** Assets in the legacy DB that no migrated entry references are not migrated. This is intentional, not a bug. The trade-off is acceptable because Craft is the schema-leading side: if no entry needs a given asset, there's no Craft home for it.
 - **Deferred CKEditor token resolution** (`[NT<id>]` / `[M<id>]`) is part of the same model. Tokens that point at not-yet-migrated entries get re-resolved in `migrate/finalize` once all referenced entries exist.
+- **Schema-incompatible assets stay explicit.** If a legacy page exposes media columns that do not fit the existing Craft field contract, the plugin should classify that gap instead of forcing the data into a misleading field. CQM Case pages are the current example: `image_id` maps to `headerCase.image` and powers Case cards, but legacy `logo_id` values are PNG/JPEG while Craft `svgIcon` only accepts SVG, and `preview_image_id` has no compatible Case entry field. Migrating those needs a Craft schema decision first.
 
 The post-run "sync remaining media" sweep is roadmapped as `NEXT-05` for cases where stakeholders want every legacy asset, referenced or not, to land in Craft.
 
@@ -141,7 +142,7 @@ not.
 | Anthropic-only AI | Pragmatic. Multi-provider abstraction has a real cost and no current driver. | — Pending |
 | Drop the three-tier `kunstmaan/`/`craft/`/`bridge/` layout + Deptrac | Mechanism without proportionate benefit at this codebase size. Vertical-slice-by-stage is easier to navigate. | — Pending |
 | Drop `.claude/skills/` bundle | Fragile (`cp -r` from `vendor/`), and the rubber-stamp loop is fully expressible as a CLI command. | — Pending |
-| Drop the CP "Migration Pipeline" runner utility | Three operator surfaces in v1 were one too many; the CLI is canonical. | — Pending |
+| Drop the CP "Migration Pipeline" runner utility, keep CP mapping review | A stage-running CP utility is too much surface area, but mapping decisions need an interactive CP review/editing workflow backed by `mapping.yaml`; CLI remains fallback/automation. | — Pending |
 | Tests required from day one | v1's "test suite deliberately skipped in 1.0" was a regret. Transform-stage characterization tests are the cheapest insurance against regression. | — Pending |
 | Page-driven migration (entries are the unit of work; assets/relations pulled in lazily) | Faster, more predictable runs. Orphan media is acknowledged as a deliberate trade-off — Craft schema leads, so unreferenced legacy assets have no Craft home. Post-run "sync remaining media" is `NEXT-05`. | — Pending |
 | Keep v1's `kunstmaanmigrator_state` schema verbatim | Lets a v2 install detect prior state on hosts already migrated under v1.x. Schema (`id`, `source`, `sourceKey`, `targetType`, `targetId`, `targetUid`, `siteId`, `meta`, `dateCreated`, `dateUpdated`, with UNIQUE on `(source, sourceKey, siteId)`) earns its keep over a field-only approach: a fast index for "have I seen this legacy id?" without loading every Craft entry, plus an audit trail. | — Pending |

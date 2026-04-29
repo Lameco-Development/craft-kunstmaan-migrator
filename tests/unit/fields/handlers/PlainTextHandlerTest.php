@@ -15,7 +15,7 @@ use RuntimeException;
 /**
  * Phase 5 / TST-01 / D-10 — direct unit tests for PlainTextHandler.
  *
- * 4 modes: plain / ckeditor / link / dropdown. Pure mode-switch; the only
+ * Modes: plain / date / ckeditor / link / email / url / dropdown. Pure mode-switch; the only
  * external surface is ResolverContext::$ck (CKEditor rewriter, exercised in
  * ckeditor mode) and ResolverContext::$state (MigrationStateReader, exercised
  * in link mode for the entry-id resolution branch).
@@ -47,7 +47,10 @@ final class PlainTextHandlerTest extends TestCase
     {
         self::assertSame('ckeditor', (new PlainTextHandler('ckeditor'))->id());
         self::assertSame('link', (new PlainTextHandler('link'))->id());
+        self::assertSame('email', (new PlainTextHandler('email'))->id());
+        self::assertSame('url', (new PlainTextHandler('url'))->id());
         self::assertSame('dropdown', (new PlainTextHandler('dropdown'))->id());
+        self::assertSame('date', (new PlainTextHandler('date'))->id());
     }
 
     public function testIdReturnsPlainForDefaultMode(): void
@@ -76,6 +79,13 @@ final class PlainTextHandlerTest extends TestCase
     public function testPlainModeReturnsEmptyStringForNull(): void
     {
         $h = new PlainTextHandler('plain');
+        self::assertSame('', $h->resolve(null, $this->ctx()));
+    }
+
+    public function testDateModePassesThroughDateStringForNativeEntryParsing(): void
+    {
+        $h = new PlainTextHandler('date');
+        self::assertSame('2024-03-15 10:30:00', $h->resolve('2024-03-15 10:30:00', $this->ctx()));
         self::assertSame('', $h->resolve(null, $this->ctx()));
     }
 
@@ -151,6 +161,28 @@ final class PlainTextHandlerTest extends TestCase
         $h = new PlainTextHandler('link');
         $result = $h->resolve('https://example.com', $this->ctx());
         self::assertSame(['type' => 'url', 'value' => 'https://example.com'], $result);
+    }
+
+    public function testEmailModeReturnsExplicitEmailLinkPayload(): void
+    {
+        $h = new PlainTextHandler('email');
+
+        self::assertSame(
+            ['type' => 'email', 'value' => 'john@example.com'],
+            $h->resolve(' john@example.com ', $this->ctx()),
+        );
+        self::assertNull($h->resolve('', $this->ctx()));
+    }
+
+    public function testUrlModeReturnsExplicitUrlLinkPayload(): void
+    {
+        $h = new PlainTextHandler('url');
+
+        self::assertSame(
+            ['type' => 'url', 'value' => 'https://example.com'],
+            $h->resolve(' https://example.com ', $this->ctx()),
+        );
+        self::assertNull($h->resolve(null, $this->ctx()));
     }
 
     // ---------- dropdown mode ----------

@@ -529,7 +529,7 @@ class AnalyzeController extends Controller
             }
         }
         $entityIndexForFold = Plugin::getInstance()->doctrineEntityParser->getAll();
-        [$pageWrapSyntheticRows, $pageWrapFoldedFqcns] = self::emitPageWrapSyntheticColumns(
+        [$pageWrapSyntheticRows, $pageWrapFoldedFqcns, $pageWrapMergeProposals] = self::emitPageWrapSyntheticColumns(
             $scopedPageStructure,
             $entityIndexForFold,
             (array) ($schemaDump['columns'] ?? []),
@@ -1260,6 +1260,9 @@ class AnalyzeController extends Controller
         foreach ($nodeClassProposals as $p) {
             $rows[] = $plugin->mappingFile->buildNodeClassRow($p, $this->statusForLlm($p, false));
         }
+        foreach ($pageWrapMergeProposals as $p) {
+            $rows[] = $plugin->mappingFile->buildNodeClassRow($p, 'accepted');
+        }
         // Phase 8 / D-05, D-06 — non-page entity (taxonomy) proposals from step 7.7.
         // SUPPORTING drops are emitted by the proposer with kind=taxonomy + status=dropped
         // (advisor row-shape correction — keeps MappingAuditor's dropped-status
@@ -1548,11 +1551,13 @@ class AnalyzeController extends Controller
      * `nodeClasses[<pageFqcn>].fields[<targetHandle>] = {handler, source: '_rel:...'}`
      * transparently.
      *
-     * Returns `[syntheticRows, foldedTargetFqcns]`. The folded set is
+     * Returns `[syntheticRows, foldedTargetFqcns, mergeRelationProposals]`. The folded set is
      * consumed downstream to force `status: dropped, reason: superseded-
      * by-page` on the wrapped entity's taxonomy proposal — the canonical
      * entry is the page; the wrapped entity contributes via `_rel:` only
      * (governed by the saved `feedback_pages_lead.md` rule).
+     * The merge proposals persist the runtime transform contract:
+     * `nodeClasses[page].mergeRelations[rel] = {mode: flatten, table, fk, pk}`.
      *
      * Symmetric gating: name-match drives BOTH emission and drop. Page→
      * taxonomy ManyToOne FKs (e.g. CaseStudyPage→CaseStudyCategory) DO NOT
@@ -1568,7 +1573,8 @@ class AnalyzeController extends Controller
      * @param  array<string, \lameco\kunstmaanmigrator\source\DoctrineEntityInfo> $entityIndex  parser->getAll() — FQCN-keyed
      * @param  array<string, list<array<string, mixed>>>                        $columnsByTable  schemaDump.columns — table → list of {column, fillRate, sqlType, samples}
      * @param  array<string, string>                                            $pageTableToEntryType  page table → targetEntryType (from nodeClass proposals, all confidence tiers)
-     * @return array{0: list<array<string, mixed>>, 1: list<string>}  [syntheticRows, foldedTargetFqcns]
+     * @return array{0: list<array<string, mixed>>, 1: list<string>, 2: list<array<string, mixed>>}
+     *         [syntheticRows, foldedTargetFqcns, mergeRelationProposals]
      */
     public static function emitPageWrapSyntheticColumns(
         array $scopedPageStructure,
@@ -1578,6 +1584,7 @@ class AnalyzeController extends Controller
     ): array {
         $syntheticRows = [];
         $foldedFqcns = [];
+        $mergeRelationProposals = [];
         $seenSyntheticKey = []; // dedupe within this run when two pages wrap the same target
 
         foreach ($scopedPageStructure as $pageFqcn => $pageRecord) {
@@ -1674,11 +1681,28 @@ class AnalyzeController extends Controller
 
                 if ($emittedAtLeastOne) {
                     $foldedFqcns[$targetFqcn] = true;
+                    if ((string) ($rel->fkColumn ?? '') !== '') {
+                        $mergeRelationProposals[$pageFqcn] ??= [
+                            'fqcn' => $pageFqcn,
+                            'sourceTable' => $pageTable,
+                            'targetEntryType' => (string) ($pageTableToEntryType[$pageTable] ?? ''),
+                            'targetSection' => '',
+                            'confidence' => 'high',
+                            'rationale' => 'Name-matched page wrap: flatten related entity fields into the page-owned Craft entry.',
+                            'mergeRelations' => [],
+                        ];
+                        $mergeRelationProposals[$pageFqcn]['mergeRelations'][$rel->propertyName] = [
+                            'mode' => 'flatten',
+                            'table' => $targetTable,
+                            'fk' => (string) $rel->fkColumn,
+                            'pk' => 'id',
+                        ];
+                    }
                 }
             }
         }
 
-        return [$syntheticRows, array_keys($foldedFqcns)];
+        return [$syntheticRows, array_keys($foldedFqcns), array_values($mergeRelationProposals)];
     }
 
     /**

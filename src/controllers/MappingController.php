@@ -1,0 +1,218 @@
+<?php
+
+declare(strict_types=1);
+
+namespace lameco\kunstmaanmigrator\controllers;
+
+use Craft;
+use craft\helpers\UrlHelper;
+use craft\web\Controller;
+use lameco\kunstmaanmigrator\filter\MigrationFilters;
+use lameco\kunstmaanmigrator\mapping\MappingReview;
+use lameco\kunstmaanmigrator\Plugin;
+use yii\web\Response;
+
+final class MappingController extends Controller
+{
+    protected array|bool|int $allowAnonymous = self::ALLOW_ANONYMOUS_NEVER;
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function utilityVariables(): array
+    {
+        $plugin = Plugin::getInstance();
+        $path = $plugin->mappingFile->resolvePath();
+        $mapping = is_file($path) ? $plugin->mappingFile->load($path) : ['proposals' => []];
+        $rows = (array) ($mapping['proposals'] ?? []);
+        $entities = MappingReview::pageEntities($rows);
+
+        $request = Craft::$app->getRequest();
+        $selectedEntity = $request->getIsConsoleRequest()
+            ? ''
+            : trim((string) $request->getQueryParam('entity', ''));
+        if ($selectedEntity === '' && $entities !== []) {
+            $selectedEntity = $entities[0];
+        }
+
+        $indexedRows = [];
+        if ($selectedEntity !== '') {
+            $indexedRows = MappingReview::collectPageMappingRows(
+                $rows,
+                new MigrationFilters(entities: [$selectedEntity]),
+            );
+            foreach ($indexedRows as &$item) {
+                $item['summary'] = MappingReview::summaryLine($item['row']);
+            }
+            unset($item);
+        }
+
+        return [
+            'mappingPath' => $path,
+            'entities' => $entities,
+            'selectedEntity' => $selectedEntity,
+            'indexedRows' => $indexedRows,
+            'summaryCounts' => self::summaryCounts($indexedRows),
+            'targetOptions' => self::targetOptions(),
+        ];
+    }
+
+    public function actionSetStatus(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePostRequest();
+
+        $request = Craft::$app->getRequest();
+        $rowIndex = (int) $request->getRequiredBodyParam('rowIndex');
+        $status = (string) $request->getRequiredBodyParam('status');
+        if (!in_array($status, ['accepted', 'dropped', 'needs-review', 'proposed'], true)) {
+            $this->setFailFlash('Invalid mapping status.');
+            return $this->redirectBackToUtility();
+        }
+
+        $changes = ['status' => $status];
+        $rationale = trim((string) $request->getBodyParam('rationale', ''));
+        if ($rationale !== '') {
+            $changes['rationale'] = $rationale;
+        }
+
+        $plugin = Plugin::getInstance();
+        if ($plugin->mappingFile->updateRow($plugin->mappingFile->resolvePath(), $rowIndex, $changes)) {
+            $this->setSuccessFlash('Mapping row updated.');
+        } else {
+            $this->setFailFlash('Could not update mapping row.');
+        }
+
+        return $this->redirectBackToUtility();
+    }
+
+    public function actionSaveTarget(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePostRequest();
+
+        $request = Craft::$app->getRequest();
+        $rowIndex = (int) $request->getRequiredBodyParam('rowIndex');
+        $kind = (string) $request->getBodyParam('kind', 'column');
+        $changes = ['status' => 'accepted'];
+
+        if ($kind === 'nodeClass' || $kind === 'taxonomy') {
+            $changes['targetSection'] = trim((string) $request->getBodyParam('targetSection', ''));
+            $changes['targetEntryType'] = trim((string) $request->getBodyParam('targetEntryType', ''));
+        } elseif ($kind === 'pagePart') {
+            $changes['targetEntryType'] = trim((string) $request->getBodyParam('targetEntryType', ''));
+            $changes['targetMatrixField'] = trim((string) $request->getBodyParam('targetMatrixField', ''));
+            $changes['targetBlockType'] = trim((string) $request->getBodyParam('targetBlockType', ''));
+        } else {
+            $changes['targetEntryType'] = trim((string) $request->getBodyParam('targetEntryType', ''));
+            $changes['targetHandle'] = trim((string) $request->getBodyParam('targetHandle', ''));
+            $changes['handler'] = trim((string) $request->getBodyParam('handler', ''));
+        }
+
+        $plugin = Plugin::getInstance();
+        if ($plugin->mappingFile->updateRow($plugin->mappingFile->resolvePath(), $rowIndex, $changes)) {
+            $this->setSuccessFlash('Mapping target saved.');
+        } else {
+            $this->setFailFlash('Could not save mapping target.');
+        }
+
+        return $this->redirectBackToUtility();
+    }
+
+    private function redirectBackToUtility(): Response
+    {
+        $entity = trim((string) Craft::$app->getRequest()->getBodyParam('entity', ''));
+        return $this->redirect(UrlHelper::cpUrl('utilities/kunstmaan-mapping', $entity !== '' ? ['entity' => $entity] : []));
+    }
+
+    /**
+     * @param list<array{index:int,row:array<string,mixed>}> $indexedRows
+     * @return array<string, int>
+     */
+    private static function summaryCounts(array $indexedRows): array
+    {
+        $counts = [];
+        foreach ($indexedRows as $item) {
+            $status = (string) ($item['row']['status'] ?? 'unknown');
+            $counts[$status] = ($counts[$status] ?? 0) + 1;
+        }
+        ksort($counts);
+        return $counts;
+    }
+
+    /**
+     * @return array{sections:list<string>,entryTypes:list<string>,fieldHandles:list<string>,matrixFields:list<string>,blockTypes:list<string>,handlers:list<string>}
+     */
+    private static function targetOptions(): array
+    {
+        $sections = [];
+        foreach (Craft::$app->getEntries()->getAllSections() as $section) {
+            $handle = (string) ($section->handle ?? '');
+            if ($handle !== '') {
+                $sections[$handle] = true;
+            }
+        }
+
+        $entryTypes = [];
+        $fieldHandles = [];
+        $matrixFields = [];
+        $blockTypes = [];
+        foreach (Craft::$app->getEntries()->getAllEntryTypes() as $entryType) {
+            $entryTypeHandle = (string) ($entryType->handle ?? '');
+            if ($entryTypeHandle !== '') {
+                $entryTypes[$entryTypeHandle] = true;
+            }
+
+            $layout = $entryType->getFieldLayout();
+            if ($layout === null) {
+                continue;
+            }
+            foreach ($layout->getCustomFields() as $field) {
+                $fieldHandle = (string) ($field->handle ?? '');
+                if ($fieldHandle === '') {
+                    continue;
+                }
+                $fieldHandles[$fieldHandle] = true;
+                if ($field instanceof \craft\fields\Matrix) {
+                    $matrixFields[$fieldHandle] = true;
+                    foreach ($field->getEntryTypes() as $blockType) {
+                        $blockTypeHandle = (string) ($blockType->handle ?? '');
+                        if ($blockTypeHandle !== '') {
+                            $blockTypes[$blockTypeHandle] = true;
+                        }
+                        $blockLayout = $blockType->getFieldLayout();
+                        if ($blockLayout === null) {
+                            continue;
+                        }
+                        foreach ($blockLayout->getCustomFields() as $blockField) {
+                            $blockFieldHandle = (string) ($blockField->handle ?? '');
+                            if ($blockFieldHandle !== '') {
+                                $fieldHandles[$fieldHandle . '.' . $blockFieldHandle] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return [
+            'sections' => self::sortedKeys($sections),
+            'entryTypes' => self::sortedKeys($entryTypes),
+            'fieldHandles' => self::sortedKeys($fieldHandles),
+            'matrixFields' => self::sortedKeys($matrixFields),
+            'blockTypes' => self::sortedKeys($blockTypes),
+            'handlers' => ['asset', 'ckeditor', 'date', 'email', 'link', 'matrix', 'plain', 'relation', 'splitName', 'url'],
+        ];
+    }
+
+    /**
+     * @param array<string, true> $set
+     * @return list<string>
+     */
+    private static function sortedKeys(array $set): array
+    {
+        $out = array_keys($set);
+        sort($out, SORT_NATURAL | SORT_FLAG_CASE);
+        return $out;
+    }
+}

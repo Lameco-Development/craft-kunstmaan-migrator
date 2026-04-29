@@ -132,4 +132,14 @@ final class MapControllerEntitiesFilterTest extends TestCase
             $filters,
         ));
     }
+
+    public function testNodeClassRowMatchesByFqcnBasename(): void
+    {
+        $filters = new MigrationFilters(entities: ['NewsPage']);
+
+        self::assertTrue(MapController::matchesEntitiesFilter(
+            ['kind' => 'nodeClass', 'fqcn' => 'App\\Entity\\Pages\\NewsPage'],
+            $filters,
+        ));
+    }
 }

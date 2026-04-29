@@ -123,7 +123,7 @@ class CompileController extends Controller
             $graphCompatibilityRows,
             static fn(array $row): bool => (string) ($row['severity'] ?? '') === 'fatal',
         ));
-        foreach ($graphCompatibilityRows as $row) {
+        foreach ($this->summarizeGraphCompatibilityRows($graphCompatibilityRows) as $row) {
             $line = sprintf(
                 '%s [%s] %s%s%s',
                 strtoupper((string) ($row['severity'] ?? 'warning')),
@@ -355,7 +355,7 @@ class CompileController extends Controller
                 $this->stdout("        - {$line}\n", Console::FG_YELLOW);
             }
         }
-        foreach ((array) $report['warnings'] as $w) {
+        foreach ($this->summarizeCompileWarnings((array) $report['warnings']) as $w) {
             $this->stdout("  WARN {$w}\n", Console::FG_YELLOW);
         }
 
@@ -456,6 +456,103 @@ class CompileController extends Controller
     }
 
     /**
+     * @param list<array<string, mixed>> $rows
+     * @return list<array<string, mixed>>
+     */
+    private function summarizeGraphCompatibilityRows(array $rows): array
+    {
+        $out = [];
+        $relationIntent = [];
+
+        foreach ($rows as $row) {
+            if (
+                (string) ($row['severity'] ?? '') !== 'fatal'
+                && (string) ($row['code'] ?? '') === 'relation_intent_required'
+            ) {
+                $source = (string) ($row['sourceRef'] ?? '');
+                $target = (string) ($row['targetRef'] ?? '');
+                $relationIntent[] = $source . ($target !== '' ? ' -> ' . $target : '');
+                continue;
+            }
+
+            $out[] = $row;
+        }
+
+        if ($relationIntent !== []) {
+            $examples = array_slice($relationIntent, 0, 5);
+            $suffix = count($relationIntent) > count($examples)
+                ? '; examples: ' . implode(', ', $examples) . ', +' . (count($relationIntent) - count($examples)) . ' more'
+                : '; examples: ' . implode(', ', $examples);
+            $out[] = [
+                'severity' => 'warning',
+                'code' => 'relation_intent_required',
+                'message' => count($relationIntent) . ' graph relation(s) have FK evidence but no explicit intent yet (reference, promote, embed, drop, or out_of_scope)' . $suffix,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param list<string> $warnings
+     * @return list<string>
+     */
+    private function summarizeCompileWarnings(array $warnings): array
+    {
+        $out = [];
+        $pageBuilderGroups = [];
+        $deduped = [];
+
+        foreach ($warnings as $warning) {
+            if (!is_string($warning)) {
+                continue;
+            }
+            if (preg_match(
+                '/^(?<fqcn>[^:]+): pageBuilderHandle `(?<matrix>[^`]+)` not propagated for (?<source>.+?) because entry-type `(?<entryType>[^`]+)` does not own that Matrix field(?<tail>.*)$/',
+                $warning,
+                $m,
+            ) === 1) {
+                $hasFallback = str_contains($m['tail'], 'flatPagePartContent');
+                $key = implode('|', [$m['fqcn'], $m['matrix'], $m['entryType'], $hasFallback ? 'fallback' : 'no-fallback']);
+                $pageBuilderGroups[$key]['fqcn'] = $m['fqcn'];
+                $pageBuilderGroups[$key]['matrix'] = $m['matrix'];
+                $pageBuilderGroups[$key]['entryType'] = $m['entryType'];
+                $pageBuilderGroups[$key]['hasFallback'] = $hasFallback;
+                $pageBuilderGroups[$key]['sources'][] = $m['source'];
+                continue;
+            }
+
+            $deduped[$warning] = ($deduped[$warning] ?? 0) + 1;
+        }
+
+        foreach ($deduped as $warning => $count) {
+            $out[] = $count > 1 ? "{$warning} (repeated {$count}x)" : $warning;
+        }
+
+        foreach ($pageBuilderGroups as $group) {
+            $sources = array_values(array_unique((array) $group['sources']));
+            $examples = array_slice($sources, 0, 3);
+            $suffix = count($sources) > count($examples)
+                ? ', +' . (count($sources) - count($examples)) . ' more'
+                : '';
+            $out[] = sprintf(
+                '%s: %d page-part mapping(s) not propagated from pageBuilderHandle `%s` because entry-type `%s` does not own that Matrix field%s; examples: %s%s.',
+                $group['fqcn'],
+                count($sources),
+                $group['matrix'],
+                $group['entryType'],
+                $group['hasFallback']
+                    ? '; content is preserved via flatPagePartContent fallback'
+                    : ' and no flatPagePartContent fallback is available',
+                implode(', ', $examples),
+                $suffix,
+            );
+        }
+
+        return $out;
+    }
+
+    /**
      * Normalize optional relation metadata embedded by source scanners into the
      * shape consumed by PageRootedSurfaceDiscovery. Scanners differ by project,
      * so this accepts common keys and otherwise returns an empty map, which the
@@ -540,6 +637,9 @@ class CompileController extends Controller
                 $handle = (string) ($field['handle'] ?? '');
                 if ($handle === '' || str_contains($handle, '.')) { continue; }
                 $fieldMap[$handle] = ['type' => strtolower((string) ($field['classification'] ?? $field['type'] ?? 'plain'))];
+                if (isset($field['blocks']) && is_array($field['blocks'])) {
+                    $fieldMap[$handle]['blocks'] = $field['blocks'];
+                }
             }
             $entryTypes[(string) $entryType] = ['fields' => $fieldMap];
         }

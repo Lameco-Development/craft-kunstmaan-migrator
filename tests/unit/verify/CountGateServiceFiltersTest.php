@@ -117,4 +117,11 @@ final class CountGateServiceFiltersTest extends TestCase
         self::assertStringContainsString('type($translatedScope[\'entryTypeHandles\'])', $source);
         self::assertStringContainsString('unmappedSourceEntities', $source);
     }
+
+    public function testFinalizeWalkerResetsRewriterLookupCachesBeforeWalking(): void
+    {
+        $source = (string) file_get_contents(__DIR__ . '/../../../src/finalize/FinalizeWalker.php');
+
+        self::assertStringContainsString('resetLookupCaches()', $source);
+    }
 }

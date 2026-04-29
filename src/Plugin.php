@@ -7,6 +7,10 @@ namespace lameco\kunstmaanmigrator;
 use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
+use craft\events\RegisterComponentTypesEvent;
+use craft\events\RegisterTemplateRootsEvent;
+use craft\services\Utilities;
+use craft\web\View as CraftView;
 use lameco\kunstmaanmigrator\analyze\HeuristicProposer;
 use lameco\kunstmaanmigrator\analyze\LlmClassifier;
 use lameco\kunstmaanmigrator\analyze\ReportBuilder;
@@ -56,12 +60,14 @@ use lameco\kunstmaanmigrator\source\CraftKnowledgeBase;
 use lameco\kunstmaanmigrator\source\MediaFkScanner;
 use lameco\kunstmaanmigrator\source\TopologicalOrderer;
 use lameco\kunstmaanmigrator\transform\TransformService;
+use lameco\kunstmaanmigrator\utilities\KunstmaanMappingUtility;
 use lameco\kunstmaanmigrator\verify\BaselineCounterService;
 use lameco\kunstmaanmigrator\verify\CaptureBaselineHtmlService;
 use lameco\kunstmaanmigrator\verify\CountGateService;
 use lameco\kunstmaanmigrator\verify\SnapshotDiffer;
 use lameco\kunstmaanmigrator\verify\SpotCheckUrlFetcher;
 use PDO;
+use yii\base\Event;
 use yii\db\Connection;
 
 /**
@@ -226,7 +232,24 @@ class Plugin extends BasePlugin
         // when CFG-01 introduces the real form.
         if (Craft::$app->request->getIsConsoleRequest()) {
             $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\console';
+        } else {
+            $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\controllers';
+            Event::on(
+                Utilities::class,
+                Utilities::EVENT_REGISTER_UTILITIES,
+                static function (RegisterComponentTypesEvent $event): void {
+                    $event->types[] = KunstmaanMappingUtility::class;
+                },
+            );
         }
+
+        Event::on(
+            CraftView::class,
+            CraftView::EVENT_REGISTER_CP_TEMPLATE_ROOTS,
+            static function (RegisterTemplateRootsEvent $event): void {
+                $event->roots['kunstmaan-migrator'] = dirname(__DIR__) . '/templates';
+            },
+        );
 
         // Phase 02.1 follow-up: wire the source-namespace components' sibling
         // dependencies. Plugin::config() registers them as bare class names so
@@ -285,14 +308,17 @@ class Plugin extends BasePlugin
         // bare class registrations in config() leave the public ?Foo $dep = null slots
         // null and produce silent NPEs at first call.
 
-        // Field handler registry — register all 4 PlainTextHandler modes and the 4 other
+        // Field handler registry — register all PlainTextHandler modes and the 4 other
         // typed handlers. PlainTextHandler is parametric on its mode constructor arg
         // ('plain' / 'ckeditor' / 'link' / 'dropdown'); each mode registers under its
         // own id() so the registry can dispatch by handler-name from mapping.yaml.
         $registry = $this->fieldHandlerRegistry;
         $registry->register(new PlainTextHandler('plain'));
+        $registry->register(new PlainTextHandler('date'));
         $registry->register(new PlainTextHandler('ckeditor'));
         $registry->register(new PlainTextHandler('link'));
+        $registry->register(new PlainTextHandler('email'));
+        $registry->register(new PlainTextHandler('url'));
         $registry->register(new PlainTextHandler('dropdown'));
         $registry->register($this->assetHandler);
         $registry->register($this->relationHandler);

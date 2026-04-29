@@ -101,7 +101,7 @@ class DoctorController extends Controller
      * Check #1: legacy DB reachable AND a default schema is selected.
      *
      * `SELECT 1` only proves the connection opens (host/port/user/pass valid).
-     * Every downstream stage (LocalePreflight, SchemaDumper, ...) issues
+     * Every downstream stage (LocalePreflight, KunstmaanSchemaDumper, ...) issues
      * unqualified queries that need a default schema, so we also verify
      * `SELECT DATABASE()` is non-null. Catches the case where
      * `CRAFT_LEGACY_DB_DATABASE` is unset and the DSN ends with `dbname=`.

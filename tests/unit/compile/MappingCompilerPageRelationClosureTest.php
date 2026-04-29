@@ -67,6 +67,126 @@ final class MappingCompilerPageRelationClosureTest extends TestCase
         ], $field['handlerOptions']);
     }
 
+    public function testManyToOneToWrappedEntityResolvesViaPageWrapperState(): void
+    {
+        $compiled = (new MappingCompiler())->compile(
+            [
+                'proposals' => [
+                    [
+                        'kind' => 'nodeClass',
+                        'fqcn' => 'App\\Entity\\Pages\\CaseStudyPage',
+                        'sourceTable' => 'case_study_pages',
+                        'targetSection' => 'cases',
+                        'targetEntryType' => 'casePage',
+                        'status' => 'accepted',
+                    ],
+                    [
+                        'kind' => 'column',
+                        'table' => 'case_study_pages',
+                        'column' => 'employee_id',
+                        'targetEntryType' => 'casePage',
+                        'targetHandle' => 'caseTeamMembers',
+                        'handler' => 'relation',
+                        'status' => 'accepted',
+                        'relation' => [
+                            'relationType' => 'ManyToOne',
+                            'relationProperty' => 'employee',
+                            'targetFqcn' => 'App\\Entity\\Employee',
+                            'targetTable' => 'employees',
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'App\\Entity\\Pages\\CaseStudyPage' => [
+                    'tableName' => 'case_study_pages',
+                    'contexts' => [['name' => 'main']],
+                ],
+                'App\\Entity\\Pages\\EmployeePage' => [
+                    'tableName' => 'employee_pages',
+                    'contexts' => [['name' => 'main']],
+                ],
+            ],
+            ['nl' => 'default'],
+            entryTypeFlatHandles: ['casePage' => ['title', 'caseTeamMembers']],
+        );
+
+        $field = $compiled['nodeClasses']['App\\Entity\\Pages\\CaseStudyPage']['fields']['caseTeamMembers'];
+        self::assertSame('relation', $field['handler']);
+        self::assertSame('employee_id', $field['source']);
+        self::assertSame([
+            'stateSource' => 'App_Entity_Pages_EmployeePage',
+            'joinTranslation' => [
+                'table' => 'employee_pages',
+                'sourceColumn' => 'employee_id',
+                'targetColumn' => 'id',
+            ],
+        ], $field['handlerOptions']);
+    }
+
+    public function testManyToOnePageWrapperOptionsOverrideLlmJoinTranslationGuess(): void
+    {
+        $compiled = (new MappingCompiler())->compile(
+            [
+                'proposals' => [
+                    [
+                        'kind' => 'nodeClass',
+                        'fqcn' => 'App\\Entity\\Pages\\CaseStudyPage',
+                        'sourceTable' => 'case_study_pages',
+                        'targetSection' => 'cases',
+                        'targetEntryType' => 'casePage',
+                        'status' => 'accepted',
+                    ],
+                    [
+                        'kind' => 'column',
+                        'table' => 'case_study_pages',
+                        'column' => 'employee_id',
+                        'targetEntryType' => 'casePage',
+                        'targetHandle' => 'caseTeamMembers',
+                        'handler' => 'relation',
+                        'status' => 'accepted',
+                        'handlerOptions' => [
+                            'stateSource' => 'App_Entity_Pages_EmployeePage',
+                            'joinTranslation' => [
+                                'table' => 'employee_pages',
+                                'sourceColumn' => 'employee_id',
+                                'targetColumn' => 'employee_id',
+                            ],
+                        ],
+                        'relation' => [
+                            'relationType' => 'ManyToOne',
+                            'relationProperty' => 'employee',
+                            'targetFqcn' => 'App\\Entity\\Employee',
+                            'targetTable' => 'employees',
+                        ],
+                    ],
+                ],
+            ],
+            [
+                'App\\Entity\\Pages\\CaseStudyPage' => [
+                    'tableName' => 'case_study_pages',
+                    'contexts' => [['name' => 'main']],
+                ],
+                'App\\Entity\\Pages\\EmployeePage' => [
+                    'tableName' => 'employee_pages',
+                    'contexts' => [['name' => 'main']],
+                ],
+            ],
+            ['nl' => 'default'],
+            entryTypeFlatHandles: ['casePage' => ['title', 'caseTeamMembers']],
+        );
+
+        $field = $compiled['nodeClasses']['App\\Entity\\Pages\\CaseStudyPage']['fields']['caseTeamMembers'];
+        self::assertSame([
+            'stateSource' => 'App_Entity_Pages_EmployeePage',
+            'joinTranslation' => [
+                'table' => 'employee_pages',
+                'sourceColumn' => 'employee_id',
+                'targetColumn' => 'id',
+            ],
+        ], $field['handlerOptions']);
+    }
+
     public function testUnsupportedPageOwnedRelationShapeWarnsAndSkips(): void
     {
         $compiled = (new MappingCompiler())->compile(

@@ -1,0 +1,225 @@
+{% set title = 'Kunstmaan Mapping' %}
+{% set selectedUrl = url('utilities/kunstmaan-mapping') %}
+
+<style>
+    .km-map-summary {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 12px 0 24px;
+    }
+    .km-map-badge {
+        border-radius: 999px;
+        background: #eef0f2;
+        padding: 3px 10px;
+        font-size: 12px;
+    }
+    .km-map-row {
+        border: 1px solid #d7dce2;
+        border-radius: 6px;
+        margin-bottom: 16px;
+        padding: 16px;
+        background: #fff;
+    }
+    .km-map-row__head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 12px;
+    }
+    .km-map-row__summary {
+        font-weight: 600;
+    }
+    .km-map-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+    }
+    .km-map-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: end;
+        margin-top: 12px;
+    }
+    .km-map-muted {
+        color: #596673;
+    }
+    .km-map-code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+    }
+</style>
+
+<form method="get" action="{{ selectedUrl }}" class="field">
+    <div class="heading">
+        <label for="km-entity">Kunstmaan page entity</label>
+    </div>
+    <div class="input ltr">
+        <div class="select">
+            <select id="km-entity" name="entity" onchange="this.form.submit()">
+                {% for entity in entities %}
+                    <option value="{{ entity }}"{{ entity == selectedEntity ? ' selected' }}>{{ entity }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+</form>
+
+<p class="km-map-muted">
+    Editing saves directly to <code>{{ mappingPath }}</code>. This first CP version keeps the rows structured and focused:
+    review, accept/drop, and adjust target handles.
+</p>
+
+{% if summaryCounts %}
+    <div class="km-map-summary">
+        {% for status, count in summaryCounts %}
+            <span class="km-map-badge">{{ status }}: {{ count }}</span>
+        {% endfor %}
+    </div>
+{% endif %}
+
+{% if not selectedEntity %}
+    <p>No page entities were found in mapping.yaml. Run analyze/compile first.</p>
+{% elseif indexedRows is empty %}
+    <p>No mapping rows found for {{ selectedEntity }}.</p>
+{% else %}
+    <datalist id="km-sections">
+        {% for value in targetOptions.sections %}<option value="{{ value }}">{% endfor %}
+    </datalist>
+    <datalist id="km-entry-types">
+        {% for value in targetOptions.entryTypes %}<option value="{{ value }}">{% endfor %}
+    </datalist>
+    <datalist id="km-fields">
+        {% for value in targetOptions.fieldHandles %}<option value="{{ value }}">{% endfor %}
+    </datalist>
+    <datalist id="km-matrix-fields">
+        {% for value in targetOptions.matrixFields %}<option value="{{ value }}">{% endfor %}
+    </datalist>
+    <datalist id="km-block-types">
+        {% for value in targetOptions.blockTypes %}<option value="{{ value }}">{% endfor %}
+    </datalist>
+    <datalist id="km-handlers">
+        {% for value in targetOptions.handlers %}<option value="{{ value }}">{% endfor %}
+    </datalist>
+
+    {% for item in indexedRows %}
+        {% set row = item.row %}
+        {% set kind = row.kind ?? 'column' %}
+        <section class="km-map-row">
+            <div class="km-map-row__head">
+                <div>
+                    <div class="km-map-row__summary">{{ item.summary }}</div>
+                    <div class="km-map-muted km-map-code">
+                        row #{{ item.index }} · kind: {{ kind }} · status: {{ row.status ?? 'unknown' }}
+                    </div>
+                </div>
+                <form method="post" class="km-map-actions">
+                    {{ csrfInput() }}
+                    {{ actionInput('kunstmaan-migrator/mapping/set-status') }}
+                    {{ hiddenInput('rowIndex', item.index) }}
+                    {{ hiddenInput('entity', selectedEntity) }}
+                    <input type="hidden" name="status" value="accepted">
+                    <button type="submit" class="btn small submit">Accept</button>
+                </form>
+            </div>
+
+            {% if row.rationale ?? '' %}
+                <p class="km-map-muted">{{ row.rationale }}</p>
+            {% endif %}
+
+            <form method="post">
+                {{ csrfInput() }}
+                {{ actionInput('kunstmaan-migrator/mapping/save-target') }}
+                {{ hiddenInput('rowIndex', item.index) }}
+                {{ hiddenInput('kind', kind) }}
+                {{ hiddenInput('entity', selectedEntity) }}
+
+                {% if kind == 'nodeClass' or kind == 'taxonomy' %}
+                    <div class="km-map-grid">
+                        <div>
+                            <label>Source</label>
+                            <input class="text fullwidth" readonly value="{{ row.fqcn ?? '' }}">
+                        </div>
+                        <div>
+                            <label>Target section</label>
+                            <input class="text fullwidth" name="targetSection" list="km-sections" value="{{ row.targetSection ?? '' }}">
+                        </div>
+                        <div>
+                            <label>Target entry type</label>
+                            <input class="text fullwidth" name="targetEntryType" list="km-entry-types" value="{{ row.targetEntryType ?? '' }}">
+                        </div>
+                    </div>
+                {% elseif kind == 'pagePart' %}
+                    <div class="km-map-grid">
+                        <div>
+                            <label>Page part</label>
+                            <input class="text fullwidth" readonly value="{{ row.pagePartClass ?? '' }}">
+                        </div>
+                        <div>
+                            <label>Context</label>
+                            <input class="text fullwidth" readonly value="{{ row.context ?? '' }}">
+                        </div>
+                        <div>
+                            <label>Target entry type</label>
+                            <input class="text fullwidth" name="targetEntryType" list="km-entry-types" value="{{ row.targetEntryType ?? '' }}">
+                        </div>
+                        <div>
+                            <label>Matrix field</label>
+                            <input class="text fullwidth" name="targetMatrixField" list="km-matrix-fields" value="{{ row.targetMatrixField ?? '' }}">
+                        </div>
+                        <div>
+                            <label>Block type</label>
+                            <input class="text fullwidth" name="targetBlockType" list="km-block-types" value="{{ row.targetBlockType ?? '' }}">
+                        </div>
+                    </div>
+                    {% if row.fields ?? [] %}
+                        <p class="km-map-muted km-map-code">
+                            Fields:
+                            {% for field in row.fields %}
+                                {{ field.targetHandle ?? '' }} ← {{ field.sourceProperty ?? '' }}{% if not loop.last %}, {% endif %}
+                            {% endfor %}
+                        </p>
+                    {% endif %}
+                {% else %}
+                    <div class="km-map-grid">
+                        <div>
+                            <label>Source table.column</label>
+                            <input class="text fullwidth" readonly value="{{ (row.table ?? '') ~ '.' ~ (row.column ?? '') }}">
+                        </div>
+                        <div>
+                            <label>Target entry type</label>
+                            <input class="text fullwidth" name="targetEntryType" list="km-entry-types" value="{{ row.targetEntryType ?? '' }}">
+                        </div>
+                        <div>
+                            <label>Target handle</label>
+                            <input class="text fullwidth" name="targetHandle" list="km-fields" value="{{ row.targetHandle ?? '' }}">
+                        </div>
+                        <div>
+                            <label>Handler</label>
+                            <input class="text fullwidth" name="handler" list="km-handlers" value="{{ row.handler ?? '' }}">
+                        </div>
+                    </div>
+                    {% if row.samples ?? [] %}
+                        <p class="km-map-muted km-map-code">Samples: {{ row.samples|slice(0, 3)|json_encode }}</p>
+                    {% endif %}
+                {% endif %}
+
+                <div class="km-map-actions">
+                    <button type="submit" class="btn submit">Save target + accept</button>
+                </div>
+            </form>
+
+            <form method="post" class="km-map-actions">
+                {{ csrfInput() }}
+                {{ actionInput('kunstmaan-migrator/mapping/set-status') }}
+                {{ hiddenInput('rowIndex', item.index) }}
+                {{ hiddenInput('entity', selectedEntity) }}
+                <input type="hidden" name="status" value="dropped">
+                <input class="text" name="rationale" placeholder="Drop rationale" value="{{ row.rationale ?? '' }}">
+                <button type="submit" class="btn small">Drop</button>
+            </form>
+        </section>
+    {% endfor %}
+{% endif %}

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\unit\transform;
 
+use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\fields\FieldHandlerRegistry;
 use lameco\kunstmaanmigrator\fields\handlers\PlainTextHandler;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
@@ -96,6 +97,74 @@ final class TransformServicePromotedTargetsTest extends TestCase
 
         self::assertSame('12', $payload['perSite']['default']['fieldValues']['employeeRelation']);
         self::assertArrayNotHasKey('_rel:employee.name', $payload['perSite']['default']['fieldValues']);
+    }
+
+    public function testPageRootedMergeRelationFlattensRelatedEntityIntoOwnerEntry(): void
+    {
+        $service = $this->service();
+        $service->legacyDb = new class extends LegacyDbService {
+            public function queryOne(string $sql, array $params = []): ?array
+            {
+                TestCase::assertStringContainsString('lameco_websitebundle_employee_employees', $sql);
+                TestCase::assertSame([':pk' => 31], $params);
+
+                return [
+                    'id' => 31,
+                    'real_name' => 'Bram Kranenburg',
+                    'job_title' => 'Principal Consultant',
+                    'email' => 'kranenburg@cqm.nl',
+                ];
+            }
+        };
+
+        $rows = [
+            [
+                'fqcn' => 'App\\Entity\\Pages\\EmployeePage',
+                'kunstmaanSourceId' => 'App_Entity_Pages_EmployeePage:76',
+                'kuma_node_id' => 76,
+                'refIdsByLocale' => ['nl' => 76],
+                'perSite' => [
+                    'nl' => [
+                        'online' => true,
+                        'title' => 'Bram Kranenburg',
+                        'slug' => 'bram-kranenburg',
+                        'detail' => ['id' => 76, 'employee_id' => 31],
+                        'pageParts' => [],
+                    ],
+                ],
+            ],
+        ];
+        $mapping = [
+            'sites' => ['nl' => 'default'],
+            'nodeClasses' => [
+                'App\\Entity\\Pages\\EmployeePage' => [
+                    'section' => 'teamMember',
+                    'mergeRelations' => [
+                        'employee' => [
+                            'mode' => 'flatten',
+                            'table' => 'lameco_websitebundle_employee_employees',
+                            'fk' => 'employee_id',
+                            'pk' => 'id',
+                        ],
+                    ],
+                    'fields' => [
+                        'firstName' => ['source' => '_rel:employee.real_name', 'handler' => 'plain'],
+                        'role' => ['source' => '_rel:employee.job_title', 'handler' => 'plain'],
+                        'linkEmail' => ['source' => '_rel:employee.email', 'handler' => 'plain'],
+                    ],
+                ],
+            ],
+            'sections' => [
+                'teamMember' => ['section' => 'teamMembers', 'entryType' => 'teamMember'],
+            ],
+        ];
+
+        $payloads = iterator_to_array($service->run($rows, $mapping, new MigrationFilters()));
+        $fields = $payloads[0]['perSite']['default']['fieldValues'];
+
+        self::assertSame('Bram Kranenburg', $fields['firstName']);
+        self::assertSame('Principal Consultant', $fields['role']);
+        self::assertSame('kranenburg@cqm.nl', $fields['linkEmail']);
     }
 
     private function service(): TransformService

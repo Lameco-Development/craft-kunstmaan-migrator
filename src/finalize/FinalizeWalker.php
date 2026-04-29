@@ -47,7 +47,7 @@ final class FinalizeWalker extends Component
      *         Optional progress callback fired once per entry walked. `$total` is the
      *         pre-counted (entry, site) pair count from `$query->count()`. Null skips
      *         emission (test-path silent behaviour).
-     * @return array{processed: int, rewritten: int, unresolvable: int, unresolvedDiagnostics: list<array<string, mixed>>}
+     * @return array{processed: int, rewritten: int, unresolvable: int, unresolvedDiagnostics: list<array<string, mixed>>, outOfScopeDiagnostics: list<array<string, mixed>>}
      */
     public function walk(MigrationFilters $filters, ?callable $onProgress = null): array
     {
@@ -62,6 +62,9 @@ final class FinalizeWalker extends Component
         $rewritten = 0;
         $unresolvable = 0;
         $unresolvedDiagnostics = [];
+        $outOfScopeDiagnostics = [];
+
+        $this->rewriter->resetLookupCaches();
 
         // Build entries query — wildcard site id walks every (entry, site) pair so the walker
         // can rewrite per-site values independently. The entries returned are duplicated
@@ -123,6 +126,14 @@ final class FinalizeWalker extends Component
                         'source' => 'FinalizeWalker',
                     ] + $diagnostic;
                 }
+                foreach ($this->rewriter->consumeOutOfScopeDiagnostics() as $diagnostic) {
+                    $outOfScopeDiagnostics[] = [
+                        'entryId' => (int) $entry->id,
+                        'siteId' => (int) $entry->siteId,
+                        'fieldHandle' => (string) $field->handle,
+                        'source' => 'FinalizeWalker',
+                    ] + $diagnostic;
+                }
 
                 if (str_contains($rewrittenHtml, '<!-- MIGRATION:UNRESOLVED')) {
                     $unresolvable++;
@@ -165,6 +176,7 @@ final class FinalizeWalker extends Component
             'rewritten' => $rewritten,
             'unresolvable' => $unresolvable,
             'unresolvedDiagnostics' => $unresolvedDiagnostics,
+            'outOfScopeDiagnostics' => $outOfScopeDiagnostics,
         ];
     }
 

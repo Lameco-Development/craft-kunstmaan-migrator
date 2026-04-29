@@ -86,6 +86,42 @@ final class CkeditorRewriterServiceTest extends TestCase
         self::assertStringContainsString('href="{asset:99@1:url}"', $out);
     }
 
+    public function testLegacyMediaUrlCanMaterialiseThroughKumaMediaLookupFallback(): void
+    {
+        $svc = $this->service();
+        $svc->seedUrlIdCache([]);
+        $svc->seedMediaUrlToKumaMediaIdCache(['/uploads/media/doc.pdf' => 493]);
+        $svc->assetResolver = new class {
+            public function resolveFromLegacyId(int $kumaMediaId): int
+            {
+                return $kumaMediaId === 493 ? 9001 : 0;
+            }
+        };
+
+        $out = $svc->rewrite('<a href="/uploads/media/doc.pdf?v=2">Download</a>', 1);
+
+        self::assertStringContainsString('href="{asset:9001@1:url}"', $out);
+        self::assertStringNotContainsString('/uploads/media/doc.pdf', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
+    }
+
+    public function testLegacyMediaUrlCanMaterialiseThroughRawUrlFallbackWhenNoKumaMediaRowExists(): void
+    {
+        $svc = $this->service();
+        $svc->seedUrlIdCache([]);
+        $svc->assetResolver = new class {
+            public function resolveFromLegacyUrl(string $legacyUrl): int
+            {
+                return $legacyUrl === '/uploads/media/orphan.png' ? 9002 : 0;
+            }
+        };
+
+        $out = $svc->rewrite('<img src="/uploads/media/orphan.png?cache=1">', 1);
+
+        self::assertStringContainsString('src="{asset:9002@1:url}"', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
+    }
+
     public function testEmitsUnresolvedMarkerForMissingAssetUrl(): void
     {
         $svc = $this->service();
@@ -213,6 +249,23 @@ final class CkeditorRewriterServiceTest extends TestCase
         self::assertArrayHasKey('reason', $diagnostics[0]);
     }
 
+    public function testOutOfScopeKumaMediaPlaceholderDoesNotEmitBlockingMarker(): void
+    {
+        $svc = $this->service();
+        $svc->seedKumaMediaIdCache([]);
+        $svc->seedOutOfScopeMediaReasons([2805 => 'legacy media row is HTML']);
+
+        $out = $svc->rewrite('<a href="%5BM2805%5D">legacy html</a>', 1);
+
+        self::assertStringContainsString('%5BM2805%5D', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
+        self::assertSame([], $svc->consumeUnresolvedDiagnostics());
+        $diagnostics = $svc->consumeOutOfScopeDiagnostics();
+        self::assertSame('media', $diagnostics[0]['tokenFamily']);
+        self::assertSame(2805, $diagnostics[0]['legacyId']);
+        self::assertSame('legacy media row is HTML', $diagnostics[0]['reason']);
+    }
+
     public function testRewritesNodeTranslationPlaceholderToEntryRefToken(): void
     {
         $svc = $this->service();
@@ -246,6 +299,23 @@ final class CkeditorRewriterServiceTest extends TestCase
         self::assertSame(1, $diagnostics[0]['siteId']);
         self::assertArrayHasKey('reason', $diagnostics[0]);
         self::assertSame([], $svc->consumeUnresolvedDiagnostics(), 'Diagnostics are consumed/reset per field.');
+    }
+
+    public function testOutOfScopeNodeTranslationDoesNotEmitBlockingMarker(): void
+    {
+        $svc = $this->service();
+        $svc->seedNtToEntryCache([]);
+        $svc->seedOutOfScopeNtReasons([101 => 'legacy node translation is offline']);
+
+        $out = $svc->rewrite('<a href="%5BNT101%5D">offline page</a>', 1);
+
+        self::assertStringContainsString('%5BNT101%5D', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
+        self::assertSame([], $svc->consumeUnresolvedDiagnostics());
+        $diagnostics = $svc->consumeOutOfScopeDiagnostics();
+        self::assertSame('nt', $diagnostics[0]['tokenFamily']);
+        self::assertSame(101, $diagnostics[0]['legacyId']);
+        self::assertSame('legacy node translation is offline', $diagnostics[0]['reason']);
     }
 
     public function testPureNtCacheBuilderMapsSourceKeyAndMetaKumaNodeId(): void
@@ -363,6 +433,59 @@ final class CkeditorRewriterServiceTest extends TestCase
 
         self::assertStringContainsString('{entry:209@1:url}', $out);
         self::assertStringContainsString('{asset:105@1:url}', $out);
+    }
+
+    public function testResetLookupCachesClearsStaleSeededMissesBeforeFinalizeWarmup(): void
+    {
+        $svc = $this->service();
+        $svc->seedNtToEntryCache([9 => 209]);
+
+        self::assertStringContainsString('{entry:209@1:url}', $svc->rewrite('<a href="[NT9]">page</a>', 1));
+
+        $svc->resetLookupCaches();
+        $out = $svc->rewrite('<a href="[NT9]">page</a>', 1);
+
+        self::assertStringContainsString('[NT9]', $out);
+        self::assertStringContainsString('MIGRATION:UNRESOLVED', $out);
+    }
+
+    public function testResetLookupCachesClearsLegacyMediaUrlLookupFallbackCache(): void
+    {
+        $svc = $this->service();
+        $svc->seedUrlIdCache([]);
+        $svc->seedMediaUrlToKumaMediaIdCache(['/uploads/media/doc.pdf' => 493]);
+        $svc->assetResolver = new class {
+            public function resolveFromLegacyId(int $kumaMediaId): int
+            {
+                return $kumaMediaId === 493 ? 9001 : 0;
+            }
+        };
+
+        self::assertStringContainsString(
+            '{asset:9001@1:url}',
+            $svc->rewrite('<a href="/uploads/media/doc.pdf">Download</a>', 1),
+        );
+
+        $svc->resetLookupCaches();
+        $out = $svc->rewrite('<a href="/uploads/media/doc.pdf">Download</a>', 1);
+
+        self::assertStringContainsString('/uploads/media/doc.pdf', $out);
+        self::assertStringContainsString('MIGRATION:UNRESOLVED', $out);
+    }
+
+    public function testRewriteStripsStaleUnresolvedMarkersBeforeReclassifying(): void
+    {
+        $svc = $this->service();
+        $svc->seedNtToEntryCache([]);
+        $svc->seedOutOfScopeNtReasons([101 => 'legacy node translation is offline']);
+
+        $out = $svc->rewrite(
+            '<a href="%5BNT101%5D">offline page</a><!-- MIGRATION:UNRESOLVED sourceB64=a3VtYV9ub2RlX3RyYW5zbGF0aW9uOjEwMQ -->',
+            1,
+        );
+
+        self::assertStringContainsString('%5BNT101%5D', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
     }
 
     public function testStrippedQueryAndFragmentFallbackResolvesAssetUrl(): void

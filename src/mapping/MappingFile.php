@@ -263,6 +263,39 @@ class MappingFile extends Component
                 $existingRow[$graphKey] = $value;
             }
         }
+
+        if (
+            !isset($existingRow['handlerOptions'])
+            && isset($incomingRow['handlerOptions'])
+            && is_array($incomingRow['handlerOptions'])
+            && $incomingRow['handlerOptions'] !== []
+        ) {
+            $existingRow['handlerOptions'] = $incomingRow['handlerOptions'];
+        }
+
+        $status = (string) ($existingRow['status'] ?? '');
+        if ($status === 'proposed' || $status === 'needs-review') {
+            foreach (['targetEntryType', 'targetHandle', 'handler'] as $key) {
+                if ((string) ($existingRow[$key] ?? '') !== '') {
+                    continue;
+                }
+                $value = $incomingRow[$key] ?? null;
+                if (is_string($value) && $value !== '') {
+                    $existingRow[$key] = $value;
+                }
+            }
+        }
+
+        if ((string) ($existingRow['kind'] ?? '') === 'nodeClass') {
+            foreach (['headerBlock', 'bodyWrapBlock', 'mergeRelations'] as $key) {
+                if (isset($existingRow[$key]) && $existingRow[$key] !== [] && $existingRow[$key] !== null) {
+                    continue;
+                }
+                if (isset($incomingRow[$key]) && is_array($incomingRow[$key]) && $incomingRow[$key] !== []) {
+                    $existingRow[$key] = $incomingRow[$key];
+                }
+            }
+        }
     }
 
     /**
@@ -277,7 +310,7 @@ class MappingFile extends Component
      */
     public function buildNodeClassRow(array $proposal, string $initialStatus): array
     {
-        return [
+        $row = [
             'kind'            => 'nodeClass',
             'fqcn'            => (string) ($proposal['fqcn'] ?? ''),
             'sourceTable'     => (string) ($proposal['sourceTable'] ?? ''),
@@ -287,6 +320,17 @@ class MappingFile extends Component
             'rationale'       => (string) ($proposal['rationale'] ?? ''),
             'status'          => $initialStatus,
         ];
+
+        foreach (['headerBlock', 'bodyWrapBlock', 'mergeRelations'] as $key) {
+            if (isset($proposal[$key]) && is_array($proposal[$key]) && $proposal[$key] !== []) {
+                $row[$key] = $proposal[$key];
+            }
+        }
+        if (isset($proposal['bodyColumn']) && is_string($proposal['bodyColumn']) && $proposal['bodyColumn'] !== '') {
+            $row['bodyColumn'] = $proposal['bodyColumn'];
+        }
+
+        return $row;
     }
 
     /**
@@ -404,6 +448,29 @@ class MappingFile extends Component
     }
 
     /**
+     * Apply arbitrary scalar/list row updates while preserving atomic writes.
+     *
+     * @param array<string, mixed> $changes
+     */
+    public function updateRow(string $path, int $rowIndex, array $changes): bool
+    {
+        $parsed = Yaml::parseFile($path) ?? [];
+        if (!is_array($parsed) || !isset($parsed['proposals'][$rowIndex]) || !is_array($parsed['proposals'][$rowIndex])) {
+            return false;
+        }
+
+        foreach ($changes as $key => $value) {
+            if (!is_string($key) || $key === '') {
+                continue;
+            }
+            $parsed['proposals'][$rowIndex][$key] = $value;
+        }
+
+        $yaml = Yaml::dump($parsed, 4, 2, Yaml::DUMP_MULTI_LINE_LITERAL_BLOCK);
+        return $this->writeAtomic($path, $yaml);
+    }
+
+    /**
      * Atomic write: tmp file + rename. Port of v1 MappingDraftWriter::writeAtomic
      * (lines 34-50). Operator Ctrl+C never corrupts state.
      */
@@ -426,7 +493,7 @@ class MappingFile extends Component
     }
 
     /**
-     * Atomic JSON write — sibling helper for schema-dump.json (Plan 03 / SchemaDumper).
+     * Atomic JSON write — sibling helper for kunstmaan-schema.json (Plan 03 / KunstmaanSchemaDumper).
      * Same tmp+rename pattern; JSON_PRETTY_PRINT for diff-friendly output.
      *
      * @param array<string, mixed> $data

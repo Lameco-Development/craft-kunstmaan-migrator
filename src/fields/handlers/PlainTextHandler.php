@@ -9,7 +9,7 @@ use lameco\kunstmaanmigrator\fields\ResolverContext;
 use RuntimeException;
 
 /**
- * v2 PlainTextHandler — 4 modes (plain | ckeditor | link | dropdown).
+ * v2 PlainTextHandler — modes (plain | date | ckeditor | link | email | url | dropdown).
  * v1's 5th SEOmatic mode dropped per Phase 3 / Plan 03-08 — Phase 4 / ADP-01 reinstates
  * the SEOmatic mode + writer method + the payload-builder constructor parameter.
  *
@@ -22,11 +22,15 @@ use RuntimeException;
  *
  * Modes:
  *   'plain'    (default) — cast scalar-ish value to string; null → "".
+ *   'date'               — cast legacy date/datetime value to string; null → "".
+ *                          Native Craft date parsing happens in EntryMigrationService.
  *   'ckeditor'           — rewrite legacy `[M<id>]` / `[NT<id>]` tokens via
  *                          CkeditorRewriterService. Empty/null → "".
  *   'link'               — classify the legacy link string into
  *                          {email, entry, url} and return Craft 5 Link-field
  *                          shape `['type' => ..., 'value' => ...]`. Empty/null → null.
+ *   'email' / 'url'      — explicit Craft 5 Link-field payloads for projects
+ *                          whose Craft schema has dedicated email/url Link fields.
  *   'dropdown'           — validate against an allowed-list; in-list → string,
  *                          unknown → null (default) or throw on onUnknown='throw'.
  *
@@ -34,6 +38,7 @@ use RuntimeException;
  *   plain:     (none; PlainText fields take no options)
  *   ckeditor:  (none)
  *   link:      (none; state-table 'page' lookup is implicit)
+ *   email/url: (none)
  *   dropdown:  allowed     list<string>   REQUIRED
  *              onUnknown   'skip'|'throw' default 'skip'
  *
@@ -47,7 +52,7 @@ final class PlainTextHandler implements FieldHandler
     public function __construct(
         private readonly string $mode = 'plain',
     ) {
-        if (!in_array($this->mode, ['plain', 'ckeditor', 'link', 'dropdown'], true)) {
+        if (!in_array($this->mode, ['plain', 'date', 'ckeditor', 'link', 'email', 'url', 'dropdown'], true)) {
             throw new RuntimeException("PlainTextHandler: unknown mode '{$this->mode}'.");
         }
     }
@@ -61,8 +66,11 @@ final class PlainTextHandler implements FieldHandler
     {
         return match ($this->mode) {
             'plain'    => $this->writePlain($legacyValue),
+            'date'     => $this->writePlain($legacyValue),
             'ckeditor' => $this->writeCkeditor($legacyValue, $ctx),
             'link'     => $this->writeLink($legacyValue, $ctx),
+            'email'    => $this->writeTypedLink($legacyValue, 'email'),
+            'url'      => $this->writeTypedLink($legacyValue, 'url'),
             'dropdown' => $this->writeDropdown($legacyValue, $options),
         };
     }
@@ -126,6 +134,23 @@ final class PlainTextHandler implements FieldHandler
         }
 
         return ['type' => 'url', 'value' => $value];
+    }
+
+    /**
+     * @return array{type: string, value: string}|null
+     */
+    private function writeTypedLink(mixed $legacyValue, string $type): ?array
+    {
+        if ($legacyValue === null || $legacyValue === '') {
+            return null;
+        }
+
+        $value = trim((string) $legacyValue);
+        if ($value === '') {
+            return null;
+        }
+
+        return ['type' => $type, 'value' => $value];
     }
 
     /**

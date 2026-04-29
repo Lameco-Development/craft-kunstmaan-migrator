@@ -70,6 +70,30 @@ final class CraftTargetIntrospectorTest extends TestCase
         self::assertStringNotContainsString('bodyBlocks.heading missing', $joined);
     }
 
+    public function testNativeEntryPropertiesAndTwoPartMatrixTargetsAreAccepted(): void
+    {
+        $compiled = $this->compiled();
+        $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['postDate'] = [
+            'handler' => 'date',
+            'source' => 'date',
+        ];
+        $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['bodyBlocks.heading'] = [
+            'handler' => 'plain',
+            'source' => 'heading',
+        ];
+        $compiled['nodeClasses']['App\\Entity\\ArticlePage']['fields']['bodyBlocks.title'] = [
+            'handler' => 'plain',
+            'source' => 'block_title',
+        ];
+
+        $warnings = (new CraftTargetIntrospector())->validate($compiled, $this->schema());
+
+        $joined = implode("\n", $warnings);
+        self::assertStringNotContainsString('postDate', $joined);
+        self::assertStringNotContainsString('bodyBlocks.heading', $joined);
+        self::assertStringNotContainsString('bodyBlocks.title', $joined);
+    }
+
     public function testAssetEntriesSeomaticAndRetourTargetsAreValidatedDeterministically(): void
     {
         $compiled = $this->compiled();

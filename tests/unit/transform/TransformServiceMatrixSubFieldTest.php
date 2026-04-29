@@ -57,7 +57,12 @@ final class TransformServiceMatrixSubFieldTest extends TestCase
         $this->assertSame('headerHero', $matrix['new1']['type']);
         $this->assertTrue($matrix['new1']['enabled']);
         $this->assertSame(
-            ['heading' => 'Welcome to CQM', 'subheading' => 'Quality you can rely on', 'image' => [123]],
+            [
+                'heading' => 'Welcome to CQM',
+                'subheading' => 'Quality you can rely on',
+                'image' => [123],
+                '_suppressNativeTitleFallback' => true,
+            ],
             $matrix['new1']['fields'],
         );
         $this->assertSame([], $report['warnings']);
@@ -97,7 +102,7 @@ final class TransformServiceMatrixSubFieldTest extends TestCase
 
         $this->assertArrayHasKey('knownMatrix', $result);
         $this->assertSame('knownInner', $result['knownMatrix']['new1']['type']);
-        $this->assertSame(['foo' => 'A'], $result['knownMatrix']['new1']['fields']);
+        $this->assertSame(['foo' => 'A', '_suppressNativeTitleFallback' => true], $result['knownMatrix']['new1']['fields']);
         $this->assertArrayNotHasKey('knownMatrix.foo', $result);
         $this->assertSame('T', $result['title']);
     }
@@ -125,6 +130,25 @@ final class TransformServiceMatrixSubFieldTest extends TestCase
         $this->assertStringContainsString('top-level value', $warningJoin);
     }
 
+    public function testEmptyDottedMatrixSubFieldsDoNotCreateEmptyBlock(): void
+    {
+        $svc = new TransformService();
+        $svc->matrixInnerTypeMap = ['contactCta' => 'contactCtaItem'];
+
+        $report = ['warnings' => []];
+        $result = $this->callCollapse(
+            $svc,
+            [
+                'title' => 'Case',
+                'contactCta.teamMember' => [],
+            ],
+            $report,
+        );
+
+        $this->assertSame(['title' => 'Case'], $result);
+        $this->assertSame([], $report['warnings']);
+    }
+
     public function testMultipleDifferentMatrixFieldsCollapseIndependently(): void
     {
         $svc = new TransformService();
@@ -144,8 +168,8 @@ final class TransformServiceMatrixSubFieldTest extends TestCase
         );
 
         $this->assertSame('headerHero', $result['headerHome']['new1']['type']);
-        $this->assertSame(['heading' => 'A'], $result['headerHome']['new1']['fields']);
+        $this->assertSame(['heading' => 'A', '_suppressNativeTitleFallback' => true], $result['headerHome']['new1']['fields']);
         $this->assertSame('footerBranding', $result['footerBlock']['new1']['type']);
-        $this->assertSame(['copyText' => 'B'], $result['footerBlock']['new1']['fields']);
+        $this->assertSame(['copyText' => 'B', '_suppressNativeTitleFallback' => true], $result['footerBlock']['new1']['fields']);
     }
 }

@@ -129,6 +129,15 @@ final class SplitNameHandlerTest extends TestCase
         self::assertSame('Jr.', $parts['suffix']);
     }
 
+    public function testStripsTrailingAcademicSuffix(): void
+    {
+        $h = new SplitNameHandler();
+        $parts = $h->split('Arjen Sijtsma MSc');
+        self::assertSame('Arjen', $parts['firstName']);
+        self::assertSame('Sijtsma', $parts['lastName']);
+        self::assertSame('MSc', $parts['suffix']);
+    }
+
     public function testInfixOnlyTailPromotesLastInfixToLastName(): void
     {
         // Defensive fallback: "Jan van" — infix consumed everything → promote

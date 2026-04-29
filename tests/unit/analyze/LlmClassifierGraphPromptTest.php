@@ -70,6 +70,83 @@ final class LlmClassifierGraphPromptTest extends TestCase
         self::assertStringContainsString('relationIntent', $system);
         self::assertStringContainsString('reference, promote, embed, drop, out_of_scope', $system);
         self::assertStringContainsString('stable graph refs', $system);
+        self::assertStringContainsString('handlerOptions', $system);
+        self::assertStringContainsString('joinTranslation', $system);
+    }
+
+    public function testHandlerOptionsSanitizerPreservesRelationAndSplitNameOptions(): void
+    {
+        $classifier = $this->classifierWithoutYiiInit();
+        $method = new ReflectionMethod($classifier, 'sanitiseHandlerOptions');
+
+        $options = $method->invoke($classifier, [
+            'stateSource' => 'App_Entity_Pages_EmployeePage',
+            'joinTranslation' => [
+                'table' => 'lameco_websitebundle_employee_pages',
+                'sourceColumn' => 'employee_id',
+                'targetColumn' => 'id',
+            ],
+            'part' => 'firstName',
+            'unknown' => 'drop me',
+        ]);
+
+        self::assertSame([
+            'stateSource' => 'App_Entity_Pages_EmployeePage',
+            'part' => 'firstName',
+            'joinTranslation' => [
+                'table' => 'lameco_websitebundle_employee_pages',
+                'sourceColumn' => 'employee_id',
+                'targetColumn' => 'id',
+            ],
+        ], $options);
+    }
+
+    public function testLayoutBlockSanitizerKeepsHeaderBlockObjectShape(): void
+    {
+        $classifier = $this->classifierWithoutYiiInit();
+        $method = new ReflectionMethod($classifier, 'sanitiseLayoutBlockSpec');
+
+        $block = $method->invoke($classifier, [
+            'fieldHandle' => 'headerCase',
+            'blockType' => 'headerCaseHero',
+            'title' => '{title}',
+            'fields' => [
+                'headerCase.image' => ['source' => 'image_id', 'handler' => 'asset'],
+                'ckeditorDefault' => ['source' => 'summary', 'handler' => 'ckeditor'],
+                'bad' => ['source' => 'ignored', 'handler' => 'notAHandler'],
+            ],
+        ], [
+            'headerCase' => ['headerCaseHero'],
+        ], true, true);
+
+        self::assertSame([
+            'blockType' => 'headerCaseHero',
+            'fieldHandle' => 'headerCase',
+            'title' => '{title}',
+            'fields' => [
+                'image' => ['source' => 'image_id', 'handler' => 'asset'],
+                'ckeditorDefault' => ['source' => 'summary', 'handler' => 'ckeditor'],
+            ],
+        ], $block);
+    }
+
+    public function testLayoutBlockSanitizerDropsLiteralBodyWrapTitle(): void
+    {
+        $classifier = $this->classifierWithoutYiiInit();
+        $method = new ReflectionMethod($classifier, 'sanitiseLayoutBlockSpec');
+
+        $block = $method->invoke($classifier, [
+            'fieldHandle' => 'ckeditorDefault',
+            'blockType' => 'generalContentBlock',
+            'title' => 'Vacancy Details',
+        ], [
+            'pageBuilder' => ['generalContentBlock'],
+        ], false, false);
+
+        self::assertSame([
+            'blockType' => 'generalContentBlock',
+            'fieldHandle' => 'ckeditorDefault',
+        ], $block);
     }
 
     public function testGraphProposalFieldsArePreservedWhenValid(): void
@@ -108,6 +185,20 @@ final class LlmClassifierGraphPromptTest extends TestCase
         self::assertSame(KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\NewsPage') . '.employee', $fields['sourceRef']);
         self::assertSame(CraftGraphContract::craftFieldRef('newsPage', 'caseTeamMembers'), $fields['targetRef']);
         self::assertSame('reference', $fields['relationIntent']);
+    }
+
+    public function testDecodeLlmJsonPayloadAcceptsFencedJsonWithTrailingText(): void
+    {
+        $classifier = $this->classifierWithoutYiiInit();
+        $method = new ReflectionMethod($classifier, 'decodeLlmJsonPayload');
+
+        $decoded = $method->invoke(
+            $classifier,
+            "Here is the mapping:\n```json\n{\"proposals\":[{\"column\":\"content\"}]}\n```\nDone.",
+            'test response',
+        );
+
+        self::assertSame(['proposals' => [['column' => 'content']]], $decoded);
     }
 
     private function classifierWithoutYiiInit(): LlmClassifier

@@ -8,6 +8,7 @@ use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
+use lameco\kunstmaanmigrator\mapping\MappingReview;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
@@ -16,8 +17,9 @@ use yii\console\ExitCode;
 /**
  * Map — interactive rubber-stamp loop over mapping.yaml's proposed/needs-review rows.
  *
- * Greenfield in v2 — v1 had no equivalent (its CP MappingDraftUtility and
- * `analyze/apply-proposals` non-interactive command are both dropped per PROJECT.md).
+ * CLI fallback for the CP mapping utility. The CP utility is the preferred
+ * operator surface for browsing/editing mappings; this command remains useful
+ * for terminal-only review and automation.
  *
  * Loop body per row (D-05):
  *   1. Render compact one-screen block ([N/total] table.column header, separator,
@@ -94,6 +96,96 @@ class MapController extends Controller
 
         // Interactive rubber-stamp loop.
         return $this->runInteractiveLoop($path, $filters);
+    }
+
+    /**
+     * Page-scoped mapping review utility.
+     *
+     * Shows every mapping proposal related to one Kunstmaan page entity,
+     * regardless of status, then lets the operator select individual rows for
+     * the same atomic edits used by the normal map loop.
+     */
+    public function actionReview(?string $entity = null): int
+    {
+        if (($gate = $this->enforceNeverProduction()) !== null) {
+            return $gate;
+        }
+
+        $plugin = Plugin::getInstance();
+        $entities = trim((string) ($entity ?? ''));
+        if ($entities === '') {
+            $entities = trim((string) ($this->entities ?? ''));
+        }
+        if ($entities === '') {
+            $this->stderr(
+                "  FAIL choose a Kunstmaan page entity, e.g. `php craft kunstmaan-migrator/map/review NewsPage`.\n",
+                Console::FG_RED,
+            );
+            return ExitCode::USAGE;
+        }
+
+        $filters = $plugin->filterFactory->fromCli(
+            entitiesArg: $entities,
+            localesArg: $this->locales,
+            sinceArg: $this->since,
+            relationGraph: $this->loadRuntimeRelationGraph(),
+        );
+
+        $path = $plugin->mappingFile->resolvePath();
+        if (!is_file($path)) {
+            $this->stderr("  FAIL mapping.yaml not found at {$path} — run analyze first.\n", Console::FG_RED);
+            return ExitCode::CONFIG;
+        }
+
+        while (true) {
+            $data = $plugin->mappingFile->load($path);
+            $indexedRows = MappingReview::collectPageMappingRows((array) ($data['proposals'] ?? []), $filters);
+            if ($indexedRows === []) {
+                $this->stdout("Map review: no mapping rows found for {$entities}.\n", Console::FG_YELLOW);
+                return ExitCode::OK;
+            }
+
+            $this->stdout($this->renderReviewSummary($indexedRows, $entities), Console::FG_CYAN);
+            $choice = trim((string) $this->prompt('  row number to inspect/edit, or q to quit:', [
+                'required' => false,
+                'default' => 'q',
+            ]));
+            if ($choice === '' || strtolower($choice) === 'q') {
+                $this->stdout("Map review: exit (any decisions made are persisted).\n", Console::FG_CYAN);
+                return ExitCode::OK;
+            }
+            if (!ctype_digit($choice)) {
+                $this->stdout("  invalid choice; enter a row number or q.\n\n", Console::FG_YELLOW);
+                continue;
+            }
+
+            $position = (int) $choice;
+            if ($position < 1 || $position > count($indexedRows)) {
+                $this->stdout("  invalid row number; choose 1-" . count($indexedRows) . ".\n\n", Console::FG_YELLOW);
+                continue;
+            }
+
+            $selected = $indexedRows[$position - 1];
+            $rowIndex = (int) $selected['index'];
+            $current = $plugin->mappingFile->load($path);
+            $row = $current['proposals'][$rowIndex] ?? null;
+            if (!is_array($row)) {
+                $this->stdout("  row disappeared from mapping.yaml; refreshing.\n\n", Console::FG_YELLOW);
+                continue;
+            }
+
+            $kind = (string) ($row['kind'] ?? 'column');
+            if ($kind === 'pagePart') {
+                $exit = $this->dispatchPagePartRow($path, $rowIndex, $row, $position, count($indexedRows));
+            } elseif ($kind === 'nodeClass') {
+                $exit = $this->dispatchNodeClassRow($path, $rowIndex, $row, $position, count($indexedRows));
+            } else {
+                $exit = $this->dispatchColumnRow($path, $rowIndex, $row, $position, count($indexedRows));
+            }
+            if ($exit !== null) {
+                return $exit;
+            }
+        }
     }
 
     /**
@@ -307,6 +399,64 @@ class MapController extends Controller
     }
 
     /**
+     * @param array<string, mixed> $row
+     */
+    private function dispatchNodeClassRow(string $path, int $rowIndex, array $row, int $position, int $total): ?int
+    {
+        $plugin = Plugin::getInstance();
+
+        $this->stdout($this->renderNodeClassRowBlock($row, $position, $total));
+
+        $action = strtolower((string) $this->select(
+            '  action',
+            ['a' => 'accept', 'd' => 'drop', 'r' => 'remap (section/entry type)', 's' => 'skip', 'q' => 'quit'],
+        ));
+
+        switch ($action) {
+            case 'a':
+                if ($plugin->mappingFile->setStatus($path, $rowIndex, 'accepted')) {
+                    $this->stdout("    → accepted\n\n", Console::FG_GREEN);
+                } else {
+                    $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                }
+                break;
+            case 'd':
+                $rationale = (string) $this->prompt('  rationale (enter for default):', [
+                    'required' => false,
+                    'default' => 'no Craft entry target — operator-decided drop in map review',
+                ]);
+                if ($plugin->mappingFile->setStatus($path, $rowIndex, 'dropped', $rationale)) {
+                    $this->stdout("    → dropped\n\n", Console::FG_YELLOW);
+                } else {
+                    $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                }
+                break;
+            case 'r':
+                $updated = $this->runRemapPickerForNodeClass($row);
+                $targetSection = (string) ($updated['targetSection'] ?? '');
+                $targetEntryType = (string) ($updated['targetEntryType'] ?? '');
+                if ($targetSection !== '' && $targetEntryType !== '') {
+                    if ($this->writeNodeClassTarget($path, $rowIndex, $targetSection, $targetEntryType)) {
+                        $this->stdout("    → remapped to {$targetSection}.{$targetEntryType} (accepted)\n\n", Console::FG_GREEN);
+                    } else {
+                        $this->stdout("    FAIL: could not write mapping.yaml — row not modified\n\n", Console::FG_RED);
+                    }
+                } else {
+                    $this->stdout("    → remap cancelled (skipped, status unchanged)\n\n", Console::FG_YELLOW);
+                }
+                break;
+            case 's':
+                $this->stdout("    → skipped\n\n", Console::FG_CYAN);
+                break;
+            case 'q':
+                $this->stdout("Map review: exit (any decisions made are persisted).\n", Console::FG_CYAN);
+                return ExitCode::OK;
+        }
+
+        return null;
+    }
+
+    /**
      * Persist a new targetBlockType + flip status to accepted on a pagePart row.
      * MappingFile::setStatus only mutates a fixed key set (status/rationale/targetHandle/handler),
      * so page-part-specific fields need a direct YAML rewrite via the same atomic primitive
@@ -315,14 +465,20 @@ class MapController extends Controller
     private function writePagePartBlockType(string $path, int $rowIndex, string $targetBlockType): bool
     {
         $plugin = Plugin::getInstance();
-        $parsed = \Symfony\Component\Yaml\Yaml::parseFile($path) ?? [];
-        if (!is_array($parsed) || !isset($parsed['proposals'][$rowIndex]) || !is_array($parsed['proposals'][$rowIndex])) {
-            return false;
-        }
-        $parsed['proposals'][$rowIndex]['targetBlockType'] = $targetBlockType;
-        $parsed['proposals'][$rowIndex]['status']          = 'accepted';
-        $yaml = \Symfony\Component\Yaml\Yaml::dump($parsed, 4, 2, \Symfony\Component\Yaml\Yaml::DUMP_MULTI_LINE_LITERAL_BLOCK);
-        return $plugin->mappingFile->writeAtomic($path, $yaml);
+        return $plugin->mappingFile->updateRow($path, $rowIndex, [
+            'targetBlockType' => $targetBlockType,
+            'status' => 'accepted',
+        ]);
+    }
+
+    private function writeNodeClassTarget(string $path, int $rowIndex, string $targetSection, string $targetEntryType): bool
+    {
+        $plugin = Plugin::getInstance();
+        return $plugin->mappingFile->updateRow($path, $rowIndex, [
+            'targetSection' => $targetSection,
+            'targetEntryType' => $targetEntryType,
+            'status' => 'accepted',
+        ]);
     }
 
     /**
@@ -410,6 +566,65 @@ class MapController extends Controller
     }
 
     /**
+     * @param array<string, mixed> $row
+     */
+    private function renderNodeClassRowBlock(array $row, int $position, int $total): string
+    {
+        $sep = str_repeat('─', 60) . "\n";
+        $fqcn = (string) ($row['fqcn'] ?? '');
+        $sourceTable = (string) ($row['sourceTable'] ?? '');
+        $section = (string) ($row['targetSection'] ?? '');
+        $entryType = (string) ($row['targetEntryType'] ?? '');
+        $confidence = (string) ($row['confidence'] ?? '');
+        $rationale = (string) ($row['rationale'] ?? '');
+        $status = (string) ($row['status'] ?? '');
+
+        $out  = "[{$position}/{$total}] {$fqcn}\n";
+        $out .= $sep;
+        $out .= "Status: {$status}\n";
+        $out .= "Proposed: → {$section}.{$entryType}  (confidence: {$confidence})\n";
+        $out .= "Source table: {$sourceTable}\n";
+        $out .= "Rationale: {$rationale}\n";
+        $out .= $sep;
+        return $out;
+    }
+
+    /**
+     * @param list<array{index:int,row:array<string,mixed>}> $indexedRows
+     */
+    private function renderReviewSummary(array $indexedRows, string $entities): string
+    {
+        $counts = [];
+        foreach ($indexedRows as $item) {
+            $status = (string) ($item['row']['status'] ?? 'unknown');
+            $counts[$status] = ($counts[$status] ?? 0) + 1;
+        }
+        ksort($counts);
+
+        $out = "\nMap review: {$entities} (" . count($indexedRows) . " rows";
+        if ($counts !== []) {
+            $parts = [];
+            foreach ($counts as $status => $count) {
+                $parts[] = "{$status}: {$count}";
+            }
+            $out .= '; ' . implode(', ', $parts);
+        }
+        $out .= ")\n";
+        $out .= str_repeat('─', 100) . "\n";
+
+        foreach ($indexedRows as $displayIndex => $item) {
+            $out .= sprintf(
+                "%3d. %s\n",
+                $displayIndex + 1,
+                MappingReview::summaryLine($item['row']),
+            );
+        }
+
+        $out .= str_repeat('─', 100) . "\n";
+        return $out;
+    }
+
+    /**
      * Phase 02.1 / D-34 block-type picker for pagePart rows.
      *
      * Numbered list of available Matrix block-types on the parent entry type's
@@ -464,6 +679,43 @@ class MapController extends Controller
             return $this->typeManuallyBlockType($row, $blockTypes);
         }
         $row['targetBlockType'] = $picked;
+        return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function runRemapPickerForNodeClass(array $row): array
+    {
+        $currentSection = (string) ($row['targetSection'] ?? '');
+        $currentEntryType = (string) ($row['targetEntryType'] ?? '');
+
+        $section = (string) $this->prompt('  target section handle:', [
+            'required' => false,
+            'default' => $currentSection,
+        ]);
+        $entryType = (string) $this->prompt('  target entry type handle:', [
+            'required' => false,
+            'default' => $currentEntryType,
+        ]);
+
+        if ($section === '' || $entryType === '') {
+            return $row;
+        }
+
+        if (!in_array($section, $this->sectionHandles(), true)) {
+            $this->stdout("  invalid section handle. Available: " . implode(', ', $this->sectionHandles()) . "\n", Console::FG_YELLOW);
+            return $row;
+        }
+
+        if (Craft::$app->entries->getEntryTypeByHandle($entryType) === null) {
+            $this->stdout("  invalid entry type handle. Available: " . implode(', ', $this->entryTypeHandles()) . "\n", Console::FG_YELLOW);
+            return $row;
+        }
+
+        $row['targetSection'] = $section;
+        $row['targetEntryType'] = $entryType;
         return $row;
     }
 
@@ -552,7 +804,7 @@ class MapController extends Controller
         $handlers = [
             'a' => 'asset', 'c' => 'ckeditor', 'd' => 'date', 'e' => 'email',
             'l' => 'link', 'm' => 'matrix', 'p' => 'plain', 'r' => 'relation',
-            'u' => 'url', 'b' => 'back',
+            's' => 'splitName', 'u' => 'url', 'b' => 'back',
         ];
         $picked = strtolower((string) $this->select('  handler?', $handlers));
         if ($picked === 'b') {
@@ -636,7 +888,55 @@ class MapController extends Controller
             if ($h !== '') {
                 $out[] = $h;
             }
+            if ($h !== '' && $f instanceof \craft\fields\Matrix) {
+                foreach ($f->getEntryTypes() as $innerEt) {
+                    $innerLayout = $innerEt->getFieldLayout();
+                    if ($innerLayout === null) {
+                        continue;
+                    }
+                    foreach ($innerLayout->getCustomFields() as $innerField) {
+                        $innerHandle = (string) ($innerField->handle ?? '');
+                        if ($innerHandle !== '') {
+                            $out[] = $h . '.' . $innerHandle;
+                        }
+                    }
+                }
+            }
         }
+        $out = array_values(array_unique($out));
+        sort($out, SORT_NATURAL | SORT_FLAG_CASE);
+        return $out;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function sectionHandles(): array
+    {
+        $out = [];
+        foreach (Craft::$app->entries->getAllSections() as $section) {
+            $handle = (string) ($section->handle ?? '');
+            if ($handle !== '') {
+                $out[] = $handle;
+            }
+        }
+        sort($out);
+        return $out;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function entryTypeHandles(): array
+    {
+        $out = [];
+        foreach (Craft::$app->entries->getAllEntryTypes() as $entryType) {
+            $handle = (string) ($entryType->handle ?? '');
+            if ($handle !== '') {
+                $out[] = $handle;
+            }
+        }
+        sort($out);
         return $out;
     }
 
@@ -655,7 +955,7 @@ class MapController extends Controller
         }
         $out = [];
         foreach ($rows as $r) {
-            if (self::matchesEntitiesFilter($r, $filters)) {
+            if (MappingReview::matchesEntitiesFilter($r, $filters)) {
                 $out[] = $r;
             }
         }
@@ -679,32 +979,7 @@ class MapController extends Controller
      */
     public static function matchesEntitiesFilter(array $row, MigrationFilters $filters): bool
     {
-        if ($filters->entities === []) {
-            return true;
-        }
-
-        $kind = (string) ($row['kind'] ?? 'column');
-        if ($kind === 'pagePart') {
-            $parent = (string) ($row['parentPageClass'] ?? '');
-            if ($parent === '') {
-                return false;
-            }
-            return $filters->allows($parent);
-        }
-
-        $table = (string) ($row['table'] ?? '');
-        foreach ($filters->entities as $e) {
-            // Pattern is a literal — preg_replace can only return null if
-            // PCRE itself is broken. Assert documents the invariant; the
-            // `?? $e` keeps the strtolower call type-safe regardless.
-            $replaced = preg_replace('/(?<!^)[A-Z]/', '_$0', $e);
-            assert(is_string($replaced), 'preg_replace returned null for literal snake-case pattern');
-            $snake = strtolower($replaced ?? $e);
-            if (str_starts_with($table, 'kuma_' . $snake)) {
-                return true;
-            }
-        }
-        return false;
+        return MappingReview::matchesEntitiesFilter($row, $filters);
     }
 
     /**

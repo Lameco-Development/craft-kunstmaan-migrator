@@ -52,6 +52,46 @@ final class GraphCompatibilityValidatorTest extends TestCase
         )));
     }
 
+    public function testUnknownSourceRefOutsideScopedGraphIsWarningNotFatal(): void
+    {
+        $kunstmaanGraph = GraphFixtureFactory::kunstmaanNewsEmployeeGraph();
+        unset($kunstmaanGraph[KunstmaanGraphContract::KEY_ROOTS][KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\HomePage')]);
+        unset($kunstmaanGraph[KunstmaanGraphContract::KEY_ENTITIES][KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\HomePage')]);
+
+        $rows = (new GraphCompatibilityValidator())->validate([
+            'proposals' => [
+                [
+                    'sourceRef' => KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\HomePage') . '.bannerImage',
+                    'targetRef' => CraftGraphContract::craftFieldRef('homePage', 'headerHome'),
+                ],
+            ],
+        ], $kunstmaanGraph, GraphFixtureFactory::craftNewsHomeGraph());
+
+        $unknownRows = array_values(array_filter(
+            $rows,
+            static fn(array $row): bool => $row['code'] === 'unknown_source_ref',
+        ));
+        self::assertSame('warning', $unknownRows[0]['severity']);
+    }
+
+    public function testUnknownSourceRefInsideScopedGraphRemainsFatal(): void
+    {
+        $rows = (new GraphCompatibilityValidator())->validate([
+            'proposals' => [
+                [
+                    'sourceRef' => KunstmaanGraphContract::pageRootRef('App\\Entity\\Pages\\NewsPage') . '.doesNotExist',
+                    'targetRef' => CraftGraphContract::craftFieldRef('newsPage', 'image'),
+                ],
+            ],
+        ], GraphFixtureFactory::kunstmaanNewsEmployeeGraph(), GraphFixtureFactory::craftNewsHomeGraph());
+
+        $unknownRows = array_values(array_filter(
+            $rows,
+            static fn(array $row): bool => $row['code'] === 'unknown_source_ref',
+        ));
+        self::assertSame('fatal', $unknownRows[0]['severity']);
+    }
+
     public function testMissingRelationIntentIsWarningUntilOperatorDecisionExists(): void
     {
         $rows = (new GraphCompatibilityValidator())->validate([

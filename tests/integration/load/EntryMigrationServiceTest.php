@@ -83,6 +83,30 @@ final class EntryMigrationServiceTest extends TestCase
         self::assertArrayNotHasKey('heading', $normalized['contentBuilder']['new3']['fields']);
     }
 
+    public function testMatrixNativeTitleFallbackCanBeSuppressedForOptionalBodyTitle(): void
+    {
+        $service = new EntryMigrationService();
+
+        $normalized = $service->normalizeMatrixPayload([
+            'contentBuilder' => [
+                'new1' => [
+                    'type' => 'textContentBlock',
+                    'enabled' => true,
+                    'fields' => [
+                        '_sourcePartRef' => '__implicit_content__|NewsPage|main:78',
+                        '_suppressNativeTitleFallback' => true,
+                        'ckeditorDefault' => '<p>Article body.</p>',
+                    ],
+                ],
+            ],
+        ]);
+
+        self::assertSame('', $normalized['contentBuilder']['new1']['title']);
+        self::assertSame('<p>Article body.</p>', $normalized['contentBuilder']['new1']['fields']['ckeditorDefault']);
+        self::assertArrayNotHasKey('_sourcePartRef', $normalized['contentBuilder']['new1']['fields']);
+        self::assertArrayNotHasKey('_suppressNativeTitleFallback', $normalized['contentBuilder']['new1']['fields']);
+    }
+
     public function testSparseLocalePrimaryFallbackBorrowsBestAvailablePayloadWithoutMutatingSourceSites(): void
     {
         $service = new EntryMigrationService();
