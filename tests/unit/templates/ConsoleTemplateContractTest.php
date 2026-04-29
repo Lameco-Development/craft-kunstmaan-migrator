@@ -47,6 +47,8 @@ final class ConsoleTemplateContractTest extends TestCase
             'actionInput',
             'filters',
             'analyzeOptions',
+            'analyzeBlockingGates',
+            "!= 'ai-confirmation'",
             'name="entities[]"',
             'name="locales[]"',
             'multiple',

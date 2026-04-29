@@ -6,8 +6,9 @@
 {% set analyzeOptions = analyzeOptions ?? {} %}
 {% set entityOptions = analyzeOptions.entities|default([]) %}
 {% set localeOptions = analyzeOptions.locales|default([]) %}
-{% set analyzeBlocked = (analyzeGates|filter(g => g.blocking ?? false)|length) > 0 %}
-{% set missingKey = (analyzeGates|filter(g => (g.id ?? '') == 'anthropic-api-key-presence' and (g.status ?? '') != 'passed')|length) > 0 %}
+{% set analyzeBlockingGates = analyzeGates|filter(g => (g.blocking|default(false)) and (g.id|default('')) != 'ai-confirmation') %}
+{% set analyzeBlocked = analyzeBlockingGates|length > 0 %}
+{% set missingKey = (analyzeGates|filter(g => (g.id|default('')) == 'anthropic-api-key-presence' and (g.status|default('')) != 'passed')|length) > 0 %}
 
 <section class="pane">
     <h2>Analyze</h2>
