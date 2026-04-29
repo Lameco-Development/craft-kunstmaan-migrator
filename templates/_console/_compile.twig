@@ -38,7 +38,11 @@
     <form method="post" class="km-console-actions">
         {{ csrfInput() }}
         {{ actionInput(runActions.compile.action ?? 'kunstmaan-migrator/migration-console/queue-compile') }}
+        <label>
+            <input type="checkbox" name="overwrite" value="1" checked>
+            Regenerate compiled mapping blocks if they already exist.
+        </label>
         <button type="submit" class="btn submit"{{ compileBlocked ? ' disabled' }}>{{ runActions.compile.label ?? 'Queue compile' }}</button>
-        <span class="instructions">equivalent CLI command: <code>{{ cliCommands.compile ?? './craft kunstmaan-migrator/compile' }}</code></span>
+        <span class="instructions">equivalent CLI command: <code>{{ (cliCommands.compile ?? './craft kunstmaan-migrator/compile') ~ ' --overwrite' }}</code></span>
     </form>
 </section>
