@@ -46,6 +46,11 @@ final class ConsoleTemplateContractTest extends TestCase
             'csrfInput()',
             'actionInput',
             'filters',
+            'analyzeOptions',
+            'name="entities[]"',
+            'name="locales[]"',
+            'multiple',
+            'Comma-separated fallback',
             'I understand analyze may send schema and mapping context to Anthropic.',
             'Analyze is unavailable because no Anthropic API key is configured. Add an API key in plugin settings or run the CLI with an approved environment.',
         ] as $needle) {

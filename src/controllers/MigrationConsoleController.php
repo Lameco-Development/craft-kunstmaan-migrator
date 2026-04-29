@@ -123,6 +123,7 @@ final class MigrationConsoleController extends Controller
         $options = self::defaultOptions();
         $copy = self::copy();
         $compileGates = self::safeArray(fn (): array => $gateService->compileGates(), self::emptyCompileGates());
+        $mapping = self::mappingVariables();
 
         return [
             'title' => 'Kunstmaan Migration Console',
@@ -143,9 +144,10 @@ final class MigrationConsoleController extends Controller
             'latestRun' => self::latestRun(),
             'runs' => self::runs(),
             'reports' => self::reports(),
-            'mapping' => self::mappingVariables(),
+            'mapping' => $mapping,
             'compileSummary' => self::compileSummary($compileGates),
             'filters' => $filters,
+            'analyzeOptions' => self::analyzeFilterOptions($mapping, $filters),
             'options' => $options,
             'runActions' => self::runActions($copy),
             'cliCommands' => self::cliCommands(),
@@ -482,6 +484,113 @@ final class MigrationConsoleController extends Controller
                 ],
             ],
         );
+    }
+
+    /**
+     * @param array<string, mixed> $mapping
+     * @param array<string, mixed> $filters
+     * @return array{entities:list<array{label:string,value:string,selected:bool}>,locales:list<array{label:string,value:string,selected:bool}>}
+     */
+    private static function analyzeFilterOptions(array $mapping, array $filters): array
+    {
+        return [
+            'entities' => self::optionList(
+                (array) ($mapping['entities'] ?? []),
+                (array) ($filters['entities'] ?? []),
+            ),
+            'locales' => self::optionList(
+                self::legacyLocaleValues(),
+                (array) ($filters['locales'] ?? []),
+            ),
+        ];
+    }
+
+    /**
+     * @param list<mixed>|array<mixed> $values
+     * @param list<mixed>|array<mixed> $selected
+     * @return list<array{label:string,value:string,selected:bool}>
+     */
+    private static function optionList(array $values, array $selected): array
+    {
+        $selectedSet = [];
+        foreach ($selected as $value) {
+            $value = trim((string) $value);
+            if ($value !== '') {
+                $selectedSet[$value] = true;
+            }
+        }
+
+        $set = $selectedSet;
+        foreach ($values as $value) {
+            $value = trim((string) $value);
+            if ($value !== '') {
+                $set[$value] = true;
+            }
+        }
+
+        $out = [];
+        $values = array_keys($set);
+        sort($values, SORT_NATURAL | SORT_FLAG_CASE);
+        foreach ($values as $value) {
+            $out[] = [
+                'label' => $value,
+                'value' => $value,
+                'selected' => isset($selectedSet[$value]),
+            ];
+        }
+
+        return $out;
+    }
+
+    /** @return list<string> */
+    private static function legacyLocaleValues(): array
+    {
+        $plugin = self::plugin();
+        if (!$plugin instanceof Plugin) {
+            return [];
+        }
+
+        $values = [];
+
+        try {
+            $mapping = $plugin->mappingFile->load();
+            foreach ((array) ($mapping['sites'] ?? []) as $legacy => $_handle) {
+                self::addOptionValue($values, $legacy);
+            }
+        } catch (Throwable $e) {
+            Craft::warning('Analyze locale options unavailable from mapping: ' . $e->getMessage(), __METHOD__);
+        }
+
+        foreach ((array) ($plugin->getSettings()->localeMap ?? []) as $legacy => $row) {
+            if (is_array($row)) {
+                self::addOptionValue($values, $row['legacy'] ?? '');
+                continue;
+            }
+            self::addOptionValue($values, $legacy);
+        }
+
+        if ($values === []) {
+            try {
+                foreach ($plugin->localePreflight->detect() as $locale) {
+                    self::addOptionValue($values, $locale);
+                }
+            } catch (Throwable $e) {
+                Craft::warning('Analyze locale options unavailable from legacy DB: ' . $e->getMessage(), __METHOD__);
+            }
+        }
+
+        $out = array_keys($values);
+        sort($out, SORT_NATURAL | SORT_FLAG_CASE);
+        return $out;
+    }
+
+    /** @param array<string, true> $values */
+    private static function addOptionValue(array &$values, mixed $value): void
+    {
+        $value = trim((string) $value);
+        if ($value !== '') {
+            $values[$value] = true;
+        }
     }
 
     /** @return array<string, mixed> */

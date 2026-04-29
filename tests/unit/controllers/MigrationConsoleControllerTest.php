@@ -38,6 +38,8 @@ final class MigrationConsoleControllerTest extends TestCase
             'reports',
             'mapping',
             'compileSummary',
+            'filters',
+            'analyzeOptions',
             'runActions',
             'cliCommands',
             'copy',
@@ -86,6 +88,9 @@ final class MigrationConsoleControllerTest extends TestCase
 
         foreach ([
             'compileSummary',
+            'analyzeFilterOptions',
+            'legacyLocaleValues',
+            'optionList',
             'runActions',
             'cliCommands',
             'readiness',

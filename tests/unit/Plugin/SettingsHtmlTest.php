@@ -80,6 +80,18 @@ final class SettingsHtmlTest extends TestCase
         self::assertStringNotContainsString("'Fallback'|t", $body);
     }
 
+    public function testSettingsExposeSectionSidebarNavigation(): void
+    {
+        $body = file_get_contents(self::TWIG_PATH);
+        self::assertStringContainsString('km-settings-sidebar', $body);
+        self::assertStringContainsString("aria-label=\"{{ 'Kunstmaan Migrator settings sections'|t('kunstmaan-migrator') }}\"", $body);
+        self::assertStringContainsString('href="#km-settings-{{ section.id }}"', $body);
+        foreach (['connectivity', 'mapping', 'execution', 'adapters', 'retention'] as $section) {
+            self::assertStringContainsString("id: '{$section}'", $body);
+            self::assertStringContainsString("id=\"km-settings-{$section}\"", $body);
+        }
+    }
+
     public function testStableSettingsFieldsPresent(): void
     {
         $body = file_get_contents(self::TWIG_PATH);

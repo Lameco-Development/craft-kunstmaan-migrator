@@ -3,6 +3,9 @@
 {% set runActions = runActions ?? {} %}
 {% set cliCommands = cliCommands ?? {} %}
 {% set filters = filters ?? {} %}
+{% set analyzeOptions = analyzeOptions ?? {} %}
+{% set entityOptions = analyzeOptions.entities|default([]) %}
+{% set localeOptions = analyzeOptions.locales|default([]) %}
 {% set analyzeBlocked = (analyzeGates|filter(g => g.blocking ?? false)|length) > 0 %}
 {% set missingKey = (analyzeGates|filter(g => (g.id ?? '') == 'anthropic-api-key-presence' and (g.status ?? '') != 'passed')|length) > 0 %}
 
@@ -20,11 +23,35 @@
         <div class="km-console-form-grid">
             <div class="field">
                 <div class="heading"><label for="km-console-analyze-entities">Entity filter</label></div>
-                <div class="input ltr"><input id="km-console-analyze-entities" class="text fullwidth" name="entities" value="{{ filters.entities|default([])|join(',') }}"></div>
+                <div class="input ltr">
+                    {% if entityOptions %}
+                        <select id="km-console-analyze-entities" class="select fullwidth" name="entities[]" multiple size="6">
+                            {% for option in entityOptions %}
+                                <option value="{{ option.value }}"{{ option.selected ? ' selected' }}>{{ option.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <p class="instructions">Leave unselected to include all discovered Kunstmaan page entities.</p>
+                    {% else %}
+                        <input id="km-console-analyze-entities" class="text fullwidth" name="entities" value="{{ filters.entities|default([])|join(',') }}">
+                        <p class="instructions">Comma-separated fallback; run analyze/compile or add mapping rows to enable guided entity choices.</p>
+                    {% endif %}
+                </div>
             </div>
             <div class="field">
                 <div class="heading"><label for="km-console-analyze-locales">Locale filter</label></div>
-                <div class="input ltr"><input id="km-console-analyze-locales" class="text fullwidth" name="locales" value="{{ filters.locales|default([])|join(',') }}"></div>
+                <div class="input ltr">
+                    {% if localeOptions %}
+                        <select id="km-console-analyze-locales" class="select fullwidth" name="locales[]" multiple size="4">
+                            {% for option in localeOptions %}
+                                <option value="{{ option.value }}"{{ option.selected ? ' selected' }}>{{ option.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <p class="instructions">Leave unselected to include all discovered Kunstmaan locales.</p>
+                    {% else %}
+                        <input id="km-console-analyze-locales" class="text fullwidth" name="locales" value="{{ filters.locales|default([])|join(',') }}">
+                        <p class="instructions">Comma-separated fallback; connect the legacy DB or configure locale mapping to enable guided locale choices.</p>
+                    {% endif %}
+                </div>
             </div>
             <div class="field">
                 <div class="heading"><label for="km-console-analyze-since">Since date filter</label></div>

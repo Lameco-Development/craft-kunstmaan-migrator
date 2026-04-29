@@ -14,7 +14,80 @@
 #}
 {% import "_includes/forms" as forms %}
 
-<h2>{{ 'Connectivity'|t('kunstmaan-migrator') }}</h2>
+{% set settingsSections = [
+    { id: 'connectivity', label: 'Connectivity'|t('kunstmaan-migrator') },
+    { id: 'mapping', label: 'Mapping'|t('kunstmaan-migrator') },
+    { id: 'execution', label: 'Execution'|t('kunstmaan-migrator') },
+    { id: 'adapters', label: 'Adapters'|t('kunstmaan-migrator') },
+    { id: 'retention', label: 'Retention'|t('kunstmaan-migrator') },
+] %}
+
+<style>
+    .km-settings-layout {
+        display: grid;
+        grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+        gap: 24px;
+        align-items: start;
+    }
+
+    .km-settings-sidebar {
+        position: sticky;
+        top: 24px;
+    }
+
+    .km-settings-sidebar ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+    }
+
+    .km-settings-sidebar a {
+        display: block;
+        padding: 7px 10px;
+        border-radius: 4px;
+        color: inherit;
+        text-decoration: none;
+    }
+
+    .km-settings-sidebar a:hover,
+    .km-settings-sidebar a:focus {
+        background: #f3f7fc;
+    }
+
+    .km-settings-section {
+        scroll-margin-top: 24px;
+    }
+
+    .km-settings-section + .km-settings-section {
+        margin-top: 32px;
+        padding-top: 24px;
+        border-top: 1px solid #e3e5e8;
+    }
+
+    @media (max-width: 799px) {
+        .km-settings-layout {
+            display: block;
+        }
+
+        .km-settings-sidebar {
+            position: static;
+            margin-bottom: 24px;
+        }
+    }
+</style>
+
+<div class="km-settings-layout">
+    <nav class="km-settings-sidebar" aria-label="{{ 'Kunstmaan Migrator settings sections'|t('kunstmaan-migrator') }}">
+        <ul>
+            {% for section in settingsSections %}
+                <li><a href="#km-settings-{{ section.id }}">{{ section.label }}</a></li>
+            {% endfor %}
+        </ul>
+    </nav>
+
+    <div class="km-settings-content">
+        <section id="km-settings-connectivity" class="km-settings-section">
+            <h2>{{ 'Connectivity'|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.autosuggestField({
     label: 'Legacy DB host'|t('kunstmaan-migrator'),
@@ -71,7 +144,10 @@
     instructions: 'Read-only presence display. Configure the key through `ANTHROPIC_API_KEY` or config/kunstmaan-migrator.php; raw keys are never rendered in the Control Panel.'|t('kunstmaan-migrator'),
 }) }}
 
-<h2>{{ 'Mapping'|t('kunstmaan-migrator') }}</h2>
+        </section>
+
+        <section id="km-settings-mapping" class="km-settings-section">
+            <h2>{{ 'Mapping'|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.autosuggestField({
     label: 'Kunstmaan source path'|t('kunstmaan-migrator'),
@@ -150,7 +226,10 @@
     instructions: 'When OFF, extracted JSON keeps only factual source values such as `employee_id`. When ON, page and page-part rows also carry related entity columns under `_rel:<property>.<column>` keys for debugging or hand-curated mappings. CLI --no-rel-join bypasses per-run.'|t('kunstmaan-migrator'),
 }) }}
 
-<h2>{{ 'Execution'|t('kunstmaan-migrator') }}</h2>
+        </section>
+
+        <section id="km-settings-execution" class="km-settings-section">
+            <h2>{{ 'Execution'|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.lightswitchField({
     label: 'Allow CP queue actions'|t('kunstmaan-migrator'),
@@ -168,7 +247,10 @@
     instructions: 'Default OFF. Live migration from the Control Panel remains blocked unless this is enabled and every live gate passes.'|t('kunstmaan-migrator'),
 }) }}
 
-<h2>{{ 'Adapters'|t('kunstmaan-migrator') }}</h2>
+        </section>
+
+        <section id="km-settings-adapters" class="km-settings-section">
+            <h2>{{ 'Adapters'|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.lightswitchField({
     label: 'Enable SEOmatic adapter'|t('kunstmaan-migrator'),
@@ -186,7 +268,10 @@
     instructions: 'When OFF, Retour redirect migration is skipped even if the plugin is installed. CLI --no-retour can still bypass per run.'|t('kunstmaan-migrator'),
 }) }}
 
-<h2>{{ 'Retention'|t('kunstmaan-migrator') }}</h2>
+        </section>
+
+        <section id="km-settings-retention" class="km-settings-section">
+            <h2>{{ 'Retention'|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.textField({
     label: 'Run record retention days'|t('kunstmaan-migrator'),
@@ -207,3 +292,7 @@
     min: 1,
     instructions: 'Default number of days to keep migration logs and artifacts under storage/migration before future cleanup actions.'|t('kunstmaan-migrator'),
 }) }}
+
+        </section>
+    </div>
+</div>

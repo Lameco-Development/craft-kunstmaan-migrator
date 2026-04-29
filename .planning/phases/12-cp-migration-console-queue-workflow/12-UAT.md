@@ -14,13 +14,13 @@ source:
   - 12-10-SUMMARY.md
   - 12-UI-SPEC.md
 started: 2026-04-29T11:36:47Z
-updated: 2026-04-29T12:01:09Z
+updated: 2026-04-29T12:10:16Z
 ---
 
 ## Current Test
 
 complete: true
-result: "UAT checklist complete: 7 passed, 2 minor issues, 1 blocked verification."
+result: "UAT checklist complete: 7 passed, 2 fixed minor gaps, 1 blocked verification."
 
 ## Tests
 
@@ -84,27 +84,28 @@ blocked: 1
 ## Gaps
 
 - truth: "Settings page should expose section navigation in a sidebar like Formie settings."
-  status: failed
+  status: fixed
   reason: "User reported: Yes, it works. However, I think ideally we should have a sidebar with the different sections like how https://cqm-craft-website.test/craft-cms/formie/settings?site=default does it."
   severity: minor
   test: 1
-  root_cause: ""
-  artifacts: []
+  root_cause: "The settings fragment rendered grouped fields but had no in-page section navigation."
+  artifacts:
+    - path: "templates/_settings.twig"
+      fix: "Added fragment-safe sidebar navigation with anchors for Connectivity, Mapping, Execution, Adapters, and Retention."
+    - path: "tests/unit/Plugin/SettingsHtmlTest.php"
+      fix: "Added a source contract for the settings sidebar."
   missing: []
   debug_session: ""
 - truth: "Analyze filters should use guided controls where values are knowable instead of plain comma-separated text fields."
-  status: failed
+  status: fixed
   reason: "User reported: Yes it does. Anything we can do about the text fields? Could they just be dropdowns or something?"
   severity: minor
   test: 4
   root_cause: "The Analyze tab currently renders entity and locale filters as free-text inputs even though entities can often be derived from source introspection/mapping context and locales can reuse existing locale option discovery."
   artifacts:
     - path: "templates/_console/_analyze.twig"
-      issue: "Entity and locale filters are plain text fields."
+      fix: "Entity and locale filters now render multi-select controls when options are available, with comma-separated text fallback."
     - path: "src/controllers/MigrationConsoleController.php"
-      issue: "View model does not yet expose analyze filter option lists."
-  missing:
-    - "Expose available entity and locale options in the console view model when discoverable."
-    - "Render entity/locale filters as select/multi-select controls with text fallback when options are unavailable."
-    - "Keep since as a date/text date field."
+      fix: "View model now exposes analyze filter option lists from mapping entities and legacy locale discovery."
+  missing: []
   debug_session: ""
