@@ -46,6 +46,9 @@ use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingFile;
 use lameco\kunstmaanmigrator\models\Settings;
+use lameco\kunstmaanmigrator\runs\MigrationRunService;
+use lameco\kunstmaanmigrator\safety\MigrationGateService;
+use lameco\kunstmaanmigrator\safety\MigrationSafety;
 use lameco\kunstmaanmigrator\source\BodyScanColumnFinder;
 use lameco\kunstmaanmigrator\source\DetailTableResolver;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
@@ -66,6 +69,10 @@ use lameco\kunstmaanmigrator\verify\CaptureBaselineHtmlService;
 use lameco\kunstmaanmigrator\verify\CountGateService;
 use lameco\kunstmaanmigrator\verify\SnapshotDiffer;
 use lameco\kunstmaanmigrator\verify\SpotCheckUrlFetcher;
+use lameco\kunstmaanmigrator\workflow\AnalyzeWorkflow;
+use lameco\kunstmaanmigrator\workflow\CompileWorkflow;
+use lameco\kunstmaanmigrator\workflow\MigrateWorkflow;
+use lameco\kunstmaanmigrator\workflow\VerifyWorkflow;
 use PDO;
 use yii\base\Event;
 use yii\db\Connection;
@@ -124,6 +131,13 @@ use yii\db\Connection;
  * @property-read SnapshotDiffer $snapshotDiffer
  * @property-read SpotCheckUrlFetcher $spotCheckUrlFetcher
  * @property-read CaptureBaselineHtmlService $captureBaselineHtmlService
+ * @property-read MigrationRunService $migrationRunService
+ * @property-read MigrationSafety $migrationSafety
+ * @property-read MigrationGateService $migrationGateService
+ * @property-read AnalyzeWorkflow $analyzeWorkflow
+ * @property-read CompileWorkflow $compileWorkflow
+ * @property-read MigrateWorkflow $migrateWorkflow
+ * @property-read VerifyWorkflow $verifyWorkflow
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -193,6 +207,14 @@ class Plugin extends BasePlugin
                 'snapshotDiffer'             => SnapshotDiffer::class,
                 'spotCheckUrlFetcher'        => SpotCheckUrlFetcher::class,
                 'captureBaselineHtmlService' => CaptureBaselineHtmlService::class,
+                // Phase 12 additions — CP migration console, run records, safety gates, and queue-ready workflows.
+                'migrationRunService'  => MigrationRunService::class,
+                'migrationSafety'      => MigrationSafety::class,
+                'migrationGateService' => MigrationGateService::class,
+                'analyzeWorkflow'      => AnalyzeWorkflow::class,
+                'compileWorkflow'      => CompileWorkflow::class,
+                'migrateWorkflow'      => MigrateWorkflow::class,
+                'verifyWorkflow'       => VerifyWorkflow::class,
             ],
         ];
     }
