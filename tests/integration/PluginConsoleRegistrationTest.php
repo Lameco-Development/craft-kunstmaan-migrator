@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\integration;
 
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\utilities\KunstmaanMappingUtility;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -42,6 +43,21 @@ final class PluginConsoleRegistrationTest extends TestCase
             $source,
             'Phase 12 must not register a Craft CP section/nav event.',
         );
+    }
+
+    public function testUtilityRendersMigrationConsoleShell(): void
+    {
+        $utilitySource = (string) file_get_contents((new ReflectionClass(KunstmaanMappingUtility::class))->getFileName());
+        $templateSource = (string) file_get_contents(dirname(__DIR__, 2) . '/templates/_console/index.twig');
+
+        self::assertStringContainsString('Kunstmaan Migration Console', $utilitySource);
+        self::assertStringContainsString('shuffle', $utilitySource);
+        self::assertStringContainsString('_console/index', $utilitySource);
+        self::assertStringContainsString('MigrationConsoleController::utilityVariables', $utilitySource);
+        self::assertStringContainsString('View::TEMPLATE_MODE_CP', $utilitySource);
+        self::assertStringContainsString('Kunstmaan Migration Console', $templateSource);
+        self::assertStringContainsString("{% include 'kunstmaan-migrator/_console/_tabs' ignore missing", $templateSource);
+        self::assertStringContainsString('CLI remains the canonical workflow.', $templateSource);
     }
 
     public function testMigrationGateServiceSiblingDependenciesAreWired(): void

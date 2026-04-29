@@ -7,7 +7,7 @@ namespace lameco\kunstmaanmigrator\utilities;
 use Craft;
 use craft\base\Utility;
 use craft\web\View;
-use lameco\kunstmaanmigrator\controllers\MappingController;
+use lameco\kunstmaanmigrator\controllers\MigrationConsoleController;
 
 final class KunstmaanMappingUtility extends Utility
 {
@@ -18,7 +18,7 @@ final class KunstmaanMappingUtility extends Utility
 
     public static function displayName(): string
     {
-        return 'Kunstmaan Mapping';
+        return 'Kunstmaan Migration Console';
     }
 
     public static function icon(): ?string
@@ -29,8 +29,8 @@ final class KunstmaanMappingUtility extends Utility
     public static function contentHtml(): string
     {
         return Craft::$app->getView()->renderTemplate(
-            'kunstmaan-migrator/_mapping/index',
-            MappingController::utilityVariables(),
+            'kunstmaan-migrator/_console/index',
+            MigrationConsoleController::utilityVariables(),
             View::TEMPLATE_MODE_CP,
         );
     }

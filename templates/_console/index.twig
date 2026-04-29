@@ -1,0 +1,27 @@
+{% set title = title ?? 'Kunstmaan Migration Console' %}
+{% set subtitle = subtitle ?? 'Review readiness, mapping coverage, queued runs, logs, and artifacts for the Kunstmaan → Craft migration. CLI remains the canonical workflow.' %}
+{% set tabs = tabs ?? [] %}
+{% set activeTab = activeTab ?? 'readiness' %}
+
+<div class="km-console">
+    <header class="km-console-header">
+        <h1>{{ title }}</h1>
+        <p>{{ subtitle }}</p>
+    </header>
+
+    {% include 'kunstmaan-migrator/_console/_tabs' ignore missing with {
+        tabs: tabs,
+        activeTab: activeTab,
+    } only %}
+
+    <div class="pane">
+        <h2>Kunstmaan Migration Console</h2>
+        <p>
+            Console tabs are being prepared. Queue actions, run records, reports, and mapping review will render here as the
+            remaining Control Panel templates are expanded.
+        </p>
+        <p>
+            CLI remains the canonical workflow.
+        </p>
+    </div>
+</div>
