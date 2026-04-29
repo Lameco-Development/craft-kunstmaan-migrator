@@ -37,11 +37,9 @@ final class CompileWorkflowTest extends TestCase
 
         self::assertStringContainsString('CompileWorkflow', $source);
         self::assertStringContainsString('->run(', $source);
-        self::assertLessThan(
-            strpos($source, 'CompileWorkflow'),
-            strpos($source, '$plugin = Plugin::getInstance()') ?: PHP_INT_MAX,
-            'Controller should delegate before orchestration service lookup.',
-        );
+        $action = substr($source, (int) strpos($source, 'public function actionIndex(): int'), 1100);
+        self::assertStringContainsString('(new CompileWorkflow())->run(', $action);
+        self::assertStringNotContainsString('$plugin = Plugin::getInstance()', $action);
     }
 
     public function testCompileWorkflowDoesNotIntroduceAiSurface(): void

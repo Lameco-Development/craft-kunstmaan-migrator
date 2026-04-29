@@ -65,15 +65,6 @@ class AnalyzeWorkflow extends Component
     public ?string $locales = null;
     public ?string $since = null;
 
-    public function options($actionID): array
-    {
-        return array_merge(parent::options($actionID), [
-            'noAi', 'autoAcceptHigh', 'auditStrict', 'sourceStrict',
-            'noLayout', 'noProviders',  // NEW — Phase 8 / D-14
-            'entities', 'locales', 'since',
-        ]);
-    }
-
     /**
      * Run shared analyze orchestration for CLI, CP, and queue adapters.
      *
