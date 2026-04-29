@@ -211,7 +211,7 @@ final class MappingController extends Controller
         $request = Craft::$app->getRequest();
         $params = [];
         foreach (['entity', 'status', 'kind', 'finding', 'q'] as $key) {
-            $value = trim((string) $request->getBodyParam($key, ''));
+            $value = trim((string) $request->getBodyParam($key, $request->getBodyParam('filter' . ucfirst($key), '')));
             if ($value !== '') {
                 $params[$key] = $value;
             }
