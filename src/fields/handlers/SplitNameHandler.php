@@ -12,7 +12,7 @@ use RuntimeException;
  * SplitNameHandler — Dutch-aware composite-name splitter (D-08-22).
  *
  * Splits a single legacy `real_name` string (e.g. "Dr. Jan van der Meer")
- * into the Craft teamMember entry type's separate name fields:
+ * into separate Craft name fields:
  *   - prefix    — academic/professional titles (Dr., Ir., Drs., Prof., Mr., Mw.)
  *   - firstName — first non-prefix token
  *   - infix     — Dutch tussenvoegsel (van, de, der, den, ten, ter, het, 't, van der, de la, ...)

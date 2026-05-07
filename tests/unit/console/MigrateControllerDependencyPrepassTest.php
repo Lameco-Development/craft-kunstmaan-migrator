@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\tests\unit\console;
 
 use lameco\kunstmaanmigrator\console\MigrateController;
 use lameco\kunstmaanmigrator\load\MigrationReport;
+use lameco\kunstmaanmigrator\workflow\MigrateWorkflow;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
@@ -15,7 +16,7 @@ final class MigrateControllerDependencyPrepassTest extends TestCase
     private static function source(): string
     {
         return (string) file_get_contents(
-            (new ReflectionClass(MigrateController::class))->getFileName(),
+            (new ReflectionClass(MigrateWorkflow::class))->getFileName(),
         );
     }
 

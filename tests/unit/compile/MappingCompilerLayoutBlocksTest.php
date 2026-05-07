@@ -174,6 +174,73 @@ final class MappingCompilerLayoutBlocksTest extends TestCase
         $this->assertArrayNotHasKey('title', $nodeClass['bodyWrapBlock']);
     }
 
+    public function testFallbackEntryTypeUsesIntrospectedGenericContentBlockField(): void
+    {
+        $fqcn = 'App\\Entity\\Pages\\ArticlePage';
+        $mapping = [
+            'proposals' => [
+                $this->columnRow('article_pages', 'body', 'contentPage', ''),
+            ],
+        ];
+        $pageStructure = [$fqcn => ['tableName' => 'article_pages']];
+
+        $compiled = $this->compiler->compile(
+            $mapping,
+            $pageStructure,
+            ['nl' => 'default'],
+            'contentPage',
+            'textContentBlock',
+            ['contentPage'],
+            ['pageBuilder' => ['richTextSection']],
+            [],
+            ['contentPage' => ['title', 'slug', 'pageBuilder']],
+            ['pageBuilder' => ['blockType' => 'richTextSection', 'fieldHandle' => 'bodyCopy']],
+        );
+
+        $nodeClass = $compiled['nodeClasses'][$fqcn];
+        $this->assertSame('pageBuilder', $nodeClass['pageBuilderHandle']);
+        $this->assertSame('body', $nodeClass['bodyColumn']);
+        $this->assertSame('richTextSection', $nodeClass['bodyWrapBlock']['blockType']);
+        $this->assertSame('bodyCopy', $nodeClass['bodyWrapBlock']['fieldHandle']);
+    }
+
+    public function testFallbackEntryTypeCorrectsMalformedBodyWrapFieldFromGenericCandidate(): void
+    {
+        $fqcn = 'App\\Entity\\Pages\\ArticlePage';
+        $mapping = [
+            'proposals' => [
+                $this->columnRow('article_pages', 'content', 'contentPage', ''),
+                $this->layoutRow(
+                    $fqcn,
+                    bodyWrapBlock: [
+                        'blockType' => 'textContentBlock',
+                        'fieldHandle' => 'pageBuilderCondensed',
+                    ],
+                ),
+            ],
+        ];
+        $pageStructure = [$fqcn => ['tableName' => 'article_pages']];
+
+        $compiled = $this->compiler->compile(
+            $mapping,
+            $pageStructure,
+            ['nl' => 'default'],
+            'contentPage',
+            'generalContentBlock',
+            ['contentPage'],
+            ['pageBuilderCondensed' => ['textContentBlock']],
+            [],
+            ['contentPage' => ['title', 'slug', 'pageBuilderCondensed']],
+            ['pageBuilderCondensed' => ['blockType' => 'textContentBlock', 'fieldHandle' => 'mainContent']],
+        );
+
+        $nodeClass = $compiled['nodeClasses'][$fqcn];
+        $this->assertSame('pageBuilderCondensed', $nodeClass['pageBuilderHandle']);
+        $this->assertSame('content', $nodeClass['bodyColumn']);
+        $this->assertSame('textContentBlock', $nodeClass['bodyWrapBlock']['blockType']);
+        $this->assertSame('mainContent', $nodeClass['bodyWrapBlock']['fieldHandle']);
+    }
+
     /** @return array<string, mixed> */
     private function columnRow(
         string $table,

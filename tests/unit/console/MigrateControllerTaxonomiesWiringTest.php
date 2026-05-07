@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\console;
 
 use lameco\kunstmaanmigrator\console\MigrateController;
+use lameco\kunstmaanmigrator\workflow\MigrateWorkflow;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -27,6 +28,13 @@ use ReflectionClass;
 final class MigrateControllerTaxonomiesWiringTest extends TestCase
 {
     private static function source(): string
+    {
+        return (string) file_get_contents(
+            (new ReflectionClass(MigrateWorkflow::class))->getFileName(),
+        );
+    }
+
+    private static function controllerSource(): string
     {
         return (string) file_get_contents(
             (new ReflectionClass(MigrateController::class))->getFileName(),
@@ -96,7 +104,7 @@ final class MigrateControllerTaxonomiesWiringTest extends TestCase
 
     public function testActionTaxonomiesGatesNeverProductionFirst(): void
     {
-        $source = self::source();
+        $source = self::controllerSource();
         // Locate the actionTaxonomies body and verify enforceNeverProduction()
         // is the first non-trivial statement (D-20 pattern from actionSeo / actionRetour).
         $needle = 'public function actionTaxonomies(';

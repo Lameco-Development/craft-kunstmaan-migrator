@@ -1,5 +1,5 @@
 {% set title = 'Kunstmaan Mapping' %}
-{% set selectedUrl = url('utilities/kunstmaan-mapping') %}
+{% set selectedUrl = url('utilities/kunstmaan-mapping', {tab: 'mapping'}) %}
 
 <style>
     .km-map-summary {
@@ -43,6 +43,37 @@
         align-items: end;
         margin-top: 12px;
     }
+    .km-map-filter-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+        align-items: end;
+        margin-bottom: 16px;
+    }
+    .km-map-batch {
+        border: 1px solid #d7dce2;
+        border-radius: 6px;
+        padding: 16px;
+        margin: 16px 0;
+        background: #fff;
+    }
+    .km-map-finding {
+        border-left: 4px solid #f3ba00;
+        padding: 8px 12px;
+        margin: 12px 0;
+        background: #fff8e5;
+    }
+    .km-map-finding--fatal,
+    .km-map-finding--unsupported {
+        border-left-color: #cf1124;
+        background: #fff0f1;
+    }
+    .km-map-meta {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+    }
     .km-map-muted {
         color: #596673;
     }
@@ -52,18 +83,75 @@
     }
 </style>
 
-<form method="get" action="{{ selectedUrl }}" class="field">
-    <div class="heading">
-        <label for="km-entity">Kunstmaan page entity</label>
-    </div>
-    <div class="input ltr">
-        <div class="select">
-            <select id="km-entity" name="entity" onchange="this.form.submit()">
-                {% for entity in entities %}
-                    <option value="{{ entity }}"{{ entity == selectedEntity ? ' selected' }}>{{ entity }}</option>
-                {% endfor %}
-            </select>
+<form method="get" action="{{ selectedUrl }}" class="km-map-filter-grid">
+    {{ hiddenInput('tab', 'mapping') }}
+    <div class="field">
+        <div class="heading">
+            <label for="km-entity">Kunstmaan page entity</label>
         </div>
+        <div class="input ltr">
+            <div class="select">
+                <select id="km-entity" name="entity">
+                    {% for entity in entities %}
+                        <option value="{{ entity }}"{{ entity == selectedEntity ? ' selected' }}>{{ entity }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+    <div class="field">
+        <div class="heading">
+            <label for="km-status">Status</label>
+        </div>
+        <div class="input ltr">
+            <div class="select">
+                <select id="km-status" name="status">
+                    {% for option in statusFilterOptions %}
+                        <option value="{{ option }}"{{ option == statusFilter ? ' selected' }}>{{ option == 'all' ? 'All' : option|replace({'-': ' '})|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+    <div class="field">
+        <div class="heading">
+            <label for="km-kind">Kind</label>
+        </div>
+        <div class="input ltr">
+            <div class="select">
+                <select id="km-kind" name="kind">
+                    {% for option in kindFilterOptions %}
+                        <option value="{{ option }}"{{ option == kindFilter ? ' selected' }}>{{ option == 'all' ? 'All' : option|replace({'pagePart': 'Page part', 'nodeClass': 'Node class', 'dataProvider': 'Data provider'})|title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+    <div class="field">
+        <div class="heading">
+            <label for="km-finding">Finding severity</label>
+        </div>
+        <div class="input ltr">
+            <div class="select">
+                <select id="km-finding" name="finding">
+                    {% for option in findingFilterOptions %}
+                        <option value="{{ option }}"{{ option == findingFilter ? ' selected' }}>{{ option == 'all' ? 'All' : (option == 'none' ? 'No findings' : option|title) }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+    <div class="field">
+        <div class="heading">
+            <label for="km-q">Search source or target</label>
+        </div>
+        <div class="input ltr">
+            <input id="km-q" class="text fullwidth" type="search" name="q" value="{{ searchQuery }}" placeholder="table, column, FQCN, target, handler">
+        </div>
+    </div>
+    <div class="field">
+        <button type="submit" class="btn submit">Apply filters</button>
+        <a class="btn" href="{{ selectedUrl }}">Clear filters</a>
     </div>
 </form>
 
@@ -83,7 +171,7 @@
 {% if not selectedEntity %}
     <p>No page entities were found in mapping.yaml. Run analyze/compile first.</p>
 {% elseif indexedRows is empty %}
-    <p>No mapping rows found for {{ selectedEntity }}.</p>
+    <p>No rows match the current filters. Clear filters to view all mapping rows.</p>
 {% else %}
     <datalist id="km-sections">
         {% for value in targetOptions.sections %}<option value="{{ value }}">{% endfor %}
@@ -104,9 +192,64 @@
         {% for value in targetOptions.handlers %}<option value="{{ value }}">{% endfor %}
     </datalist>
 
+    <form id="km-map-batch" method="post" class="km-map-batch">
+        {{ csrfInput() }}
+        {{ actionInput('kunstmaan-migrator/mapping/batch') }}
+        {{ hiddenInput('entity', selectedEntity) }}
+        {{ hiddenInput('status', statusFilter) }}
+        {{ hiddenInput('kind', kindFilter) }}
+        {{ hiddenInput('finding', findingFilter) }}
+        {{ hiddenInput('q', searchQuery) }}
+        {{ hiddenInput('tab', 'mapping') }}
+
+        <div class="km-map-actions">
+            <div>
+                <label for="km-batch-action">Batch action</label>
+                <div class="select">
+                    <select id="km-batch-action" name="batchAction">
+                        <option value="accept">Accept selected</option>
+                        <option value="needs-review">Mark needs review</option>
+                        <option value="drop">Drop selected</option>
+                        <option value="accept-warnings">Accept warnings explicitly</option>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label for="km-batch-confirmation">Confirmation</label>
+                <input id="km-batch-confirmation" class="text" name="confirmation" placeholder="Required for risky actions">
+                <p class="instructions">Type <code>DROP SELECTED</code> to drop rows or <code>ACCEPT WARNINGS</code> to accept warning/unsupported rows.</p>
+            </div>
+            <div>
+                <label for="km-batch-rationale">Batch rationale</label>
+                <input id="km-batch-rationale" class="text" name="rationale" placeholder="Optional audit note">
+            </div>
+            <button type="submit" class="btn">Apply to selected rows</button>
+        </div>
+    </form>
+
     {% for item in indexedRows %}
         {% set row = item.row %}
         {% set kind = row.kind ?? 'column' %}
+        {% set firstFinding = (row.findings ?? [])|first %}
+        {% set findingSeverity = row.findingSeverity ?? row.severity ?? ((row.status ?? '') in ['warning', 'unsupported'] ? row.status : (firstFinding.severity ?? 'none')) %}
+        {% set findingRationale = row.rationale ?? firstFinding.message ?? firstFinding.reason ?? '' %}
+        {% if kind == 'nodeClass' or kind == 'taxonomy' %}
+            {% set sourceSummary = row.fqcn ?? '' %}
+            {% set targetSummary = ((row.targetSection ?? '') ~ '.' ~ (row.targetEntryType ?? ''))|trim('.') %}
+            {% set handlerSummary = 'section mapping' %}
+        {% elseif kind == 'dataProvider' %}
+            {% set sourceSummary = row.fqcn ?? row.sourceTable ?? '' %}
+            {% set targetSummary = row.target ?? '' %}
+            {% set handlerSummary = 'dataProvider' %}
+        {% elseif kind == 'pagePart' %}
+            {% set sourceSummary = (row.pagePartClass ?? '') ~ ' / ' ~ (row.context ?? '') %}
+            {% set targetSummary = ((row.targetEntryType ?? '') ~ '.' ~ (row.targetMatrixField ?? '') ~ ':' ~ (row.targetBlockType ?? ''))|trim('.:') %}
+            {% set handlerSummary = 'matrix' %}
+        {% else %}
+            {% set sourceSummary = (row.table ?? '') ~ '.' ~ (row.column ?? '') %}
+            {% set targetSummary = ((row.targetEntryType ?? '') ~ '.' ~ (row.targetHandle ?? ''))|trim('.') %}
+            {% set handlerSummary = row.handler ?? '' %}
+        {% endif %}
         <section class="km-map-row">
             <div class="km-map-row__head">
                 <div>
@@ -114,19 +257,36 @@
                     <div class="km-map-muted km-map-code">
                         row #{{ item.index }} · kind: {{ kind }} · status: {{ row.status ?? 'unknown' }}
                     </div>
+                    <div class="km-map-meta">
+                        <div><strong>Source:</strong> <span class="km-map-code">{{ sourceSummary }}</span></div>
+                        <div><strong>Target:</strong> <span class="km-map-code">{{ targetSummary ?: 'not mapped' }}</span></div>
+                        <div><strong>Handler:</strong> <span class="km-map-code">{{ handlerSummary ?: 'none' }}</span></div>
+                        <div><strong>Finding severity:</strong> {{ findingSeverity ?: 'none' }}</div>
+                    </div>
                 </div>
+                <label>
+                    <input type="checkbox" name="selectedRows[]" value="{{ item.index }}" form="km-map-batch">
+                    Select
+                </label>
                 <form method="post" class="km-map-actions">
                     {{ csrfInput() }}
                     {{ actionInput('kunstmaan-migrator/mapping/set-status') }}
                     {{ hiddenInput('rowIndex', item.index) }}
                     {{ hiddenInput('entity', selectedEntity) }}
+                    {{ hiddenInput('filterStatus', statusFilter) }}
+                    {{ hiddenInput('filterKind', kindFilter) }}
+                    {{ hiddenInput('filterFinding', findingFilter) }}
+                    {{ hiddenInput('filterQ', searchQuery) }}
                     <input type="hidden" name="status" value="accepted">
                     <button type="submit" class="btn small submit">Accept</button>
                 </form>
             </div>
 
-            {% if row.rationale ?? '' %}
-                <p class="km-map-muted">{{ row.rationale }}</p>
+            {% if findingSeverity != 'none' or findingRationale %}
+                <div class="km-map-finding km-map-finding--{{ findingSeverity }}">
+                    <strong>{{ findingSeverity == 'none' ? 'Rationale' : findingSeverity|title ~ ' finding' }}:</strong>
+                    {{ findingRationale ?: 'Review this row before editing target controls.' }}
+                </div>
             {% endif %}
 
             <form method="post">
@@ -135,6 +295,10 @@
                 {{ hiddenInput('rowIndex', item.index) }}
                 {{ hiddenInput('kind', kind) }}
                 {{ hiddenInput('entity', selectedEntity) }}
+                {{ hiddenInput('filterStatus', statusFilter) }}
+                {{ hiddenInput('filterKind', kindFilter) }}
+                {{ hiddenInput('filterFinding', findingFilter) }}
+                {{ hiddenInput('filterQ', searchQuery) }}
 
                 {% if kind == 'nodeClass' or kind == 'taxonomy' %}
                     <div class="km-map-grid">
@@ -216,6 +380,10 @@
                 {{ actionInput('kunstmaan-migrator/mapping/set-status') }}
                 {{ hiddenInput('rowIndex', item.index) }}
                 {{ hiddenInput('entity', selectedEntity) }}
+                {{ hiddenInput('filterStatus', statusFilter) }}
+                {{ hiddenInput('filterKind', kindFilter) }}
+                {{ hiddenInput('filterFinding', findingFilter) }}
+                {{ hiddenInput('filterQ', searchQuery) }}
                 <input type="hidden" name="status" value="dropped">
                 <input class="text" name="rationale" placeholder="Drop rationale" value="{{ row.rationale ?? '' }}">
                 <button type="submit" class="btn small">Drop</button>

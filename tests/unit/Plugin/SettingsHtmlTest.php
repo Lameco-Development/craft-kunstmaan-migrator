@@ -14,22 +14,28 @@ use PHPUnit\Framework\TestCase;
  */
 final class SettingsHtmlTest extends TestCase
 {
-    private const TWIG_PATH = __DIR__ . '/../../../src/templates/_settings.twig';
+    private const TWIG_PATH = __DIR__ . '/../../../templates/_settings.twig';
     private const PLUGIN_PATH = __DIR__ . '/../../../src/Plugin.php';
 
-    private const NINE_ESSENTIAL_FIELDS = [
+    private const STABLE_SETTINGS_FIELDS = [
         'legacyDbServer', 'legacyDbPort', 'legacyDbDatabase',
         'legacyDbUser', 'legacyDbPassword', 'anthropicApiKey',
-        'kunstmaanSourcePath', 'mappingPath', 'localeMap',
+        'kunstmaanSourcePath', 'mappingPath', 'localeMap', 'defaultFilters',
+        'joinFkRelations', 'seoEnabled', 'retourEnabled',
+        'allowCpQueueActions', 'allowCpLiveQueueAction',
+        'runRecordRetentionDays', 'artifactRetentionDays',
     ];
 
-    private const FOURTEEN_STRIPPED_FIELDS = [
+    private const STRIPPED_FIELDS = [
         'legacyDbCharset', 'legacyDbTablePrefix',
         'llmModel', 'llmTimeout', 'llmInterChunkDelay',
         'defaultEntities', 'defaultLocales', 'defaultSince',
         'defaultMaxPerEntity', 'dryRunDefault',
         'verifyCountTolerance', 'verifyUrlDiffThreshold',
         'seoTableName', 'redirectsTableName',
+        'defaultEntryType', 'defaultBlockType',
+        'proposeLayout', 'proposeProviders',
+        'genericContentBlockOverrides', 'relationMirrorRules',
     ];
 
     public function testFragmentShapeHasNoExtends(): void
@@ -43,56 +49,69 @@ final class SettingsHtmlTest extends TestCase
         );
     }
 
-    public function testBothSecretsUsePasswordField(): void
+    public function testSecretsUseMaskedCpFields(): void
     {
         $body = file_get_contents(self::TWIG_PATH);
-        // G-03 fix per D-19: both legacyDbPassword and anthropicApiKey must use forms.passwordField.
-        self::assertGreaterThanOrEqual(
-            2,
-            substr_count($body, 'forms.passwordField'),
-            'G-03 fix invariant: both secret fields must use forms.passwordField macro.',
-        );
-        // Each of the two specific id values must appear within a passwordField block.
+        // G-03 fix per D-19: legacyDbPassword must use the passwordField macro.
         self::assertMatchesRegularExpression(
             "/forms\\.passwordField\\(\\{[^}]*id:\\s*'legacyDbPassword'/s",
             $body,
         );
+        // Phase 12 keeps Anthropic display read-only/masked in CP settings.
         self::assertMatchesRegularExpression(
-            "/forms\\.passwordField\\(\\{[^}]*id:\\s*'anthropicApiKey'/s",
+            "/forms\\.textField\\(\\{[^}]*id:\\s*'anthropicApiKey'/s",
             $body,
         );
+        self::assertStringContainsString("name: 'anthropicApiKeyMasked'", $body);
+        self::assertStringContainsString('readonly: true', $body);
+        self::assertStringNotContainsString('value: settings.anthropicApiKey,', $body);
     }
 
-    public function testFourH2GroupsConnectivityMappingAiFallback(): void
+    public function testFiveStableH2Groups(): void
     {
         $body = file_get_contents(self::TWIG_PATH);
-        self::assertSame(4, preg_match_all('/<h2>/', $body), 'expected exactly four <h2> tags');
+        self::assertSame(5, preg_match_all('/<h2>/', $body), 'expected exactly five <h2> tags');
         self::assertStringContainsString("'Connectivity'|t", $body);
         self::assertStringContainsString("'Mapping'|t", $body);
-        self::assertStringContainsString("'AI'|t", $body);
-        self::assertStringContainsString("'Fallback'|t", $body);
+        self::assertStringContainsString("'Execution'|t", $body);
+        self::assertStringContainsString("'Adapters'|t", $body);
+        self::assertStringContainsString("'Retention'|t", $body);
+        self::assertStringNotContainsString("'AI'|t", $body);
+        self::assertStringNotContainsString("'Fallback'|t", $body);
     }
 
-    public function testNineEssentialFieldsPresent(): void
+    public function testSettingsExposeSectionSidebarNavigation(): void
     {
         $body = file_get_contents(self::TWIG_PATH);
-        foreach (self::NINE_ESSENTIAL_FIELDS as $name) {
+        self::assertStringContainsString('km-settings-sidebar', $body);
+        self::assertStringContainsString("aria-label=\"{{ 'Kunstmaan Migrator settings sections'|t('kunstmaan-migrator') }}\"", $body);
+        self::assertStringContainsString('href="#km-settings-{{ section.id }}"', $body);
+        foreach (['connectivity', 'mapping', 'execution', 'adapters', 'retention'] as $section) {
+            self::assertStringContainsString("id: '{$section}'", $body);
+            self::assertStringContainsString("id=\"km-settings-{$section}\"", $body);
+        }
+    }
+
+    public function testStableSettingsFieldsPresent(): void
+    {
+        $body = file_get_contents(self::TWIG_PATH);
+        foreach (self::STABLE_SETTINGS_FIELDS as $name) {
             self::assertStringContainsString(
                 "id: '{$name}'",
                 $body,
-                "essential field {$name} must appear in _settings.twig",
+                "stable field {$name} must appear in _settings.twig",
             );
         }
     }
 
-    public function testFourteenStrippedFieldsAbsent(): void
+    public function testAdvancedAndProjectShapeFieldsAbsent(): void
     {
         $body = file_get_contents(self::TWIG_PATH);
-        foreach (self::FOURTEEN_STRIPPED_FIELDS as $name) {
+        foreach (self::STRIPPED_FIELDS as $name) {
             self::assertStringNotContainsString(
                 "id: '{$name}'",
                 $body,
-                "stripped field {$name} MUST NOT appear in _settings.twig (moved to config/kunstmaan-migrator.example.php per D-15)",
+                "stripped field {$name} MUST NOT appear in _settings.twig (advanced/project-shape settings stay config-only)",
             );
         }
     }
@@ -118,6 +137,8 @@ final class SettingsHtmlTest extends TestCase
     public function testPluginSettingsHtmlPayloadIncludesDropdownOptions(): void
     {
         $body = file_get_contents(self::PLUGIN_PATH);
+        self::assertStringContainsString("\$event->roots['kunstmaan-migrator'] = dirname(__DIR__) . '/templates'", $body);
+        self::assertStringContainsString("'kunstmaan-migrator/_settings.twig'", $body);
         self::assertStringContainsString("'localeOptions' =>", $body);
         self::assertStringContainsString("'siteHandleOptions' =>", $body);
         self::assertStringContainsString('private function resolveLocaleOptions', $body);

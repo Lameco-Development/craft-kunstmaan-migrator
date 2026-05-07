@@ -23,8 +23,9 @@ use yii\base\Component;
  *
  *   `public array $sites` is a legacy-locale → Craft-site-handle map,
  *   populated via Plugin.php fallback-config dict (Plan 07) or the
- *   config file (Plan 09). CQM ships `['nl' => 'default', 'en' => 'en']`;
- *   enreach's design stress test ships a 7-locale map. The loop iterates
+ *   config file (Plan 09). A small bilingual site might use
+ *   `['nl' => 'default', 'en' => 'en']`; a larger multilingual site can use
+ *   any number of locales. The loop iterates
  *   `array_values($this->sites)` (handles only) preserving first-write =
  *   canonical save. Callers supply per-site data keyed by the same handles.
  *
@@ -65,8 +66,7 @@ class EntryMigrationService extends Component
      * Populated by Plugin::init() (Plan 03-14) from LocalePreflight::detect() + Settings::$localeMap.
      * Empty default — saveEntryForSites() throws if accessed while empty.
      *
-     * Example for CQM: `['nl' => 'default', 'en' => 'en']`
-     * Example for enreach: 7-locale map (design stress test).
+     * Example: `['nl' => 'default', 'en' => 'en']`
      *
      * Handle order determines primary-first save ordering — first handle is
      * canonical, others reload-before-save.

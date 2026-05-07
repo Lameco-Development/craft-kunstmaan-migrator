@@ -49,7 +49,7 @@
         "handle": "kunstmaan-migrator",
         "name": "Kunstmaan Migrator",
         "class": "lameco\\kunstmaanmigrator\\Plugin",
-        "schemaVersion": "1.0.0",
+        "schemaVersion": "1.1.0",
         "developer": "Lameco Development"
     },
     "config": {

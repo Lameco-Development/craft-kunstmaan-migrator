@@ -46,6 +46,9 @@ use lameco\kunstmaanmigrator\mapping\CoverageAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingAuditor;
 use lameco\kunstmaanmigrator\mapping\MappingFile;
 use lameco\kunstmaanmigrator\models\Settings;
+use lameco\kunstmaanmigrator\runs\MigrationRunService;
+use lameco\kunstmaanmigrator\safety\MigrationGateService;
+use lameco\kunstmaanmigrator\safety\MigrationSafety;
 use lameco\kunstmaanmigrator\source\BodyScanColumnFinder;
 use lameco\kunstmaanmigrator\source\DetailTableResolver;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
@@ -66,6 +69,10 @@ use lameco\kunstmaanmigrator\verify\CaptureBaselineHtmlService;
 use lameco\kunstmaanmigrator\verify\CountGateService;
 use lameco\kunstmaanmigrator\verify\SnapshotDiffer;
 use lameco\kunstmaanmigrator\verify\SpotCheckUrlFetcher;
+use lameco\kunstmaanmigrator\workflow\AnalyzeWorkflow;
+use lameco\kunstmaanmigrator\workflow\CompileWorkflow;
+use lameco\kunstmaanmigrator\workflow\MigrateWorkflow;
+use lameco\kunstmaanmigrator\workflow\VerifyWorkflow;
 use PDO;
 use yii\base\Event;
 use yii\db\Connection;
@@ -124,12 +131,19 @@ use yii\db\Connection;
  * @property-read SnapshotDiffer $snapshotDiffer
  * @property-read SpotCheckUrlFetcher $spotCheckUrlFetcher
  * @property-read CaptureBaselineHtmlService $captureBaselineHtmlService
+ * @property-read MigrationRunService $migrationRunService
+ * @property-read MigrationSafety $migrationSafety
+ * @property-read MigrationGateService $migrationGateService
+ * @property-read AnalyzeWorkflow $analyzeWorkflow
+ * @property-read CompileWorkflow $compileWorkflow
+ * @property-read MigrateWorkflow $migrateWorkflow
+ * @property-read VerifyWorkflow $verifyWorkflow
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
 {
-    // D-08: v2 declares 1.0.0 (NOT v1.x's 2.0.0).
-    public string $schemaVersion = '1.0.0';
+    // D-08: v2 starts below v1.x's 2.0.0; Phase 12 bumps for run-record migrations.
+    public string $schemaVersion = '1.1.0';
 
     // D-16: enables CP Settings page; placeholder template ships with this plan,
     // real form lives in Phase 4 / CFG-01.
@@ -193,6 +207,14 @@ class Plugin extends BasePlugin
                 'snapshotDiffer'             => SnapshotDiffer::class,
                 'spotCheckUrlFetcher'        => SpotCheckUrlFetcher::class,
                 'captureBaselineHtmlService' => CaptureBaselineHtmlService::class,
+                // Phase 12 additions — CP migration console, run records, safety gates, and queue-ready workflows.
+                'migrationRunService'  => MigrationRunService::class,
+                'migrationSafety'      => MigrationSafety::class,
+                'migrationGateService' => MigrationGateService::class,
+                'analyzeWorkflow'      => AnalyzeWorkflow::class,
+                'compileWorkflow'      => CompileWorkflow::class,
+                'migrateWorkflow'      => MigrateWorkflow::class,
+                'verifyWorkflow'       => VerifyWorkflow::class,
             ],
         ];
     }
@@ -410,6 +432,17 @@ class Plugin extends BasePlugin
 
         // D-57: Settings table-name overrides wired here so adapter services pick them up.
         $settings = $this->getSettings();
+
+        // Phase 12 CP console / queue workflow wiring.
+        // MigrationGateService is consumed by future CP controllers and queue
+        // dispatchers, so it must share the same run repository, mapping file,
+        // settings model, and production safety helper as the rest of the
+        // plugin graph instead of constructing detached fallback instances.
+        $this->migrationGateService->migrationRunService = $this->migrationRunService;
+        $this->migrationGateService->mappingFile = $this->mappingFile;
+        $this->migrationGateService->settings = $settings;
+        $this->migrationGateService->migrationSafety = $this->migrationSafety;
+
         if (is_string($settings->seoTableName) && $settings->seoTableName !== '') {
             $this->seoMigrationService->seoTableName = $settings->seoTableName;
         }

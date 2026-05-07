@@ -9,7 +9,7 @@ use craft\elements\Entry;
 /**
  * Default TaxonomyResolver: name-match lookup against a single Craft section.
  *
- * Generalises the CQM v1.0 `CaseCategoryResolverService` pattern:
+ * Generalises the older per-project category resolver pattern:
  *
  *   1. Lazy-load: on first resolve() / resolveAll(), query
  *      Entry::find()->section($handle)->site('*')->unique()->all()

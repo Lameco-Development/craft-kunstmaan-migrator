@@ -15,6 +15,7 @@ use lameco\kunstmaanmigrator\filter\FilterFactory;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
+use lameco\kunstmaanmigrator\workflow\MigrateWorkflow;
 use Symfony\Component\Yaml\Yaml;
 use Throwable;
 use yii\console\ExitCode;
@@ -111,6 +112,12 @@ class MigrateController extends Controller
      */
     public string|int $verbose = 0;
 
+    /** Queue-batched migrate offset; null preserves the full CLI flow. */
+    public ?int $batchOffset = null;
+
+    /** Queue-batched migrate limit; null preserves the full CLI flow. */
+    public ?int $batchLimit = null;
+
     /** D-67: per-run timestamped log file under storage/migration/. */
     private ?string $logFilePath = null;
     /** @var resource|null */
@@ -191,314 +198,34 @@ class MigrateController extends Controller
             return $gate;
         }
 
-        // D-67: open per-run log BEFORE the first stdout so stage timings and
-        // FAIL emissions can be correlated against the on-disk trail.
-        $this->openLogFile($this->defaultLogPath());
-        $this->logLine('actionIndex started; verbosity=' . $this->verbosityLevel(), 1);
-        $tRunStart = microtime(true);
-
-        $this->stdout("Migrate: extract → transform → load → finalize\n", Console::FG_CYAN);
-
-        $plugin = Plugin::getInstance();
-        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
-        $this->applyNoRelJoinOverride($plugin);
-        $storageDir = Craft::$app->path->getStoragePath() . '/migration';
-        $report = new MigrationReport();
-
-        // Step 1: locale preflight (LOC-02 D-17 hard-fail).
-        $unmapped = $plugin->localePreflight->ensure($filters);
-        if ($unmapped !== null) {
-            $this->stderr(
-                "  FAIL unmapped Kunstmaan locales: " . implode(', ', $unmapped) . "\n",
-                Console::FG_RED,
-            );
-            return ExitCode::CONFIG;
-        }
-        $this->stdout("  OK   locale preflight\n", Console::FG_GREEN);
-
-        // Step 2: load mapping.yaml + coverage gate (MAP-06).
-        $mappingPath = $plugin->mappingFile->resolvePath();
-        if (!is_file($mappingPath)) {
-            $this->stderr(
-                "  FAIL mapping.yaml not found at {$mappingPath} — run analyze first\n",
-                Console::FG_RED,
-            );
-            return ExitCode::CONFIG;
-        }
-        $mapping = $plugin->mappingFile->load($mappingPath);
-        $this->stdout(
-            "  OK   mapping loaded (" . count($mapping['proposals'] ?? []) . " rows) → {$mappingPath}\n",
-            Console::FG_GREEN,
-        );
-        $compiledPreflight = $this->preflightCompiledMapping($mapping, $this->migrateTargetSchema($plugin));
-        if ($compiledPreflight['missing'] !== [] || $compiledPreflight['fatal'] !== []) {
-            $this->stderr(
-                "  FAIL compiled mapping preflight blocked migrate --live\n",
-                Console::FG_RED,
-            );
-            foreach ($compiledPreflight['messages'] as $message) {
-                $this->stderr("  - {$message}\n", Console::FG_RED);
+        $result = (new MigrateWorkflow())->run([
+            'live' => $this->live,
+            'confirm' => $this->confirm,
+            'preloadAssets' => $this->preloadAssets,
+            'force' => $this->force,
+            'entities' => $this->entities,
+            'locales' => $this->locales,
+            'since' => $this->since,
+            'noSeo' => $this->noSeo,
+            'noRetour' => $this->noRetour,
+            'noRelJoin' => $this->noRelJoin,
+            'includeUnreferencedTaxonomies' => $this->includeUnreferencedTaxonomies,
+            'limit' => $this->limit,
+            'onlyId' => $this->onlyId,
+            'verbose' => $this->verbose,
+            'batchOffset' => $this->batchOffset,
+            'batchLimit' => $this->batchLimit,
+        ], function (array $event): void {
+            $stream = (string) ($event['stream'] ?? 'stdout');
+            $message = (string) ($event['message'] ?? '');
+            if ($stream === 'stderr') {
+                $this->stderr($message);
+                return;
             }
-            return ExitCode::CONFIG;
-        }
-        $this->clearFullPipelineArtifacts($storageDir);
-        $opts = new MigrationOptions(
-            dryRun: !$this->live,
-            force: $this->force,
-            skipAssets: false,
-        );
+            $this->stdout($message);
+        });
 
-        // Step 3: extract (writes storage/migration/extracted/<fqcn-slug>/<node-id>.json).
-        $extractProgress = $this->makeExtractProgress();
-        try {
-            $extractReport = $plugin->extractService->run($mapping, $filters, $this->buildExtractOptions(), $extractProgress);
-            $extractCounts = is_array($extractReport) ? $extractReport : iterator_to_array($extractReport);
-        } catch (Throwable $e) {
-            $this->endProgressIfStarted();
-            $this->stderr("  FAIL extract: {$e->getMessage()}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-        $this->endProgressIfStarted();
-        $extractedNodes = (int) ($extractCounts['nodesExtracted'] ?? 0);
-        $this->stdout(
-            "  OK   extract complete ({$extractedNodes} nodes → {$storageDir}/extracted/)\n",
-            Console::FG_GREEN,
-        );
-
-        if ($this->live) {
-            $dependencyExit = $this->migrateMissingPageDependencies($storageDir, $mapping, $filters, $opts, $report);
-            if ($dependencyExit !== ExitCode::OK) {
-                return $dependencyExit;
-            }
-            $extractedNodes = $this->countExtractedFiles($storageDir);
-        }
-
-        // Step 4: transform — stream extracted/*.json through TransformService and persist
-        // each yielded payload to transformed/entries/<fqcn-slug>/<node-id>.json so the
-        // load stage can read by file path (AtomicMigrationService::migrateOneEntry's
-        // verbatim v1 contract takes a file path, not a tuple — Plan 03-12 SUMMARY).
-        $transformedDir = $storageDir . '/transformed/entries';
-        $transformedCount = 0;
-        $this->clearTransformBlockMarker($storageDir);
-        // Use the just-completed extract count as the transform denominator — extract and
-        // transform are 1:1 at the input level (locale fan-out happens in transform's output).
-        $transformProgress = $this->makeTransformProgress($extractedNodes);
-        $hasBlockingTransformRelationFailure = false;
-        try {
-            $extractedStream = $this->streamExtracted($storageDir);
-            foreach ($plugin->transformService->run($extractedStream, $mapping, $filters, $this->buildTransformOptions($report), $transformProgress) as $payload) {
-                if (isset($payload['__report'])) {
-                    $hasBlockingTransformRelationFailure =
-                        $this->mergeTransformReportSentinel($payload, $report)
-                        || $hasBlockingTransformRelationFailure;
-                    continue;
-                }
-                $fqcn = (string) ($payload['stateSource'] ?? '');
-                $nodeId = (int) ($payload['kuma_node_id'] ?? 0);
-                if ($fqcn === '' || $nodeId <= 0) {
-                    continue;
-                }
-                $outDir = $transformedDir . '/' . $this->slugify($fqcn);
-                if (!is_dir($outDir) && !@mkdir($outDir, 0775, true) && !is_dir($outDir)) {
-                    throw new \RuntimeException("Cannot create transformed dir: {$outDir}");
-                }
-                $outFile = $outDir . '/' . $nodeId . '.json';
-                $json = json_encode(
-                    $payload,
-                    JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE,
-                );
-                if ($json === false || file_put_contents($outFile, $json) === false) {
-                    $report->warn("Could not write transformed JSON: {$outFile}");
-                    continue;
-                }
-                $transformedCount++;
-            }
-        } catch (Throwable $e) {
-            $this->endProgressIfStarted();
-            $this->stderr("  FAIL transform: {$e->getMessage()}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-        $this->endProgressIfStarted();
-        $this->stdout(
-            "  OK   transform complete ({$transformedCount} payloads → {$transformedDir})\n",
-            Console::FG_GREEN,
-        );
-
-        if ($hasBlockingTransformRelationFailure) {
-            $this->writeTransformBlockMarker($storageDir, $report);
-        }
-
-        if ($this->live && $hasBlockingTransformRelationFailure) {
-            $this->recordBlockingTransformFailure($report);
-            $this->writeReport($storageDir, $report, $filters, $tRunStart);
-            return $this->reportExitCode($report);
-        }
-
-        // FH-03: --preload-assets ingests the full referenced asset set in one batch
-        // before the per-entry loop. Default JIT materialises inside migrateOneEntry().
-        // Hoisted above the load step so the SEO + Retour bolt-ons (D-55) downstream
-        // can re-use the same MigrationOptions instance without redeclaring.
-        // Step 4.5 (Phase 10): default taxonomy mode is page-rooted and
-        // referenced-only. The full pre-load migrateAll() import runs only when
-        // operators explicitly opt in via CLI/settings; the standalone
-        // migrate/taxonomies sub-action remains the explicit full import path.
-        $settings = $plugin->getSettings();
-        $includeUnreferencedTaxonomies = $this->includeUnreferencedTaxonomies
-            || (bool) $settings->includeUnreferencedTaxonomies;
-        $taxonomyMode = $includeUnreferencedTaxonomies ? 'full' : 'referenced-only';
-        $report->warn('taxonomyMode=' . $taxonomyMode);
-        $this->stdout("  Taxonomy mode: {$taxonomyMode}\n", Console::FG_CYAN);
-        if ($includeUnreferencedTaxonomies) {
-            try {
-                $plugin->taxonomyMigrationService->filters = $filters;
-                $taxonomyReport = $plugin->taxonomyMigrationService->migrateAll($opts);
-            } catch (Throwable $e) {
-                $this->stderr("  FAIL taxonomies: {$e->getMessage()}\n", Console::FG_RED);
-                return ExitCode::UNSPECIFIED_ERROR;
-            }
-            $this->mergeReport($report, $taxonomyReport, 'taxonomies');
-            $this->stdout(sprintf(
-                "  Stage taxonomies: created=%d updated=%d skipped=%d failed=%d\n",
-                (int) ($taxonomyReport->counts['created'] ?? 0),
-                (int) ($taxonomyReport->counts['updated'] ?? 0),
-                (int) ($taxonomyReport->counts['skipped'] ?? 0),
-                (int) ($taxonomyReport->counts['failed']  ?? 0),
-            ), Console::FG_GREEN);
-        }
-
-        // Step 5: load — per-entry atomic write (or dry-run print).
-        if (!$this->live) {
-            $this->stdout(
-                "  WARN load skipped (dry-run; pass --live to write entries)\n",
-                Console::FG_YELLOW,
-            );
-        } else {
-            if ($this->preloadAssets) {
-                try {
-                    $referencedAssetIds = $this->collectReferencedAssetIdsFromPayloadDirectory($transformedDir, $filters);
-                    $plugin->assetMigrationService->ingestReferenced($opts, $filters, $referencedAssetIds);
-                    $this->stdout("  OK   --preload-assets batch complete\n", Console::FG_GREEN);
-                } catch (Throwable $e) {
-                    $this->stderr("  FAIL --preload-assets: {$e->getMessage()}\n", Console::FG_RED);
-                    return ExitCode::UNSPECIFIED_ERROR;
-                }
-            }
-            $loadExit = $this->runLoadFromDisk($transformedDir, $opts, $report, $filters);
-            if ($loadExit !== ExitCode::OK) {
-                return $loadExit;
-            }
-        }
-
-        // Step 6: finalize (CKEditor token resolution pass).
-        if ($this->live) {
-            $finalizeProgress = $this->makeFinalizeProgress();
-            try {
-                $finalizeCounts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
-                $this->endProgressIfStarted();
-                $this->stdout(sprintf(
-                    "  OK   finalize complete (processed=%d rewritten=%d unresolvable=%d)\n",
-                    (int) $finalizeCounts['processed'],
-                    (int) $finalizeCounts['rewritten'],
-                    (int) $finalizeCounts['unresolvable'],
-                ), Console::FG_GREEN);
-                $report->incr('finalize.processed', (int) $finalizeCounts['processed']);
-                $report->incr('finalize.rewritten', (int) $finalizeCounts['rewritten']);
-                $report->incr('finalize.unresolvable', (int) $finalizeCounts['unresolvable']);
-                $this->recordFinalizeUnresolvedGate($report, $finalizeCounts);
-            } catch (Throwable $e) {
-                $this->endProgressIfStarted();
-                $this->stderr(sprintf(
-                    "  FAIL finalize: %s %s @ %s:%d\n",
-                    $e::class,
-                    $e->getMessage() !== '' ? $e->getMessage() : '(no message)',
-                    $e->getFile(),
-                    $e->getLine(),
-                ), Console::FG_RED);
-                return ExitCode::UNSPECIFIED_ERROR;
-            }
-        } else {
-            $this->stdout(
-                "  WARN finalize skipped (dry-run)\n",
-                Console::FG_YELLOW,
-            );
-        }
-
-        // Step 6.5 (D-55): SEO stage — runs AFTER finalize so all entries+assets exist
-        // and kuma_seo image refs resolve via the state map. The service short-circuits
-        // internally with a WARN when SEOmatic is absent (D-56).
-        // Phase 4.1 / D-26: --no-seo bypasses adapter execution per-run with distinct
-        // warn-line copy (different from Settings-disabled and plugin-not-installed).
-        if ($this->live) {
-            if ($filters->noSeo) {
-                $report->warn(self::cliBypassSeoWarnLine());
-                $this->stdout(
-                    "  WARN seo skipped via --no-seo (CLI override)\n",
-                    Console::FG_YELLOW,
-                );
-            } else {
-                $plugin->seoMigrationService->filters = $filters;
-                try {
-                    $seoReport = $plugin->seoMigrationService->migrateAll($opts);
-                } catch (Throwable $e) {
-                    $this->stderr("  FAIL seo: {$e->getMessage()}\n", Console::FG_RED);
-                    return ExitCode::UNSPECIFIED_ERROR;
-                }
-                $this->mergeReport($report, $seoReport, 'seo');
-                $this->stdout(sprintf(
-                    "  Stage seo: created=%d updated=%d skipped=%d failed=%d\n",
-                    (int) ($seoReport->counts['created'] ?? 0),
-                    (int) ($seoReport->counts['updated'] ?? 0),
-                    (int) ($seoReport->counts['skipped'] ?? 0),
-                    (int) ($seoReport->counts['failed'] ?? 0),
-                ), Console::FG_GREEN);
-            }
-        } else {
-            $this->stdout(
-                "  WARN seo skipped (dry-run)\n",
-                Console::FG_YELLOW,
-            );
-        }
-
-        // Step 6.6 (D-55): Retour stage — same shape; service short-circuits when Retour absent.
-        // Phase 4.1 / D-26: --no-retour bypasses adapter execution per-run with distinct copy.
-        if ($this->live) {
-            if ($filters->noRetour) {
-                $report->warn(self::cliBypassRetourWarnLine());
-                $this->stdout(
-                    "  WARN retour skipped via --no-retour (CLI override)\n",
-                    Console::FG_YELLOW,
-                );
-            } else {
-                $plugin->redirectMigrationService->filters = $filters;
-                try {
-                    $retourReport = $plugin->redirectMigrationService->migrateAll($opts);
-                } catch (Throwable $e) {
-                    $this->stderr("  FAIL retour: {$e->getMessage()}\n", Console::FG_RED);
-                    return ExitCode::UNSPECIFIED_ERROR;
-                }
-                $this->mergeReport($report, $retourReport, 'retour');
-                $this->stdout(sprintf(
-                    "  Stage retour: created=%d updated=%d skipped=%d failed=%d\n",
-                    (int) ($retourReport->counts['created'] ?? 0),
-                    (int) ($retourReport->counts['updated'] ?? 0),
-                    (int) ($retourReport->counts['skipped'] ?? 0),
-                    (int) ($retourReport->counts['failed'] ?? 0),
-                ), Console::FG_GREEN);
-            }
-        } else {
-            $this->stdout(
-                "  WARN retour skipped (dry-run)\n",
-                Console::FG_YELLOW,
-            );
-        }
-
-        // Step 7: REPORT.md (D-50 failures + D-52 counts + D-68 three new sections).
-        $this->writeReport($storageDir, $report, $filters, $tRunStart);
-
-        $tRunMs = (int) round((microtime(true) - $tRunStart) * 1000);
-        $this->logLine(sprintf('actionIndex complete in %dms', $tRunMs), 1);
-
-        return $this->reportExitCode($report);
+        return (int) ($result['summary']['exitCode'] ?? ExitCode::UNSPECIFIED_ERROR);
     }
 
     /**

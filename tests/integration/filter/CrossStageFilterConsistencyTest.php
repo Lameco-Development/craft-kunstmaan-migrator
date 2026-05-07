@@ -67,13 +67,13 @@ final class CrossStageFilterConsistencyTest extends TestCase
         self::assertStringContainsString('relationGraph: $this->loadRuntimeRelationGraph()', $migrate);
 
         foreach ([
-            'AnalyzeController.php',
-            'MapController.php',
-            'VerifyController.php',
-        ] as $file) {
-            $source = (string) file_get_contents(__DIR__ . '/../../../src/console/' . $file);
-            self::assertStringContainsString('relationGraphFromArtifact', $source, $file . ' must use the same relationGraph normalizer.');
-            self::assertStringContainsString('relationGraph:', $source, $file . ' must pass normalized graph into FilterFactory::fromCli().');
+            'AnalyzeWorkflow' => 'src/workflow/AnalyzeWorkflow.php',
+            'MapController' => 'src/console/MapController.php',
+            'VerifyWorkflow' => 'src/workflow/VerifyWorkflow.php',
+        ] as $label => $file) {
+            $source = (string) file_get_contents(__DIR__ . '/../../../' . $file);
+            self::assertStringContainsString('relationGraphFromArtifact', $source, $label . ' must use the same relationGraph normalizer.');
+            self::assertStringContainsString('relationGraph:', $source, $label . ' must pass normalized graph into FilterFactory::fromCli().');
         }
     }
 
@@ -141,7 +141,7 @@ final class CrossStageFilterConsistencyTest extends TestCase
     private function sourceFor(string $class): string
     {
         $map = [
-            'MigrateController' => __DIR__ . '/../../../src/console/MigrateController.php',
+            'MigrateController' => __DIR__ . '/../../../src/workflow/MigrateWorkflow.php',
         ];
 
         return (string) file_get_contents($map[$class]);

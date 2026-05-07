@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\unit\load;
 
+use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\SeoMigrationService;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -49,5 +50,38 @@ final class SeoMigrationServiceGateTest extends TestCase
         $rm = new ReflectionMethod(SeoMigrationService::class, 'disabledWarnLine');
         $line = (string) $rm->invoke(null);
         self::assertStringContainsString('SEO adapter disabled', $line);
+    }
+
+    public function testLegacyRefFallbackUsesLocaleMapInsteadOfHardcodedNlEnJoins(): void
+    {
+        $db = new class extends LegacyDbService {
+            public string $sql = '';
+
+            /** @var array<string, mixed> */
+            public array $params = [];
+
+            public function queryOne(string $sql, array $params = []): ?array
+            {
+                $this->sql = $sql;
+                $this->params = $params;
+                return ['class' => 'App\\Entity\\Pages\\ArticlePage', 'ref_id' => 456];
+            }
+        };
+
+        $service = new SeoMigrationService();
+        $service->legacyDb = $db;
+        $service->sites = ['fr' => 'default', 'de' => 'de'];
+
+        $rm = new ReflectionMethod(SeoMigrationService::class, 'resolveLegacyRef');
+        $result = $rm->invoke($service, 'App_Entity_Pages_ArticlePage', '123', null);
+
+        self::assertSame(['App\\Entity\\Pages\\ArticlePage', 456], $result);
+        self::assertSame(123, $db->params[':id'] ?? null);
+        self::assertSame('fr', $db->params[':locale0'] ?? null);
+        self::assertSame('de', $db->params[':locale1'] ?? null);
+        self::assertStringContainsString('nt.lang IN (:locale0, :locale1)', $db->sql);
+        self::assertStringNotContainsString('nt_nl', $db->sql);
+        self::assertStringNotContainsString(':langNl', $db->sql);
+        self::assertStringNotContainsString(':langEn', $db->sql);
     }
 }

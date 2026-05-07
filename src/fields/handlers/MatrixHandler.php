@@ -25,7 +25,7 @@ use RuntimeException;
  *       fields hashes; this method just wraps them in the new1/new2/... shape.
  *
  * Required options (generic path):
- *   itemTable  (string)       — legacy child table name (e.g. 'lameco_websitebundle_client_item')
+ *   itemTable  (string)       — legacy child table name (e.g. '<project_prefix>_client_item')
  *   fkCol      (string)       — FK column in child table back to parent row
  *   blockType  (string)       — target Matrix block type handle
  *
@@ -54,9 +54,9 @@ use RuntimeException;
  * (Plan 04) hands this to EntryMigrationService::threadBlockUidsIntoPageBuilder
  * for UID threading (Pitfall 3). Handlers do NOT write to entries directly.
  *
- * Security: table/column names come from the CQM config file (trusted PHP
- * code per RESEARCH.md §Security Domain); the FK value is parameter-bound
- * in the underlying query. Matrix handler does not introduce any
+ * Security: table/column names come from project config/mapping review
+ * (trusted PHP/YAML inputs); the FK value is parameter-bound in the
+ * underlying query. Matrix handler does not introduce any
  * unserialize() calls — central-unserialize invariant preserved.
  */
 final class MatrixHandler implements FieldHandler

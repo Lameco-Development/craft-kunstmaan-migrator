@@ -8,10 +8,10 @@
  * merge over '*' in that order (Craft's standard `getConfigFromFile()` shape).
  *
  * Values shown are the plugin defaults — copy and edit only what needs to
- * change. The 9 essentials live in the CP Settings page (Phase 4.1 / CFG-05);
- * the 14 advanced fields below are file-only.
+ * change. The essentials live in the CP Settings page; the advanced fields
+ * below are file-only.
  *
- * Phase 4.1 / CFG-05: 14 advanced fields stripped from the CP Settings page
+ * Phase 4.1 / CFG-05: advanced fields stripped from the CP Settings page
  * and documented here as the canonical override surface.
  *
  * @see lameco\kunstmaanmigrator\models\Settings — source of truth for defaults.
@@ -49,6 +49,24 @@ return [
         // `--no-seo` / `--no-retour` on `kunstmaan-migrator/migrate`.
         'seoEnabled'              => true,
         'retourEnabled'           => true,
+
+        // Optional generic rich-text fallback overrides. Usually unnecessary:
+        // analyze/compile introspects Craft Matrix fields and picks the best
+        // rich-text block automatically. Use only when the schema is ambiguous.
+        'genericContentBlockOverrides' => [
+            // 'pageBuilder' => ['blockType' => 'richTextBlock', 'fieldHandle' => 'bodyCopy'],
+        ],
+
+        // Optional relation mirrors. Use when a Craft design stores one
+        // accepted relation in a second presentation field, such as a CTA
+        // Matrix block. This is intentionally project config instead of a
+        // hardcoded compiler heuristic.
+        'relationMirrorRules' => [
+            // [
+            //     'targetField' => 'ctaPanel.primaryContact',
+            //     'sourceField' => 'relatedContacts',
+            // ],
+        ],
     ],
 
     // Per-environment overlays — uncomment and customize as needed.

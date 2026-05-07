@@ -1,0 +1,17 @@
+{% set mapping = mapping ?? {} %}
+{% set indexedRows = mapping.indexedRows ?? [] %}
+{% set selectedEntity = mapping.selectedEntity ?? '' %}
+
+<section class="pane">
+    <h2>Mapping</h2>
+    <p class="km-console-muted">Review canonical mapping.yaml coverage, status filters, unsafe findings, and structured target edits from the Mapping tab.</p>
+
+    {% if not selectedEntity and indexedRows is empty %}
+        <h3>No mapping rows found</h3>
+        <p>Run analyze and compile first, then return here to review mapping coverage.</p>
+    {% elseif indexedRows is empty %}
+        <p>No rows match the current filters. Clear filters to view all mapping rows.</p>
+    {% endif %}
+
+    {% include 'kunstmaan-migrator/_mapping/index' ignore missing with mapping only %}
+</section>

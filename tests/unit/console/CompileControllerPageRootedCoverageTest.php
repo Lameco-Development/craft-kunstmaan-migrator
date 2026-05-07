@@ -76,6 +76,6 @@ final class CompileControllerPageRootedCoverageTest extends TestCase
 
     private function source(): string
     {
-        return (string) file_get_contents(__DIR__ . '/../../../src/console/CompileController.php');
+        return (string) file_get_contents(__DIR__ . '/../../../src/workflow/CompileWorkflow.php');
     }
 }

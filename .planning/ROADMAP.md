@@ -1,6 +1,6 @@
 # Roadmap
 
-11 phases. Coarse granularity. Built greenfield against the v1.x plugin as
+12 phases. Coarse granularity. Built greenfield against the v1.x plugin as
 brownfield reference. Every v1 requirement maps to exactly one phase. v2
 requirements (`NEXT-*`) are deferred to a follow-up milestone.
 
@@ -25,6 +25,7 @@ requirements (`NEXT-*`) are deferred to a follow-up milestone.
 | 9 | Migration Workflow Hardening & Page-rooted Introspection Audit | Close the release-blocking audit gaps before v1.0: make the canonical workflow impossible to run as a successful no-op, preserve compiled mapping blocks across analyze reruns, make scoped runs trustworthy, harden CKEditor unresolved markers and migration failure exits, and critically audit Kunstmaan Page-rooted introspection end-to-end. The audit treats a Kunstmaan Page as the entry point and a Craft Entry as the result: every page-owned relation, asset, page-part, taxonomy/data-provider/leaf entity, SEO/redirect sidecar, and CKEditor reference must be either migrated, intentionally dropped with a visible reason, or explicitly marked out of scope. | PH9-01..20 | 10 criteria below | no |
 | 10 | Generic Migration Rehearsal Gap Closure | Fix the generic release-rehearsal gaps surfaced by the first full CQM staging run: required Matrix block titles, sparse-locale primary saves, invalid section/entry-type routing, taxonomy-before-transform relation resolution, pageBuilder ownership validation, and verify count semantics. The fixes must remain generic across Lameco Kunstmaan sites and must be validated by a clean rerun path. | PH10-01..08 (to be refined in planning) | 8 criteria below | no |
 | 11 | Dual Schema Walkers & LLM-first Mapping | Replace ad-hoc heuristic expansion with explicit Kunstmaan and Craft graph walkers. The Kunstmaan walker starts at `Entity\Pages`, walks direct properties, assets, relations, pageparts, and pagepart relations; the Craft walker starts at candidate entry types and walks fields, Matrix blocks, nested fields, Entries/Assets targets, and validation constraints. Mapping then compares two persisted graphs (`kunstmaan-schema.json` / `craft-schema.json`) so the LLM can make generic mapping decisions before deterministic compile/load enforcement. | PH11-01..10 (to be refined in planning) | 10 criteria below | no |
+| 12 | CP Migration Console & Queue Workflow | Add a Control Panel operator cockpit for readiness, insights, run records, queue-backed safe actions, and guarded dry-run execution while keeping CLI execution canonical and live migration heavily gated until queue/retry safety is proven. | TBD | TBD | yes |
 
 ### Phase 1: Foundation & Connectivity
 
@@ -459,6 +460,25 @@ Plans:
 - [x] `11-05-PLAN.md` — compile/audit graph compatibility and relation intent validation — completed.
 - [x] `11-06-PLAN.md` — promoted/shared relation target extract/transform/load support — completed.
 - [x] `11-07-PLAN.md` — graph-backed relation reporting and scoped NewsPage/HomePage rehearsal — completed.
+
+### Phase 12: CP Migration Console & Queue Workflow
+
+**Goal:** Add a Craft Control Panel operator cockpit for readiness, insights, run records, queue-backed safe actions, and guarded dry-run/live execution while keeping CLI execution canonical and safety gates strict.
+**Requirements**: Phase 12 context decisions D-01..D-25
+**Depends on:** Phase 11
+**Plans:** 10 plans
+
+Plans:
+- [x] `12-01-PLAN.md` — Run records and file-backed artifacts — completed.
+- [x] `12-02-PLAN.md` — Analyze and compile workflow extraction — completed.
+- [x] `12-03-PLAN.md` — Migrate and verify workflow extraction — completed.
+- [x] `12-04-PLAN.md` — Mapping review UX filters, visible findings, and safe batch actions — completed.
+- [x] `12-05-PLAN.md` — Stable CP settings boundary for queue/live allowance, retention, adapters, default filters, and config-only project-shape hints — completed.
+- [x] `12-06-PLAN.md` — Safety and live gates for CP/job production guards, readiness, dry-run, compile, analyze, and strict live gate contracts — completed.
+- [x] `12-07-PLAN.md` — Plugin wiring for Phase 12 run, safety, gate, and workflow service components while preserving Utility-only CP registration — completed.
+- [x] `12-08-PLAN.md` — Queue jobs for serialization-safe analyze/compile/verify stages plus staged dry-run/live migration batches with job production re-checks and run-record progress/chaining — completed.
+- [x] `12-09-PLAN.md` — CP controller and Utility shell with migration console view model plus admin-only queue actions for analyze/compile/verify/dry-run/live dispatch — completed.
+- [x] `12-10-PLAN.md` — CP-native tabbed console templates for readiness, analyze, mapping, compile, runs, reports, and Danger Zone with exact UI-SPEC copy, queue forms, gated live controls, and disabled/deferred reset/cleanup panels — completed.
 
 ---
 

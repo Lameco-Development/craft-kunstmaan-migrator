@@ -13,6 +13,7 @@ use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\verify\CountGateService;
+use lameco\kunstmaanmigrator\workflow\VerifyWorkflow;
 use Throwable;
 use yii\console\ExitCode;
 
@@ -104,236 +105,30 @@ class VerifyController extends Controller
             return $gate;
         }
 
-        $plugin = Plugin::getInstance();
-
-        // ROADMAP criterion 5: parse filter flags. Mirrors AnalyzeController step 2.
-        // Phase 4.1 / VER-04: $filters flows into CountGateService::run() (gate evaluation
-        // is now filter-aware — see CountGateService::isSectionFilteredOut + locale→siteId
-        // scoping).
-        $filters = $this->buildRuntimeFilters($plugin);
-        try {
-            $translatedScope = $this->loadTranslatedScopeForEntityFilters($filters, $plugin);
-        } catch (Throwable $e) {
-            $this->stderr("  FAIL {$e->getMessage()}\n", Console::FG_RED);
-            return ExitCode::CONFIG;
-        }
-
-        $tolerance = $this->countTolerance ?? $plugin->getSettings()->verifyCountTolerance ?? 0.01;
-        $threshold = $this->urlDiffThreshold ?? $plugin->getSettings()->verifyUrlDiffThreshold ?? 0.05;
-
-        $report = [
-            'timestamp'        => gmdate('c'),
-            'tolerance'        => $tolerance,
-            'urlDiffThreshold' => $threshold,
-            'countGate'        => [],
-            'countDomains'     => [],
-            'urlGate'          => [],
-            'pass'             => true,
-        ];
-
-        // ---------------------------------------------------------------
-        // Gate 1 — count match (delegated to CountGateService)
-        // ---------------------------------------------------------------
-        $this->stdout("\n[1/2] Count-match gate (tolerance: " . ($tolerance * 100) . "%)\n", Console::FG_CYAN);
-
-        $baselinePath = $this->baseline ?? Craft::$app->path->getStoragePath() . '/migration/baseline.json';
-        if (!is_file($baselinePath)) {
-            // D-58: missing-baseline semantic — WARN + flip overall pass.
-            $this->stdout("  WARN no-baseline (run verify capture-baseline first): {$baselinePath}\n", Console::FG_YELLOW);
-            $report['countGate'] = [
-                'no-baseline' => ['skip' => true, 'note' => "no-baseline at {$baselinePath}"],
-            ];
-            $report['pass'] = false;
-        } else {
-            $rawBaseline = (string) file_get_contents($baselinePath);
-            $baselineDecoded = json_decode($rawBaseline, true);
-            if (!is_array($baselineDecoded)) {
-                $this->stdout("  WARN no-baseline (could not decode {$baselinePath})\n", Console::FG_YELLOW);
-                $report['countGate'] = [
-                    'no-baseline' => ['skip' => true, 'note' => "decode-failed at {$baselinePath}"],
-                ];
-                $report['pass'] = false;
-            } else {
-                // Phase 10: keep count domains explicit. A pre-migration Craft
-                // baseline is only a Craft baseline/current drift reference; it
-                // is not converted into source migration expectations.
-                $currentSnapshot = $plugin->baselineCounterService->capture($filters, $translatedScope);
-                $craftDrift = $plugin->countGateService->compareFlatCounts(
-                    CountGateService::flattenCraftSnapshotCounts($baselineDecoded),
-                    CountGateService::flattenCraftSnapshotCounts($currentSnapshot),
-                    (float) $tolerance,
-                    CountGateService::DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT,
-                    false,
-                );
-                $report['countDomains']['craft-baseline-current-drift'] = [
-                    'label' => CountGateService::DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT,
-                    'blocking' => false,
-                    'gates' => $craftDrift['gates'],
-                ];
-                $this->renderCountDomainToConsole(
-                    CountGateService::DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT,
-                    $craftDrift['gates'],
-                    false,
-                );
-
-                $stateCounts = $plugin->countGateService->migrationCreatedStateCounts();
-                $stateGates = [];
-                foreach ($stateCounts as $key => $actual) {
-                    $stateGates[$key] = [
-                        'domain' => CountGateService::DOMAIN_MIGRATION_CREATED_STATE_COUNTS,
-                        'actual' => $actual,
-                        'blocking' => false,
-                        'note' => 'reported from kunstmaanmigrator_state; no pre-migration baseline comparison',
-                    ];
-                }
-                $report['countDomains']['migration-created-state-counts'] = [
-                    'label' => CountGateService::DOMAIN_MIGRATION_CREATED_STATE_COUNTS,
-                    'blocking' => false,
-                    'gates' => $stateGates,
-                ];
-                $this->renderCountDomainToConsole(
-                    CountGateService::DOMAIN_MIGRATION_CREATED_STATE_COUNTS,
-                    $stateGates,
-                    false,
-                );
-
-                $sourceExpectedCounts = $this->sourceParityExpectedCounts($baselineDecoded);
-                if ($sourceExpectedCounts === []) {
-                    $sourceGates = [
-                        'source-parity:unavailable' => [
-                            'domain' => CountGateService::DOMAIN_SOURCE_TRANSFORMED_PARITY,
-                            'skip' => true,
-                            'note' => 'no source-derived expected counts found in baseline/source artifact',
-                            'blocking' => false,
-                        ],
-                    ];
-                    $sourcePass = true;
-                } else {
-                    $sourceResult = $plugin->countGateService->run($sourceExpectedCounts, (float) $tolerance, $filters, $translatedScope);
-                    $sourceGates = $sourceResult['gates'];
-                    $sourcePass = (bool) $sourceResult['pass'];
-                    if (!$sourcePass) {
-                        $report['pass'] = false;
-                    }
-                }
-                $report['countDomains']['source-transformed-parity'] = [
-                    'label' => CountGateService::DOMAIN_SOURCE_TRANSFORMED_PARITY,
-                    'blocking' => true,
-                    'gates' => $sourceGates,
-                    'pass' => $sourcePass,
-                ];
-                $report['countGate'] = $sourceGates;
-                $this->renderCountDomainToConsole(
-                    CountGateService::DOMAIN_SOURCE_TRANSFORMED_PARITY,
-                    $sourceGates,
-                    true,
-                );
+        $result = (new VerifyWorkflow())->run([
+            'baseline' => $this->baseline,
+            'urlSpotCheck' => $this->urlSpotCheck,
+            'baselineDir' => $this->baselineDir,
+            'countTolerance' => $this->countTolerance,
+            'urlDiffThreshold' => $this->urlDiffThreshold,
+            'entities' => $this->entities,
+            'locales' => $this->locales,
+            'since' => $this->since,
+            'captureBaseline' => false,
+            'captureBaselineHtml' => false,
+            'output' => $this->output,
+            'outputDir' => $this->outputDir,
+        ], function (array $event): void {
+            $stream = (string) ($event['stream'] ?? 'stdout');
+            $message = (string) ($event['message'] ?? '');
+            if ($stream === 'stderr') {
+                $this->stderr($message);
+                return;
             }
-        }
+            $this->stdout($message);
+        });
 
-        // D-58 / D-61: surface optional-plugin SKIP rows when CountGate didn't include them
-        // (operator's baseline didn't carry expected counts for that plugin).
-        if (!isset($report['countGate']['plugins:seomatic'])) {
-            $this->stdout("  SKIP seomatic (plugin not installed or not in baseline)\n", Console::FG_YELLOW);
-            $report['countGate']['plugins:seomatic'] = ['skip' => true, 'note' => 'seomatic plugin not installed or not in baseline'];
-            if (isset($report['countDomains']['source-transformed-parity']['gates'])
-                && is_array($report['countDomains']['source-transformed-parity']['gates'])
-            ) {
-                $report['countDomains']['source-transformed-parity']['gates']['plugins:seomatic'] = $report['countGate']['plugins:seomatic'];
-            }
-        }
-        if (!isset($report['countGate']['plugins:retour'])) {
-            $this->stdout("  SKIP retour (plugin not installed or not in baseline)\n", Console::FG_YELLOW);
-            $report['countGate']['plugins:retour'] = ['skip' => true, 'note' => 'retour plugin not installed or not in baseline'];
-            if (isset($report['countDomains']['source-transformed-parity']['gates'])
-                && is_array($report['countDomains']['source-transformed-parity']['gates'])
-            ) {
-                $report['countDomains']['source-transformed-parity']['gates']['plugins:retour'] = $report['countGate']['plugins:retour'];
-            }
-        }
-
-        // ---------------------------------------------------------------
-        // Gate 2 — URL HTML diff against baseline (B1 fix in SpotCheckUrlFetcher)
-        // ---------------------------------------------------------------
-        $this->stdout("\n[2/2] URL diff gate (threshold: " . ($threshold * 100) . "%)\n", Console::FG_CYAN);
-
-        $urlListPath = $this->urlSpotCheck ?? Craft::$app->path->getStoragePath() . '/migration/spot-check-urls.txt';
-        $baselineDir = $this->baselineDir   ?? Craft::$app->path->getStoragePath() . '/migration/baseline';
-
-        if (!is_file($urlListPath)) {
-            $this->stdout("  WARN URL list missing: {$urlListPath}\n", Console::FG_YELLOW);
-        } else {
-            $fetcher = $plugin->spotCheckUrlFetcher;
-            $lines = (array) file($urlListPath);
-            $urls = array_filter(
-                array_map('trim', $lines),
-                static fn(string $l): bool => $l !== '' && !str_starts_with($l, '#'),
-            );
-
-            foreach ($urls as $url) {
-                try {
-                    $currentHtml = $fetcher->fetchAndNormalize($url);
-                    $slug = $this->urlToSlug($url);
-                    $localBaseline = $baselineDir . '/' . $slug . '.html';
-                    if (!is_file($localBaseline)) {
-                        $report['urlGate'][$url] = [
-                            'status' => 'no-baseline',
-                            'bytes'  => strlen($currentHtml),
-                        ];
-                        $report['pass'] = false;
-                        $this->stdout(
-                            "  WARN {$url} — no baseline at {$localBaseline} (run verify capture-baseline-html first)\n",
-                            Console::FG_YELLOW,
-                        );
-                        continue;
-                    }
-                    $baselineHtml = (string) file_get_contents($localBaseline);
-
-                    // B1 — real diff against the baseline (logic lives in SpotCheckUrlFetcher per Plan 04-03).
-                    $diffResult = $fetcher->diff($currentHtml, $baselineHtml);
-                    $diffLength = strlen($diffResult);
-                    $diffRatio  = strlen($currentHtml) > 0
-                        ? $diffLength / strlen($currentHtml)
-                        : ($diffLength > 0 ? 1.0 : 0.0);
-
-                    $pass = $diffRatio <= $threshold;
-                    $report['urlGate'][$url] = [
-                        'status'    => $pass ? 'pass' : 'fail',
-                        'diffRatio' => $diffRatio,
-                        'diffBytes' => $diffLength,
-                    ];
-                    if (!$pass) {
-                        $report['pass'] = false;
-                    }
-                    $this->stdout(sprintf(
-                        "  %s %s (diff=%.3f%%)\n",
-                        $pass ? 'PASS' : 'FAIL',
-                        $url,
-                        $diffRatio * 100,
-                    ), $pass ? Console::FG_GREEN : Console::FG_RED);
-                } catch (Throwable $e) {
-                    $report['urlGate'][$url] = [
-                        'status' => 'error',
-                        'error'  => $e->getMessage(),
-                    ];
-                    $report['pass'] = false;
-                    $this->stdout("  FAIL {$url}: {$e->getMessage()}\n", Console::FG_RED);
-                }
-            }
-        }
-
-        // ---------------------------------------------------------------
-        // Emit report (D-61 markdown-only; Phase 2 / D-07 atomic write)
-        // ---------------------------------------------------------------
-        $reportPath = Craft::$app->path->getStoragePath() . '/migration/VERIFY-' . gmdate('Y-m-d--H-i-s') . '.md';
-        $rendered = $this->renderReportMarkdown($report);
-        if (!$plugin->mappingFile->writeAtomic($reportPath, $rendered)) {
-            $this->stderr("  FAIL could not write {$reportPath}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-        $this->stdout("\nReport: {$reportPath}\n", $report['pass'] ? Console::FG_GREEN : Console::FG_RED);
-
-        return $report['pass'] ? ExitCode::OK : ExitCode::UNSPECIFIED_ERROR;
+        return (int) ($result['summary']['exitCode'] ?? ExitCode::UNSPECIFIED_ERROR);
     }
 
     /**
@@ -423,31 +218,31 @@ class VerifyController extends Controller
         if (($gate = $this->enforceNeverProduction()) !== null) {
             return $gate;
         }
-        $this->stdout("Verify (capture-baseline): light counts → baseline.json\n", Console::FG_CYAN);
 
-        $plugin = Plugin::getInstance();
+        $result = (new VerifyWorkflow())->run([
+            'baseline' => $this->baseline,
+            'urlSpotCheck' => $this->urlSpotCheck,
+            'baselineDir' => $this->baselineDir,
+            'countTolerance' => $this->countTolerance,
+            'urlDiffThreshold' => $this->urlDiffThreshold,
+            'entities' => $this->entities,
+            'locales' => $this->locales,
+            'since' => $this->since,
+            'captureBaseline' => true,
+            'captureBaselineHtml' => false,
+            'output' => $this->output,
+            'outputDir' => $this->outputDir,
+        ], function (array $event): void {
+            $stream = (string) ($event['stream'] ?? 'stdout');
+            $message = (string) ($event['message'] ?? '');
+            if ($stream === 'stderr') {
+                $this->stderr($message);
+                return;
+            }
+            $this->stdout($message);
+        });
 
-        // Phase 4.1 / VER-04: $filters flows into capture() — the snapshot embeds a
-        // filterScope JSON header (entities / locales / since) so a later doctor 8th
-        // check can detect filter-scope drift between capture and verify (D-30).
-        $filters = $this->buildRuntimeFilters($plugin);
-        try {
-            $translatedScope = $this->loadTranslatedScopeForEntityFilters($filters, $plugin);
-        } catch (Throwable $e) {
-            $this->stderr("  FAIL {$e->getMessage()}\n", Console::FG_RED);
-            return ExitCode::CONFIG;
-        }
-        $snapshot = $plugin->baselineCounterService->capture($filters, $translatedScope);
-
-        $path = $this->output ?? Craft::$app->path->getStoragePath() . '/migration/baseline.json';
-        // Phase 2 / D-07 atomic write seam.
-        if (!$plugin->mappingFile->writeAtomicJson($path, $snapshot)) {
-            $this->stderr("  FAIL could not write {$path}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-
-        $this->stdout("  OK   baseline.json written to {$path}\n", Console::FG_GREEN);
-        return ExitCode::OK;
+        return (int) ($result['summary']['exitCode'] ?? ExitCode::UNSPECIFIED_ERROR);
     }
 
     /**
@@ -460,26 +255,31 @@ class VerifyController extends Controller
         if (($gate = $this->enforceNeverProduction()) !== null) {
             return $gate;
         }
-        $this->stdout("Verify (capture-baseline-html): URL spot-check fetches\n", Console::FG_CYAN);
 
-        $plugin = Plugin::getInstance();
+        $result = (new VerifyWorkflow())->run([
+            'baseline' => $this->baseline,
+            'urlSpotCheck' => $this->urlSpotCheck,
+            'baselineDir' => $this->baselineDir,
+            'countTolerance' => $this->countTolerance,
+            'urlDiffThreshold' => $this->urlDiffThreshold,
+            'entities' => $this->entities,
+            'locales' => $this->locales,
+            'since' => $this->since,
+            'captureBaseline' => false,
+            'captureBaselineHtml' => true,
+            'output' => $this->output,
+            'outputDir' => $this->outputDir,
+        ], function (array $event): void {
+            $stream = (string) ($event['stream'] ?? 'stdout');
+            $message = (string) ($event['message'] ?? '');
+            if ($stream === 'stderr') {
+                $this->stderr($message);
+                return;
+            }
+            $this->stdout($message);
+        });
 
-        // Criterion 5: filter flags accepted for CLI uniformity. spot-check-urls.txt is
-        // operator-curated, so URL-list scoping is already operator-controlled; $filters parsed
-        // but unused at v1.0.
-        $filters = $this->buildRuntimeFilters($plugin);
-        unset($filters);
-
-        $urlList = $this->urlSpotCheck ?? Craft::$app->path->getStoragePath() . '/migration/spot-check-urls.txt';
-        $outDir  = $this->outputDir   ?? Craft::$app->path->getStoragePath() . '/migration/baseline';
-        try {
-            $count = $plugin->captureBaselineHtmlService->capture($urlList, $outDir);
-        } catch (Throwable $e) {
-            $this->stderr("  FAIL {$e->getMessage()}\n", Console::FG_RED);
-            return ExitCode::UNSPECIFIED_ERROR;
-        }
-        $this->stdout("  OK   {$count} baseline HTML files written to {$outDir}\n", Console::FG_GREEN);
-        return ExitCode::OK;
+        return (int) ($result['summary']['exitCode'] ?? ExitCode::UNSPECIFIED_ERROR);
     }
 
     /**

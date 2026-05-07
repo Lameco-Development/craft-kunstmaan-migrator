@@ -282,13 +282,13 @@ class AssetMigrationService extends Component
                     );
                     // D-08-23b: verbose RCA trace for the residual 0.04% asset
                     // failure. Emits a structured Craft::error line tagged
-                    // `cqm-migrator:asset-failure` so the next rehearsal's
+                    // `kunstmaan-migrator:asset-failure` so the next rehearsal's
                     // run log can be grepped for the exact source row id,
                     // exception class, resolved path context, and full
                     // trace without relying on --verbose.
                     Craft::error(
                         [
-                            'tag' => 'cqm-migrator:asset-failure',
+                            'tag' => 'kunstmaan-migrator:asset-failure',
                             'kuma_media_id' => $row['id'] ?? null,
                             'location' => $row['location'] ?? null,
                             'file_name' => $row['file_name'] ?? null,
