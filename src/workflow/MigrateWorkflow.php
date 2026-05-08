@@ -1825,6 +1825,69 @@ class MigrateWorkflow extends Component
      * preserved by transform/load and are safe preload inputs.
      *
      * @return list<int>
+     * Compute a tree depth per transformed-payload file using
+     * `kuma_node_id` / `kuma_parent_id`. Roots (parents missing from the
+     * file set, including the implicit Kunstmaan root with id 1 that's not
+     * itself migrated) are depth 0; children of roots are depth 1; etc.
+     * Used to sort the load queue so parents save before their children
+     * within a single migrate run, eliminating most need for the
+     * end-of-load hierarchy fix-up pass.
+     *
+     * @param  list<string> $files
+     * @return array<string, int>  jsonPath → depth
+     */
+    private function computeHierarchyDepths(array $files): array
+    {
+        $nodeIdToFile = [];
+        $parentByNodeId = [];
+        foreach ($files as $jsonPath) {
+            $raw = @file_get_contents($jsonPath);
+            if ($raw === false) {
+                continue;
+            }
+            $payload = json_decode($raw, true);
+            if (!is_array($payload)) {
+                continue;
+            }
+            $nodeId = (int) ($payload['kuma_node_id'] ?? 0);
+            if ($nodeId <= 0) {
+                continue;
+            }
+            $nodeIdToFile[$nodeId] = $jsonPath;
+            $parentByNodeId[$nodeId] = (int) ($payload['kuma_parent_id'] ?? 0);
+        }
+
+        $depthByNode = [];
+        $resolveDepth = function (int $nodeId, array $stack = []) use (
+            $parentByNodeId,
+            &$depthByNode,
+            &$resolveDepth,
+        ): int {
+            if (isset($depthByNode[$nodeId])) {
+                return $depthByNode[$nodeId];
+            }
+            if (in_array($nodeId, $stack, true)) {
+                // Defensive: cycle in the source data — treat as root so we
+                // don't recurse forever. Should never happen with kuma_nodes.
+                return $depthByNode[$nodeId] = 0;
+            }
+            $parentId = $parentByNodeId[$nodeId] ?? 0;
+            if ($parentId <= 0 || !isset($parentByNodeId[$parentId])) {
+                // Parent isn't in the migrated file set — treat node as root.
+                return $depthByNode[$nodeId] = 0;
+            }
+            $stack[] = $nodeId;
+            return $depthByNode[$nodeId] = 1 + $resolveDepth($parentId, $stack);
+        };
+
+        $depthByFile = [];
+        foreach ($nodeIdToFile as $nodeId => $jsonPath) {
+            $depthByFile[$jsonPath] = $resolveDepth($nodeId);
+        }
+        return $depthByFile;
+    }
+
+    /**
      */
     private function collectReferencedAssetIdsFromPayloadDirectory(string $transformedDir, ?MigrationFilters $filters = null): array
     {
@@ -1945,6 +2008,13 @@ class MigrateWorkflow extends Component
     ): int {
         $plugin = Plugin::getInstance();
 
+        // Hierarchy resolution carries process-local state (kuma_node_id →
+        // entry id map and a deferred fix-up queue). Reset it at the start
+        // of every load run so stale entries from a previous in-process
+        // migrate don't leak into the next one (long-running queue workers,
+        // tests).
+        \lameco\kunstmaanmigrator\load\AtomicMigrationService::resetHierarchyState();
+
         // Pre-walk to compute total — operators want [N/total] not just [N].
         // Phase 8.6 — when --entities is set, filter files at the load site so
         // stale `transformed/entries/` payloads from previous runs don't leak
@@ -1958,13 +2028,30 @@ class MigrateWorkflow extends Component
             }
             $files[] = $f;
         }
-        usort($files, fn(string $a, string $b): int => [
-            $this->isPromotedTargetPayloadFile($a) ? 0 : 1,
-            $a,
-        ] <=> [
-            $this->isPromotedTargetPayloadFile($b) ? 0 : 1,
-            $b,
-        ]);
+        // Hierarchy-aware ordering: read each entry payload's
+        // kuma_node_id/kuma_parent_id once, compute tree depth via BFS from
+        // the roots (kuma_parent_id ∉ payload set), then sort:
+        //   1. promotedTarget files (always first — relation prerequisites)
+        //   2. by ascending depth (parents before children)
+        //   3. then by file path for deterministic ordering within a depth
+        // This ensures AtomicMigrationService's parent-id lookup almost
+        // always finds the parent already saved; the fix-up queue at the
+        // end of load is kept as a safety net for cross-section parents and
+        // payloads that don't carry kuma_node_id.
+        $depthByFile = $this->computeHierarchyDepths($files);
+        usort($files, function (string $a, string $b) use ($depthByFile): int {
+            $aPromoted = $this->isPromotedTargetPayloadFile($a) ? 0 : 1;
+            $bPromoted = $this->isPromotedTargetPayloadFile($b) ? 0 : 1;
+            if ($aPromoted !== $bPromoted) {
+                return $aPromoted <=> $bPromoted;
+            }
+            $aDepth = $depthByFile[$a] ?? PHP_INT_MAX;
+            $bDepth = $depthByFile[$b] ?? PHP_INT_MAX;
+            if ($aDepth !== $bDepth) {
+                return $aDepth <=> $bDepth;
+            }
+            return $a <=> $b;
+        });
         $total = count($files);
         $this->lastTotal = $total;
         $offset = max(0, (int) ($this->batchOffset ?? 0));
@@ -2014,6 +2101,48 @@ class MigrateWorkflow extends Component
             $this->stdout(sprintf(
                 "[%d/%d] %s → %s\n",
                 $i, $total, $slug, $verb,
+            ), Console::FG_GREEN);
+        }
+
+        // Hierarchy fix-up pass: stitch in parents that migrated AFTER their
+        // children due to the alphabetical-by-FQCN iteration order. The
+        // AtomicMigrationService static map carries kuma_node_id → entry id
+        // for everything saved this run. Deferred children re-emit
+        // setParentId here.
+        $fixups = \lameco\kunstmaanmigrator\load\AtomicMigrationService::pendingHierarchyFixups();
+        if ($fixups !== []) {
+            $nodeIdMap = \lameco\kunstmaanmigrator\load\AtomicMigrationService::kumaNodeIdMap();
+            $resolved = 0;
+            $unresolved = 0;
+            foreach ($fixups as $fixup) {
+                $parentEntryId = $nodeIdMap[$fixup['kumaParentId']] ?? null;
+                if ($parentEntryId === null) {
+                    $unresolved++;
+                    continue;
+                }
+                try {
+                    $entry = \craft\elements\Entry::find()
+                        ->id($fixup['entryId'])
+                        ->status(null)
+                        ->one();
+                    if ($entry === null) {
+                        $unresolved++;
+                        continue;
+                    }
+                    $entry->setParentId($parentEntryId);
+                    if (\Craft::$app->elements->saveElement($entry, true, false)) {
+                        $resolved++;
+                    } else {
+                        $unresolved++;
+                    }
+                } catch (Throwable) {
+                    $unresolved++;
+                }
+            }
+            $this->stdout(sprintf(
+                "  OK   hierarchy fix-up: %d parent assignments resolved%s\n",
+                $resolved,
+                $unresolved > 0 ? sprintf(' (%d still unresolved)', $unresolved) : '',
             ), Console::FG_GREEN);
         }
 

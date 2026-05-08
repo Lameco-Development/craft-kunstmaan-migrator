@@ -409,8 +409,47 @@ class TransformService extends Component
         $fieldValues = $this->collapseDottedPathTargets($fieldValues, $report);
 
         // 2) PageBuilder — pagePart + dataProvider blocks in Craft 5 native matrix shape.
+        // Multi-matrix routing: when nodeSpec['pageBuilderRouting'] is set
+        // (compiler-emitted from per-row targetMatrixField metadata), bucket
+        // pageParts by context and assign each bucket to its target matrix
+        // field. Falls back to single-matrix `pageBuilderHandle` routing when
+        // the map is absent — keeps operator-curated mappings working.
         $pageBuilderHandle = (string) ($nodeSpec['pageBuilderHandle'] ?? '');
-        if ($pageBuilderHandle !== '') {
+        $pageBuilderRouting = is_array($nodeSpec['pageBuilderRouting'] ?? null)
+            ? array_filter(
+                $nodeSpec['pageBuilderRouting'],
+                static fn(mixed $v): bool => is_string($v) && $v !== '',
+            )
+            : [];
+        if ($pageBuilderRouting !== []) {
+            // pageBuilderRouting: <context> => <matrixFieldHandle>. Iterate
+            // unique target fields preserving their first-seen order, so the
+            // primary (pageBuilderHandle) always lands first.
+            $matrixToContexts = [];
+            foreach ($pageBuilderRouting as $context => $matrixField) {
+                $matrixToContexts[$matrixField][] = (string) $context;
+            }
+            // Ensure pageBuilderHandle comes first in iteration order so its
+            // matrix field is populated even when the routing map has it
+            // bucketed under a non-primary context.
+            if ($pageBuilderHandle !== '' && isset($matrixToContexts[$pageBuilderHandle])) {
+                $primary = [$pageBuilderHandle => $matrixToContexts[$pageBuilderHandle]];
+                unset($matrixToContexts[$pageBuilderHandle]);
+                $matrixToContexts = $primary + $matrixToContexts;
+            }
+            foreach ($matrixToContexts as $matrixField => $contexts) {
+                $blocks = $this->transformPageBuilder(
+                    $pageParts,
+                    $mapping,
+                    $ctx,
+                    $report,
+                    $contexts,
+                );
+                if ($blocks !== []) {
+                    $fieldValues[(string) $matrixField] = $blocks;
+                }
+            }
+        } elseif ($pageBuilderHandle !== '') {
             // pageBuilderContexts: mapping.yaml uses list<string>; preserve trim +
             // empty-filter semantics for all reachable inputs (null => no filter).
             $rawCtxs = $nodeSpec['pageBuilderContexts'] ?? null;

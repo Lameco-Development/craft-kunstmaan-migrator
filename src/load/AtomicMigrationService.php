@@ -45,6 +45,55 @@ class AtomicMigrationService extends Component
     public ?AssetMigrationService $assetMigrationService = null;
 
     /**
+     * Process-local kuma_node_id → Craft entry id map. Populated by every
+     * successful entry save during the migrate run; consumed by hierarchy
+     * resolution to look up a parent's Craft entry id from `kuma_parent_id`.
+     * Cleared at the start of each migrate via resetHierarchyState().
+     *
+     * Stored statically so it survives across `migrateOneEntry()` calls in
+     * the same process — they're invoked one-at-a-time per transformed JSON
+     * by MigrateWorkflow's load loop, but each runs in a fresh transaction
+     * scope where instance state would be lost.
+     *
+     * @var array<int, int>
+     */
+    private static array $kumaNodeIdToEntryId = [];
+
+    /**
+     * Pending fix-up queue: entries whose parent wasn't yet in the map at
+     * save time. Walked once at the end of migrate to set parentId on
+     * children whose parent migrated later in the iteration order.
+     *
+     * Each entry: ['kumaNodeId' => N, 'kumaParentId' => M, 'entryId' => E,
+     *              'sectionId' => S, 'siteIds' => [int]].
+     *
+     * @var list<array{kumaNodeId: int, kumaParentId: int, entryId: int, sectionId: int}>
+     */
+    private static array $hierarchyFixupQueue = [];
+
+    public static function resetHierarchyState(): void
+    {
+        self::$kumaNodeIdToEntryId = [];
+        self::$hierarchyFixupQueue = [];
+    }
+
+    /**
+     * @return list<array{kumaNodeId: int, kumaParentId: int, entryId: int, sectionId: int}>
+     */
+    public static function pendingHierarchyFixups(): array
+    {
+        return self::$hierarchyFixupQueue;
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    public static function kumaNodeIdMap(): array
+    {
+        return self::$kumaNodeIdToEntryId;
+    }
+
+    /**
      * Migrate one entry (atomic unit: JIT assets + entry save + per-entry SEO in Phase 4).
      *
      * Increments $report with 'created', 'updated', or 'skipped' so callers
@@ -136,6 +185,35 @@ class AtomicMigrationService extends Component
         // row per site — each locale points to a different legacy entity id.
         $refIdsByLocale = (array) ($transformed['refIdsByLocale'] ?? []);
 
+        // Hierarchy: resolve `kuma_parent_id` to a Craft entry id via the
+        // process-local kuma-node-id map and inject it into every per-site
+        // payload. Kunstmaan's node tree (`kuma_nodes.parent_id`) maps
+        // cleanly onto Craft's Structure-section parentId. The state table
+        // is keyed by ref_id (the Page entity row id), not kuma_node_id, so
+        // a state lookup can't resolve parents directly — we maintain an
+        // in-memory map populated on every save() during the migrate run.
+        // First-pass entries whose parent hasn't been migrated yet leave
+        // parentId unset and get fixed up by the end-of-load fix-up pass.
+        $kumaNodeId = (int) ($transformed['kuma_node_id'] ?? 0);
+        $kumaParentId = (int) ($transformed['kuma_parent_id'] ?? 0);
+        if ($kumaParentId > 0 && isset(self::$kumaNodeIdToEntryId[$kumaParentId])) {
+            $parentEntryId = self::$kumaNodeIdToEntryId[$kumaParentId];
+            foreach ($perSite as $handle => $siteData) {
+                if (is_array($siteData)) {
+                    $perSite[$handle]['parentId'] = $parentEntryId;
+                }
+            }
+            Craft::info(
+                sprintf('hierarchy: kuma_node=%d → parent kuma_node=%d → entry %d', $kumaNodeId, $kumaParentId, $parentEntryId),
+                __METHOD__,
+            );
+        } elseif ($kumaParentId > 0) {
+            Craft::info(
+                sprintf('hierarchy: kuma_node=%d parent kuma_node=%d NOT YET IN MAP (deferred to fix-up)', $kumaNodeId, $kumaParentId),
+                __METHOD__,
+            );
+        }
+
         // PHASE B — DB TRANSACTION (ETL-04 atomic-always-on): saveEntryForSites
         // + state meta update + (Phase 4) per-entry SEO write.
         Craft::$app->db->transaction(function () use (
@@ -150,6 +228,8 @@ class AtomicMigrationService extends Component
             $refIdsByLocale,
             $report,
             $isPromotedTarget,
+            $kumaNodeId,
+            $kumaParentId,
         ): void {
             $entry = $isPromotedTarget
                 ? $module->entryMigrationService->savePromotedTargetForSites(
@@ -170,6 +250,25 @@ class AtomicMigrationService extends Component
                     $overwrite,
                     $report,
                 );
+
+            // Register kuma_node_id → Craft entry id so subsequent saves
+            // in this run can look up parents. Queue a fix-up if the parent
+            // wasn't migrated yet — finalize() walks the queue at end of
+            // load and stitches in the parents that came alphabetically
+            // after their children.
+            if ($kumaNodeId > 0) {
+                self::$kumaNodeIdToEntryId[$kumaNodeId] = (int) $entry->id;
+                if ($kumaParentId > 0
+                    && !isset(self::$kumaNodeIdToEntryId[$kumaParentId])
+                ) {
+                    self::$hierarchyFixupQueue[] = [
+                        'kumaNodeId' => $kumaNodeId,
+                        'kumaParentId' => $kumaParentId,
+                        'entryId' => (int) $entry->id,
+                        'sectionId' => (int) $section->id,
+                    ];
+                }
+            }
 
             // Merge refIdsByLocale into the state row's meta so the SEO
             // migrator (Phase 4) and any re-runs can resolve per-locale ref_ids

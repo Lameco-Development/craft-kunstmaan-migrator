@@ -79,6 +79,41 @@ class MigrationStateService extends Component implements MigrationStateReader
         return (int) $row['targetId'];
     }
 
+    /**
+     * Find a target id by sourceKey alone, scanning across the supplied
+     * `source` prefix(es). Used for parent-id resolution: a Kunstmaan
+     * `kuma_node_id` is unique across every `App_Entity_Pages_*` source, so
+     * the caller can hand over a single sourceKey and let the lookup pick
+     * whichever Page entity rendered the parent. Returns null when the
+     * parent has not yet been migrated (caller can defer to a fix-up pass).
+     *
+     * @param  list<string> $sourcePrefixes Match any state row whose
+     *                                       `source` column starts with one
+     *                                       of these prefixes.
+     */
+    public function getTargetIdByKey(string $key, array $sourcePrefixes): ?int
+    {
+        $query = (new Query())
+            ->select(['targetId'])
+            ->from($this->table())
+            ->where(['sourceKey' => $key])
+            ->andWhere(['not', ['targetId' => null]]);
+
+        if ($sourcePrefixes !== []) {
+            $orConditions = ['or'];
+            foreach ($sourcePrefixes as $prefix) {
+                $orConditions[] = ['like', 'source', $prefix . '%', false];
+            }
+            $query->andWhere($orConditions);
+        }
+
+        $row = $query->limit(1)->one($this->db());
+        if (!$row || $row['targetId'] === null) {
+            return null;
+        }
+        return (int) $row['targetId'];
+    }
+
     public function getTargetUid(string $source, string $key, ?int $siteId = null): ?string
     {
         $row = $this->get($source, $key, $siteId);

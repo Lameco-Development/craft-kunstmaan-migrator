@@ -654,6 +654,21 @@ final class MappingCompiler extends Component
                 $existingCtxs[] = $context;
                 $nodeClasses[$parentFqcn]['pageBuilderContexts'] = $existingCtxs;
             }
+
+            // Per-context Matrix-field routing for parents that own multiple
+            // Matrix fields (singletonpages with site-languages/tray-column-1/…
+            // and multi-context Pages like HomePage). TransformService falls
+            // back to the single `pageBuilderHandle` when this map is empty,
+            // preserving back-compat with operator-curated mappings.
+            if ($context !== '') {
+                $existingRouting = is_array($nodeClasses[$parentFqcn]['pageBuilderRouting'] ?? null)
+                    ? $nodeClasses[$parentFqcn]['pageBuilderRouting']
+                    : [];
+                if (!isset($existingRouting[$context])) {
+                    $existingRouting[$context] = $matrix;
+                    $nodeClasses[$parentFqcn]['pageBuilderRouting'] = $existingRouting;
+                }
+            }
         }
 
         // Phase 8 / D-07: compile mapping.taxonomies block from accepted kind=taxonomy
