@@ -296,6 +296,32 @@ class AtomicMigrationService extends Component
                 );
             }
 
+            // Parallel state rows for per-locale refIds. State is keyed by
+            // the canonical (primary-locale) refId; relation FKs in source
+            // PageParts (e.g. ServicePagePart.page_id) point at THE LOCALE-
+            // SPECIFIC entity row id, which differs from the canonical.
+            // Without parallel rows, RelationHandler's getTargetId(source,
+            // <localeRefId>) misses and the field stores []. Record a
+            // parallel state row per non-canonical refId pointing at the
+            // same Craft entry — same targetId/targetUid/targetType, just
+            // a different sourceKey for cross-locale lookups. Idempotent
+            // via record()'s upsert.
+            $canonicalSourceId = (int) $sourceId;
+            foreach ($refIdsByLocale as $localeRefId) {
+                $localeRefId = (int) $localeRefId;
+                if ($localeRefId <= 0 || $localeRefId === $canonicalSourceId) {
+                    continue;
+                }
+                $module->migrationStateService->record(
+                    source: $sourceStream,
+                    key: (string) $localeRefId,
+                    targetType: 'entry',
+                    targetId: (int) $entry->id,
+                    targetUid: (string) $entry->uid,
+                    meta: ['canonicalSourceKey' => $canonicalSourceId],
+                );
+            }
+
             // PHASE 4 / ADP-01 reinstatement point: SEOmatic per-entry write
             // goes here. v1 invoked the SEOmatic service from this site with
             // the saved entry id, $opts, and $refIdsByLocale; that call is
