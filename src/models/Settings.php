@@ -49,6 +49,14 @@ class Settings extends Model
      * @var array<string, string>
      */
     public array   $localeMap            = [];
+
+    /**
+     * Craft volume handle assets land in when migrated. Defaults to
+     * `uploads` — the starter-kit convention. Scaffolder-generated targets
+     * use `media` (matches Kunstmaan's `kuma_media` semantics); override
+     * via `config/kunstmaan-migrator.php` to align with the actual handle.
+     */
+    public string  $targetVolume         = 'uploads';
     public ?string $defaultSince         = null;
     public ?int    $defaultMaxPerEntity  = null;
     public bool    $dryRunDefault        = true;
@@ -117,12 +125,45 @@ class Settings extends Model
     // env vars or config/kunstmaan-migrator.php when the legacy DB diverges.
     public string $seoTableName = 'kuma_seo';
     public string $redirectsTableName = 'kuma_redirects';
+    public string $menuTableName = 'kuma_menu';
+    public string $menuItemTableName = 'kuma_menu_item';
+    public string $nodesTableName = 'kuma_nodes';
+    public string $translationTableName = 'kuma_translation';
+
+    /**
+     * Symfony translation domains to migrate from kuma_translation.
+     * Defaults to `['messages']` — the default Symfony domain that
+     * `{% trans %}` calls without explicit `from 'X'` use. Other domains
+     * (validators, security, plugin-specific) are skipped with a warning;
+     * extend this list to include them.
+     *
+     * @var list<string>
+     */
+    public array $translationDomains = ['messages'];
+
+    /**
+     * Slice 2 — NodeMenu pass target nav handle. Defaults match the
+     * scaffolder's slice 7 v0.7 porter rewrite (`headerMain`).
+     */
+    public string $nodeMenuNavHandle = 'headerMain';
+
+    /**
+     * Slice 2 — `kuma_nodes.internal_name` values to exclude from NodeMenu
+     * migration. Defaults to `['settings']` (every Lameco site filters
+     * this from header nav). Operator extends per-project — e.g. dewert
+     * also filters `'dienst'` (legacy ServicesOverviewPage).
+     *
+     * @var list<string>
+     */
+    public array $nodeMenuExcludedInternalNames = ['settings'];
 
     // Phase 4.1 / D-24 — adapter explicit-disable. Defaults to true so existing
     // operators see no behavior change; flip to false to skip the adapter even
-    // when the plugin IS installed. CLI --no-seo / --no-retour bypass per-run.
+    // when the plugin IS installed. CLI --no-seo / --no-retour / --no-nav bypass per-run.
     public bool $seoEnabled = true;
     public bool $retourEnabled = true;
+    public bool $navigationEnabled = true;
+    public bool $translationsEnabled = true;
 
     // Phase 8 / D-14 — AI proposer scope gates. Defaults to true (proposers run);
     // flip to false to disable per Settings persistence. CLI --no-layout / --no-providers
@@ -302,11 +343,12 @@ class Settings extends Model
             // Phase 8 / D-14 — AI proposer scope gates (proposeLayout, proposeProviders).
             // Phase 8.5 / D-24 — joinFkRelations (Doctrine ManyToOne join gate).
             // Phase 12 / Plan 05 — CP queue/action gates.
-            [['seoEnabled', 'retourEnabled', 'proposeLayout', 'proposeProviders', 'joinFkRelations', 'allowCpQueueActions', 'allowCpLiveQueueAction', 'includeUnreferencedTaxonomies'], 'boolean'],
+            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'proposeLayout', 'proposeProviders', 'joinFkRelations', 'allowCpQueueActions', 'allowCpLiveQueueAction', 'includeUnreferencedTaxonomies'], 'boolean'],
             // Phase 4 / D-60 — verify-stage tolerances pinned to [0, 1].
             [['verifyCountTolerance', 'verifyUrlDiffThreshold'], 'number', 'min' => 0, 'max' => 1],
             // Phase 4 / D-57 — adapter source-table overrides.
-            [['seoTableName', 'redirectsTableName'], 'string'],
+            [['seoTableName', 'redirectsTableName', 'menuTableName', 'menuItemTableName', 'nodesTableName', 'nodeMenuNavHandle', 'translationTableName'], 'string'],
+            [['nodeMenuExcludedInternalNames', 'translationDomains'], 'safe'],
         ];
     }
 }

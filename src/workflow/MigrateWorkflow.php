@@ -529,6 +529,23 @@ class MigrateWorkflow extends Component
                 $report->incr('finalize.rewritten', (int) $finalizeCounts['rewritten']);
                 $report->incr('finalize.unresolvable', (int) $finalizeCounts['unresolvable']);
                 $this->recordFinalizeUnresolvedGate($report, $finalizeCounts);
+
+                // Step 6b: placeholder rewrite in NON-CKEditor string fields
+                // (matrix-block PlainText URLs like footer-link
+                // `linkPagePart.url` carrying [NT115] etc.). Same rewriter,
+                // wider scope — top-level + matrix blocks via direct
+                // `elements_sites.content LIKE '[NT'` candidate scan.
+                $placeholderCounts = $plugin->finalizeWalker->walkPlaceholders($filters);
+                $this->stdout(sprintf(
+                    "  OK   finalize placeholders complete (processed=%d rewritten=%d unresolvable=%d)\n",
+                    (int) $placeholderCounts['processed'],
+                    (int) $placeholderCounts['rewritten'],
+                    (int) $placeholderCounts['unresolvable'],
+                ), Console::FG_GREEN);
+                $report->incr('finalize.processed', (int) $placeholderCounts['processed']);
+                $report->incr('finalize.rewritten', (int) $placeholderCounts['rewritten']);
+                $report->incr('finalize.unresolvable', (int) $placeholderCounts['unresolvable']);
+                $this->recordFinalizeUnresolvedGate($report, $placeholderCounts);
             } catch (Throwable $e) {
                 $this->endProgressIfStarted();
                 $this->stderr(sprintf(
@@ -612,6 +629,66 @@ class MigrateWorkflow extends Component
         } else {
             $this->stdout(
                 "  WARN retour skipped (dry-run)\n",
+                Console::FG_YELLOW,
+            );
+        }
+
+        // Step 6.65 — Translation stage. Imports kuma_translation rows
+        // into per-locale site translation PHP catalogs (+ enupal-translate
+        // DB rows when the plugin is installed). Runtime t-filter
+        // (`{{ "key" | t }}`) reads from the files; without these,
+        // every literal key like `service.heading` renders as the key
+        // itself rather than the translated string. Independent of
+        // entry/asset migration; runs after retour for log readability.
+        if ($this->live) {
+            try {
+                $tReport = $plugin->translationMigrationService->migrateAll($opts);
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL translations: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->mergeReport($report, $tReport, 'translations');
+            $this->stdout(sprintf(
+                "  Stage translations: created=%d updated=%d skipped=%d failed=%d\n",
+                (int) ($tReport->counts['created'] ?? 0),
+                (int) ($tReport->counts['updated'] ?? 0),
+                (int) ($tReport->counts['skipped'] ?? 0),
+                (int) ($tReport->counts['failed'] ?? 0),
+            ), Console::FG_GREEN);
+        } else {
+            $this->stdout(
+                "  WARN translations skipped (dry-run)\n",
+                Console::FG_YELLOW,
+            );
+        }
+
+        // Step 6.7 — Navigation stage. Imports kuma_menu + kuma_menu_item
+        // into verbb/navigation nodes. Service short-circuits with WARN
+        // when verbb/navigation is absent or Settings::navigationEnabled
+        // is false. Runs AFTER entry migration (needed for state-map
+        // resolution of page_link nodes) and AFTER retour (independent;
+        // ordering is just for log readability).
+        // No --no-nav CLI flag in v0.1; per-run opt-out is via
+        // Settings::navigationEnabled.
+        if ($this->live) {
+            $plugin->navigationMigrationService->filters = $filters;
+            try {
+                $navReport = $plugin->navigationMigrationService->migrateAll($opts);
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL navigation: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->mergeReport($report, $navReport, 'navigation');
+            $this->stdout(sprintf(
+                "  Stage navigation: created=%d updated=%d skipped=%d failed=%d\n",
+                (int) ($navReport->counts['created'] ?? 0),
+                (int) ($navReport->counts['updated'] ?? 0),
+                (int) ($navReport->counts['skipped'] ?? 0),
+                (int) ($navReport->counts['failed'] ?? 0),
+            ), Console::FG_GREEN);
+        } else {
+            $this->stdout(
+                "  WARN navigation skipped (dry-run)\n",
                 Console::FG_YELLOW,
             );
         }
@@ -1061,6 +1138,12 @@ class MigrateWorkflow extends Component
         $finalizeProgress = $this->makeFinalizeProgress();
         try {
             $counts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
+            // Step 6b — placeholder pass over non-CKEditor string fields.
+            $placeholderCounts = $plugin->finalizeWalker->walkPlaceholders($filters);
+            // Merge counts so the standalone summary reflects both passes.
+            $counts['processed'] = (int) $counts['processed'] + (int) $placeholderCounts['processed'];
+            $counts['rewritten'] = (int) $counts['rewritten'] + (int) $placeholderCounts['rewritten'];
+            $counts['unresolvable'] = (int) $counts['unresolvable'] + (int) $placeholderCounts['unresolvable'];
         } catch (Throwable $e) {
             $this->endProgressIfStarted();
             $this->stderr(sprintf(
