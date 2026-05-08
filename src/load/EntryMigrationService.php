@@ -430,21 +430,32 @@ class EntryMigrationService extends Component
         ?string $stateKey = null,
         ?string $siteHandle = null,
     ): void {
-        $entry->title = (string) ($data['title'] ?? '');
-        // Only overwrite slug when the Transform emitted a non-empty value.
-        // Singleton sections (HomePage, ErrorPage, overview pages) have a
-        // meaningful pre-existing slug that Kunstmaan doesn't expose; blanking
-        // it on --overwrite re-runs breaks URI generation (uriFormat={slug}
+        $fieldValues = (array) ($data['fieldValues'] ?? []);
+
+        // Native title/slug come from the extract per-site `title`/`slug`
+        // (NodeTranslation for Pages). When extract has nothing, fall back to
+        // `fieldValues[title|slug]` — that's where mapping rows whose
+        // `targetHandle` is `title` or `slug` land. The scaffolder marks such
+        // rows with `craft_target: builtin_attribute` (intent), but the
+        // runtime contract is "targetHandle in {title, slug, postDate,
+        // expiryDate, enabled, parentId, authorId} routes to native". The
+        // strip at line ~520 then drops them from the custom-field hash so
+        // they don't double-write.
+        $entry->title = (string) ($this->firstNonEmpty($data['title'] ?? null, $fieldValues['title'] ?? null) ?? '');
+        // Only overwrite slug when a non-empty value is available. Singleton
+        // sections (HomePage, ErrorPage, overview pages) have a meaningful
+        // pre-existing slug that Kunstmaan doesn't expose; blanking it on
+        // --overwrite re-runs breaks URI generation (uriFormat={slug}
         // collapses to empty, collides with root URI, save fails validation).
-        if (!empty($data['slug'])) {
-            $entry->slug = (string) $data['slug'];
+        $resolvedSlug = $this->firstNonEmpty($data['slug'] ?? null, $fieldValues['slug'] ?? null);
+        if ($resolvedSlug !== null) {
+            $entry->slug = (string) $resolvedSlug;
         }
 
         if (!empty($data['parentId'])) {
             $entry->setParentId((int) $data['parentId']);
         }
 
-        $fieldValues = (array) ($data['fieldValues'] ?? []);
         // Thread existing block UIDs into every matrix field payload so re-runs
         // update existing blocks in place instead of duplicating them.
         foreach ($fieldValues as $handle => $payload) {
@@ -756,6 +767,26 @@ class EntryMigrationService extends Component
     private function hasNonEmptyString(mixed $value): bool
     {
         return is_string($value) && trim($value) !== '';
+    }
+
+    /**
+     * Pick the first scalar argument that is neither null nor an empty/whitespace
+     * string. Used to resolve native attributes (title/slug) where extract is
+     * the canonical source but a mapping row pointing `targetHandle` at the
+     * native handle is the legitimate fallback.
+     */
+    private function firstNonEmpty(mixed ...$candidates): mixed
+    {
+        foreach ($candidates as $value) {
+            if ($value === null) {
+                continue;
+            }
+            if (is_string($value) && trim($value) === '') {
+                continue;
+            }
+            return $value;
+        }
+        return null;
     }
 
     private function recordFallback(?MigrationReport $report, string $category, string $message): void

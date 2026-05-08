@@ -183,4 +183,31 @@ final class EntryMigrationServiceTest extends TestCase
         self::assertSame(1, $report->counts['fallback.sparse_locale_primary'] ?? 0);
         self::assertSame(0, $report->counts['failed'] ?? 0);
     }
+
+    /**
+     * Mapping rows whose `targetHandle` is `title` or `slug` (the scaffolder
+     * marks these `craft_target: builtin_attribute`) must reach the native
+     * Entry attribute, not be silently dropped at the fieldValues strip. The
+     * extract-supplied native value still wins when both are present.
+     */
+    public function testFirstNonEmptySkipsNullAndEmptyStringsAndKeepsExtractWinner(): void
+    {
+        $service = new EntryMigrationService();
+        $method = new ReflectionMethod(EntryMigrationService::class, 'firstNonEmpty');
+
+        // Extract supplied a non-empty value → wins.
+        self::assertSame('extract title', $method->invoke($service, 'extract title', 'fieldValues title'));
+
+        // Extract empty/whitespace-only → fall through to fieldValues.
+        self::assertSame('mapping title', $method->invoke($service, '', 'mapping title'));
+        self::assertSame('mapping title', $method->invoke($service, '   ', 'mapping title'));
+        self::assertSame('mapping title', $method->invoke($service, null, 'mapping title'));
+
+        // Both absent → null (caller decides default).
+        self::assertNull($method->invoke($service, null, null));
+        self::assertNull($method->invoke($service, '', ''));
+
+        // Non-string values pass through (e.g. integer ids for parentId/authorId reuse).
+        self::assertSame(42, $method->invoke($service, null, 42));
+    }
 }

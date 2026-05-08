@@ -1172,13 +1172,16 @@ class AnalyzeWorkflow extends Component
                 // kuma_page_part_refs row.
                 $referencedFqcns = [];
                 try {
+                    $refsSchema = new \lameco\kunstmaanmigrator\source\PagePartRefsSchema(
+                        $plugin->legacyDbService,
+                    );
                     $refRows = $plugin->legacyDbService->queryAll(
-                        'SELECT DISTINCT page_part_entityname FROM '
+                        'SELECT DISTINCT ' . $refsSchema->entitySelectAlias() . ' FROM '
                         . \lameco\kunstmaanmigrator\source\KunstmaanCoreTables::PAGE_PART_REFS
-                        . ' WHERE page_part_entityname IS NOT NULL'
+                        . ' WHERE ' . $refsSchema->entityColumn() . ' IS NOT NULL'
                     );
                     foreach ($refRows as $r) {
-                        $referencedFqcns[(string) ($r['page_part_entityname'] ?? '')] = true;
+                        $referencedFqcns[(string) ($r[\lameco\kunstmaanmigrator\source\PagePartRefsSchema::KEY_ENTITY] ?? '')] = true;
                     }
                 } catch (Throwable) {
                     // kuma_page_part_refs unreadable — treat referenced set as empty,
