@@ -730,12 +730,50 @@ class MigrateController extends Controller
             return ExitCode::OK;
         }
 
-        // Live + confirmed: delegate to AssetMigrationService::truncate for assets,
-        // and to MigrationStateService for the state-row deletes. Entry deletes
-        // walk state-table rows via getTargetId per (source, key) pair.
-        // (Wider entry-delete + multi-source iteration loops will land in Plan 04
-        // alongside the verify command; Phase 3 ships the safety-rail surface and
-        // the asset/state primitives.)
+        // Live + confirmed: delete the entries the migrator created, then
+        // its assets, then state rows. Order matters — once state is gone
+        // we lose the targetId pointers, so entries+assets must come first.
+
+        // 1) Walk state's entry rows, hard-delete each Craft entry.
+        $entriesDeleted = 0;
+        $entriesMissed = 0;
+        foreach ($plugin->migrationStateService->entryRows() as $stateRow) {
+            $entryId = (int) ($stateRow['targetId'] ?? 0);
+            if ($entryId === 0) {
+                continue;
+            }
+            try {
+                $entry = \craft\elements\Entry::find()
+                    ->id($entryId)
+                    ->status(null)
+                    ->one();
+                if ($entry === null) {
+                    $entriesMissed++;
+                    continue;
+                }
+                if (Craft::$app->elements->deleteElement($entry, true)) {
+                    $entriesDeleted++;
+                } else {
+                    $entriesMissed++;
+                }
+            } catch (Throwable $e) {
+                $this->stderr(
+                    sprintf("  WARN delete entry id=%d failed: %s\n", $entryId, $e->getMessage()),
+                    Console::FG_YELLOW,
+                );
+                $entriesMissed++;
+            }
+        }
+        $this->stdout(
+            sprintf(
+                "  OK   deleted %d entries%s\n",
+                $entriesDeleted,
+                $entriesMissed > 0 ? sprintf(' (%d already gone or refused)', $entriesMissed) : '',
+            ),
+            Console::FG_GREEN,
+        );
+
+        // 2) Delete the migrator-owned assets.
         $assetsDeleted = 0;
         try {
             $assetsDeleted = $plugin->assetMigrationService->truncate();
@@ -743,9 +781,25 @@ class MigrateController extends Controller
             $this->stderr("  FAIL truncate assets: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
-
         $this->stdout(
-            "  OK   truncated {$assetsDeleted} plugin-owned assets (entries + state-row scoped delete pending Plan 04)\n",
+            "  OK   truncated {$assetsDeleted} plugin-owned assets\n",
+            Console::FG_GREEN,
+        );
+
+        // 3) Wipe the state table — leaves Craft otherwise intact (project
+        // config, sites, fields, layouts all stay). Operator can re-run
+        // the full migrate chain afterward to repopulate cleanly.
+        $statePrefix = $plugin->migrationStateService->statePrefix;
+        try {
+            Craft::$app->db->createCommand()
+                ->delete('{{%' . $statePrefix . '}}')
+                ->execute();
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL wipe state table: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout(
+            "  OK   wiped state table — re-run `migrate --live` to rebuild\n",
             Console::FG_GREEN,
         );
         return ExitCode::OK;
