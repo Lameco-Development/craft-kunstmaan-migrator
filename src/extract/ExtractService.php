@@ -9,6 +9,7 @@ use lameco\kunstmaanmigrator\source\DetailTableResolver;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
 use lameco\kunstmaanmigrator\source\TopologicalOrderer;
 use lameco\kunstmaanmigrator\source\KunstmaanCoreTables;
+use lameco\kunstmaanmigrator\source\PagePartRefsSchema;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use Craft;
 use Throwable;
@@ -820,8 +821,9 @@ class ExtractService extends Component
      */
     private function loadPageParts(int $refId, string $pageClass, ?array $allowedContextClasses = null): array
     {
+        $refsSchema = new PagePartRefsSchema($this->legacyDb);
         $refs = $this->legacyDb->queryAll(
-            'SELECT context, sequencenumber, page_part_id, page_part_entityname'
+            'SELECT context, sequencenumber, ' . $refsSchema->selectAliases()
             . ' FROM ' . KunstmaanCoreTables::PAGE_PART_REFS
             . ' WHERE pageId = :pid AND pageEntityname = :class'
             . ' ORDER BY context, sequencenumber',
@@ -837,10 +839,17 @@ class ExtractService extends Component
             }
             $context = (string) ($ref['context'] ?? '');
             if ($allowedContextClasses !== null) {
-                if (!array_key_exists($context, $allowedContextClasses)) {
+                // Dash- and underscore-separator tolerance: Kunstmaan entity
+                // classes' getPagePartAdminConfigurations() may return either
+                // form (e.g. `site_languages`) while the YAML config and live
+                // DB use the other (`site-languages`). Match on a normalised
+                // key so mismatched forms don't silently filter every row.
+                $allowedNormalised = self::normaliseContextMap($allowedContextClasses);
+                $contextKey = self::normaliseContextKey($context);
+                if (!array_key_exists($contextKey, $allowedNormalised)) {
                     continue;
                 }
-                $allowedClasses = $allowedContextClasses[$context];
+                $allowedClasses = $allowedNormalised[$contextKey];
                 if (is_array($allowedClasses) && $allowedClasses !== [] && !isset($allowedClasses[$partFqcn])) {
                     continue;
                 }
@@ -936,6 +945,48 @@ class ExtractService extends Component
         }
 
         return $fallback !== [] ? $fallback : null;
+    }
+
+    /**
+     * Canonicalise a Kunstmaan pagepart-context name. Dashes and underscores
+     * are interchangeable across the Kunstmaan layers (entity-class methods
+     * declare one form; YAML configs and the kuma_page_part_refs.context
+     * column may store the other) — normalise to a single representation
+     * before comparing.
+     */
+    private static function normaliseContextKey(string $context): string
+    {
+        return strtolower(strtr($context, ['-' => '_']));
+    }
+
+    /**
+     * Re-key an allow-map by canonical context name. Late-binding collisions
+     * between two source forms of the same context (e.g. `tray-column-1` and
+     * `tray_column_1`) merge their allowed-class sets; filter by the union.
+     *
+     * @param  array<string, array<string, true>|null> $map
+     * @return array<string, array<string, true>|null>
+     */
+    private static function normaliseContextMap(array $map): array
+    {
+        $out = [];
+        foreach ($map as $context => $allowed) {
+            if (!is_string($context) || $context === '') {
+                continue;
+            }
+            $key = self::normaliseContextKey($context);
+            if (!array_key_exists($key, $out)) {
+                $out[$key] = $allowed;
+                continue;
+            }
+            // Merge: a null value (no class filter) wins over a class-set.
+            if ($out[$key] === null || $allowed === null) {
+                $out[$key] = null;
+            } elseif (is_array($out[$key]) && is_array($allowed)) {
+                $out[$key] = $out[$key] + $allowed;
+            }
+        }
+        return $out;
     }
 
     /** @return array<string, mixed> */
