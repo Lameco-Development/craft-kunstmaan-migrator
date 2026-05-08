@@ -272,13 +272,27 @@ class AtomicMigrationService extends Component
 
             // Merge refIdsByLocale into the state row's meta so the SEO
             // migrator (Phase 4) and any re-runs can resolve per-locale ref_ids
-            // without re-reading the transformed JSON.
+            // without re-reading the transformed JSON. Also persist
+            // kumaNodeId — RedirectMigrationService's section-move synthesis
+            // needs it (the legacy URL set lives in kuma_node_translations
+            // keyed by node_id) but state.sourceKey carries refId, not
+            // nodeId. Without this, section-move pairs random URL/entry
+            // combinations and produces broken redirects (`/nl/diensten` →
+            // `/personeels-dossier` because state.sourceKey=1 happens to
+            // match many different node ids in the source).
+            $metaPatch = [];
             if ($refIdsByLocale !== []) {
+                $metaPatch['refIdsByLocale'] = $refIdsByLocale;
+            }
+            if ($kumaNodeId > 0) {
+                $metaPatch['kumaNodeId'] = $kumaNodeId;
+            }
+            if ($metaPatch !== []) {
                 $module->migrationStateService->updateMeta(
                     $sourceStream,
                     (string) $sourceId,
                     null,
-                    ['refIdsByLocale' => $refIdsByLocale],
+                    $metaPatch,
                 );
             }
 
