@@ -440,6 +440,54 @@ class MigrateController extends Controller
     }
 
     /**
+     * Sub-action: migrate Kunstmaan FormBundle FormPages into Formie forms.
+     * Standalone for resume / debug — same gating shape as actionRetour.
+     * Service short-circuits with WARN when Formie is absent.
+     */
+    public function actionForms(): int
+    {
+        if (($gate = $this->enforceNeverProduction()) !== null) {
+            return $gate;
+        }
+        $this->openLogFile($this->defaultLogPath());
+        $this->logLine('actionForms started; verbosity=' . $this->verbosityLevel(), 1);
+        $this->stdout(
+            "Migrate (forms): FormPages → Formie forms\n",
+            Console::FG_CYAN,
+        );
+
+        $plugin = Plugin::getInstance();
+
+        if (!$this->live) {
+            $this->stdout(
+                "  WARN forms skipped (dry-run; pass --live to write Formie forms)\n",
+                Console::FG_YELLOW,
+            );
+            return ExitCode::OK;
+        }
+
+        $opts = new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false);
+
+        try {
+            $report = $plugin->formMigrationService->migrateAll($opts);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL forms: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        foreach ($report->warnings as $warning) {
+            $this->stdout("  WARN {$warning}\n", Console::FG_YELLOW);
+        }
+        $this->stdout(sprintf(
+            "  OK   forms complete (created=%d updated=%d skipped=%d failed=%d)\n",
+            (int) ($report->counts['created'] ?? 0),
+            (int) ($report->counts['updated'] ?? 0),
+            (int) ($report->counts['skipped'] ?? 0),
+            (int) ($report->counts['failed'] ?? 0),
+        ), Console::FG_GREEN);
+        return ExitCode::OK;
+    }
+
+    /**
      * Sub-action: migrate Doctrine standalone taxonomy/classifier entities into Craft entries.
      *
      * Phase 8 / D-03 / TAX-08: standalone resume / debug entry point. The

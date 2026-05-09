@@ -693,6 +693,33 @@ class MigrateWorkflow extends Component
             );
         }
 
+        // Step 6.8 — Forms stage. Migrates Kunstmaan FormBundle FormPages
+        // into Formie forms (label/required/options copied; one row per
+        // field; handle derived from FormPage slug + refId for global
+        // uniqueness). Service short-circuits with WARN when Formie isn't
+        // installed.
+        if ($this->live) {
+            try {
+                $formReport = $plugin->formMigrationService->migrateAll($opts);
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL forms: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->mergeReport($report, $formReport, 'forms');
+            $this->stdout(sprintf(
+                "  Stage forms: created=%d updated=%d skipped=%d failed=%d\n",
+                (int) ($formReport->counts['created'] ?? 0),
+                (int) ($formReport->counts['updated'] ?? 0),
+                (int) ($formReport->counts['skipped'] ?? 0),
+                (int) ($formReport->counts['failed'] ?? 0),
+            ), Console::FG_GREEN);
+        } else {
+            $this->stdout(
+                "  WARN forms skipped (dry-run)\n",
+                Console::FG_YELLOW,
+            );
+        }
+
         // Step 7: REPORT.md (D-50 failures + D-52 counts + D-68 three new sections).
         $this->writeReport($storageDir, $report, $filters, $tRunStart);
 

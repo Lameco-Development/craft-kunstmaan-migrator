@@ -35,6 +35,7 @@ use lameco\kunstmaanmigrator\load\AssetPathResolver;
 use lameco\kunstmaanmigrator\load\AtomicMigrationService;
 use lameco\kunstmaanmigrator\load\AttachService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
+use lameco\kunstmaanmigrator\load\FormMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\NavigationMigrationService;
 use lameco\kunstmaanmigrator\load\RedirectMigrationService;
@@ -129,6 +130,7 @@ use yii\db\Connection;
  * @property-read RedirectMigrationService $redirectMigrationService
  * @property-read NavigationMigrationService $navigationMigrationService
  * @property-read TranslationMigrationService $translationMigrationService
+ * @property-read FormMigrationService $formMigrationService
  * @property-read TaxonomyMigrationService $taxonomyMigrationService
  * @property-read BaselineCounterService $baselineCounterService
  * @property-read CountGateService $countGateService
@@ -206,6 +208,8 @@ class Plugin extends BasePlugin
                 'redirectMigrationService'   => RedirectMigrationService::class,
                 'navigationMigrationService' => NavigationMigrationService::class,
                 'translationMigrationService' => TranslationMigrationService::class,
+                // Kunstmaan FormBundle FormPages → Formie forms (PLUGIN-CONTENT-AUDIT priority #1).
+                'formMigrationService' => FormMigrationService::class,
                 // Phase 8 / D-08 — verbatim-ported taxonomy load service (TAX-08).
                 'taxonomyMigrationService'   => TaxonomyMigrationService::class,
                 'baselineCounterService'     => BaselineCounterService::class,
@@ -441,6 +445,13 @@ class Plugin extends BasePlugin
         $this->translationMigrationService->legacyDb     = $this->legacyDbService;
         $this->translationMigrationService->stateService = $this->migrationStateService;
         $this->translationMigrationService->sites        = $this->resolveSitesMap();
+
+        // FormMigrationService — Kunstmaan FormBundle FormPages → Formie
+        // forms. Reads kuma_nodes + kuma_page_part_refs + per-type
+        // kuma_<type>_page_parts tables, builds Formie Form elements via
+        // saveElement(). Skipped silently when Formie isn't installed.
+        $this->formMigrationService->legacyDb     = $this->legacyDbService;
+        $this->formMigrationService->stateService = $this->migrationStateService;
 
         // Phase 8 / D-08 / TAX-08 — TaxonomyMigrationService sibling DI fanout.
         // Service public slots: legacyDb / migrationState / mappingFile (Plan 11).
