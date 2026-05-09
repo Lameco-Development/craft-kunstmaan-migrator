@@ -109,13 +109,13 @@ class LegacyDbService extends Component
      * MAX(id WHERE type='public') fallback only when the FK is NULL (defensive
      * — not observed on live rows in production CQM dumps).
      *
-     * @return list<array{lang: string, online: int, title: string, slug: string, url: string, ref_id: int|null}>
+     * @return list<array{lang: string, online: int, title: string, slug: string, url: string, created: ?string, ref_id: int|null}>
      */
     public function translationsFor(int $nodeId): array
     {
         $nv = KunstmaanCoreTables::NODE_VERSIONS;
         return $this->queryAll(
-            'SELECT t.lang, t.online, t.title, t.slug, t.url, v.ref_id'
+            'SELECT t.lang, t.online, t.title, t.slug, t.url, t.created, v.ref_id'
             . ' FROM ' . KunstmaanCoreTables::NODE_TRANSLATIONS . ' t'
             . ' LEFT JOIN ' . $nv . ' v'
             . '   ON v.id = COALESCE('

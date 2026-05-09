@@ -568,6 +568,30 @@ class EntryMigrationService extends Component
         $postDate = $nativeDate($data['postDate'] ?? $fieldValues['postDate'] ?? null);
         if ($postDate !== null) {
             $entry->postDate = $postDate;
+        } elseif ($entry->postDate === null) {
+            // CRITICAL routability fallback. The migrator sets
+            // `$entry->resaving = true` to suppress per-save revision
+            // creation, but `Entry::maybeSetDefaultAttributes()` (Craft
+            // 5 — Entry.php:3010) short-circuits the auto-postDate when
+            // resaving is true:
+            //
+            //     if ($this->resaving || $this->getIsRevision()) {
+            //         return;  // ← skips the postDate default below
+            //     }
+            //
+            // Net effect without this elseif: every migrated entry has
+            // postDate=NULL → status=STATUS_PENDING → Entry::route()
+            // returns null → UrlManager::_getMatchedElementRoute fails
+            // → 404 on the frontend even though slug/uri are correct.
+            //
+            // Use `now()` rather than leaving the entry pending. The
+            // primary path above (kuma_node_translations.created via
+            // extract → transform) supplies the real source date when
+            // available; this is the safety net for entries where the
+            // source date is unparseable, missing, or the entry was
+            // migrated via a path that doesn't carry NodeTranslation
+            // dates (singletons, AbstractConfigs, promoted targets).
+            $entry->postDate = new \DateTime();
         }
         $expiryDate = $nativeDate($data['expiryDate'] ?? $fieldValues['expiryDate'] ?? null);
         if ($expiryDate !== null) {

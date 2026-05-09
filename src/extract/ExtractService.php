@@ -357,6 +357,17 @@ class ExtractService extends Component
                         'title'      => (string) ($t['title'] ?? ''),
                         'slug'       => (string) ($t['slug'] ?? ''),
                         'url'        => (string) ($t['url'] ?? ''),
+                        // `kuma_node_translations.created` becomes Craft's
+                        // postDate. Without it the entry's status stays
+                        // STATUS_PENDING (Entry::route returns null on
+                        // non-live entries → 404 on the frontend).
+                        // Critical for routability after migrate-and-resave
+                        // because the migrator sets `entry->resaving = true`
+                        // (to suppress revisions), which ALSO short-circuits
+                        // Craft's auto-postDate fallback in
+                        // Entry::maybeSetDefaultAttributes() — see
+                        // Entry.php:3010 (`if ($this->resaving || …) return;`).
+                        'created'    => $t['created'] ?? null,
                         'refId'      => $perLocaleRefId,
                         'detail'     => $detail,
                         'pageParts'  => $pageParts,

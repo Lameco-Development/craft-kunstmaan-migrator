@@ -197,6 +197,13 @@ class TransformService extends Component
                     'online'      => (bool) ($siteData['online'] ?? false),
                     'title'       => (string) ($siteData['title'] ?? ''),
                     'slug'        => (string) ($siteData['slug'] ?? ''),
+                    // Source `kuma_node_translations.created` flows through
+                    // as Craft's `postDate`. EntryMigrationService::applyPerSiteData
+                    // already reads `$data['postDate']` natively. Plumbed
+                    // here (not extract→transform passthrough) so a future
+                    // mapping override could rewrite it without touching
+                    // extract semantics.
+                    'postDate'    => $siteData['created'] ?? null,
                     'fieldValues' => $fieldValues,
                 ];
             }
