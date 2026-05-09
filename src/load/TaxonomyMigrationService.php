@@ -435,6 +435,10 @@ class TaxonomyMigrationService extends Component
             return $existingCraftId;
         }
 
+        // resaving=true short-circuits Entry::_shouldSaveRevision so the
+        // canonical save + per-site Gedmo passes don't bloat each taxonomy
+        // entry with one revision per saveElement. Migration is a re-save.
+        $entry->resaving = true;
         if (!Craft::$app->elements->saveElement($entry, true, true)) {
             throw new RuntimeException(sprintf(
                 'saveElement failed for %s id=%d: %s',
@@ -564,6 +568,7 @@ class TaxonomyMigrationService extends Component
                     $localized->setFieldValues($canonicalFieldValues);
                 }
                 // propagateChanges=false: only update this one site.
+                $localized->resaving = true;
                 if (!Craft::$app->elements->saveElement($localized, true, false)) {
                     throw new RuntimeException($this->localizedTaxonomySaveFailureMessage(
                         $this->fqcnToSlug($fqcn),
@@ -646,6 +651,7 @@ class TaxonomyMigrationService extends Component
                 $localized->setFieldValues($translatedFields);
             }
             // propagateChanges=false: only update this one site.
+            $localized->resaving = true;
             if (!Craft::$app->elements->saveElement($localized, true, false)) {
                 throw new RuntimeException($this->localizedTaxonomySaveFailureMessage(
                     $this->fqcnToSlug($fqcn),

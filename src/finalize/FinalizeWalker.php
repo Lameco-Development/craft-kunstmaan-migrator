@@ -153,6 +153,7 @@ final class FinalizeWalker extends Component
             if ($entryDirty) {
                 // propagate=false discipline: per-site save only — propagation already happened
                 // during the load pass (EntryMigrationService).
+                $entry->resaving = true;
                 $ok = Craft::$app->elements->saveElement($entry, true, false);
                 if (!$ok) {
                     $errors = $entry->getFirstErrors();
@@ -355,6 +356,7 @@ final class FinalizeWalker extends Component
             }
 
             if ($entryDirty) {
+                $element->resaving = true;
                 $ok = Craft::$app->elements->saveElement($element, true, false);
                 if (!$ok) {
                     $errors = $element->getFirstErrors();

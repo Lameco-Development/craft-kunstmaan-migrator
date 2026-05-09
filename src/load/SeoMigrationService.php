@@ -453,6 +453,7 @@ class SeoMigrationService extends Component
                 Craft::$app->sites->setCurrentSite($targetSite);
             }
             try {
+                $entry->resaving = true;
                 $saved = Craft::$app->elements->saveElement($entry, true, false);
             } finally {
                 Craft::$app->sites->setCurrentSite($previousSite);
