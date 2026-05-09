@@ -365,6 +365,22 @@ class EntryMigrationService extends Component
                 continue;
             }
 
+            // Phase 12 / propagationMethod=none cleanup: when the primary
+            // save enables this entry on multiple sites, Craft auto-creates
+            // ghost matrix-block mirrors on the non-primary sites with NULL
+            // content. The secondary save then ADDS new blocks alongside
+            // the ghosts (sortOrders 1-N for ghosts + 1-M for real EN data),
+            // bloating the rendered matrix with empty rows. Hard-delete any
+            // block on this site that isn't in our tracked blockUidMap for
+            // this site BEFORE applyPerSiteData runs setFieldValues — the
+            // tracked set carries real blocks from previous runs (re-runs)
+            // or is empty (first runs), so the wipe targets only ghosts.
+            $this->wipeStaleSecondarySiteBlocks(
+                $localised,
+                (array) ($perSite[$site->handle]['fieldValues'] ?? []),
+                (array) ($blockUidMap[$site->handle] ?? []),
+            );
+
             $this->applyPerSiteData(
                 $localised,
                 $perSite[$site->handle],
@@ -924,6 +940,97 @@ class EntryMigrationService extends Component
             }
         }
         return $map;
+    }
+
+    /**
+     * Phase 12 / propagationMethod=none ghost-block cleanup. Hard-delete
+     * matrix-block elements on the secondary site that aren't in our
+     * tracked sourceRef→blockId map for this site. Background:
+     *
+     * Craft 5's matrix-block save with `propagationMethod: none` creates
+     * empty mirror blocks on every non-primary site enabled on the parent
+     * during the PRIMARY save (EntryMigrationService::saveEntryForSites
+     * sets `setEnabledForSite([1=>true, 2=>true, ...])` before the primary
+     * save). When the secondary site's save then runs with that site's
+     * actual data, Craft adds NEW blocks alongside the ghosts instead of
+     * replacing them — so the EN site's matrix ends up with both the
+     * 5 NL-mirror ghosts (sortOrder 1-5, NULL content) and the 3 real EN
+     * blocks (sortOrder 1-3) co-existing. Without this cleanup, the
+     * rendered EN matrix is a bloated mess.
+     *
+     * Cleanup contract:
+     *   - $perSiteFieldValues: this site's fieldValues map; we only wipe
+     *     blocks for matrix fields the secondary save is about to populate.
+     *     Other matrix fields (which this site's payload doesn't touch)
+     *     are left alone.
+     *   - $trackedBlockIds: blockUidMap[$siteHandle] — sourceRef → blockId
+     *     for blocks this migration tracked as real on this site. On first
+     *     runs the bucket is empty (no real blocks yet); on re-runs it
+     *     carries the previous run's real EN block ids.
+     *
+     * @param array<string, mixed>  $perSiteFieldValues
+     * @param array<string, string> $trackedBlockIds  sourceRef → blockId
+     */
+    private function wipeStaleSecondarySiteBlocks(
+        Entry $localised,
+        array $perSiteFieldValues,
+        array $trackedBlockIds,
+    ): void {
+        $trackedIds = [];
+        foreach ($trackedBlockIds as $blockId) {
+            $intId = (int) $blockId;
+            if ($intId > 0) {
+                $trackedIds[$intId] = true;
+            }
+        }
+
+        foreach ($perSiteFieldValues as $handle => $payload) {
+            if (!is_array($payload) || $payload === [] || !$this->looksLikeMatrixPayload($payload)) {
+                continue;
+            }
+            try {
+                $existing = $localised->getFieldValue((string) $handle);
+            } catch (\Throwable) {
+                continue;
+            }
+            if (!$existing || !method_exists($existing, 'all')) {
+                continue;
+            }
+            // Use ->siteId() to scope the query to this site's blocks.
+            // Without this scope we'd potentially see blocks from other
+            // sites and mistakenly delete them.
+            try {
+                if (method_exists($existing, 'siteId')) {
+                    $existing->siteId($localised->siteId);
+                }
+                if (method_exists($existing, 'status')) {
+                    $existing->status(null);
+                }
+                $blocks = $existing->all();
+            } catch (\Throwable) {
+                continue;
+            }
+            foreach ($blocks as $block) {
+                if (!is_object($block) || empty($block->id)) {
+                    continue;
+                }
+                if (isset($trackedIds[(int) $block->id])) {
+                    continue;
+                }
+                try {
+                    Craft::$app->elements->deleteElement($block, true);
+                } catch (\Throwable $e) {
+                    Craft::warning(
+                        sprintf(
+                            'wipeStaleSecondarySiteBlocks: deleteElement(%d) failed: %s',
+                            (int) $block->id,
+                            $e->getMessage(),
+                        ),
+                        __METHOD__,
+                    );
+                }
+            }
+        }
     }
 
     /**
