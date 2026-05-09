@@ -14,19 +14,30 @@ use yii\base\Component;
  * payloads and pass each during the per-site entry save.
  *
  * Emitted keys (per SEO-COVERAGE-DIAGNOSTIC.md, kunstmaan-craft-scaffolder):
- *   metaGlobalVars (always 6, +1 conditional):
+ *   metaGlobalVars (always 6, +up to 4 conditional):
  *     seoTitle, seoDescription, seoImage, ogTitle, ogDescription, ogImage
- *     robots          ← only when meta_robots is non-empty
- *   metaBundleSettings (always 4, +1 conditional, +2 image):
+ *     robots             ← only when meta_robots is non-empty
+ *     twitterTitle       ← only when twitter_title is non-empty
+ *     twitterDescription ← only when twitter_description is non-empty
+ *     twitterImage       ← only when twitter_image_id resolves
+ *   metaBundleSettings (always 4, +up to 4 conditional, +2 og-image, +2 twitter-image):
  *     seoTitleSource, seoDescriptionSource, ogTitleSource, ogDescriptionSource = 'fromCustom'
- *     robotsSource = 'fromCustom'      ← only when robots is emitted
+ *     twitterTitleSource = 'fromCustom'        ← only when twitterTitle is emitted
+ *     twitterDescriptionSource = 'fromCustom'  ← only when twitterDescription is emitted
  *     seoImageSource = 'fromAsset', seoImageIds, ogImageSource = 'sameAsSeo'
  *                                        ← only when og_image resolves
+ *     twitterImageSource = 'fromAsset', twitterImageIds
+ *                                        ← only when twitter_image_id resolves to a unique-from-og asset
  *
  * Fallback chains:
  *   ogTitle        → og_title ?: meta_title
  *   ogDescription  → og_description ?: meta_description
- *   twitter image  → og_image_id used as fallback for twitter (not yet emitted; see P2 in diagnostic)
+ *   twitter image  → falls back to og_image at SEOmatic render time via the
+ *                    sameAsSeo source default. We only emit twitterImage when
+ *                    the source row has its own override AND it differs from
+ *                    og_image — emitting an identical id would force a
+ *                    redundant content-JSON entry on every page (~85-92% of
+ *                    twitter rows match og per SEO-COVERAGE-DIAGNOSTIC.md).
  *
  * Why robots is conditionally emitted (vs title/desc which are always 'fromCustom'):
  *   - title/desc need explicit 'fromCustom' + '' to prevent SEOmatic from
@@ -49,8 +60,6 @@ use yii\base\Component;
  * twitter_site / twitter_creator / extra_metadata) are intentionally
  * dropped per SEO-COVERAGE-DIAGNOSTIC.md — population is 0–25 rows
  * portfolio-wide or values are unresolved Kunstmaan placeholders.
- * twitter_title / twitter_description / twitter_image_id remain dropped
- * pending P2 (~70 unique twitter override rows on dewert).
  */
 class SeomaticPayloadBuilder extends Component
 {
@@ -71,14 +80,10 @@ class SeomaticPayloadBuilder extends Component
         $metaTitle = $this->str($row, 'meta_title');
         $metaDescription = $this->str($row, 'meta_description');
 
-        // og_image_id and twitter_image_id → numeric Craft asset id via state
+        // og_image_id → numeric Craft asset id via state. twitter_image_id
+        // is resolved separately below in the twitter-overrides block (and
+        // gated on differing from og_image — see comment there).
         $ogImageId = $this->resolveMediaId($row['og_image_id'] ?? null);
-        $twitterImageId = $this->resolveMediaId($row['twitter_image_id'] ?? null);
-
-        // Twitter image falls back to og image
-        if ($twitterImageId === null && $ogImageId !== null) {
-            $twitterImageId = $ogImageId;
-        }
 
         $ogTitle = $this->str($row, 'og_title') ?: $metaTitle;
         $ogDescription = $this->str($row, 'og_description') ?: $metaDescription;
@@ -139,6 +144,44 @@ class SeomaticPayloadBuilder extends Component
             $metaBundleSettings['seoImageSource'] = 'fromAsset';
             $metaBundleSettings['seoImageIds'] = [$ogImageId];
             $metaBundleSettings['ogImageSource'] = 'sameAsSeo';
+        }
+
+        // Twitter overrides — conditional, mirrors the meta_robots pattern.
+        // Only emit when the source row has an explicit value; otherwise let
+        // SEOmatic fall through to its defaults (sameAsSeo for image,
+        // sameAsSeoTwitter for title/description). Emitting a `fromCustom`
+        // toggle with empty value would force-clear the field on the per-site
+        // entry, propagating empty twitter content downstream. Verified
+        // against MetaBundleSettings.php — twitterTitleSource /
+        // twitterDescriptionSource / twitterImageSource / twitterImageIds
+        // exist on the model (unlike the fictional `robotsSource` from the
+        // 58ee7f6 bug fix). Closes P8 / P2 (SEO-COVERAGE-DIAGNOSTIC.md):
+        // ~70 unique twitter overrides per-page on dewert that previously
+        // rendered as og copy at the editor's expense.
+        $twitterTitle = $this->str($row, 'twitter_title');
+        if ($twitterTitle !== '') {
+            $metaGlobalVars['twitterTitle'] = $twitterTitle;
+            $metaBundleSettings['twitterTitleSource'] = 'fromCustom';
+        }
+        $twitterDescription = $this->str($row, 'twitter_description');
+        if ($twitterDescription !== '') {
+            $metaGlobalVars['twitterDescription'] = $twitterDescription;
+            $metaBundleSettings['twitterDescriptionSource'] = 'fromCustom';
+        }
+        // Twitter image is the trickier case. The original code resolved
+        // twitter_image_id INTO `$twitterImageId`, then fell back to
+        // `$ogImageId` when the explicit twitter_image_id was empty — and
+        // then never used the result. The og-fallback was wrong-direction
+        // (twitter falling back to og is what SEOmatic's `sameAsSeo` source
+        // already does at render time). Drop the unused fallback; emit
+        // twitterImage only when the source row has its own twitter image
+        // AND it differs from og_image (avoids ~91% of redundant rows per
+        // SEO-COVERAGE-DIAGNOSTIC.md — the `sameAsSeo` default covers them).
+        $rawTwitterImageId = $this->resolveMediaId($row['twitter_image_id'] ?? null);
+        if ($rawTwitterImageId !== null && $rawTwitterImageId !== $ogImageId) {
+            $metaGlobalVars['twitterImage'] = (string) $rawTwitterImageId;
+            $metaBundleSettings['twitterImageSource'] = 'fromAsset';
+            $metaBundleSettings['twitterImageIds'] = [$rawTwitterImageId];
         }
 
         return [
