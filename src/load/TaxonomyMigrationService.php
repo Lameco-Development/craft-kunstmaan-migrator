@@ -419,6 +419,24 @@ class TaxonomyMigrationService extends Component
         }
 
         if ($title === '') {
+            // Title-mirror heuristic: when the operator's mapping doesn't
+            // route any column to `title`, fall back to a field-value with a
+            // title-like handle. dewert's `App\Entity\Category` is the
+            // canonical case — its source schema has `name` (no `title`),
+            // and the scaffolder routes `name → name` because the Craft
+            // entry type has a `name` field. Without this fallback every
+            // taxonomy entry renders as `[legacy id 1]` in the CP. Operator
+            // can still pin an explicit mapping (`name → title`) and that
+            // path wins above (the explicit-target loop captures `title`
+            // into `$title` directly and skips this branch).
+            foreach (['title', 'name', 'label'] as $candidate) {
+                if (isset($fieldValues[$candidate]) && $fieldValues[$candidate] !== '') {
+                    $title = (string) $fieldValues[$candidate];
+                    break;
+                }
+            }
+        }
+        if ($title === '') {
             $title = sprintf('[legacy id %d]', $legacyId);
         }
         $entry->title = $title;

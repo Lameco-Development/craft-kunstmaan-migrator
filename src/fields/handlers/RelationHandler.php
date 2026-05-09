@@ -340,9 +340,39 @@ final class RelationHandler implements FieldHandler
             }
             if ($targetId !== null) {
                 $out[] = $targetId;
-            } elseif ($isAssetRelation) {
+                continue;
+            }
+            if ($isAssetRelation) {
                 // Deferred token: load-time resolver will materialise and resolve.
                 $out[] = DeferredAssetToken::emit($id);
+                continue;
+            }
+            // Taxonomy JIT materialisation — mirrors the resolveDirect branch.
+            // m2m relations whose target is a Custom (Category, Tag, Author)
+            // hit this when the default `referenced-only` taxonomy mode is
+            // active: the foreign id has never been migrated, so the state
+            // table misses; resolveTaxonomyMiss delegates to
+            // TaxonomyMigrationService::resolveReferenced which materialises
+            // the taxonomy row on demand. Without this branch, every m2m
+            // relation to a Custom silently drops its values at transform
+            // time. (Direct-id m2o relations get this for free via
+            // resolveDirect; join-table m2m needed the same wiring.)
+            //
+            // The synthetic `taxonomyBacked: true` option opts the call in
+            // unconditionally — any state-miss in a join-table m2m IS a
+            // taxonomy candidate by design (m2m to a Page-rooted entity
+            // would have its target entries pre-materialised via the page
+            // migration). resolveTaxonomyMiss handles "unknown taxonomy"
+            // gracefully via TaxonomyMigrationService::findTaxonomyMapping
+            // which returns null + a warning when the source isn't mapped.
+            $resolvedTaxonomyId = $this->resolveTaxonomyMiss(
+                $id,
+                $ctx,
+                $source,
+                $options + ['taxonomyBacked' => true],
+            );
+            if ($resolvedTaxonomyId !== null) {
+                $out[] = $resolvedTaxonomyId;
             }
         }
 
