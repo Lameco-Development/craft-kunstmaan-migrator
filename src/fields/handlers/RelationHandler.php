@@ -139,11 +139,24 @@ final class RelationHandler implements FieldHandler
                 continue;
             }
 
-            // State miss + non-taxonomy. Defer to the load-time fixup pass
-            // unless the caller opted out via `deferEntryRelations: false`
-            // (taxonomyResolver on the resolver context already handled the
-            // explicit-taxonomy case above; the opt-out exists as a safety
-            // valve for callers that prefer the legacy silent-drop).
+            // Taxonomy-backed relations have their own resolver track
+            // (resolveTaxonomyMiss above). When the explicit
+            // `taxonomySource` option is set, the relation IS taxonomy —
+            // a miss here means the taxonomy resolver couldn't reach the
+            // target (already logged via the report). Don't emit a
+            // deferred-entry token: load-time fixup can't reach taxonomy
+            // entries through state.meta.blockIds either, so emitting a
+            // token would just leak a string into the saved relation
+            // payload. Preserve the legacy silent-drop semantics for
+            // taxonomy.
+            if (!empty($options['taxonomySource'])) {
+                continue;
+            }
+
+            // State miss + non-taxonomy. Defer to the load-time fixup
+            // pass unless the caller opted out via
+            // `deferEntryRelations: false` (a safety valve for callers
+            // that prefer the legacy silent-drop).
             $deferEnabled = ($options['deferEntryRelations'] ?? true) !== false;
             if ($deferEnabled && $this->isDeferableEntrySource($source)) {
                 $out[] = DeferredEntryToken::emit($source, $id);
