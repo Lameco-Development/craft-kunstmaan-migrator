@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
+use craft\base\Element;
 use craft\elements\Entry;
 use craft\models\Section;
 use craft\models\Site;
@@ -494,6 +495,19 @@ class EntryMigrationService extends Component
         $resolvedSlug = $this->firstNonEmpty($data['slug'] ?? null, $fieldValues['slug'] ?? null);
         if ($resolvedSlug !== null) {
             $entry->slug = (string) $resolvedSlug;
+        } elseif ($stateSource !== null && self::isHomePageStateSource($stateSource)) {
+            // Kunstmaan HomePage rows have NULL slug/url because they ARE
+            // the site root — `kuma_node_translations` doesn't store a slug
+            // for the lvl=0 homepage. Without this branch, Craft auto-derives
+            // `slug = "home"` from the entry title, and the migrated entry
+            // serves at `/nl/home` instead of `/nl/`.
+            //
+            // `__home__` is Craft's HOMEPAGE_URI marker (Element.php:171). Craft's
+            // UrlManager (UrlManager.php:412) routes `/` to the entry whose URI
+            // is `__home__`, and ElementHelper::normalizeSlug special-cases the
+            // value so the slug survives validation. Works on Structure sections
+            // with `uriFormat: {slug}` — no need to special-case the section.
+            $entry->slug = Element::HOMEPAGE_URI;
         }
 
         if (!empty($data['parentId'])) {
@@ -811,6 +825,23 @@ class EntryMigrationService extends Component
     private function hasNonEmptyString(mixed $value): bool
     {
         return is_string($value) && trim($value) !== '';
+    }
+
+    /**
+     * Recognises a Kunstmaan HomePage state source from its FQCN-derived slug
+     * form (e.g. `App_Entity_Pages_HomePage`). Lameco's portfolio convention
+     * names the homepage entity literally `HomePage` across all 3 sampled
+     * sites (dewert / deklerk / simac); the suffix check is robust against
+     * project-namespace drift.
+     *
+     * Used to special-case the `__home__` slug fallback when source
+     * `kuma_node_translations.slug` is NULL — the homepage IS the site root,
+     * Kunstmaan stores no slug for it, and Craft's title-derived auto-slug
+     * `home` would route the migrated entry to `/nl/home` instead of `/nl/`.
+     */
+    private static function isHomePageStateSource(string $stateSource): bool
+    {
+        return str_ends_with($stateSource, '_HomePage');
     }
 
     /**
