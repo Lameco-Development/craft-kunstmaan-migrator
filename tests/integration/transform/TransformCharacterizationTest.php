@@ -193,7 +193,18 @@ final class TransformCharacterizationTest extends TestCase
         }
 
         self::assertCount(1, $payloads);
-        self::assertSame([], $payloads[0]['perSite']['default']['fieldValues']['category']);
+        // Phase 12: cross-page entry relations that miss state at transform
+        // time emit a `entry:<source>:<id>` deferred token so the load-time
+        // fixup pass (AtomicMigrationService::ingestAndResolveEntryRelations
+        // + MigrateWorkflow::resolveDeferredEntryRelations) can resolve once
+        // state is populated. Pre-Phase-12 this returned []; the new
+        // contract is the token string. This case is NOT taxonomy-backed
+        // (the test sets only `stateSource`, no `taxonomySource`), so the
+        // taxonomy carve-out in resolveDirect doesn't apply.
+        self::assertSame(
+            ['entry:App_Entity_TaxonomyCategory:44'],
+            $payloads[0]['perSite']['default']['fieldValues']['category'],
+        );
     }
 
     /**

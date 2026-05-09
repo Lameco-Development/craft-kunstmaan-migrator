@@ -485,15 +485,41 @@ class RedirectMigrationService extends Component
                 continue;
             }
 
+            // state.sourceKey carries the refId (page-entity row id), NOT
+            // the kuma_node_id. Recover the actual kumaNodeId from meta;
+            // AtomicMigrationService persists it on every entry save
+            // specifically so this path can pair the right source URLs to
+            // the right Craft entry. Without this, every state row whose
+            // sourceKey happens to equal some unrelated node's id pairs the
+            // unrelated node's legacy URL with this entry's URI — visible
+            // as `/nl/diensten` → `/personeels-dossier` after a clean
+            // rebuild (sourceKey=1 hits ~9 different source nodes).
+            $kumaNodeId = $this->kumaNodeIdFromStateMeta($stateRow);
+            if ($kumaNodeId === null) {
+                // Backwards compatibility: pre-meta state rows fell back to
+                // treating sourceKey as the node id. Keep that path so an
+                // operator with an old state table doesn't silently lose
+                // section-move 301s — but log a hint that re-running
+                // migrate will correct the pairings.
+                if (ctype_digit($sourceKey)) {
+                    $kumaNodeId = (int) $sourceKey;
+                } else {
+                    continue;
+                }
+            }
+            if ($kumaNodeId <= 0) {
+                continue;
+            }
+
             try {
-                $this->emitSectionMoveForOne($source, $sourceKey, $entryId, $opts, $report);
+                $this->emitSectionMoveForOne($source, $kumaNodeId, $entryId, $opts, $report);
             } catch (\Throwable $e) {
                 $report->incr('failed');
                 $report->warn(
                     sprintf(
-                        'section-move 301 failed for %s:%s entryId=%d — %s',
+                        'section-move 301 failed for %s:%d entryId=%d — %s',
                         $source,
-                        $sourceKey,
+                        $kumaNodeId,
                         $entryId,
                         $e->getMessage(),
                     ),
@@ -502,18 +528,34 @@ class RedirectMigrationService extends Component
         }
     }
 
+    /**
+     * @param array<string, mixed> $stateRow
+     */
+    private function kumaNodeIdFromStateMeta(array $stateRow): ?int
+    {
+        $meta = $stateRow['meta'] ?? null;
+        if (is_string($meta) && $meta !== '') {
+            try {
+                $decoded = json_decode($meta, true, 16, JSON_THROW_ON_ERROR);
+                if (is_array($decoded) && isset($decoded['kumaNodeId'])) {
+                    return (int) $decoded['kumaNodeId'];
+                }
+            } catch (\Throwable) {
+                // fall through to null — caller handles legacy fallback.
+            }
+        } elseif (is_array($meta) && isset($meta['kumaNodeId'])) {
+            return (int) $meta['kumaNodeId'];
+        }
+        return null;
+    }
+
     private function emitSectionMoveForOne(
         string $source,
-        string $sourceKey,
+        int $kumaNodeId,
         int $entryId,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
-        if (!ctype_digit($sourceKey)) {
-            return;
-        }
-
-        $kumaNodeId = (int) $sourceKey;
         if ($kumaNodeId <= 0) {
             return;
         }
@@ -545,7 +587,16 @@ class RedirectMigrationService extends Component
             }
 
             $oldPath = '/' . $kumaLang . '/' . ltrim($legacyUrl, '/');
-            $newPath = '/' . ltrim($entry->uri, '/');
+            // Resolve the destination as a SITE-AWARE path: parse the
+            // entry's full URL through the site's baseUrl so a multi-site
+            // setup with a `/en/` URL prefix renders the redirect to
+            // `/en/services` instead of `/services`. Falls back to the
+            // bare URI for single-site installs (and tolerates installs
+            // where Site::baseUrl can't be resolved at this point).
+            $entryUrl = (string) ($entry->getUrl() ?? '');
+            $newPath = $entryUrl !== ''
+                ? (parse_url($entryUrl, PHP_URL_PATH) ?: ('/' . ltrim($entry->uri, '/')))
+                : '/' . ltrim($entry->uri, '/');
             if ($oldPath === $newPath) {
                 continue;
             }

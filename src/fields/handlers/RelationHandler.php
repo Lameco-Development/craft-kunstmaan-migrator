@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\fields\handlers;
 use lameco\kunstmaanmigrator\fields\FieldHandler;
 use lameco\kunstmaanmigrator\fields\ResolverContext;
 use lameco\kunstmaanmigrator\fields\DeferredAssetToken;
+use lameco\kunstmaanmigrator\fields\DeferredEntryToken;
 use RuntimeException;
 
 /**
@@ -89,9 +90,25 @@ final class RelationHandler implements FieldHandler
     }
 
     /**
-     * Original direct-id lookup behaviour — back-compat path, unchanged.
+     * Original direct-id lookup behaviour — back-compat path, with the
+     * addition (Phase 12 / Gap [C]) of deferred-entry-token emission for
+     * misses on entry-state sources. The migrator's pipeline runs
+     * extract → transform → load sequentially: when resolveDirect runs
+     * during transform, the state table is empty. Without a deferred
+     * mechanism, every cross-page entry relation collapses to []
+     * (servicePagePart.page, pageSelectPagePart.textPage,
+     * specializationPagePart.* — the entire family of matrix-block
+     * Entries fields). Asset relations were already covered by
+     * resolveViaJoinTable's `asset:N` token; this method extends the same
+     * pattern to direct entry relations via DeferredEntryToken.
      *
-     * @return array<int, int>
+     * Output is a mixed list of resolved Craft ids (int) and deferred
+     * entry tokens (string of the form `entry:<source>:<id>`). The
+     * load-time consumer (AtomicMigrationService::ingestAndResolveEntryRelations)
+     * resolves what state has and records the rest for the post-load
+     * fixup pass (MigrateWorkflow::resolveDeferredEntryRelations).
+     *
+     * @return list<int|string>
      */
     private function resolveDirect(mixed $legacyValue, ResolverContext $ctx, string $source, array $options = []): array
     {
@@ -119,10 +136,50 @@ final class RelationHandler implements FieldHandler
             $resolvedTaxonomyId = $this->resolveTaxonomyMiss($id, $ctx, $source, $options);
             if ($resolvedTaxonomyId !== null) {
                 $out[] = $resolvedTaxonomyId;
+                continue;
+            }
+
+            // Taxonomy-backed relations have their own resolver track
+            // (resolveTaxonomyMiss above). When the explicit
+            // `taxonomySource` option is set, the relation IS taxonomy —
+            // a miss here means the taxonomy resolver couldn't reach the
+            // target (already logged via the report). Don't emit a
+            // deferred-entry token: load-time fixup can't reach taxonomy
+            // entries through state.meta.blockIds either, so emitting a
+            // token would just leak a string into the saved relation
+            // payload. Preserve the legacy silent-drop semantics for
+            // taxonomy.
+            if (!empty($options['taxonomySource'])) {
+                continue;
+            }
+
+            // State miss + non-taxonomy. Defer to the load-time fixup
+            // pass unless the caller opted out via
+            // `deferEntryRelations: false` (a safety valve for callers
+            // that prefer the legacy silent-drop).
+            $deferEnabled = ($options['deferEntryRelations'] ?? true) !== false;
+            if ($deferEnabled && $this->isDeferableEntrySource($source)) {
+                $out[] = DeferredEntryToken::emit($source, $id);
             }
         }
 
         return array_values(array_unique($out));
+    }
+
+    /**
+     * Limit token emission to state-sources that map to Craft entries —
+     * App_Entity_*, anything that doesn't smell like the asset-only `media`
+     * source. The entry-token consumer is matrix-block-only so this filter
+     * is conservative; expand only when a new source class needs it.
+     */
+    private function isDeferableEntrySource(string $source): bool
+    {
+        if ($source === 'media') {
+            return false;
+        }
+        // App_Entity_Pages_<X>, App_Entity_PageParts_<X>, App_Entity_<Custom>
+        return str_starts_with($source, 'App_Entity_')
+            || str_contains($source, '\\Entity\\');
     }
 
     /**

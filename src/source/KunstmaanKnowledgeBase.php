@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\source;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\source\DoctrineEntityParser;
 use lameco\kunstmaanmigrator\source\KunstmaanCoreTables;
+use lameco\kunstmaanmigrator\source\PagePartRefsSchema;
 use DateTimeInterface;
 use yii\base\Component;
 
@@ -94,14 +95,15 @@ final class KunstmaanKnowledgeBase extends Component
         /** @var array<string, list<string>> $partToPages */
         $partToPages = [];
         try {
+            $refsSchema = new PagePartRefsSchema($this->legacyDb);
             $allRefs = $this->legacyDb->queryAll(
-                'SELECT DISTINCT pageEntityname, page_part_entityname'
+                'SELECT DISTINCT pageEntityname, ' . $refsSchema->entitySelectAlias()
                 . ' FROM ' . KunstmaanCoreTables::PAGE_PART_REFS
-                . ' WHERE pageEntityname IS NOT NULL AND page_part_entityname IS NOT NULL',
+                . ' WHERE pageEntityname IS NOT NULL AND ' . $refsSchema->entityColumn() . ' IS NOT NULL',
             );
             foreach ($allRefs as $r) {
                 $page = (string) ($r['pageEntityname'] ?? '');
-                $pp   = (string) ($r['page_part_entityname'] ?? '');
+                $pp   = (string) ($r[PagePartRefsSchema::KEY_ENTITY] ?? '');
                 if ($page !== '' && $pp !== '') {
                     $partToPages[$pp][] = $page;
                 }
@@ -120,12 +122,15 @@ final class KunstmaanKnowledgeBase extends Component
         // Discover page part FQCNs from DB.
         $discoveredPpFqcns = [];
         try {
+            $refsSchemaInner = new PagePartRefsSchema($this->legacyDb);
             $ppDbRows = $this->legacyDb->queryAll(
-                'SELECT DISTINCT page_part_entityname FROM ' . KunstmaanCoreTables::PAGE_PART_REFS
-                . ' WHERE page_part_entityname IS NOT NULL ORDER BY page_part_entityname',
+                'SELECT DISTINCT ' . $refsSchemaInner->entitySelectAlias()
+                . ' FROM ' . KunstmaanCoreTables::PAGE_PART_REFS
+                . ' WHERE ' . $refsSchemaInner->entityColumn() . ' IS NOT NULL'
+                . ' ORDER BY ' . $refsSchemaInner->entityColumn(),
             );
             foreach ($ppDbRows as $r) {
-                $fqcn = (string) ($r['page_part_entityname'] ?? '');
+                $fqcn = (string) ($r[PagePartRefsSchema::KEY_ENTITY] ?? '');
                 if ($fqcn !== '') {
                     $discoveredPpFqcns[] = $fqcn;
                 }
@@ -596,13 +601,14 @@ final class KunstmaanKnowledgeBase extends Component
 
             // Page parts used by this page type.
             try {
+                $refsSchemaPp = new PagePartRefsSchema($this->legacyDb);
                 $ppRows = $this->legacyDb->queryAll(
-                    'SELECT page_part_entityname, COUNT(*) AS cnt,'
+                    'SELECT ' . $refsSchemaPp->entitySelectAlias() . ', COUNT(*) AS cnt,'
                     . ' GROUP_CONCAT(DISTINCT context ORDER BY context SEPARATOR \', \') AS contexts'
                     . ' FROM ' . KunstmaanCoreTables::PAGE_PART_REFS
                     . ' WHERE pageEntityname = :fqcn'
-                    . ' GROUP BY page_part_entityname'
-                    . ' ORDER BY page_part_entityname',
+                    . ' GROUP BY ' . $refsSchemaPp->entityColumn()
+                    . ' ORDER BY ' . $refsSchemaPp->entityColumn(),
                     [':fqcn' => $ncFqcn],
                 );
                 if ($ppRows !== []) {
@@ -610,7 +616,7 @@ final class KunstmaanKnowledgeBase extends Component
                     $out[] = '| page part | target block | contexts | count |';
                     $out[] = '|-----------|--------------|----------|-------|';
                     foreach ($ppRows as $ppr) {
-                        $ppFqcn2     = (string) ($ppr['page_part_entityname'] ?? '');
+                        $ppFqcn2     = (string) ($ppr[PagePartRefsSchema::KEY_ENTITY] ?? '');
                         $ppSpec2     = is_array($mappingPageParts[$ppFqcn2] ?? null) ? $mappingPageParts[$ppFqcn2] : null;
                         $targetBlock = $mapping !== null
                             ? ($ppSpec2 !== null ? (string) ($ppSpec2['target'] ?? '—') : '—')

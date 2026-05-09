@@ -36,7 +36,9 @@ use lameco\kunstmaanmigrator\load\AtomicMigrationService;
 use lameco\kunstmaanmigrator\load\AttachService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
+use lameco\kunstmaanmigrator\load\NavigationMigrationService;
 use lameco\kunstmaanmigrator\load\RedirectMigrationService;
+use lameco\kunstmaanmigrator\load\TranslationMigrationService;
 use lameco\kunstmaanmigrator\load\SeoMigrationService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
 use lameco\kunstmaanmigrator\load\TaxonomyMigrationService;
@@ -125,6 +127,8 @@ use yii\db\Connection;
  * @property-read SeoMigrationService $seoMigrationService
  * @property-read SeomaticPayloadBuilder $seomaticPayloadBuilder
  * @property-read RedirectMigrationService $redirectMigrationService
+ * @property-read NavigationMigrationService $navigationMigrationService
+ * @property-read TranslationMigrationService $translationMigrationService
  * @property-read TaxonomyMigrationService $taxonomyMigrationService
  * @property-read BaselineCounterService $baselineCounterService
  * @property-read CountGateService $countGateService
@@ -200,6 +204,8 @@ class Plugin extends BasePlugin
                 'seoMigrationService'        => SeoMigrationService::class,
                 'seomaticPayloadBuilder'     => SeomaticPayloadBuilder::class,
                 'redirectMigrationService'   => RedirectMigrationService::class,
+                'navigationMigrationService' => NavigationMigrationService::class,
+                'translationMigrationService' => TranslationMigrationService::class,
                 // Phase 8 / D-08 — verbatim-ported taxonomy load service (TAX-08).
                 'taxonomyMigrationService'   => TaxonomyMigrationService::class,
                 'baselineCounterService'     => BaselineCounterService::class,
@@ -386,6 +392,10 @@ class Plugin extends BasePlugin
         // AssetMigrationService deps.
         $this->assetMigrationService->legacyDb       = $this->legacyDbService;
         $this->assetMigrationService->migrationState = $this->migrationStateService;
+        $settingsTargetVolume = (string) ($this->getSettings()->targetVolume ?? '');
+        if ($settingsTargetVolume !== '') {
+            $this->assetMigrationService->targetVolume = $settingsTargetVolume;
+        }
 
         // AtomicMigrationService deps — orchestrates per-entry transactional load.
         $this->atomicMigrationService->migrationStateService = $this->migrationStateService;
@@ -416,6 +426,21 @@ class Plugin extends BasePlugin
         $this->redirectMigrationService->stateService = $this->migrationStateService;
         $this->redirectMigrationService->sites        = $this->resolveSitesMap();
         // $filters wired at invocation time.
+
+        // NavigationMigrationService — same shape as Redirect adapter.
+        // verbb/navigation node migration. Reads kuma_menu + kuma_menu_item,
+        // resolves entry-typed nodes via state map. $filters wired at
+        // invocation time. Source-table overrides flow from Settings below.
+        $this->navigationMigrationService->legacyDb     = $this->legacyDbService;
+        $this->navigationMigrationService->stateService = $this->migrationStateService;
+        $this->navigationMigrationService->sites        = $this->resolveSitesMap();
+
+        // TranslationMigrationService — kuma_translation → Craft site
+        // translations PHP catalogs (+ enupal-translate DB rows). Same
+        // wiring shape as the other adapters.
+        $this->translationMigrationService->legacyDb     = $this->legacyDbService;
+        $this->translationMigrationService->stateService = $this->migrationStateService;
+        $this->translationMigrationService->sites        = $this->resolveSitesMap();
 
         // Phase 8 / D-08 / TAX-08 — TaxonomyMigrationService sibling DI fanout.
         // Service public slots: legacyDb / migrationState / mappingFile (Plan 11).
@@ -448,6 +473,27 @@ class Plugin extends BasePlugin
         }
         if (is_string($settings->redirectsTableName) && $settings->redirectsTableName !== '') {
             $this->redirectMigrationService->redirectsTableName = $settings->redirectsTableName;
+        }
+        if (is_string($settings->menuTableName) && $settings->menuTableName !== '') {
+            $this->navigationMigrationService->menuTableName = $settings->menuTableName;
+        }
+        if (is_string($settings->menuItemTableName) && $settings->menuItemTableName !== '') {
+            $this->navigationMigrationService->menuItemTableName = $settings->menuItemTableName;
+        }
+        if (is_string($settings->nodesTableName) && $settings->nodesTableName !== '') {
+            $this->navigationMigrationService->nodesTableName = $settings->nodesTableName;
+        }
+        if (is_string($settings->nodeMenuNavHandle) && $settings->nodeMenuNavHandle !== '') {
+            $this->navigationMigrationService->nodeMenuNavHandle = $settings->nodeMenuNavHandle;
+        }
+        if (is_array($settings->nodeMenuExcludedInternalNames)) {
+            $this->navigationMigrationService->nodeMenuExcludedInternalNames = $settings->nodeMenuExcludedInternalNames;
+        }
+        if (is_string($settings->translationTableName) && $settings->translationTableName !== '') {
+            $this->translationMigrationService->translationTableName = $settings->translationTableName;
+        }
+        if (is_array($settings->translationDomains) && $settings->translationDomains !== []) {
+            $this->translationMigrationService->allowedDomains = $settings->translationDomains;
         }
 
         // BaselineCounterService — pure-read; no sibling deps in v2 light shape (D-59).

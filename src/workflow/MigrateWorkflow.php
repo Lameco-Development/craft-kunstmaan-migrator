@@ -529,6 +529,23 @@ class MigrateWorkflow extends Component
                 $report->incr('finalize.rewritten', (int) $finalizeCounts['rewritten']);
                 $report->incr('finalize.unresolvable', (int) $finalizeCounts['unresolvable']);
                 $this->recordFinalizeUnresolvedGate($report, $finalizeCounts);
+
+                // Step 6b: placeholder rewrite in NON-CKEditor string fields
+                // (matrix-block PlainText URLs like footer-link
+                // `linkPagePart.url` carrying [NT115] etc.). Same rewriter,
+                // wider scope — top-level + matrix blocks via direct
+                // `elements_sites.content LIKE '[NT'` candidate scan.
+                $placeholderCounts = $plugin->finalizeWalker->walkPlaceholders($filters);
+                $this->stdout(sprintf(
+                    "  OK   finalize placeholders complete (processed=%d rewritten=%d unresolvable=%d)\n",
+                    (int) $placeholderCounts['processed'],
+                    (int) $placeholderCounts['rewritten'],
+                    (int) $placeholderCounts['unresolvable'],
+                ), Console::FG_GREEN);
+                $report->incr('finalize.processed', (int) $placeholderCounts['processed']);
+                $report->incr('finalize.rewritten', (int) $placeholderCounts['rewritten']);
+                $report->incr('finalize.unresolvable', (int) $placeholderCounts['unresolvable']);
+                $this->recordFinalizeUnresolvedGate($report, $placeholderCounts);
             } catch (Throwable $e) {
                 $this->endProgressIfStarted();
                 $this->stderr(sprintf(
@@ -612,6 +629,66 @@ class MigrateWorkflow extends Component
         } else {
             $this->stdout(
                 "  WARN retour skipped (dry-run)\n",
+                Console::FG_YELLOW,
+            );
+        }
+
+        // Step 6.65 — Translation stage. Imports kuma_translation rows
+        // into per-locale site translation PHP catalogs (+ enupal-translate
+        // DB rows when the plugin is installed). Runtime t-filter
+        // (`{{ "key" | t }}`) reads from the files; without these,
+        // every literal key like `service.heading` renders as the key
+        // itself rather than the translated string. Independent of
+        // entry/asset migration; runs after retour for log readability.
+        if ($this->live) {
+            try {
+                $tReport = $plugin->translationMigrationService->migrateAll($opts);
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL translations: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->mergeReport($report, $tReport, 'translations');
+            $this->stdout(sprintf(
+                "  Stage translations: created=%d updated=%d skipped=%d failed=%d\n",
+                (int) ($tReport->counts['created'] ?? 0),
+                (int) ($tReport->counts['updated'] ?? 0),
+                (int) ($tReport->counts['skipped'] ?? 0),
+                (int) ($tReport->counts['failed'] ?? 0),
+            ), Console::FG_GREEN);
+        } else {
+            $this->stdout(
+                "  WARN translations skipped (dry-run)\n",
+                Console::FG_YELLOW,
+            );
+        }
+
+        // Step 6.7 — Navigation stage. Imports kuma_menu + kuma_menu_item
+        // into verbb/navigation nodes. Service short-circuits with WARN
+        // when verbb/navigation is absent or Settings::navigationEnabled
+        // is false. Runs AFTER entry migration (needed for state-map
+        // resolution of page_link nodes) and AFTER retour (independent;
+        // ordering is just for log readability).
+        // No --no-nav CLI flag in v0.1; per-run opt-out is via
+        // Settings::navigationEnabled.
+        if ($this->live) {
+            $plugin->navigationMigrationService->filters = $filters;
+            try {
+                $navReport = $plugin->navigationMigrationService->migrateAll($opts);
+            } catch (Throwable $e) {
+                $this->stderr("  FAIL navigation: {$e->getMessage()}\n", Console::FG_RED);
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+            $this->mergeReport($report, $navReport, 'navigation');
+            $this->stdout(sprintf(
+                "  Stage navigation: created=%d updated=%d skipped=%d failed=%d\n",
+                (int) ($navReport->counts['created'] ?? 0),
+                (int) ($navReport->counts['updated'] ?? 0),
+                (int) ($navReport->counts['skipped'] ?? 0),
+                (int) ($navReport->counts['failed'] ?? 0),
+            ), Console::FG_GREEN);
+        } else {
+            $this->stdout(
+                "  WARN navigation skipped (dry-run)\n",
                 Console::FG_YELLOW,
             );
         }
@@ -1061,6 +1138,12 @@ class MigrateWorkflow extends Component
         $finalizeProgress = $this->makeFinalizeProgress();
         try {
             $counts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
+            // Step 6b — placeholder pass over non-CKEditor string fields.
+            $placeholderCounts = $plugin->finalizeWalker->walkPlaceholders($filters);
+            // Merge counts so the standalone summary reflects both passes.
+            $counts['processed'] = (int) $counts['processed'] + (int) $placeholderCounts['processed'];
+            $counts['rewritten'] = (int) $counts['rewritten'] + (int) $placeholderCounts['rewritten'];
+            $counts['unresolvable'] = (int) $counts['unresolvable'] + (int) $placeholderCounts['unresolvable'];
         } catch (Throwable $e) {
             $this->endProgressIfStarted();
             $this->stderr(sprintf(
@@ -1825,6 +1908,69 @@ class MigrateWorkflow extends Component
      * preserved by transform/load and are safe preload inputs.
      *
      * @return list<int>
+     * Compute a tree depth per transformed-payload file using
+     * `kuma_node_id` / `kuma_parent_id`. Roots (parents missing from the
+     * file set, including the implicit Kunstmaan root with id 1 that's not
+     * itself migrated) are depth 0; children of roots are depth 1; etc.
+     * Used to sort the load queue so parents save before their children
+     * within a single migrate run, eliminating most need for the
+     * end-of-load hierarchy fix-up pass.
+     *
+     * @param  list<string> $files
+     * @return array<string, int>  jsonPath → depth
+     */
+    private function computeHierarchyDepths(array $files): array
+    {
+        $nodeIdToFile = [];
+        $parentByNodeId = [];
+        foreach ($files as $jsonPath) {
+            $raw = @file_get_contents($jsonPath);
+            if ($raw === false) {
+                continue;
+            }
+            $payload = json_decode($raw, true);
+            if (!is_array($payload)) {
+                continue;
+            }
+            $nodeId = (int) ($payload['kuma_node_id'] ?? 0);
+            if ($nodeId <= 0) {
+                continue;
+            }
+            $nodeIdToFile[$nodeId] = $jsonPath;
+            $parentByNodeId[$nodeId] = (int) ($payload['kuma_parent_id'] ?? 0);
+        }
+
+        $depthByNode = [];
+        $resolveDepth = function (int $nodeId, array $stack = []) use (
+            $parentByNodeId,
+            &$depthByNode,
+            &$resolveDepth,
+        ): int {
+            if (isset($depthByNode[$nodeId])) {
+                return $depthByNode[$nodeId];
+            }
+            if (in_array($nodeId, $stack, true)) {
+                // Defensive: cycle in the source data — treat as root so we
+                // don't recurse forever. Should never happen with kuma_nodes.
+                return $depthByNode[$nodeId] = 0;
+            }
+            $parentId = $parentByNodeId[$nodeId] ?? 0;
+            if ($parentId <= 0 || !isset($parentByNodeId[$parentId])) {
+                // Parent isn't in the migrated file set — treat node as root.
+                return $depthByNode[$nodeId] = 0;
+            }
+            $stack[] = $nodeId;
+            return $depthByNode[$nodeId] = 1 + $resolveDepth($parentId, $stack);
+        };
+
+        $depthByFile = [];
+        foreach ($nodeIdToFile as $nodeId => $jsonPath) {
+            $depthByFile[$jsonPath] = $resolveDepth($nodeId);
+        }
+        return $depthByFile;
+    }
+
+    /**
      */
     private function collectReferencedAssetIdsFromPayloadDirectory(string $transformedDir, ?MigrationFilters $filters = null): array
     {
@@ -1945,6 +2091,13 @@ class MigrateWorkflow extends Component
     ): int {
         $plugin = Plugin::getInstance();
 
+        // Hierarchy resolution carries process-local state (kuma_node_id →
+        // entry id map and a deferred fix-up queue). Reset it at the start
+        // of every load run so stale entries from a previous in-process
+        // migrate don't leak into the next one (long-running queue workers,
+        // tests).
+        \lameco\kunstmaanmigrator\load\AtomicMigrationService::resetHierarchyState();
+
         // Pre-walk to compute total — operators want [N/total] not just [N].
         // Phase 8.6 — when --entities is set, filter files at the load site so
         // stale `transformed/entries/` payloads from previous runs don't leak
@@ -1958,13 +2111,30 @@ class MigrateWorkflow extends Component
             }
             $files[] = $f;
         }
-        usort($files, fn(string $a, string $b): int => [
-            $this->isPromotedTargetPayloadFile($a) ? 0 : 1,
-            $a,
-        ] <=> [
-            $this->isPromotedTargetPayloadFile($b) ? 0 : 1,
-            $b,
-        ]);
+        // Hierarchy-aware ordering: read each entry payload's
+        // kuma_node_id/kuma_parent_id once, compute tree depth via BFS from
+        // the roots (kuma_parent_id ∉ payload set), then sort:
+        //   1. promotedTarget files (always first — relation prerequisites)
+        //   2. by ascending depth (parents before children)
+        //   3. then by file path for deterministic ordering within a depth
+        // This ensures AtomicMigrationService's parent-id lookup almost
+        // always finds the parent already saved; the fix-up queue at the
+        // end of load is kept as a safety net for cross-section parents and
+        // payloads that don't carry kuma_node_id.
+        $depthByFile = $this->computeHierarchyDepths($files);
+        usort($files, function (string $a, string $b) use ($depthByFile): int {
+            $aPromoted = $this->isPromotedTargetPayloadFile($a) ? 0 : 1;
+            $bPromoted = $this->isPromotedTargetPayloadFile($b) ? 0 : 1;
+            if ($aPromoted !== $bPromoted) {
+                return $aPromoted <=> $bPromoted;
+            }
+            $aDepth = $depthByFile[$a] ?? PHP_INT_MAX;
+            $bDepth = $depthByFile[$b] ?? PHP_INT_MAX;
+            if ($aDepth !== $bDepth) {
+                return $aDepth <=> $bDepth;
+            }
+            return $a <=> $b;
+        });
         $total = count($files);
         $this->lastTotal = $total;
         $offset = max(0, (int) ($this->batchOffset ?? 0));
@@ -2017,7 +2187,201 @@ class MigrateWorkflow extends Component
             ), Console::FG_GREEN);
         }
 
+        // Hierarchy fix-up pass: stitch in parents that migrated AFTER their
+        // children due to the alphabetical-by-FQCN iteration order. The
+        // AtomicMigrationService static map carries kuma_node_id → entry id
+        // for everything saved this run. Deferred children re-emit
+        // setParentId here.
+        $fixups = \lameco\kunstmaanmigrator\load\AtomicMigrationService::pendingHierarchyFixups();
+        if ($fixups !== []) {
+            $nodeIdMap = \lameco\kunstmaanmigrator\load\AtomicMigrationService::kumaNodeIdMap();
+            $resolved = 0;
+            $unresolved = 0;
+            foreach ($fixups as $fixup) {
+                $parentEntryId = $nodeIdMap[$fixup['kumaParentId']] ?? null;
+                if ($parentEntryId === null) {
+                    $unresolved++;
+                    continue;
+                }
+                try {
+                    $entry = \craft\elements\Entry::find()
+                        ->id($fixup['entryId'])
+                        ->status(null)
+                        ->one();
+                    if ($entry === null) {
+                        $unresolved++;
+                        continue;
+                    }
+                    $entry->setParentId($parentEntryId);
+                    if (\Craft::$app->elements->saveElement($entry, true, false)) {
+                        $resolved++;
+                    } else {
+                        $unresolved++;
+                    }
+                } catch (Throwable) {
+                    $unresolved++;
+                }
+            }
+            $this->stdout(sprintf(
+                "  OK   hierarchy fix-up: %d parent assignments resolved%s\n",
+                $resolved,
+                $unresolved > 0 ? sprintf(' (%d still unresolved)', $unresolved) : '',
+            ), Console::FG_GREEN);
+        }
+
+        $this->resolveDeferredEntryRelations($report);
+
         return ExitCode::OK;
+    }
+
+    /**
+     * Phase 12 / Gap [C] — post-load fix-up pass for deferred entry-relation
+     * tokens. RelationHandler emits `entry:<source>:<id>` strings at
+     * transform time when state is empty; AtomicMigrationService strips
+     * unresolvable tokens from the per-entry payload and queues a fix-up
+     * record. Now that every entry has saved at least once, walk the queue,
+     * resolve each token via the now-populated state, and re-save the
+     * owning matrix block with the resolved relation id.
+     *
+     * Block lookup: state.meta.blockIds is `{<sourceRef>: <blockId>}` per
+     * the Slice 4 contract (EntryMigrationService line 384). We pull the
+     * parent's state row, look up the saved block id by sourceRef, then
+     * Entry::find()->id() the block, setFieldValue + saveElement.
+     *
+     * Failure modes: state-row missing for parent (entry not saved → fix
+     * skipped, counts toward relation.unresolved), sourceRef not in
+     * blockIds map (block was created but not tracked — counts toward
+     * relation.unresolved), token target still unresolved (counts toward
+     * relation.unresolved).
+     */
+    private function resolveDeferredEntryRelations(MigrationReport $report): void
+    {
+        $fixups = \lameco\kunstmaanmigrator\load\AtomicMigrationService::pendingEntryRelationFixups();
+        if ($fixups === []) {
+            return;
+        }
+
+        $plugin = Plugin::getInstance();
+        if ($plugin === null) {
+            $this->stderr("  WARN deferred-entry-relation fix-up: plugin unavailable\n", Console::FG_YELLOW);
+            return;
+        }
+        $stateService = $plugin->migrationStateService;
+
+        // Group fix-ups by (parentStateSource, parentStateKey, sourceRef,
+        // siteHandle) so we re-save each block at most once per run + per
+        // site, accumulating resolved ids for the same field across multiple
+        // deferred tokens. siteHandle is in the key because matrix fields
+        // with `propagationMethod: none` have separate block elements per
+        // site — collapsing across sites would only re-save one site's
+        // block.
+        $grouped = [];
+        foreach ($fixups as $fx) {
+            $bucketKey = sprintf(
+                '%s|%s|%s|%s',
+                $fx['parentStateSource'],
+                $fx['parentStateKey'],
+                $fx['sourceRef'],
+                (string) ($fx['siteHandle'] ?? ''),
+            );
+            $grouped[$bucketKey][] = $fx;
+        }
+
+        $resolvedBlocks = 0;
+        $unresolvedTokens = 0;
+        foreach ($grouped as $rows) {
+            $first = $rows[0];
+            $parentSource = $first['parentStateSource'];
+            $parentKey = $first['parentStateKey'];
+            $sourceRef = $first['sourceRef'];
+            $siteHandle = (string) ($first['siteHandle'] ?? '');
+
+            // Find the parent's state row + extract blockIds map. Phase 12
+            // followup: the map is now nested per site
+            // ({siteHandle: {sourceRef: blockId}}). Back-compat: detect the
+            // flat v1 shape (scalar values) and treat it as a single
+            // primary-bucket — re-runs against pre-followup state rows still
+            // resolve at least the primary site.
+            $parentState = $stateService->get($parentSource, $parentKey, null);
+            if ($parentState === null) {
+                $unresolvedTokens += count($rows);
+                continue;
+            }
+            $meta = is_string($parentState['meta'] ?? null)
+                ? (json_decode((string) $parentState['meta'], true) ?: [])
+                : (array) ($parentState['meta'] ?? []);
+            $rawBlockIds = (array) ($meta['blockIds'] ?? []);
+            $blockId = 0;
+            if ($rawBlockIds !== []) {
+                $firstVal = reset($rawBlockIds);
+                if (is_array($firstVal)) {
+                    // New nested shape — pick the right site's submap.
+                    $siteSub = (array) ($rawBlockIds[$siteHandle] ?? []);
+                    $blockId = isset($siteSub[$sourceRef]) ? (int) $siteSub[$sourceRef] : 0;
+                } else {
+                    // Old flat shape — single bucket for all sites. Caps at
+                    // primary-site coverage; secondary sites stay unresolved.
+                    $blockId = isset($rawBlockIds[$sourceRef]) ? (int) $rawBlockIds[$sourceRef] : 0;
+                }
+            }
+            if ($blockId <= 0) {
+                $unresolvedTokens += count($rows);
+                continue;
+            }
+
+            // Resolve every token in this bucket. Group by fieldHandle so
+            // multi-id Entries fields receive a single setFieldValue call
+            // with the merged list.
+            $byField = [];
+            $stillUnresolved = 0;
+            foreach ($rows as $fx) {
+                $hit = $stateService->getTargetId($fx['tokenSource'], (string) $fx['tokenLegacyId'], $fx['siteId'])
+                    ?? $stateService->getTargetId($fx['tokenSource'], (string) $fx['tokenLegacyId'], null);
+                if ($hit === null) {
+                    $stillUnresolved++;
+                    continue;
+                }
+                $byField[$fx['fieldHandle']][] = $hit;
+            }
+            if ($byField === []) {
+                $unresolvedTokens += $stillUnresolved;
+                continue;
+            }
+
+            $block = \craft\elements\Entry::find()
+                ->id($blockId)
+                ->status(null)
+                ->siteId($first['siteId'] ?: '*')
+                ->one();
+            if ($block === null) {
+                $unresolvedTokens += count($rows);
+                continue;
+            }
+            foreach ($byField as $fieldHandle => $targetIds) {
+                $block->setFieldValue($fieldHandle, array_values(array_unique($targetIds)));
+            }
+            try {
+                if (\Craft::$app->elements->saveElement($block, true, false)) {
+                    $resolvedBlocks++;
+                } else {
+                    $unresolvedTokens += count($rows);
+                }
+            } catch (Throwable $e) {
+                $unresolvedTokens += count($rows);
+            }
+            $unresolvedTokens += $stillUnresolved;
+        }
+
+        // Surface counts via the standard report counters so REPORT.md picks
+        // them up. relation.unresolved already exists (D-52).
+        if ($unresolvedTokens > 0) {
+            $report->incr('relation.unresolved', $unresolvedTokens);
+        }
+        $this->stdout(sprintf(
+            "  OK   deferred-entry-relation fix-up: %d block(s) re-saved with resolved relations%s\n",
+            $resolvedBlocks,
+            $unresolvedTokens > 0 ? sprintf(' (%d token(s) still unresolved)', $unresolvedTokens) : '',
+        ), Console::FG_GREEN);
     }
 
     /**

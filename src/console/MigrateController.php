@@ -338,6 +338,108 @@ class MigrateController extends Controller
     }
 
     /**
+     * Sub-action: import kuma_translation rows into Craft's site
+     * translations PHP catalogs (+ enupal-translate DB rows for CP
+     * editing). Standalone for resume / debug — same gating shape as
+     * actionRetour. Runtime t-filter reads the files; the enupal DB
+     * rows are CP-convenience only.
+     */
+    public function actionTranslations(): int
+    {
+        if (($gate = $this->enforceNeverProduction()) !== null) {
+            return $gate;
+        }
+        $this->openLogFile($this->defaultLogPath());
+        $this->logLine('actionTranslations started; verbosity=' . $this->verbosityLevel(), 1);
+        $this->stdout(
+            "Migrate (translations): kuma_translation → Craft site translations\n",
+            Console::FG_CYAN,
+        );
+
+        $plugin = Plugin::getInstance();
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
+
+        if (!$this->live) {
+            $this->stdout(
+                "  WARN translations skipped (dry-run; pass --live to write catalogs)\n",
+                Console::FG_YELLOW,
+            );
+            return ExitCode::OK;
+        }
+
+        $plugin->translationMigrationService->filters = $filters;
+        $opts = new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false);
+
+        try {
+            $report = $plugin->translationMigrationService->migrateAll($opts);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL translations: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        foreach ($report->warnings as $warning) {
+            $this->stdout("  WARN {$warning}\n", Console::FG_YELLOW);
+        }
+        $this->stdout(sprintf(
+            "  OK   translations complete (created=%d updated=%d skipped=%d failed=%d)\n",
+            (int) ($report->counts['created'] ?? 0),
+            (int) ($report->counts['updated'] ?? 0),
+            (int) ($report->counts['skipped'] ?? 0),
+            (int) ($report->counts['failed'] ?? 0),
+        ), Console::FG_GREEN);
+        return ExitCode::OK;
+    }
+
+    /**
+     * Sub-action: import kuma_menu + kuma_menu_item rows into verbb/navigation
+     * nodes. Standalone for resume / debug — same gating shape as actionRetour.
+     * Service short-circuits with WARN when verbb/navigation is absent.
+     */
+    public function actionNavigation(): int
+    {
+        if (($gate = $this->enforceNeverProduction()) !== null) {
+            return $gate;
+        }
+        $this->openLogFile($this->defaultLogPath());
+        $this->logLine('actionNavigation started; verbosity=' . $this->verbosityLevel(), 1);
+        $this->stdout(
+            "Migrate (navigation): verbb/navigation nodes from kuma_menu + kuma_menu_item\n",
+            Console::FG_CYAN,
+        );
+
+        $plugin = Plugin::getInstance();
+        $filters = $this->buildRuntimeFilters($plugin, $this->noSeo, $this->noRetour);
+
+        if (!$this->live) {
+            $this->stdout(
+                "  WARN navigation skipped (dry-run; pass --live to write nodes)\n",
+                Console::FG_YELLOW,
+            );
+            return ExitCode::OK;
+        }
+
+        $plugin->navigationMigrationService->filters = $filters;
+        $opts = new MigrationOptions(dryRun: false, force: $this->force, skipAssets: false);
+
+        try {
+            $report = $plugin->navigationMigrationService->migrateAll($opts);
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL navigation: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        foreach ($report->warnings as $warning) {
+            $this->stdout("  WARN {$warning}\n", Console::FG_YELLOW);
+        }
+        $this->stdout(sprintf(
+            "  OK   navigation complete (created=%d updated=%d skipped=%d failed=%d)\n",
+            (int) ($report->counts['created'] ?? 0),
+            (int) ($report->counts['updated'] ?? 0),
+            (int) ($report->counts['skipped'] ?? 0),
+            (int) ($report->counts['failed'] ?? 0),
+        ), Console::FG_GREEN);
+        return ExitCode::OK;
+    }
+
+    /**
      * Sub-action: migrate Doctrine standalone taxonomy/classifier entities into Craft entries.
      *
      * Phase 8 / D-03 / TAX-08: standalone resume / debug entry point. The
@@ -664,6 +766,12 @@ class MigrateController extends Controller
         $finalizeProgress = $this->makeFinalizeProgress();
         try {
             $counts = $plugin->finalizeWalker->walk($filters, $finalizeProgress);
+            // Step 6b — placeholder pass over non-CKEditor string fields
+            // (matrix-block PlainText URLs etc.).
+            $placeholderCounts = $plugin->finalizeWalker->walkPlaceholders($filters);
+            $counts['processed'] = (int) $counts['processed'] + (int) $placeholderCounts['processed'];
+            $counts['rewritten'] = (int) $counts['rewritten'] + (int) $placeholderCounts['rewritten'];
+            $counts['unresolvable'] = (int) $counts['unresolvable'] + (int) $placeholderCounts['unresolvable'];
         } catch (Throwable $e) {
             $this->endProgressIfStarted();
             $this->stderr(sprintf(
@@ -730,12 +838,50 @@ class MigrateController extends Controller
             return ExitCode::OK;
         }
 
-        // Live + confirmed: delegate to AssetMigrationService::truncate for assets,
-        // and to MigrationStateService for the state-row deletes. Entry deletes
-        // walk state-table rows via getTargetId per (source, key) pair.
-        // (Wider entry-delete + multi-source iteration loops will land in Plan 04
-        // alongside the verify command; Phase 3 ships the safety-rail surface and
-        // the asset/state primitives.)
+        // Live + confirmed: delete the entries the migrator created, then
+        // its assets, then state rows. Order matters — once state is gone
+        // we lose the targetId pointers, so entries+assets must come first.
+
+        // 1) Walk state's entry rows, hard-delete each Craft entry.
+        $entriesDeleted = 0;
+        $entriesMissed = 0;
+        foreach ($plugin->migrationStateService->entryRows() as $stateRow) {
+            $entryId = (int) ($stateRow['targetId'] ?? 0);
+            if ($entryId === 0) {
+                continue;
+            }
+            try {
+                $entry = \craft\elements\Entry::find()
+                    ->id($entryId)
+                    ->status(null)
+                    ->one();
+                if ($entry === null) {
+                    $entriesMissed++;
+                    continue;
+                }
+                if (Craft::$app->elements->deleteElement($entry, true)) {
+                    $entriesDeleted++;
+                } else {
+                    $entriesMissed++;
+                }
+            } catch (Throwable $e) {
+                $this->stderr(
+                    sprintf("  WARN delete entry id=%d failed: %s\n", $entryId, $e->getMessage()),
+                    Console::FG_YELLOW,
+                );
+                $entriesMissed++;
+            }
+        }
+        $this->stdout(
+            sprintf(
+                "  OK   deleted %d entries%s\n",
+                $entriesDeleted,
+                $entriesMissed > 0 ? sprintf(' (%d already gone or refused)', $entriesMissed) : '',
+            ),
+            Console::FG_GREEN,
+        );
+
+        // 2) Delete the migrator-owned assets.
         $assetsDeleted = 0;
         try {
             $assetsDeleted = $plugin->assetMigrationService->truncate();
@@ -743,9 +889,60 @@ class MigrateController extends Controller
             $this->stderr("  FAIL truncate assets: {$e->getMessage()}\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }
-
         $this->stdout(
-            "  OK   truncated {$assetsDeleted} plugin-owned assets (entries + state-row scoped delete pending Plan 04)\n",
+            "  OK   truncated {$assetsDeleted} plugin-owned assets\n",
+            Console::FG_GREEN,
+        );
+
+        // 2.5) Delete migrator-owned verbb/navigation nodes. Nav nodes are
+        // verbb\navigation\elements\Node elements, not Entry elements, so
+        // step 1's entryRows() walk doesn't pick them up. truncate() in
+        // the nav service walks state.source='navigation' rows and deletes
+        // each node element. No-op when verbb/navigation isn't installed.
+        $navDeleted = 0;
+        try {
+            $navDeleted = $plugin->navigationMigrationService->truncate();
+        } catch (Throwable $e) {
+            $this->stderr("  WARN truncate nav nodes: {$e->getMessage()}\n", Console::FG_YELLOW);
+        }
+        if ($navDeleted > 0) {
+            $this->stdout(
+                "  OK   truncated {$navDeleted} verbb/navigation nodes\n",
+                Console::FG_GREEN,
+            );
+        }
+
+        // 2.6) Delete migrator-owned site translation catalogs. Per-locale
+        // `translations/<lang>/site.php` files were written by the
+        // translation stage; truncate removes them so re-migrate
+        // rebuilds from kuma_translation cleanly.
+        $translationsDeleted = 0;
+        try {
+            $translationsDeleted = $plugin->translationMigrationService->truncate();
+        } catch (Throwable $e) {
+            $this->stderr("  WARN truncate translations: {$e->getMessage()}\n", Console::FG_YELLOW);
+        }
+        if ($translationsDeleted > 0) {
+            $this->stdout(
+                "  OK   truncated {$translationsDeleted} site translation catalog(s)\n",
+                Console::FG_GREEN,
+            );
+        }
+
+        // 3) Wipe the state table — leaves Craft otherwise intact (project
+        // config, sites, fields, layouts all stay). Operator can re-run
+        // the full migrate chain afterward to repopulate cleanly.
+        $statePrefix = $plugin->migrationStateService->statePrefix;
+        try {
+            Craft::$app->db->createCommand()
+                ->delete('{{%' . $statePrefix . '}}')
+                ->execute();
+        } catch (Throwable $e) {
+            $this->stderr("  FAIL wipe state table: {$e->getMessage()}\n", Console::FG_RED);
+            return ExitCode::UNSPECIFIED_ERROR;
+        }
+        $this->stdout(
+            "  OK   wiped state table — re-run `migrate --live` to rebuild\n",
             Console::FG_GREEN,
         );
         return ExitCode::OK;

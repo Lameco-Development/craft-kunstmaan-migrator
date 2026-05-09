@@ -38,7 +38,23 @@ $repoRoot = realpath(__DIR__ . '/..');
 $failures = [];
 $rowsPrinted = 0;
 
-foreach ($xml->project->file as $file) {
+// Clover XML can place <file> nodes either directly under <project> (top-
+// level files outside namespaces) OR under <project><package> (grouped by
+// namespace). PHPUnit 10/11 with strict source filtering tends to use the
+// package-grouped form for namespaced classes, so iterating only the top-
+// level <file> children misses the entire `lameco\…` tree and the script
+// reports "no TST-01 modules found". Collect both.
+$fileNodes = [];
+foreach ($xml->project->file as $f) {
+    $fileNodes[] = $f;
+}
+foreach ($xml->project->package as $pkg) {
+    foreach ($pkg->file as $f) {
+        $fileNodes[] = $f;
+    }
+}
+
+foreach ($fileNodes as $file) {
     $absPath = (string) $file['name'];
     $rel = $absPath;
     if ($repoRoot !== false && str_starts_with($absPath, $repoRoot . '/')) {

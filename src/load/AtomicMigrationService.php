@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
+use lameco\kunstmaanmigrator\fields\DeferredEntryToken;
 use lameco\kunstmaanmigrator\Plugin;
 use RuntimeException;
 use Throwable;
@@ -43,6 +44,89 @@ class AtomicMigrationService extends Component
     public ?MigrationStateService $migrationStateService = null;
     public ?EntryMigrationService $entryMigrationService = null;
     public ?AssetMigrationService $assetMigrationService = null;
+
+    /**
+     * Process-local kuma_node_id → Craft entry id map. Populated by every
+     * successful entry save during the migrate run; consumed by hierarchy
+     * resolution to look up a parent's Craft entry id from `kuma_parent_id`.
+     * Cleared at the start of each migrate via resetHierarchyState().
+     *
+     * Stored statically so it survives across `migrateOneEntry()` calls in
+     * the same process — they're invoked one-at-a-time per transformed JSON
+     * by MigrateWorkflow's load loop, but each runs in a fresh transaction
+     * scope where instance state would be lost.
+     *
+     * @var array<int, int>
+     */
+    private static array $kumaNodeIdToEntryId = [];
+
+    /**
+     * Pending fix-up queue: entries whose parent wasn't yet in the map at
+     * save time. Walked once at the end of migrate to set parentId on
+     * children whose parent migrated later in the iteration order.
+     *
+     * Each entry: ['kumaNodeId' => N, 'kumaParentId' => M, 'entryId' => E,
+     *              'sectionId' => S, 'siteIds' => [int]].
+     *
+     * @var list<array{kumaNodeId: int, kumaParentId: int, entryId: int, sectionId: int}>
+     */
+    private static array $hierarchyFixupQueue = [];
+
+    /**
+     * Phase 12 / Gap [C] — pending entry-relation fix-up queue. When the
+     * pre-save walker (ingestAndResolveEntryRelations) encounters a deferred
+     * entry token (`entry:<source>:<id>`) whose target hasn't been saved yet,
+     * we strip the token from the field payload (so Craft's setFieldValues
+     * accepts the integer-only Entries field) and record the fix-up here.
+     * After all entries are saved, MigrateWorkflow walks the queue, resolves
+     * each token via the now-populated state, and re-saves the owning matrix
+     * block with the resolved relation id.
+     *
+     * Each entry: [
+     *   'parentStateSource' => 'App_Entity_Pages_TextPage',
+     *   'parentStateKey'    => '18',
+     *   'sourceRef'         => 'ServicePagePart:1189',
+     *   'fieldHandle'       => 'page',
+     *   'tokenSource'       => 'App_Entity_Pages_ServicesPage',
+     *   'tokenLegacyId'     => 445,
+     *   'siteId'            => 1,
+     *   'siteHandle'        => 'default',
+     * ]
+     *
+     * @var list<array{parentStateSource: string, parentStateKey: string, sourceRef: string, fieldHandle: string, tokenSource: string, tokenLegacyId: int, siteId: ?int, siteHandle: string}>
+     */
+    private static array $entryRelationFixupQueue = [];
+
+    public static function resetHierarchyState(): void
+    {
+        self::$kumaNodeIdToEntryId = [];
+        self::$hierarchyFixupQueue = [];
+        self::$entryRelationFixupQueue = [];
+    }
+
+    /**
+     * @return list<array{parentStateSource: string, parentStateKey: string, sourceRef: string, fieldHandle: string, tokenSource: string, tokenLegacyId: int, siteId: ?int, siteHandle: string}>
+     */
+    public static function pendingEntryRelationFixups(): array
+    {
+        return self::$entryRelationFixupQueue;
+    }
+
+    /**
+     * @return list<array{kumaNodeId: int, kumaParentId: int, entryId: int, sectionId: int}>
+     */
+    public static function pendingHierarchyFixups(): array
+    {
+        return self::$hierarchyFixupQueue;
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    public static function kumaNodeIdMap(): array
+    {
+        return self::$kumaNodeIdToEntryId;
+    }
 
     /**
      * Migrate one entry (atomic unit: JIT assets + entry save + per-entry SEO in Phase 4).
@@ -129,12 +213,57 @@ class AtomicMigrationService extends Component
             $transformed['perSite'] = $perSite;
         }
 
+        // Phase 12 / Gap [C] — resolve deferred entry-relation tokens.
+        // RelationHandler emits `entry:<source>:<id>` strings at transform
+        // time when the state table is empty. Those tokens are now in the
+        // perSite payload's matrix-block fields. Resolve in-place against the
+        // currently-populated state; tokens that still don't resolve (target
+        // not yet saved this load) are recorded into $entryRelationFixupQueue
+        // and stripped from the payload so Craft's setFieldValues accepts
+        // the integer-only Entries field. The post-load fix-up pass in
+        // MigrateWorkflow walks the queue once every entry has saved.
+        $perSite = $this->ingestAndResolveEntryRelations(
+            (array) ($transformed['perSite'] ?? []),
+            $sourceStream,
+            (string) $sourceId,
+        );
+        $transformed['perSite'] = $perSite;
+
         // Per-locale legacy ref_ids. Produced by ExtractService (via
         // LegacyDbService::translationsFor which joins public node versions),
         // written into the transformed payload by TransformService. Needed by
         // SeoMigrationService (Phase 4 / ADP-01) to fetch the correct kuma_seo
         // row per site — each locale points to a different legacy entity id.
         $refIdsByLocale = (array) ($transformed['refIdsByLocale'] ?? []);
+
+        // Hierarchy: resolve `kuma_parent_id` to a Craft entry id via the
+        // process-local kuma-node-id map and inject it into every per-site
+        // payload. Kunstmaan's node tree (`kuma_nodes.parent_id`) maps
+        // cleanly onto Craft's Structure-section parentId. The state table
+        // is keyed by ref_id (the Page entity row id), not kuma_node_id, so
+        // a state lookup can't resolve parents directly — we maintain an
+        // in-memory map populated on every save() during the migrate run.
+        // First-pass entries whose parent hasn't been migrated yet leave
+        // parentId unset and get fixed up by the end-of-load fix-up pass.
+        $kumaNodeId = (int) ($transformed['kuma_node_id'] ?? 0);
+        $kumaParentId = (int) ($transformed['kuma_parent_id'] ?? 0);
+        if ($kumaParentId > 0 && isset(self::$kumaNodeIdToEntryId[$kumaParentId])) {
+            $parentEntryId = self::$kumaNodeIdToEntryId[$kumaParentId];
+            foreach ($perSite as $handle => $siteData) {
+                if (is_array($siteData)) {
+                    $perSite[$handle]['parentId'] = $parentEntryId;
+                }
+            }
+            Craft::info(
+                sprintf('hierarchy: kuma_node=%d → parent kuma_node=%d → entry %d', $kumaNodeId, $kumaParentId, $parentEntryId),
+                __METHOD__,
+            );
+        } elseif ($kumaParentId > 0) {
+            Craft::info(
+                sprintf('hierarchy: kuma_node=%d parent kuma_node=%d NOT YET IN MAP (deferred to fix-up)', $kumaNodeId, $kumaParentId),
+                __METHOD__,
+            );
+        }
 
         // PHASE B — DB TRANSACTION (ETL-04 atomic-always-on): saveEntryForSites
         // + state meta update + (Phase 4) per-entry SEO write.
@@ -150,6 +279,8 @@ class AtomicMigrationService extends Component
             $refIdsByLocale,
             $report,
             $isPromotedTarget,
+            $kumaNodeId,
+            $kumaParentId,
         ): void {
             $entry = $isPromotedTarget
                 ? $module->entryMigrationService->savePromotedTargetForSites(
@@ -171,15 +302,74 @@ class AtomicMigrationService extends Component
                     $report,
                 );
 
+            // Register kuma_node_id → Craft entry id so subsequent saves
+            // in this run can look up parents. Queue a fix-up if the parent
+            // wasn't migrated yet — finalize() walks the queue at end of
+            // load and stitches in the parents that came alphabetically
+            // after their children.
+            if ($kumaNodeId > 0) {
+                self::$kumaNodeIdToEntryId[$kumaNodeId] = (int) $entry->id;
+                if ($kumaParentId > 0
+                    && !isset(self::$kumaNodeIdToEntryId[$kumaParentId])
+                ) {
+                    self::$hierarchyFixupQueue[] = [
+                        'kumaNodeId' => $kumaNodeId,
+                        'kumaParentId' => $kumaParentId,
+                        'entryId' => (int) $entry->id,
+                        'sectionId' => (int) $section->id,
+                    ];
+                }
+            }
+
             // Merge refIdsByLocale into the state row's meta so the SEO
             // migrator (Phase 4) and any re-runs can resolve per-locale ref_ids
-            // without re-reading the transformed JSON.
+            // without re-reading the transformed JSON. Also persist
+            // kumaNodeId — RedirectMigrationService's section-move synthesis
+            // needs it (the legacy URL set lives in kuma_node_translations
+            // keyed by node_id) but state.sourceKey carries refId, not
+            // nodeId. Without this, section-move pairs random URL/entry
+            // combinations and produces broken redirects (`/nl/diensten` →
+            // `/personeels-dossier` because state.sourceKey=1 happens to
+            // match many different node ids in the source).
+            $metaPatch = [];
             if ($refIdsByLocale !== []) {
+                $metaPatch['refIdsByLocale'] = $refIdsByLocale;
+            }
+            if ($kumaNodeId > 0) {
+                $metaPatch['kumaNodeId'] = $kumaNodeId;
+            }
+            if ($metaPatch !== []) {
                 $module->migrationStateService->updateMeta(
                     $sourceStream,
                     (string) $sourceId,
                     null,
-                    ['refIdsByLocale' => $refIdsByLocale],
+                    $metaPatch,
+                );
+            }
+
+            // Parallel state rows for per-locale refIds. State is keyed by
+            // the canonical (primary-locale) refId; relation FKs in source
+            // PageParts (e.g. ServicePagePart.page_id) point at THE LOCALE-
+            // SPECIFIC entity row id, which differs from the canonical.
+            // Without parallel rows, RelationHandler's getTargetId(source,
+            // <localeRefId>) misses and the field stores []. Record a
+            // parallel state row per non-canonical refId pointing at the
+            // same Craft entry — same targetId/targetUid/targetType, just
+            // a different sourceKey for cross-locale lookups. Idempotent
+            // via record()'s upsert.
+            $canonicalSourceId = (int) $sourceId;
+            foreach ($refIdsByLocale as $localeRefId) {
+                $localeRefId = (int) $localeRefId;
+                if ($localeRefId <= 0 || $localeRefId === $canonicalSourceId) {
+                    continue;
+                }
+                $module->migrationStateService->record(
+                    source: $sourceStream,
+                    key: (string) $localeRefId,
+                    targetType: 'entry',
+                    targetId: (int) $entry->id,
+                    targetUid: (string) $entry->uid,
+                    meta: ['canonicalSourceKey' => $canonicalSourceId],
                 );
             }
 
@@ -261,6 +451,149 @@ class AtomicMigrationService extends Component
             }
             foreach ($siteData['fieldValues'] ?? [] as $handle => &$val) {
                 $siteData['fieldValues'][$handle] = $resolve($val);
+            }
+            unset($val);
+        }
+        unset($siteData);
+
+        return $perSite;
+    }
+
+    /**
+     * Phase 12 / Gap [C] — entry-token analog of ingestAndResolveAssets.
+     *
+     * Walks the perSite tree once per entry. For each Entries-field value
+     * containing deferred tokens (`entry:<source>:<id>`):
+     *   1. Tokens that resolve against the currently-populated state →
+     *      replaced inline with the resolved Craft entry id.
+     *   2. Tokens that don't resolve → stripped from the payload + recorded
+     *      into self::$entryRelationFixupQueue so MigrateWorkflow's
+     *      post-load fix-up pass can re-resolve and re-save the owning
+     *      matrix block once every entry has saved at least once.
+     *
+     * The recursion shape mirrors ingestAndResolveAssets — outer loop over
+     * perSite/fieldValues, inner recursion that descends into matrix-block
+     * payloads via `$item['fields']`. Each token-bearing list carries its
+     * field handle + sourceRef (from the enclosing block's
+     * `_sourcePartRef`) into the fix-up record so the post-load pass can
+     * locate the saved block by `state.meta.blockIds[sourceRef]`.
+     *
+     * @param  array<string, mixed> $perSite
+     * @param  string $parentStateSource state key prefix of the entity that
+     *                                   owns this perSite payload (e.g.
+     *                                   App_Entity_Pages_TextPage)
+     * @param  string $parentStateKey    sourceKey of the owning entity
+     *                                   (typically the entity row id)
+     * @return array<string, mixed>      perSite with token strings
+     *                                   replaced/stripped
+     */
+    private function ingestAndResolveEntryRelations(
+        array $perSite,
+        string $parentStateSource,
+        string $parentStateKey,
+    ): array {
+        $state = $this->migrationStateService;
+        if ($state === null) {
+            return $perSite;
+        }
+
+        foreach ($perSite as $siteHandle => &$siteData) {
+            if (!is_array($siteData)) {
+                continue;
+            }
+            $site = Craft::$app->getSites()->getSiteByHandle((string) $siteHandle);
+            $siteId = $site?->id;
+
+            $resolve = static function (
+                mixed $value,
+                string $fieldHandle,
+                string $sourceRef,
+            ) use (
+                &$resolve,
+                $state,
+                $parentStateSource,
+                $parentStateKey,
+                $siteId,
+                $siteHandle,
+            ): mixed {
+                if (!is_array($value)) {
+                    return $value;
+                }
+
+                // Detect a list containing deferred entry tokens. Mixed lists
+                // (some int, some token string) are valid — token-emission may
+                // be partial when only a subset of ids missed at transform
+                // time.
+                $hasTokens = false;
+                foreach ($value as $v) {
+                    if (is_string($v) && DeferredEntryToken::isToken($v)) {
+                        $hasTokens = true;
+                        break;
+                    }
+                }
+                if ($hasTokens) {
+                    $resolved = [];
+                    foreach ($value as $v) {
+                        if (is_int($v)) {
+                            $resolved[] = $v;
+                            continue;
+                        }
+                        if (is_string($v) && ctype_digit($v)) {
+                            $resolved[] = (int) $v;
+                            continue;
+                        }
+                        if (!is_string($v) || ($parts = DeferredEntryToken::parse($v)) === null) {
+                            // Unrecognised payload — silently drop, mirroring
+                            // the asset path's behaviour on bad tokens.
+                            continue;
+                        }
+                        $hit = $state->getTargetId($parts['source'], (string) $parts['legacyId'], $siteId)
+                            ?? $state->getTargetId($parts['source'], (string) $parts['legacyId'], null);
+                        if ($hit !== null) {
+                            $resolved[] = $hit;
+                            continue;
+                        }
+                        // Defer to post-load fix-up. Strip from the payload
+                        // — Craft's Entries field validator rejects strings.
+                        self::$entryRelationFixupQueue[] = [
+                            'parentStateSource' => $parentStateSource,
+                            'parentStateKey'    => $parentStateKey,
+                            'sourceRef'         => $sourceRef,
+                            'fieldHandle'       => $fieldHandle,
+                            'tokenSource'       => $parts['source'],
+                            'tokenLegacyId'     => $parts['legacyId'],
+                            'siteId'            => $siteId,
+                            'siteHandle'        => (string) $siteHandle,
+                        ];
+                    }
+                    return $resolved;
+                }
+
+                // Recurse into matrix-shaped structures (block list).
+                foreach ($value as $k => &$item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+                    if (isset($item['fields']) && is_array($item['fields'])) {
+                        $blockSourceRef = (string) ($item['fields']['_sourcePartRef'] ?? $sourceRef);
+                        foreach ($item['fields'] as $fk => &$fv) {
+                            $item['fields'][$fk] = $resolve($fv, (string) $fk, $blockSourceRef);
+                        }
+                        unset($fv);
+                    }
+                    foreach ($item as $ik => &$iv) {
+                        if ($ik !== 'fields' && is_array($iv)) {
+                            $item[$ik] = $resolve($iv, $fieldHandle, $sourceRef);
+                        }
+                    }
+                    unset($iv);
+                }
+                unset($item);
+                return $value;
+            };
+
+            foreach ($siteData['fieldValues'] ?? [] as $handle => &$val) {
+                $siteData['fieldValues'][$handle] = $resolve($val, (string) $handle, '');
             }
             unset($val);
         }

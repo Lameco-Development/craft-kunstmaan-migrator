@@ -239,12 +239,31 @@ class EntryMigrationService extends Component
             ? ($this->stateService->get($stateSource, (string) $stateKey)['meta'] ?? null)
             : null;
 
+        // Per-site block-UID map. Shape:
+        //   ['<siteHandle>' => ['<sourceRef>' => '<blockId>', ...], ...]
+        // Matrix fields with `propagationMethod: none` get separate block
+        // elements per site, so a flat sourceRef→blockId map (the v1 shape)
+        // collapses across sites and only the last-written site's block ids
+        // survive — breaking the deferred-entry-relation fix-up pass for
+        // every other site. Phase 12 / Gap [C]-followup: nested per-site.
         $blockUidMap = [];
         if (!empty($existingMeta)) {
             if (is_string($existingMeta)) {
                 $existingMeta = json_decode($existingMeta, true);
             }
-            $blockUidMap = (array) ($existingMeta['blockIds'] ?? $existingMeta['blockUids'] ?? []);
+            $rawBlockIds = (array) ($existingMeta['blockIds'] ?? $existingMeta['blockUids'] ?? []);
+            // Back-compat: detect the flat v1 shape (scalar values) and
+            // promote it to a per-primary-site submap so re-runs against
+            // pre-Phase-12 state rows still thread block UIDs correctly
+            // for the primary site at minimum.
+            if ($rawBlockIds !== []) {
+                $first = reset($rawBlockIds);
+                if (is_array($first)) {
+                    $blockUidMap = $rawBlockIds;
+                } else {
+                    $blockUidMap = [$primarySite->handle => $rawBlockIds];
+                }
+            }
         }
 
         // Inject the kunstmaanSourceId custom-field value on each per-site
@@ -279,7 +298,7 @@ class EntryMigrationService extends Component
         $this->applyPerSiteData(
             $entry,
             $primaryData,
-            $blockUidMap,
+            (array) ($blockUidMap[$primarySite->handle] ?? []),
             $report,
             $stateSource,
             (string) $stateKey,
@@ -298,9 +317,11 @@ class EntryMigrationService extends Component
             );
         }
 
-        // Collect primary-site block UIDs immediately after save.
-        $blockUidMap = array_merge(
-            $blockUidMap,
+        // Collect primary-site block UIDs immediately after save. Per-site
+        // bucket so secondary sites (with propagationMethod=none) can keep
+        // their distinct block ids without overwriting.
+        $blockUidMap[$primarySite->handle] = array_merge(
+            (array) ($blockUidMap[$primarySite->handle] ?? []),
             $this->collectBlockUidsByPosition($entry, $primarySourceRefPositions),
         );
 
@@ -344,10 +365,26 @@ class EntryMigrationService extends Component
                 continue;
             }
 
+            // Phase 12 / propagationMethod=none cleanup: when the primary
+            // save enables this entry on multiple sites, Craft auto-creates
+            // ghost matrix-block mirrors on the non-primary sites with NULL
+            // content. The secondary save then ADDS new blocks alongside
+            // the ghosts (sortOrders 1-N for ghosts + 1-M for real EN data),
+            // bloating the rendered matrix with empty rows. Hard-delete any
+            // block on this site that isn't in our tracked blockUidMap for
+            // this site BEFORE applyPerSiteData runs setFieldValues — the
+            // tracked set carries real blocks from previous runs (re-runs)
+            // or is empty (first runs), so the wipe targets only ghosts.
+            $this->wipeStaleSecondarySiteBlocks(
+                $localised,
+                (array) ($perSite[$site->handle]['fieldValues'] ?? []),
+                (array) ($blockUidMap[$site->handle] ?? []),
+            );
+
             $this->applyPerSiteData(
                 $localised,
                 $perSite[$site->handle],
-                $blockUidMap,
+                (array) ($blockUidMap[$site->handle] ?? []),
                 $report,
                 $stateSource,
                 (string) $stateKey,
@@ -369,10 +406,11 @@ class EntryMigrationService extends Component
                 continue;
             }
 
-            // Merge this site's block UIDs into the map so subsequent sites
-            // (and next run's state lookup) can thread them correctly.
-            $blockUidMap = array_merge(
-                $blockUidMap,
+            // Merge this site's block UIDs into its own bucket so the
+            // post-load fix-up pass (and next run's threading) can find
+            // each site's block ids independently.
+            $blockUidMap[$site->handle] = array_merge(
+                (array) ($blockUidMap[$site->handle] ?? []),
                 $this->collectBlockUidsByPosition($localised, $siteSourceRefPositions),
             );
         }
@@ -430,21 +468,32 @@ class EntryMigrationService extends Component
         ?string $stateKey = null,
         ?string $siteHandle = null,
     ): void {
-        $entry->title = (string) ($data['title'] ?? '');
-        // Only overwrite slug when the Transform emitted a non-empty value.
-        // Singleton sections (HomePage, ErrorPage, overview pages) have a
-        // meaningful pre-existing slug that Kunstmaan doesn't expose; blanking
-        // it on --overwrite re-runs breaks URI generation (uriFormat={slug}
+        $fieldValues = (array) ($data['fieldValues'] ?? []);
+
+        // Native title/slug come from the extract per-site `title`/`slug`
+        // (NodeTranslation for Pages). When extract has nothing, fall back to
+        // `fieldValues[title|slug]` — that's where mapping rows whose
+        // `targetHandle` is `title` or `slug` land. The scaffolder marks such
+        // rows with `craft_target: builtin_attribute` (intent), but the
+        // runtime contract is "targetHandle in {title, slug, postDate,
+        // expiryDate, enabled, parentId, authorId} routes to native". The
+        // strip at line ~520 then drops them from the custom-field hash so
+        // they don't double-write.
+        $entry->title = (string) ($this->firstNonEmpty($data['title'] ?? null, $fieldValues['title'] ?? null) ?? '');
+        // Only overwrite slug when a non-empty value is available. Singleton
+        // sections (HomePage, ErrorPage, overview pages) have a meaningful
+        // pre-existing slug that Kunstmaan doesn't expose; blanking it on
+        // --overwrite re-runs breaks URI generation (uriFormat={slug}
         // collapses to empty, collides with root URI, save fails validation).
-        if (!empty($data['slug'])) {
-            $entry->slug = (string) $data['slug'];
+        $resolvedSlug = $this->firstNonEmpty($data['slug'] ?? null, $fieldValues['slug'] ?? null);
+        if ($resolvedSlug !== null) {
+            $entry->slug = (string) $resolvedSlug;
         }
 
         if (!empty($data['parentId'])) {
             $entry->setParentId((int) $data['parentId']);
         }
 
-        $fieldValues = (array) ($data['fieldValues'] ?? []);
         // Thread existing block UIDs into every matrix field payload so re-runs
         // update existing blocks in place instead of duplicating them.
         foreach ($fieldValues as $handle => $payload) {
@@ -758,6 +807,26 @@ class EntryMigrationService extends Component
         return is_string($value) && trim($value) !== '';
     }
 
+    /**
+     * Pick the first scalar argument that is neither null nor an empty/whitespace
+     * string. Used to resolve native attributes (title/slug) where extract is
+     * the canonical source but a mapping row pointing `targetHandle` at the
+     * native handle is the legitimate fallback.
+     */
+    private function firstNonEmpty(mixed ...$candidates): mixed
+    {
+        foreach ($candidates as $value) {
+            if ($value === null) {
+                continue;
+            }
+            if (is_string($value) && trim($value) === '') {
+                continue;
+            }
+            return $value;
+        }
+        return null;
+    }
+
     private function recordFallback(?MigrationReport $report, string $category, string $message): void
     {
         if ($report !== null) {
@@ -871,6 +940,97 @@ class EntryMigrationService extends Component
             }
         }
         return $map;
+    }
+
+    /**
+     * Phase 12 / propagationMethod=none ghost-block cleanup. Hard-delete
+     * matrix-block elements on the secondary site that aren't in our
+     * tracked sourceRef→blockId map for this site. Background:
+     *
+     * Craft 5's matrix-block save with `propagationMethod: none` creates
+     * empty mirror blocks on every non-primary site enabled on the parent
+     * during the PRIMARY save (EntryMigrationService::saveEntryForSites
+     * sets `setEnabledForSite([1=>true, 2=>true, ...])` before the primary
+     * save). When the secondary site's save then runs with that site's
+     * actual data, Craft adds NEW blocks alongside the ghosts instead of
+     * replacing them — so the EN site's matrix ends up with both the
+     * 5 NL-mirror ghosts (sortOrder 1-5, NULL content) and the 3 real EN
+     * blocks (sortOrder 1-3) co-existing. Without this cleanup, the
+     * rendered EN matrix is a bloated mess.
+     *
+     * Cleanup contract:
+     *   - $perSiteFieldValues: this site's fieldValues map; we only wipe
+     *     blocks for matrix fields the secondary save is about to populate.
+     *     Other matrix fields (which this site's payload doesn't touch)
+     *     are left alone.
+     *   - $trackedBlockIds: blockUidMap[$siteHandle] — sourceRef → blockId
+     *     for blocks this migration tracked as real on this site. On first
+     *     runs the bucket is empty (no real blocks yet); on re-runs it
+     *     carries the previous run's real EN block ids.
+     *
+     * @param array<string, mixed>  $perSiteFieldValues
+     * @param array<string, string> $trackedBlockIds  sourceRef → blockId
+     */
+    private function wipeStaleSecondarySiteBlocks(
+        Entry $localised,
+        array $perSiteFieldValues,
+        array $trackedBlockIds,
+    ): void {
+        $trackedIds = [];
+        foreach ($trackedBlockIds as $blockId) {
+            $intId = (int) $blockId;
+            if ($intId > 0) {
+                $trackedIds[$intId] = true;
+            }
+        }
+
+        foreach ($perSiteFieldValues as $handle => $payload) {
+            if (!is_array($payload) || $payload === [] || !$this->looksLikeMatrixPayload($payload)) {
+                continue;
+            }
+            try {
+                $existing = $localised->getFieldValue((string) $handle);
+            } catch (\Throwable) {
+                continue;
+            }
+            if (!$existing || !method_exists($existing, 'all')) {
+                continue;
+            }
+            // Use ->siteId() to scope the query to this site's blocks.
+            // Without this scope we'd potentially see blocks from other
+            // sites and mistakenly delete them.
+            try {
+                if (method_exists($existing, 'siteId')) {
+                    $existing->siteId($localised->siteId);
+                }
+                if (method_exists($existing, 'status')) {
+                    $existing->status(null);
+                }
+                $blocks = $existing->all();
+            } catch (\Throwable) {
+                continue;
+            }
+            foreach ($blocks as $block) {
+                if (!is_object($block) || empty($block->id)) {
+                    continue;
+                }
+                if (isset($trackedIds[(int) $block->id])) {
+                    continue;
+                }
+                try {
+                    Craft::$app->elements->deleteElement($block, true);
+                } catch (\Throwable $e) {
+                    Craft::warning(
+                        sprintf(
+                            'wipeStaleSecondarySiteBlocks: deleteElement(%d) failed: %s',
+                            (int) $block->id,
+                            $e->getMessage(),
+                        ),
+                        __METHOD__,
+                    );
+                }
+            }
+        }
     }
 
     /**
