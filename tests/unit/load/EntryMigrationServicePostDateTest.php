@@ -70,11 +70,15 @@ final class EntryMigrationServicePostDateTest extends TestCase
 
     public function testTransformPropagatesKumaCreatedAsPostDate(): void
     {
-        // ExtractService writes `'created' => $t['created'] ?? null` per-site;
-        // TransformService should propagate it as `'postDate' => $siteData['created']`.
+        // ExtractService writes `'created' => $t['created'] ?? null` per-site.
+        // TransformService routes it through `resolvePostDate($siteData, $nodeSpec)`
+        // which prefers `detail[<nodeSpec.postDateColumn>]` (editorial date for
+        // AbstractArticlePage subclasses) and falls back to `siteData['created']`.
         // Lock the wire-up so a future refactor doesn't silently drop the
         // primary-path source date (would degrade everyone to the now()
-        // fallback, losing per-page editorial dates).
+        // fallback in applyPerSiteData, losing per-page editorial dates).
+        // Editorial-override behaviour is locked separately in
+        // tests/unit/transform/TransformServicePostDateTest.
         $extractFile = dirname((string) (new ReflectionClass(EntryMigrationService::class))->getFileName(), 2)
             . '/extract/ExtractService.php';
         $transformFile = dirname((string) (new ReflectionClass(EntryMigrationService::class))->getFileName(), 2)
@@ -88,8 +92,13 @@ final class EntryMigrationServicePostDateTest extends TestCase
             $extractSource,
         );
         self::assertStringContainsString(
-            "'postDate'    => \$siteData['created'] ?? null,",
+            "'postDate'    => \$this->resolvePostDate(\$siteData, \$nodeSpec),",
             $transformSource,
+        );
+        self::assertStringContainsString(
+            "\$created = \$siteData['created'] ?? null;",
+            $transformSource,
+            'resolvePostDate() must keep kuma_node_translations.created as the fallback',
         );
     }
 }

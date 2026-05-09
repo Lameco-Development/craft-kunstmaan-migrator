@@ -523,6 +523,16 @@ final class MappingCompiler extends Component
                 'bodyWrapBlock'       => null,
                 'joins'               => [],
             ];
+            // Editorial postDate column — set by the scaffolder when a Page
+            // entity inherits a `date` column from Kunstmaan's
+            // `AbstractArticlePage`. TransformService::resolvePostDate reads
+            // this to pull `detail[<col>]` instead of the translation row's
+            // creation timestamp, preserving the publish dates editors set
+            // explicitly (matters for News/Blog index sort order).
+            $postDateColumn = $nodeClassRow !== null ? (string) ($nodeClassRow['postDateColumn'] ?? '') : '';
+            if ($postDateColumn !== '') {
+                $nodeClasses[$fqcn]['postDateColumn'] = $postDateColumn;
+            }
             $this->mergeOperatorNodeClassOverrides($nodeClasses[$fqcn], (array) ($mapping['nodeClasses'][$fqcn] ?? []));
 
             // Phase 8.7 / D-39 — auto-detect flatPagePartContent target. When
@@ -1864,7 +1874,7 @@ final class MappingCompiler extends Component
             ksort($nodeClass['fields']);
         }
 
-        foreach (['pageBuilderHandle', 'bodyColumn', 'flatPagePartContent'] as $key) {
+        foreach (['pageBuilderHandle', 'bodyColumn', 'flatPagePartContent', 'postDateColumn'] as $key) {
             if (isset($existing[$key]) && is_string($existing[$key]) && $existing[$key] !== '') {
                 $nodeClass[$key] = $existing[$key];
             }

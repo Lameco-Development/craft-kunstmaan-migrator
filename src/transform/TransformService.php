@@ -197,13 +197,7 @@ class TransformService extends Component
                     'online'      => (bool) ($siteData['online'] ?? false),
                     'title'       => (string) ($siteData['title'] ?? ''),
                     'slug'        => (string) ($siteData['slug'] ?? ''),
-                    // Source `kuma_node_translations.created` flows through
-                    // as Craft's `postDate`. EntryMigrationService::applyPerSiteData
-                    // already reads `$data['postDate']` natively. Plumbed
-                    // here (not extract→transform passthrough) so a future
-                    // mapping override could rewrite it without touching
-                    // extract semantics.
-                    'postDate'    => $siteData['created'] ?? null,
+                    'postDate'    => $this->resolvePostDate($siteData, $nodeSpec),
                     'fieldValues' => $fieldValues,
                 ];
             }
@@ -232,6 +226,41 @@ class TransformService extends Component
         // without an explicit second return channel. Marked with a `__report` key.
         // CONTEXT D-48 in-process pipeline reshape — was returned as the run() return value in v1.
         yield ['__report' => $report];
+    }
+
+    /**
+     * Resolve the source-side postDate for a per-site translation.
+     *
+     * Priority chain:
+     *   1. `detail[<nodeSpec.postDateColumn>]` — entity's own editorial date
+     *      column when the scaffolder opted this entity in. The scaffolder's
+     *      EmitMigratorMappingCommand emits `postDateColumn: date` for any
+     *      Page entity that inherits a `date` column from
+     *      `Kunstmaan\ArticleBundle\Entity\AbstractArticlePage` — News, Blog,
+     *      Event, Vacancy etc. all use this base class to expose an editorial
+     *      publish-date that drives index sort order.
+     *   2. `kuma_node_translations.created` — the translation row's creation
+     *      timestamp. Close to publish for entities without an editorial column.
+     *   3. null — falls through to applyPerSiteData's `now()` safety net.
+     *
+     * @param array<string, mixed> $siteData per-site extract payload
+     * @param array<string, mixed> $nodeSpec mapping.yaml entry for the parent FQCN
+     */
+    private function resolvePostDate(array $siteData, array $nodeSpec): ?string
+    {
+        $column = (string) ($nodeSpec['postDateColumn'] ?? '');
+        if ($column !== '') {
+            $detail = is_array($siteData['detail'] ?? null) ? $siteData['detail'] : [];
+            $editorial = $detail[$column] ?? null;
+            if ($editorial instanceof \DateTimeInterface) {
+                return $editorial->format('Y-m-d H:i:s');
+            }
+            if (is_string($editorial) && $editorial !== '') {
+                return $editorial;
+            }
+        }
+        $created = $siteData['created'] ?? null;
+        return is_string($created) && $created !== '' ? $created : null;
     }
 
     /**
