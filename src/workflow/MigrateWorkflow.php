@@ -2229,7 +2229,136 @@ class MigrateWorkflow extends Component
             ), Console::FG_GREEN);
         }
 
+        $this->resolveDeferredEntryRelations($report);
+
         return ExitCode::OK;
+    }
+
+    /**
+     * Phase 12 / Gap [C] — post-load fix-up pass for deferred entry-relation
+     * tokens. RelationHandler emits `entry:<source>:<id>` strings at
+     * transform time when state is empty; AtomicMigrationService strips
+     * unresolvable tokens from the per-entry payload and queues a fix-up
+     * record. Now that every entry has saved at least once, walk the queue,
+     * resolve each token via the now-populated state, and re-save the
+     * owning matrix block with the resolved relation id.
+     *
+     * Block lookup: state.meta.blockIds is `{<sourceRef>: <blockId>}` per
+     * the Slice 4 contract (EntryMigrationService line 384). We pull the
+     * parent's state row, look up the saved block id by sourceRef, then
+     * Entry::find()->id() the block, setFieldValue + saveElement.
+     *
+     * Failure modes: state-row missing for parent (entry not saved → fix
+     * skipped, counts toward relation.unresolved), sourceRef not in
+     * blockIds map (block was created but not tracked — counts toward
+     * relation.unresolved), token target still unresolved (counts toward
+     * relation.unresolved).
+     */
+    private function resolveDeferredEntryRelations(MigrationReport $report): void
+    {
+        $fixups = \lameco\kunstmaanmigrator\load\AtomicMigrationService::pendingEntryRelationFixups();
+        if ($fixups === []) {
+            return;
+        }
+
+        $plugin = Plugin::getInstance();
+        if ($plugin === null) {
+            $this->stderr("  WARN deferred-entry-relation fix-up: plugin unavailable\n", Console::FG_YELLOW);
+            return;
+        }
+        $stateService = $plugin->migrationStateService;
+
+        // Group fix-ups by (parentStateSource, parentStateKey, sourceRef) so
+        // we re-save each block at most once per run, accumulating resolved
+        // ids for the same field across multiple deferred tokens.
+        $grouped = [];
+        foreach ($fixups as $fx) {
+            $bucketKey = sprintf(
+                '%s|%s|%s',
+                $fx['parentStateSource'],
+                $fx['parentStateKey'],
+                $fx['sourceRef'],
+            );
+            $grouped[$bucketKey][] = $fx;
+        }
+
+        $resolvedBlocks = 0;
+        $unresolvedTokens = 0;
+        foreach ($grouped as $rows) {
+            $first = $rows[0];
+            $parentSource = $first['parentStateSource'];
+            $parentKey = $first['parentStateKey'];
+            $sourceRef = $first['sourceRef'];
+
+            // Find the parent's state row + extract blockIds map.
+            $parentState = $stateService->get($parentSource, $parentKey, null);
+            if ($parentState === null) {
+                $unresolvedTokens += count($rows);
+                continue;
+            }
+            $meta = is_string($parentState['meta'] ?? null)
+                ? (json_decode((string) $parentState['meta'], true) ?: [])
+                : (array) ($parentState['meta'] ?? []);
+            $blockIds = (array) ($meta['blockIds'] ?? []);
+            $blockId = isset($blockIds[$sourceRef]) ? (int) $blockIds[$sourceRef] : 0;
+            if ($blockId <= 0) {
+                $unresolvedTokens += count($rows);
+                continue;
+            }
+
+            // Resolve every token in this bucket. Group by fieldHandle so
+            // multi-id Entries fields receive a single setFieldValue call
+            // with the merged list.
+            $byField = [];
+            $stillUnresolved = 0;
+            foreach ($rows as $fx) {
+                $hit = $stateService->getTargetId($fx['tokenSource'], (string) $fx['tokenLegacyId'], $fx['siteId'])
+                    ?? $stateService->getTargetId($fx['tokenSource'], (string) $fx['tokenLegacyId'], null);
+                if ($hit === null) {
+                    $stillUnresolved++;
+                    continue;
+                }
+                $byField[$fx['fieldHandle']][] = $hit;
+            }
+            if ($byField === []) {
+                $unresolvedTokens += $stillUnresolved;
+                continue;
+            }
+
+            $block = \craft\elements\Entry::find()
+                ->id($blockId)
+                ->status(null)
+                ->siteId($first['siteId'] ?: '*')
+                ->one();
+            if ($block === null) {
+                $unresolvedTokens += count($rows);
+                continue;
+            }
+            foreach ($byField as $fieldHandle => $targetIds) {
+                $block->setFieldValue($fieldHandle, array_values(array_unique($targetIds)));
+            }
+            try {
+                if (\Craft::$app->elements->saveElement($block, true, false)) {
+                    $resolvedBlocks++;
+                } else {
+                    $unresolvedTokens += count($rows);
+                }
+            } catch (Throwable $e) {
+                $unresolvedTokens += count($rows);
+            }
+            $unresolvedTokens += $stillUnresolved;
+        }
+
+        // Surface counts via the standard report counters so REPORT.md picks
+        // them up. relation.unresolved already exists (D-52).
+        if ($unresolvedTokens > 0) {
+            $report->incr('relation.unresolved', $unresolvedTokens);
+        }
+        $this->stdout(sprintf(
+            "  OK   deferred-entry-relation fix-up: %d block(s) re-saved with resolved relations%s\n",
+            $resolvedBlocks,
+            $unresolvedTokens > 0 ? sprintf(' (%d token(s) still unresolved)', $unresolvedTokens) : '',
+        ), Console::FG_GREEN);
     }
 
     /**

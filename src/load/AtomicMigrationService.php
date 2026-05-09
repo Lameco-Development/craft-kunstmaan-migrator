@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
+use lameco\kunstmaanmigrator\fields\DeferredEntryToken;
 use lameco\kunstmaanmigrator\Plugin;
 use RuntimeException;
 use Throwable;
@@ -71,10 +72,43 @@ class AtomicMigrationService extends Component
      */
     private static array $hierarchyFixupQueue = [];
 
+    /**
+     * Phase 12 / Gap [C] — pending entry-relation fix-up queue. When the
+     * pre-save walker (ingestAndResolveEntryRelations) encounters a deferred
+     * entry token (`entry:<source>:<id>`) whose target hasn't been saved yet,
+     * we strip the token from the field payload (so Craft's setFieldValues
+     * accepts the integer-only Entries field) and record the fix-up here.
+     * After all entries are saved, MigrateWorkflow walks the queue, resolves
+     * each token via the now-populated state, and re-saves the owning matrix
+     * block with the resolved relation id.
+     *
+     * Each entry: [
+     *   'parentStateSource' => 'App_Entity_Pages_TextPage',
+     *   'parentStateKey'    => '18',
+     *   'sourceRef'         => 'ServicePagePart:1189',
+     *   'fieldHandle'       => 'page',
+     *   'tokenSource'       => 'App_Entity_Pages_ServicesPage',
+     *   'tokenLegacyId'     => 445,
+     *   'siteId'            => 1,
+     * ]
+     *
+     * @var list<array{parentStateSource: string, parentStateKey: string, sourceRef: string, fieldHandle: string, tokenSource: string, tokenLegacyId: int, siteId: ?int}>
+     */
+    private static array $entryRelationFixupQueue = [];
+
     public static function resetHierarchyState(): void
     {
         self::$kumaNodeIdToEntryId = [];
         self::$hierarchyFixupQueue = [];
+        self::$entryRelationFixupQueue = [];
+    }
+
+    /**
+     * @return list<array{parentStateSource: string, parentStateKey: string, sourceRef: string, fieldHandle: string, tokenSource: string, tokenLegacyId: int, siteId: ?int}>
+     */
+    public static function pendingEntryRelationFixups(): array
+    {
+        return self::$entryRelationFixupQueue;
     }
 
     /**
@@ -177,6 +211,22 @@ class AtomicMigrationService extends Component
             );
             $transformed['perSite'] = $perSite;
         }
+
+        // Phase 12 / Gap [C] — resolve deferred entry-relation tokens.
+        // RelationHandler emits `entry:<source>:<id>` strings at transform
+        // time when the state table is empty. Those tokens are now in the
+        // perSite payload's matrix-block fields. Resolve in-place against the
+        // currently-populated state; tokens that still don't resolve (target
+        // not yet saved this load) are recorded into $entryRelationFixupQueue
+        // and stripped from the payload so Craft's setFieldValues accepts
+        // the integer-only Entries field. The post-load fix-up pass in
+        // MigrateWorkflow walks the queue once every entry has saved.
+        $perSite = $this->ingestAndResolveEntryRelations(
+            (array) ($transformed['perSite'] ?? []),
+            $sourceStream,
+            (string) $sourceId,
+        );
+        $transformed['perSite'] = $perSite;
 
         // Per-locale legacy ref_ids. Produced by ExtractService (via
         // LegacyDbService::translationsFor which joins public node versions),
@@ -400,6 +450,147 @@ class AtomicMigrationService extends Component
             }
             foreach ($siteData['fieldValues'] ?? [] as $handle => &$val) {
                 $siteData['fieldValues'][$handle] = $resolve($val);
+            }
+            unset($val);
+        }
+        unset($siteData);
+
+        return $perSite;
+    }
+
+    /**
+     * Phase 12 / Gap [C] — entry-token analog of ingestAndResolveAssets.
+     *
+     * Walks the perSite tree once per entry. For each Entries-field value
+     * containing deferred tokens (`entry:<source>:<id>`):
+     *   1. Tokens that resolve against the currently-populated state →
+     *      replaced inline with the resolved Craft entry id.
+     *   2. Tokens that don't resolve → stripped from the payload + recorded
+     *      into self::$entryRelationFixupQueue so MigrateWorkflow's
+     *      post-load fix-up pass can re-resolve and re-save the owning
+     *      matrix block once every entry has saved at least once.
+     *
+     * The recursion shape mirrors ingestAndResolveAssets — outer loop over
+     * perSite/fieldValues, inner recursion that descends into matrix-block
+     * payloads via `$item['fields']`. Each token-bearing list carries its
+     * field handle + sourceRef (from the enclosing block's
+     * `_sourcePartRef`) into the fix-up record so the post-load pass can
+     * locate the saved block by `state.meta.blockIds[sourceRef]`.
+     *
+     * @param  array<string, mixed> $perSite
+     * @param  string $parentStateSource state key prefix of the entity that
+     *                                   owns this perSite payload (e.g.
+     *                                   App_Entity_Pages_TextPage)
+     * @param  string $parentStateKey    sourceKey of the owning entity
+     *                                   (typically the entity row id)
+     * @return array<string, mixed>      perSite with token strings
+     *                                   replaced/stripped
+     */
+    private function ingestAndResolveEntryRelations(
+        array $perSite,
+        string $parentStateSource,
+        string $parentStateKey,
+    ): array {
+        $state = $this->migrationStateService;
+        if ($state === null) {
+            return $perSite;
+        }
+
+        foreach ($perSite as $siteHandle => &$siteData) {
+            if (!is_array($siteData)) {
+                continue;
+            }
+            $site = Craft::$app->getSites()->getSiteByHandle((string) $siteHandle);
+            $siteId = $site?->id;
+
+            $resolve = static function (
+                mixed $value,
+                string $fieldHandle,
+                string $sourceRef,
+            ) use (
+                &$resolve,
+                $state,
+                $parentStateSource,
+                $parentStateKey,
+                $siteId,
+            ): mixed {
+                if (!is_array($value)) {
+                    return $value;
+                }
+
+                // Detect a list containing deferred entry tokens. Mixed lists
+                // (some int, some token string) are valid — token-emission may
+                // be partial when only a subset of ids missed at transform
+                // time.
+                $hasTokens = false;
+                foreach ($value as $v) {
+                    if (is_string($v) && DeferredEntryToken::isToken($v)) {
+                        $hasTokens = true;
+                        break;
+                    }
+                }
+                if ($hasTokens) {
+                    $resolved = [];
+                    foreach ($value as $v) {
+                        if (is_int($v)) {
+                            $resolved[] = $v;
+                            continue;
+                        }
+                        if (is_string($v) && ctype_digit($v)) {
+                            $resolved[] = (int) $v;
+                            continue;
+                        }
+                        if (!is_string($v) || ($parts = DeferredEntryToken::parse($v)) === null) {
+                            // Unrecognised payload — silently drop, mirroring
+                            // the asset path's behaviour on bad tokens.
+                            continue;
+                        }
+                        $hit = $state->getTargetId($parts['source'], (string) $parts['legacyId'], $siteId)
+                            ?? $state->getTargetId($parts['source'], (string) $parts['legacyId'], null);
+                        if ($hit !== null) {
+                            $resolved[] = $hit;
+                            continue;
+                        }
+                        // Defer to post-load fix-up. Strip from the payload
+                        // — Craft's Entries field validator rejects strings.
+                        self::$entryRelationFixupQueue[] = [
+                            'parentStateSource' => $parentStateSource,
+                            'parentStateKey'    => $parentStateKey,
+                            'sourceRef'         => $sourceRef,
+                            'fieldHandle'       => $fieldHandle,
+                            'tokenSource'       => $parts['source'],
+                            'tokenLegacyId'     => $parts['legacyId'],
+                            'siteId'            => $siteId,
+                        ];
+                    }
+                    return $resolved;
+                }
+
+                // Recurse into matrix-shaped structures (block list).
+                foreach ($value as $k => &$item) {
+                    if (!is_array($item)) {
+                        continue;
+                    }
+                    if (isset($item['fields']) && is_array($item['fields'])) {
+                        $blockSourceRef = (string) ($item['fields']['_sourcePartRef'] ?? $sourceRef);
+                        foreach ($item['fields'] as $fk => &$fv) {
+                            $item['fields'][$fk] = $resolve($fv, (string) $fk, $blockSourceRef);
+                        }
+                        unset($fv);
+                    }
+                    foreach ($item as $ik => &$iv) {
+                        if ($ik !== 'fields' && is_array($iv)) {
+                            $item[$ik] = $resolve($iv, $fieldHandle, $sourceRef);
+                        }
+                    }
+                    unset($iv);
+                }
+                unset($item);
+                return $value;
+            };
+
+            foreach ($siteData['fieldValues'] ?? [] as $handle => &$val) {
+                $siteData['fieldValues'][$handle] = $resolve($val, (string) $handle, '');
             }
             unset($val);
         }
