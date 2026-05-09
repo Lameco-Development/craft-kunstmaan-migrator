@@ -306,6 +306,11 @@ class EntryMigrationService extends Component
         );
 
         // Critical: propagateChanges=false (Pitfall 2)
+        // resaving=true short-circuits Entry::_shouldSaveRevision so the
+        // primary + per-site save cycle doesn't bloat each entry with one
+        // revision per call (and one snapshot of every propagationMethod=none
+        // matrix-block set per revision). Migration is a re-save, not an edit.
+        $entry->resaving = true;
         if (!Craft::$app->elements->saveElement($entry, true, false)) {
             throw new RuntimeException(
                 sprintf(
@@ -392,6 +397,7 @@ class EntryMigrationService extends Component
             );
 
             // Critical: propagateChanges=false (Pitfall 2)
+            $localised->resaving = true;
             if (!Craft::$app->elements->saveElement($localised, true, false)) {
                 Craft::warning(
                     sprintf(

@@ -2213,6 +2213,7 @@ class MigrateWorkflow extends Component
                         continue;
                     }
                     $entry->setParentId($parentEntryId);
+                    $entry->resaving = true;
                     if (\Craft::$app->elements->saveElement($entry, true, false)) {
                         $resolved++;
                     } else {
@@ -2361,6 +2362,7 @@ class MigrateWorkflow extends Component
                 $block->setFieldValue($fieldHandle, array_values(array_unique($targetIds)));
             }
             try {
+                $block->resaving = true;
                 if (\Craft::$app->elements->saveElement($block, true, false)) {
                     $resolvedBlocks++;
                 } else {
