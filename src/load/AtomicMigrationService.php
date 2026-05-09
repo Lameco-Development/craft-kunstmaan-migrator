@@ -90,9 +90,10 @@ class AtomicMigrationService extends Component
      *   'tokenSource'       => 'App_Entity_Pages_ServicesPage',
      *   'tokenLegacyId'     => 445,
      *   'siteId'            => 1,
+     *   'siteHandle'        => 'default',
      * ]
      *
-     * @var list<array{parentStateSource: string, parentStateKey: string, sourceRef: string, fieldHandle: string, tokenSource: string, tokenLegacyId: int, siteId: ?int}>
+     * @var list<array{parentStateSource: string, parentStateKey: string, sourceRef: string, fieldHandle: string, tokenSource: string, tokenLegacyId: int, siteId: ?int, siteHandle: string}>
      */
     private static array $entryRelationFixupQueue = [];
 
@@ -104,7 +105,7 @@ class AtomicMigrationService extends Component
     }
 
     /**
-     * @return list<array{parentStateSource: string, parentStateKey: string, sourceRef: string, fieldHandle: string, tokenSource: string, tokenLegacyId: int, siteId: ?int}>
+     * @return list<array{parentStateSource: string, parentStateKey: string, sourceRef: string, fieldHandle: string, tokenSource: string, tokenLegacyId: int, siteId: ?int, siteHandle: string}>
      */
     public static function pendingEntryRelationFixups(): array
     {
@@ -513,6 +514,7 @@ class AtomicMigrationService extends Component
                 $parentStateSource,
                 $parentStateKey,
                 $siteId,
+                $siteHandle,
             ): mixed {
                 if (!is_array($value)) {
                     return $value;
@@ -561,6 +563,7 @@ class AtomicMigrationService extends Component
                             'tokenSource'       => $parts['source'],
                             'tokenLegacyId'     => $parts['legacyId'],
                             'siteId'            => $siteId,
+                            'siteHandle'        => (string) $siteHandle,
                         ];
                     }
                     return $resolved;

@@ -2268,16 +2268,21 @@ class MigrateWorkflow extends Component
         }
         $stateService = $plugin->migrationStateService;
 
-        // Group fix-ups by (parentStateSource, parentStateKey, sourceRef) so
-        // we re-save each block at most once per run, accumulating resolved
-        // ids for the same field across multiple deferred tokens.
+        // Group fix-ups by (parentStateSource, parentStateKey, sourceRef,
+        // siteHandle) so we re-save each block at most once per run + per
+        // site, accumulating resolved ids for the same field across multiple
+        // deferred tokens. siteHandle is in the key because matrix fields
+        // with `propagationMethod: none` have separate block elements per
+        // site — collapsing across sites would only re-save one site's
+        // block.
         $grouped = [];
         foreach ($fixups as $fx) {
             $bucketKey = sprintf(
-                '%s|%s|%s',
+                '%s|%s|%s|%s',
                 $fx['parentStateSource'],
                 $fx['parentStateKey'],
                 $fx['sourceRef'],
+                (string) ($fx['siteHandle'] ?? ''),
             );
             $grouped[$bucketKey][] = $fx;
         }
@@ -2289,8 +2294,14 @@ class MigrateWorkflow extends Component
             $parentSource = $first['parentStateSource'];
             $parentKey = $first['parentStateKey'];
             $sourceRef = $first['sourceRef'];
+            $siteHandle = (string) ($first['siteHandle'] ?? '');
 
-            // Find the parent's state row + extract blockIds map.
+            // Find the parent's state row + extract blockIds map. Phase 12
+            // followup: the map is now nested per site
+            // ({siteHandle: {sourceRef: blockId}}). Back-compat: detect the
+            // flat v1 shape (scalar values) and treat it as a single
+            // primary-bucket — re-runs against pre-followup state rows still
+            // resolve at least the primary site.
             $parentState = $stateService->get($parentSource, $parentKey, null);
             if ($parentState === null) {
                 $unresolvedTokens += count($rows);
@@ -2299,8 +2310,20 @@ class MigrateWorkflow extends Component
             $meta = is_string($parentState['meta'] ?? null)
                 ? (json_decode((string) $parentState['meta'], true) ?: [])
                 : (array) ($parentState['meta'] ?? []);
-            $blockIds = (array) ($meta['blockIds'] ?? []);
-            $blockId = isset($blockIds[$sourceRef]) ? (int) $blockIds[$sourceRef] : 0;
+            $rawBlockIds = (array) ($meta['blockIds'] ?? []);
+            $blockId = 0;
+            if ($rawBlockIds !== []) {
+                $firstVal = reset($rawBlockIds);
+                if (is_array($firstVal)) {
+                    // New nested shape — pick the right site's submap.
+                    $siteSub = (array) ($rawBlockIds[$siteHandle] ?? []);
+                    $blockId = isset($siteSub[$sourceRef]) ? (int) $siteSub[$sourceRef] : 0;
+                } else {
+                    // Old flat shape — single bucket for all sites. Caps at
+                    // primary-site coverage; secondary sites stay unresolved.
+                    $blockId = isset($rawBlockIds[$sourceRef]) ? (int) $rawBlockIds[$sourceRef] : 0;
+                }
+            }
             if ($blockId <= 0) {
                 $unresolvedTokens += count($rows);
                 continue;

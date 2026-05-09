@@ -239,12 +239,31 @@ class EntryMigrationService extends Component
             ? ($this->stateService->get($stateSource, (string) $stateKey)['meta'] ?? null)
             : null;
 
+        // Per-site block-UID map. Shape:
+        //   ['<siteHandle>' => ['<sourceRef>' => '<blockId>', ...], ...]
+        // Matrix fields with `propagationMethod: none` get separate block
+        // elements per site, so a flat sourceRef→blockId map (the v1 shape)
+        // collapses across sites and only the last-written site's block ids
+        // survive — breaking the deferred-entry-relation fix-up pass for
+        // every other site. Phase 12 / Gap [C]-followup: nested per-site.
         $blockUidMap = [];
         if (!empty($existingMeta)) {
             if (is_string($existingMeta)) {
                 $existingMeta = json_decode($existingMeta, true);
             }
-            $blockUidMap = (array) ($existingMeta['blockIds'] ?? $existingMeta['blockUids'] ?? []);
+            $rawBlockIds = (array) ($existingMeta['blockIds'] ?? $existingMeta['blockUids'] ?? []);
+            // Back-compat: detect the flat v1 shape (scalar values) and
+            // promote it to a per-primary-site submap so re-runs against
+            // pre-Phase-12 state rows still thread block UIDs correctly
+            // for the primary site at minimum.
+            if ($rawBlockIds !== []) {
+                $first = reset($rawBlockIds);
+                if (is_array($first)) {
+                    $blockUidMap = $rawBlockIds;
+                } else {
+                    $blockUidMap = [$primarySite->handle => $rawBlockIds];
+                }
+            }
         }
 
         // Inject the kunstmaanSourceId custom-field value on each per-site
@@ -279,7 +298,7 @@ class EntryMigrationService extends Component
         $this->applyPerSiteData(
             $entry,
             $primaryData,
-            $blockUidMap,
+            (array) ($blockUidMap[$primarySite->handle] ?? []),
             $report,
             $stateSource,
             (string) $stateKey,
@@ -298,9 +317,11 @@ class EntryMigrationService extends Component
             );
         }
 
-        // Collect primary-site block UIDs immediately after save.
-        $blockUidMap = array_merge(
-            $blockUidMap,
+        // Collect primary-site block UIDs immediately after save. Per-site
+        // bucket so secondary sites (with propagationMethod=none) can keep
+        // their distinct block ids without overwriting.
+        $blockUidMap[$primarySite->handle] = array_merge(
+            (array) ($blockUidMap[$primarySite->handle] ?? []),
             $this->collectBlockUidsByPosition($entry, $primarySourceRefPositions),
         );
 
@@ -347,7 +368,7 @@ class EntryMigrationService extends Component
             $this->applyPerSiteData(
                 $localised,
                 $perSite[$site->handle],
-                $blockUidMap,
+                (array) ($blockUidMap[$site->handle] ?? []),
                 $report,
                 $stateSource,
                 (string) $stateKey,
@@ -369,10 +390,11 @@ class EntryMigrationService extends Component
                 continue;
             }
 
-            // Merge this site's block UIDs into the map so subsequent sites
-            // (and next run's state lookup) can thread them correctly.
-            $blockUidMap = array_merge(
-                $blockUidMap,
+            // Merge this site's block UIDs into its own bucket so the
+            // post-load fix-up pass (and next run's threading) can find
+            // each site's block ids independently.
+            $blockUidMap[$site->handle] = array_merge(
+                (array) ($blockUidMap[$site->handle] ?? []),
                 $this->collectBlockUidsByPosition($localised, $siteSourceRefPositions),
             );
         }
