@@ -57,6 +57,25 @@ class Settings extends Model
      * via `config/kunstmaan-migrator.php` to align with the actual handle.
      */
     public string  $targetVolume         = 'uploads';
+
+    /**
+     * Skip starter-kit / project-side asset-size validators during ingest.
+     * When true, AssetMigrationService catches `yii\web\HttpException` thrown
+     * from `Asset::EVENT_BEFORE_SAVE` listeners whose message matches the
+     * starter-kit's "The file is too large" copy, downgrades to a WARN, and
+     * skips that asset. Other validation throws still surface.
+     *
+     * Use case: Lameco's craft-starter-kit ships a per-extension size cap
+     * (modules/lameco/Module.php — 10MB for PDFs etc.) that's appropriate for
+     * editor uploads but rejects valid pre-existing assets during migration.
+     * Surfaced by deklerk's >10MB PDF on 2026-05-09.
+     *
+     * Defaults false — opt-in via project's `config/kunstmaan-migrator.php`
+     * to acknowledge the operator is willingly bypassing the cap for
+     * already-curated source content.
+     */
+    public bool    $skipAssetSizeValidation = false;
+
     public ?string $defaultSince         = null;
     public ?int    $defaultMaxPerEntity  = null;
     public bool    $dryRunDefault        = true;

@@ -82,6 +82,18 @@ class AssetMigrationService extends Component
      */
     public string $targetSubfolder = 'migrated';
 
+    /**
+     * When true, catches `yii\web\HttpException` thrown from
+     * `Asset::EVENT_BEFORE_SAVE` listeners whose message matches the
+     * starter-kit's "The file is too large" copy, downgrades to a WARN, and
+     * skips that asset. Other validation throws still surface.
+     *
+     * Wired from `Settings::$skipAssetSizeValidation` via Plugin::init.
+     * Surfaced 2026-05-09 — deklerk's >10MB PDF rejected by the starter-kit's
+     * per-extension size cap (modules/lameco/Module.php).
+     */
+    public bool $skipAssetSizeValidation = false;
+
     /** DI slot: LegacyDbService (read-only connection to Kunstmaan MySQL). */
     public ?LegacyDbService $legacyDb = null;
 
@@ -603,11 +615,33 @@ class AssetMigrationService extends Component
         $asset->setScenario(Asset::SCENARIO_CREATE);
 
         $tSaveStart = microtime(true);
-        if (!Craft::$app->elements->saveElement($asset)) {
+        try {
+            if (!Craft::$app->elements->saveElement($asset)) {
+                @unlink($tempPath);
+                throw new RuntimeException(
+                    'Asset save failed: ' . json_encode($asset->getErrors()),
+                );
+            }
+        } catch (\yii\web\HttpException $e) {
+            // Bypass the starter-kit's per-extension size cap when the
+            // operator opted in (Settings::$skipAssetSizeValidation). The
+            // starter-kit's listener throws HttpException(400, "The file is
+            // too large for {$ext} files. Maximum allowed size: …MB.").
+            // Treat that specific message as a skip; bubble everything else.
+            if ($this->skipAssetSizeValidation
+                && $e->statusCode === 400
+                && str_starts_with((string) $e->getMessage(), 'The file is too large')
+            ) {
+                @unlink($tempPath);
+                Craft::warning(
+                    "kuma_media:{$mediaId} skipped — size cap bypassed: " . $e->getMessage(),
+                    __METHOD__,
+                );
+                $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
+                return null;
+            }
             @unlink($tempPath);
-            throw new RuntimeException(
-                'Asset save failed: ' . json_encode($asset->getErrors()),
-            );
+            throw $e;
         }
         $tSave = round((microtime(true) - $tSaveStart) * 1000);
 

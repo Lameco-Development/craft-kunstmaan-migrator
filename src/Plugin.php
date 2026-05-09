@@ -396,6 +396,8 @@ class Plugin extends BasePlugin
         if ($settingsTargetVolume !== '') {
             $this->assetMigrationService->targetVolume = $settingsTargetVolume;
         }
+        $this->assetMigrationService->skipAssetSizeValidation =
+            (bool) ($this->getSettings()->skipAssetSizeValidation ?? false);
 
         // AtomicMigrationService deps — orchestrates per-entry transactional load.
         $this->atomicMigrationService->migrationStateService = $this->migrationStateService;
