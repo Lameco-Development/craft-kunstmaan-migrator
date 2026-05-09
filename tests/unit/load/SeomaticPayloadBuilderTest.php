@@ -120,11 +120,13 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $payload = $builder->build($row, 1);
 
         // Non-empty meta_robots flows through to metaGlobalVars.robots
-        // verbatim and unlocks robotsSource='fromCustom' so SEOmatic
-        // honors the override at render time (vs falling back to the
-        // sitewide 'all' default).
+        // verbatim. SEOmatic reads metaGlobalVars.robots directly at
+        // render time — no source-toggle indirection (robotsSource is
+        // NOT a valid MetaBundleSettings property; emitting it would
+        // trigger UnknownPropertyException and silently abort the entry's
+        // SEO persistence).
         $this->assertSame('noindex,nofollow', $payload['metaGlobalVars']['robots']);
-        $this->assertSame('fromCustom', $payload['metaBundleSettings']['robotsSource']);
+        $this->assertArrayNotHasKey('robotsSource', $payload['metaBundleSettings']);
     }
 
     public function testMetaRobotsOmittedWhenSourceIsEmpty(): void
@@ -135,18 +137,32 @@ final class SeomaticPayloadBuilderTest extends TestCase
         // Null row → no robots key (SEOmatic falls back to sitewide default).
         $nullPayload = $builder->build(null, 1);
         $this->assertArrayNotHasKey('robots', $nullPayload['metaGlobalVars']);
-        $this->assertArrayNotHasKey('robotsSource', $nullPayload['metaBundleSettings']);
 
-        // Empty-string meta_robots is treated identically (drop, don't
-        // force fromCustom='' which would clear robots entirely instead
-        // of letting the sitewide default apply).
+        // Empty-string meta_robots is treated identically.
         $emptyPayload = $builder->build(['meta_robots' => ''], 1);
         $this->assertArrayNotHasKey('robots', $emptyPayload['metaGlobalVars']);
-        $this->assertArrayNotHasKey('robotsSource', $emptyPayload['metaBundleSettings']);
 
         // Row missing the key entirely (older callers) — same.
         $absentPayload = $builder->build(['meta_title' => 'T'], 1);
         $this->assertArrayNotHasKey('robots', $absentPayload['metaGlobalVars']);
-        $this->assertArrayNotHasKey('robotsSource', $absentPayload['metaBundleSettings']);
+    }
+
+    public function testRobotsSourceKeyNeverEmittedRegardlessOfMetaRobotsValue(): void
+    {
+        // Defensive contract — `robotsSource` is not a valid MetaBundleSettings
+        // property; emitting it triggers Yii's __set throw and silently kills
+        // the entire SEO field's persistence. Lock the contract so a future
+        // refactor can't accidentally re-introduce it.
+        $builder = new SeomaticPayloadBuilder();
+        $builder->setResolver(static fn(int $id): ?int => null);
+
+        $populated = $builder->build(['meta_robots' => 'noindex'], 1);
+        $this->assertArrayNotHasKey('robotsSource', $populated['metaBundleSettings']);
+
+        $empty = $builder->build(['meta_robots' => ''], 1);
+        $this->assertArrayNotHasKey('robotsSource', $empty['metaBundleSettings']);
+
+        $null = $builder->build(null, 1);
+        $this->assertArrayNotHasKey('robotsSource', $null['metaBundleSettings']);
     }
 }

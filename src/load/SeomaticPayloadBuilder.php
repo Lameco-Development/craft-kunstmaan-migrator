@@ -118,10 +118,21 @@ class SeomaticPayloadBuilder extends Component
         // through to the sitewide default ('all'). Without this the noindex
         // editorial choice is silently discarded (228 / 1 291 rows on
         // deklerk / simac).
+        //
+        // CRITICAL: do NOT emit `metaBundleSettings.robotsSource` — that
+        // property doesn't exist on `MetaBundleSettings`. SEOmatic's per-
+        // field source-toggle pattern only covers seoTitle / seoDescription /
+        // ogTitle / ogDescription / seoImage; robots is read directly from
+        // metaGlobalVars.robots without indirection. Including a
+        // `robotsSource` key triggers `UnknownPropertyException` inside
+        // SEOmatic's normalizeValue → MetaBundleSettings::create chain,
+        // which silently aborts the whole field's persistence (Craft's
+        // saveElement returns true but the seo field never lands in
+        // elements_sites.content). Verified with a tinker-style debug
+        // script against the dewert smoke target on 2026-05-09.
         $metaRobots = $this->str($row, 'meta_robots');
         if ($metaRobots !== '') {
             $metaGlobalVars['robots'] = $metaRobots;
-            $metaBundleSettings['robotsSource'] = 'fromCustom';
         }
 
         if ($ogImageId !== null) {
