@@ -10,32 +10,47 @@ use yii\base\Component;
  * Builds the associative array passed to $entry->setFieldValue('seo', ...)
  * from a legacy kuma_seo row.
  *
- * Column mapping locked per MIGRATION-PLAN.md §7 and RESEARCH.md §2.
- *
  * The `seo` field has translationMethod=site, so callers build per-site
  * payloads and pass each during the per-site entry save.
  *
- * Returned keys (15 total):
- *   general   → seoTitle, seoDescription, seoImage, robots, canonicalUrl
- *   facebook  → ogType, ogTitle, ogDescription, ogImage
- *   twitter   → twitterCardType, twitterCreator, twitterTitle,
- *               twitterDescription, twitterImage
+ * Emitted keys (per SEO-COVERAGE-DIAGNOSTIC.md, kunstmaan-craft-scaffolder):
+ *   metaGlobalVars (always 6, +1 conditional):
+ *     seoTitle, seoDescription, seoImage, ogTitle, ogDescription, ogImage
+ *     robots          ← only when meta_robots is non-empty
+ *   metaBundleSettings (always 4, +1 conditional, +2 image):
+ *     seoTitleSource, seoDescriptionSource, ogTitleSource, ogDescriptionSource = 'fromCustom'
+ *     robotsSource = 'fromCustom'      ← only when robots is emitted
+ *     seoImageSource = 'fromAsset', seoImageIds, ogImageSource = 'sameAsSeo'
+ *                                        ← only when og_image resolves
  *
- * Fallback chains (per MIGRATION-PLAN §7):
- *   robots           → meta_robots ?: 'all'
- *   ogType           → og_type ?: 'website'
- *   ogTitle          → og_title ?: meta_title
- *   ogDescription    → og_description ?: meta_description
- *   twitterCardType  → og_image or twitter_image present ? 'summary_large_image' : 'summary'
- *   twitterTitle     → twitter_title ?: og_title ?: meta_title
- *   twitterDescription → twitter_description ?: og_description ?: meta_description
- *   twitterImage     → twitter_image_id ?: og_image_id
+ * Fallback chains:
+ *   ogTitle        → og_title ?: meta_title
+ *   ogDescription  → og_description ?: meta_description
+ *   twitter image  → og_image_id used as fallback for twitter (not yet emitted; see P2 in diagnostic)
+ *
+ * Why robots is conditionally emitted (vs title/desc which are always 'fromCustom'):
+ *   - title/desc need explicit 'fromCustom' + '' to prevent SEOmatic from
+ *     resolving the Twitter-fallback into the per-site content JSON,
+ *     which would propagate NL copy into EN. There's no equivalent
+ *     fallback chain for robots — the sitewide default is the literal
+ *     string 'all', not "the primary site's robots".
+ *   - Forcing robotsSource = 'fromCustom' with an empty value would
+ *     explicitly clear robots and render no robots meta at all, which
+ *     is wrong; pages that didn't override should fall through to the
+ *     sitewide default. Conditional emit gives that behavior.
  *
  * Image id resolution: og_image_id / twitter_image_id are numeric
  * kuma_media primary keys; resolved to Craft numeric asset ids via
  * MigrationStateService::getTargetId('media', 'kuma_media:<id>').
  * Unresolvable ids return null (caller is already warned via the Plan 03
  * asset scanner).
+ *
+ * Other kuma_seo columns (og_type / og_url / meta_author / og_article_* /
+ * twitter_site / twitter_creator / extra_metadata) are intentionally
+ * dropped per SEO-COVERAGE-DIAGNOSTIC.md — population is 0–25 rows
+ * portfolio-wide or values are unresolved Kunstmaan placeholders.
+ * twitter_title / twitter_description / twitter_image_id remain dropped
+ * pending P2 (~70 unique twitter override rows on dewert).
  */
 class SeomaticPayloadBuilder extends Component
 {
@@ -68,16 +83,13 @@ class SeomaticPayloadBuilder extends Component
         $ogTitle = $this->str($row, 'og_title') ?: $metaTitle;
         $ogDescription = $this->str($row, 'og_description') ?: $metaDescription;
 
-        // Based on actual kuma_seo population across 5899 rows:
-        //   meta_title, meta_description, og_title, og_description, og_image_id
-        //   are the only columns used at scale. meta_robots (12), og_type (29),
-        //   og_url (111), twitter_* (≤10) and canonical_url (doesn't exist)
-        //   are dropped — SEOmatic's sitewide defaults cover them.
-        //
         // SEOmatic per-entry field expects a nested metaGlobalVars +
         // metaBundleSettings structure; each override requires a *Source key
         // set to 'fromCustom' (text) or 'fromAsset' (image) to take effect
         // at render time.
+        //
+        // Per-column drop / map decisions are documented in
+        // SEO-COVERAGE-DIAGNOSTIC.md (kunstmaan-craft-scaffolder repo).
         $metaGlobalVars = [
             'seoTitle' => $metaTitle,
             'seoDescription' => $metaDescription,
@@ -100,6 +112,17 @@ class SeomaticPayloadBuilder extends Component
             'ogTitleSource' => 'fromCustom',
             'ogDescriptionSource' => 'fromCustom',
         ];
+
+        // Conditional: meta_robots is only emitted when the source row has
+        // an explicit override. Empty source → omit, so SEOmatic falls
+        // through to the sitewide default ('all'). Without this the noindex
+        // editorial choice is silently discarded (228 / 1 291 rows on
+        // deklerk / simac).
+        $metaRobots = $this->str($row, 'meta_robots');
+        if ($metaRobots !== '') {
+            $metaGlobalVars['robots'] = $metaRobots;
+            $metaBundleSettings['robotsSource'] = 'fromCustom';
+        }
 
         if ($ogImageId !== null) {
             $metaBundleSettings['seoImageSource'] = 'fromAsset';

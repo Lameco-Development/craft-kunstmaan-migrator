@@ -107,4 +107,46 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $this->assertSame('fromCustom', $settings['ogTitleSource']);
         $this->assertSame('fromCustom', $settings['ogDescriptionSource']);
     }
+
+    public function testMetaRobotsEmittedWhenSourceProvidesOverride(): void
+    {
+        $builder = new SeomaticPayloadBuilder();
+        $builder->setResolver(static fn(int $id): ?int => null);
+
+        $row = [
+            'meta_title' => 'T',
+            'meta_robots' => 'noindex,nofollow',
+        ];
+        $payload = $builder->build($row, 1);
+
+        // Non-empty meta_robots flows through to metaGlobalVars.robots
+        // verbatim and unlocks robotsSource='fromCustom' so SEOmatic
+        // honors the override at render time (vs falling back to the
+        // sitewide 'all' default).
+        $this->assertSame('noindex,nofollow', $payload['metaGlobalVars']['robots']);
+        $this->assertSame('fromCustom', $payload['metaBundleSettings']['robotsSource']);
+    }
+
+    public function testMetaRobotsOmittedWhenSourceIsEmpty(): void
+    {
+        $builder = new SeomaticPayloadBuilder();
+        $builder->setResolver(static fn(int $id): ?int => null);
+
+        // Null row → no robots key (SEOmatic falls back to sitewide default).
+        $nullPayload = $builder->build(null, 1);
+        $this->assertArrayNotHasKey('robots', $nullPayload['metaGlobalVars']);
+        $this->assertArrayNotHasKey('robotsSource', $nullPayload['metaBundleSettings']);
+
+        // Empty-string meta_robots is treated identically (drop, don't
+        // force fromCustom='' which would clear robots entirely instead
+        // of letting the sitewide default apply).
+        $emptyPayload = $builder->build(['meta_robots' => ''], 1);
+        $this->assertArrayNotHasKey('robots', $emptyPayload['metaGlobalVars']);
+        $this->assertArrayNotHasKey('robotsSource', $emptyPayload['metaBundleSettings']);
+
+        // Row missing the key entirely (older callers) — same.
+        $absentPayload = $builder->build(['meta_title' => 'T'], 1);
+        $this->assertArrayNotHasKey('robots', $absentPayload['metaGlobalVars']);
+        $this->assertArrayNotHasKey('robotsSource', $absentPayload['metaBundleSettings']);
+    }
 }
