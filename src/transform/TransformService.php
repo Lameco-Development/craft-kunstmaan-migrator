@@ -861,6 +861,21 @@ class TransformService extends Component
         $blocks = [];
         $blockIndex = 1;
 
+        // G9 — track occurrence counts per (fqcn, legacyId) tuple so blocks
+        // referencing the same source page-part row at different positions
+        // get unique `_sourcePartRef` values. Without this, dewert's
+        // jaarwerk-ondernemer (and any Kunstmaan page where the same
+        // ServicePagePart attaches multiple times) ends up with N blocks
+        // sharing one sourceRef → only the last block's UID gets stored in
+        // state.meta.blockIds → only the last block gets fixed up by the
+        // deferred-entry-relation pass → the others render with empty
+        // relation fields (no `page` row in `relations`). Conservative:
+        // first occurrence keeps the legacy `Simple:legacyId` shape so
+        // re-runs against pre-G9 state rows still match; subsequent
+        // occurrences add a `:N` suffix where N is the 1-based occurrence.
+        /** @var array<string, array<int, int>> $seen */
+        $seen = [];
+
         foreach ($pageParts as $pp) {
             if (!is_array($pp)) {
                 continue;
@@ -896,9 +911,13 @@ class TransformService extends Component
                     $report,
                     $mapping,
                 );
+                $legacyId = (int) ($pp['sourcePartId'] ?? $blockIndex);
+                $occurrence = ($seen[$ppFqcn][$legacyId] ?? 0) + 1;
+                $seen[$ppFqcn][$legacyId] = $occurrence;
                 $resolvedFields['_sourcePartRef'] = $this->deriveSourcePartRef(
                     $ppFqcn,
-                    (int) ($pp['sourcePartId'] ?? $blockIndex),
+                    $legacyId,
+                    $occurrence,
                 );
 
                 $blocks['new' . $blockIndex] = [
@@ -935,9 +954,13 @@ class TransformService extends Component
                     $mapping,
                 );
                 $configFieldValues['_providerType']  = $ppFqcn;
+                $legacyId = (int) ($pp['sourcePartId'] ?? $blockIndex);
+                $occurrence = ($seen[$ppFqcn][$legacyId] ?? 0) + 1;
+                $seen[$ppFqcn][$legacyId] = $occurrence;
                 $configFieldValues['_sourcePartRef'] = $this->deriveSourcePartRef(
                     $ppFqcn,
-                    (int) ($pp['sourcePartId'] ?? $blockIndex),
+                    $legacyId,
+                    $occurrence,
                 );
 
                 $blocks['new' . $blockIndex] = [
@@ -1599,17 +1622,31 @@ class TransformService extends Component
      * B8/D-24a — derive the `_sourcePartRef` hidden field value for a block.
      *
      *   'App\Entity\PageParts\HeroPagePart' → 'HeroPagePart:123'
+     *   'App\Entity\PageParts\ServicePagePart' (2nd occurrence) → 'ServicePagePart:330:2'
      *
      * EntryMigrationService reads this field to thread Craft block UIDs across re-runs
      * (Pitfall 3 mitigation).
+     *
+     * G9 — `$occurrence` (1-based) disambiguates between Craft blocks that
+     * reference the same source page-part row at different parent positions.
+     * Kunstmaan allows the same kuma_page_part_refs.pagePartId to attach to a
+     * page multiple times (different `sequencenumber`s); without an
+     * occurrence suffix every such attachment shared one `_sourcePartRef`,
+     * causing collectBlockUidsByPosition's `$map[$sourceRef] = $blockId` to
+     * keep only the last block id and the deferred-entry-relation fix-up to
+     * skip every other occurrence — which rendered as empty `page` relations
+     * on the duplicated blocks. First occurrence keeps the legacy
+     * `Simple:legacyId` shape so re-runs against pre-G9 state rows still
+     * match; subsequent occurrences add the `:N` suffix.
      */
-    private function deriveSourcePartRef(string $fqcn, int $legacyId): string
+    private function deriveSourcePartRef(string $fqcn, int $legacyId, int $occurrence = 1): string
     {
         $parts = explode('\\', trim($fqcn, '\\'));
         $simple = end($parts);
         if (!is_string($simple) || $simple === '') {
             $simple = $fqcn;
         }
-        return $simple . ':' . $legacyId;
+        $base = $simple . ':' . $legacyId;
+        return $occurrence > 1 ? $base . ':' . $occurrence : $base;
     }
 }
