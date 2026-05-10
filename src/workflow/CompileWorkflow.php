@@ -800,11 +800,19 @@ class CompileWorkflow extends Component
     }
 
     /**
-     * Derive a candidate locale → siteHandle map from kunstmaan-schema.json's
-     * `locales` list cross-referenced with Craft's configured sites by
+     * Derive a candidate locale → siteHandle map from the legacy DB's
+     * detected locales cross-referenced with Craft's configured sites by
      * language-code prefix. Returns [] when either side is empty or no
      * languages match — operator must then hand-curate Settings::localeMap
      * or the mapping.yaml sites: block.
+     *
+     * Locale source: `LocalePreflight::detect()` queries
+     * kuma_node_translations.lang directly. Earlier versions of this method
+     * read `kunstmaan-schema.json#locales` instead, but that file's shape
+     * was replaced when KunstmaanPageWalker took over its writing — the
+     * graph format doesn't carry a `locales` field. LocalePreflight is the
+     * canonical source per CONTEXT.md D-17 (no silent default-locale
+     * fallthrough), so going direct sidesteps the file-format drift.
      *
      * Match rules:
      *   - exact: legacy locale equals Craft site language (e.g. 'en' === 'en')
@@ -813,21 +821,20 @@ class CompileWorkflow extends Component
      *
      * When multiple Craft sites match a legacy locale, the primary site wins.
      *
+     * @param string $storageDir reserved for future fallback paths; currently unused
      * @return array<string, string>  legacy locale → Craft site handle
      */
     private function autoDeriveSitesFromLegacyLocales(string $storageDir): array
     {
-        $schemaPath = $storageDir . '/kunstmaan-schema.json';
-        if (!is_file($schemaPath)) {
-            $legacySchemaPath = $storageDir . '/schema-dump.json';
-            if (!is_file($legacySchemaPath)) {
-                return [];
-            }
-            $schemaPath = $legacySchemaPath;
+        try {
+            $legacyLocales = Plugin::getInstance()->localePreflight->detect();
+        } catch (Throwable $e) {
+            // Legacy DB connection unavailable (e.g. operator running compile
+            // outside the migration context). Return empty so the caller falls
+            // through to Settings::localeMap / mapping.yaml sites: block as
+            // configured upstream.
+            return [];
         }
-        $raw = (string) file_get_contents($schemaPath);
-        $schema = json_decode($raw, true);
-        $legacyLocales = (array) ($schema['locales'] ?? []);
         if ($legacyLocales === []) {
             return [];
         }
