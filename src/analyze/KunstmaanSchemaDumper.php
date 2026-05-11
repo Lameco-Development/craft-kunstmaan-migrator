@@ -77,6 +77,14 @@ final class KunstmaanSchemaDumper extends Component
         $tables = $this->applyEntitiesFilter($allTables, $filters, $sourceEntityIndex);
 
         // 2. Per-table row count.
+        // Source scanner may carry backtick-escaped names from
+        // `#[ORM\Table(name: '`order`')]` (reserved-word workaround in
+        // simac-website's Order entity). Strip backticks so our own
+        // backtick-wrap below produces a valid identifier.
+        $tables = array_values(array_filter(
+            array_map(static fn($t): string => is_string($t) ? trim($t, '`') : '', $tables),
+            static fn(string $t): bool => $t !== '',
+        ));
         $rowCounts = [];
         foreach ($tables as $t) {
             $count = (int) $db->queryScalar("SELECT COUNT(*) FROM `{$t}`");
