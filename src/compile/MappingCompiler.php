@@ -724,6 +724,37 @@ final class MappingCompiler extends Component
         ksort($promotedTargetsOut);
         $warnings = array_merge($warnings, $promotedWarnings);
 
+        // childCollection compile pass — fold accepted kind=childCollection
+        // proposals into mapping['childCollections'][<parentFqcn>][<parentMatrixField>]
+        // so ExtractService can fetch child rows during the parent's
+        // pp-row fetch loop, and TransformService can nest them as Matrix
+        // blocks inside the parent block's field hash. Keyed by parent FQCN
+        // because extract walks parent rows by FQCN; the second key
+        // (parentMatrixField) supports parents with multiple oneToMany
+        // collections (e.g. simac's CardBlockPagePart with both `items` and
+        // a hypothetical second oneToMany). Skip-existing per MAP-04.
+        $childCollectionsOut = (array) ($mapping['childCollections'] ?? []);
+        $childCollectionsEmitted = 0;
+        foreach ($proposals as $pRow) {
+            if (!is_array($pRow)) { continue; }
+            if (((string) ($pRow['kind'] ?? '')) !== 'childCollection') { continue; }
+            if (((string) ($pRow['status'] ?? '')) !== 'accepted') { continue; }
+            $parentFqcn = (string) ($pRow['parentFqcn'] ?? '');
+            $matrixField = (string) ($pRow['parentMatrixField'] ?? '');
+            if ($parentFqcn === '' || $matrixField === '') { continue; }
+            if (isset($childCollectionsOut[$parentFqcn][$matrixField])) { continue; }
+            $childCollectionsOut[$parentFqcn][$matrixField] = [
+                'childSourceTable' => (string) ($pRow['childSourceTable'] ?? ''),
+                'childFkColumn' => (string) ($pRow['childFkColumn'] ?? ''),
+                'childOrderColumn' => isset($pRow['childOrderColumn']) ? (string) $pRow['childOrderColumn'] : null,
+                'childBlockType' => (string) ($pRow['childEntryType'] ?? ''),
+                'parentSection' => isset($pRow['parentSection']) ? (string) $pRow['parentSection'] : null,
+                'fields' => (array) ($pRow['fields'] ?? []),
+            ];
+            $childCollectionsEmitted++;
+        }
+        ksort($childCollectionsOut);
+
         return [
             'proposals'      => array_values($proposals),
             'nodeClasses'    => $nodeClasses,
@@ -733,6 +764,7 @@ final class MappingCompiler extends Component
             'taxonomies'     => $taxonomiesOut,
             'dataProviders'  => $dataProvidersOut,
             'promotedTargets' => $promotedTargetsOut,
+            'childCollections' => $childCollectionsOut,
             '_compileReport' => [
                 'nodeClassesEmitted'        => count($nodeClasses),
                 'sectionsEmitted'           => count($sections),
@@ -752,6 +784,7 @@ final class MappingCompiler extends Component
                 'relationMirrorsApplied'    => $relationMirrorsApplied,
                 'dataProvidersEmitted'      => $dataProvidersEmitted,
                 'promotedTargetsEmitted'    => $promotedTargetsEmitted,
+                'childCollectionsEmitted'   => $childCollectionsEmitted,
                 'warnings'                  => $warnings,
             ],
         ];

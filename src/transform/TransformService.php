@@ -919,6 +919,53 @@ class TransformService extends Component
                     $legacyId,
                     $occurrence,
                 );
+                // childCollection nest — when extract attached child rows
+                // for this PagePart's oneToMany collections, resolve each
+                // child's fields per the compiled mapping spec and merge
+                // a nested Matrix block list into the parent's resolved
+                // fields at the matrix-field handle. Block UID and state
+                // tracking for nested blocks is a follow-up — first
+                // migrate writes children; reruns may duplicate until
+                // state-table extension lands.
+                $childCollections = is_array($pp['childCollections'] ?? null) ? (array) $pp['childCollections'] : [];
+                if ($childCollections !== []) {
+                    $specs = (array) ($mapping['childCollections'][$ppFqcn] ?? []);
+                    foreach ($childCollections as $matrixField => $childRows) {
+                        if (!is_string($matrixField) || $matrixField === '' || !is_array($childRows)) {
+                            continue;
+                        }
+                        $spec = (array) ($specs[$matrixField] ?? []);
+                        $childBlockType = (string) ($spec['childBlockType'] ?? '');
+                        if ($childBlockType === '') {
+                            continue;
+                        }
+                        $fieldSpecs = (array) ($spec['fields'] ?? []);
+                        $nested = [];
+                        $childIndex = 1;
+                        foreach ($childRows as $childRow) {
+                            if (!is_array($childRow)) {
+                                continue;
+                            }
+                            $resolvedChild = $this->resolveFieldSpecs(
+                                $fieldSpecs,
+                                $childRow,
+                                $ctx,
+                                $report,
+                                $mapping,
+                            );
+                            $nested['new' . $childIndex] = [
+                                'type'    => $childBlockType,
+                                'enabled' => true,
+                                'fields'  => $resolvedChild,
+                            ];
+                            $childIndex++;
+                        }
+                        if ($nested !== []) {
+                            $resolvedFields[$matrixField] = $nested;
+                            $report['blocksTransformed'] += $childIndex - 1;
+                        }
+                    }
+                }
 
                 $blocks['new' . $blockIndex] = [
                     'type'    => (string) ($partSpec['target'] ?? ''),

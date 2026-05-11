@@ -350,6 +350,7 @@ class ExtractService extends Component
                         $perLocaleRefId,
                         $fqcn,
                         $this->pagePartAllowMapFor($fqcn, $mapping),
+                        (array) ($mapping['childCollections'] ?? []),
                     );
 
                     $perSite[$lang] = [
@@ -830,7 +831,11 @@ class ExtractService extends Component
     /**
      * @param array<string, array<string, true>|null>|null $allowedContextClasses
      */
-    private function loadPageParts(int $refId, string $pageClass, ?array $allowedContextClasses = null): array
+    /**
+     * @param array<string, array<string, array<string, mixed>>> $childCollectionsByParentFqcn
+     *        Compiled childCollections map keyed by parentFqcn => parentMatrixField => spec.
+     */
+    private function loadPageParts(int $refId, string $pageClass, ?array $allowedContextClasses = null, array $childCollectionsByParentFqcn = []): array
     {
         $refsSchema = new PagePartRefsSchema($this->legacyDb);
         $refs = $this->legacyDb->queryAll(
@@ -899,16 +904,77 @@ class ExtractService extends Component
             // candidates for the LLM proposer + operator mapping pass.
             $partRowDecoded = $this->joinManyToOneRelations($partFqcn, $partRowDecoded);
 
+            // childCollection probe — when the compiled mapping declares
+            // this PagePart class has oneToMany child entities, fetch the
+            // child rows here (parent-bound by FK) so TransformService can
+            // build them into a nested Matrix block list on the parent's
+            // resolved fields. Closes the scaffolder's Kunstmaan
+            // oneToMany → Craft nested Matrix path (HomeSpotlightItem,
+            // GalleryItem, IconLinkListItem, etc.).
+            $childCollectionsForPart = $this->loadChildCollections(
+                $childCollectionsByParentFqcn,
+                $partFqcn,
+                $partId,
+            );
+
             $out[] = [
-                'fqcn'          => $partFqcn,
-                'sourcePartId'  => $partId,
-                'sequence'      => (int) ($ref['sequencenumber'] ?? 0),
-                'context'       => $context,
-                'row'           => $partRowDecoded,
+                'fqcn'              => $partFqcn,
+                'sourcePartId'      => $partId,
+                'sequence'          => (int) ($ref['sequencenumber'] ?? 0),
+                'context'           => $context,
+                'row'               => $partRowDecoded,
+                'childCollections'  => $childCollectionsForPart,
             ];
         }
 
         return $out;
+    }
+
+    /**
+     * For one PagePart row, fetch child-collection rows per the compiled
+     * mapping. Returns a map keyed by parent matrix-field handle so the
+     * transform step can nest each list into the parent block's fields at
+     * the right key.
+     *
+     * @param array<string, array<string, array<string, mixed>>> $childCollectionsByParentFqcn
+     * @return array<string, list<array<string, mixed>>>
+     */
+    private function loadChildCollections(array $childCollectionsByParentFqcn, string $partFqcn, int $partId): array
+    {
+        $specs = $childCollectionsByParentFqcn[$partFqcn] ?? null;
+        if (!is_array($specs) || $specs === []) {
+            return [];
+        }
+        $result = [];
+        foreach ($specs as $matrixField => $spec) {
+            if (!is_string($matrixField) || $matrixField === '' || !is_array($spec)) {
+                continue;
+            }
+            $table = (string) ($spec['childSourceTable'] ?? '');
+            $fk = (string) ($spec['childFkColumn'] ?? '');
+            if ($table === '' || $fk === '') {
+                continue;
+            }
+            // T-04-05-01 defence-in-depth — both identifiers concatenated into SQL.
+            if (!preg_match('/^[a-zA-Z0-9_]+$/', $table) || !preg_match('/^[a-zA-Z0-9_]+$/', $fk)) {
+                throw new \RuntimeException("loadChildCollections: invalid identifier table={$table} fk={$fk}");
+            }
+            $orderCol = (string) ($spec['childOrderColumn'] ?? '');
+            $orderSql = $orderCol !== '' && preg_match('/^[a-zA-Z0-9_]+$/', $orderCol) === 1
+                ? "ORDER BY `{$orderCol}` ASC, id ASC"
+                : 'ORDER BY id ASC';
+            $rows = [];
+            foreach ($this->legacyDb->streamQuery(
+                "SELECT * FROM `{$table}` WHERE `{$fk}` = :pid {$orderSql}",
+                [':pid' => $partId],
+            ) as $row) {
+                $rows[] = $this->decodeSerializedColumns($row);
+            }
+            if ($rows !== []) {
+                $result[$matrixField] = $rows;
+            }
+        }
+        return $result;
     }
 
     /**

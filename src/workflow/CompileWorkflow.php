@@ -489,6 +489,7 @@ class CompileWorkflow extends Component
         $taxonomiesOut     = (array) ($compiled['taxonomies'] ?? []);
         $dataProvidersOut  = (array) ($compiled['dataProviders'] ?? []);
         $promotedTargetsOut = (array) ($compiled['promotedTargets'] ?? []);
+        $childCollectionsOut = (array) ($compiled['childCollections'] ?? []);
         $ordered = [
             'sites'       => $compiled['sites'],
             'sections'    => $compiled['sections'],
@@ -505,6 +506,9 @@ class CompileWorkflow extends Component
         }
         if ($promotedTargetsOut !== []) {
             $ordered['promotedTargets'] = $promotedTargetsOut;
+        }
+        if ($childCollectionsOut !== []) {
+            $ordered['childCollections'] = $childCollectionsOut;
         }
         $ordered['proposals'] = $compiled['proposals'];
         try {
