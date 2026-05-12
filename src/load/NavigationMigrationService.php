@@ -65,11 +65,21 @@ use verbb\navigation\elements\Node as NavNode;
  * pattern — necessary because `kuma_menu_item.parent_id` is a self-FK
  * that must wait for the parent's verbb node to exist.
  *
- * Sites with no MenuBundle data (dewert uses NodeMenu/page-tree instead):
- * `kuma_menu` returns 0 rows → service emits a clean WARN and returns
- * without writing anything. NodeMenu migration is a separate stage
- * scheduled for v0.2 (walks Pages tree filtered by hiddenFromNav and
- * emits headerMain nodes pointing at top-level pages).
+ * NodeMenu (page-tree) fallback: when a verbb nav handle exists on the
+ * target but has NO matching `kuma_menu` rows (either the source never
+ * populated that menu, or the site drives its nav from the page tree
+ * with `nodemenu.children | filter(isHiddenFromNav)`), the NodeMenu pass
+ * seeds it from the page tree. `migrateNodeMenu` resolves target handles
+ * via `resolveNodeMenuTargetHandles` — auto-discovered from `verbb_navs ∖
+ * kuma_menu.name`.
+ *
+ * Portfolio shapes covered:
+ *   - dewert: NodeMenu in templates, kuma_menu empty → seeds `headerMain`
+ *     (the single nav handle scaffolder emits for this shape).
+ *   - simac: `get_menu_items('default'/'secondary_top')` in templates;
+ *     kuma_menu populates only `secondary_top` → MenuBundle pass covers
+ *     `secondary_top`, NodeMenu pass seeds the empty `default` from page tree.
+ *   - deklerk: both `main` + `top` populated → NodeMenu pass is a no-op.
  */
 class NavigationMigrationService extends Component
 {
@@ -614,15 +624,22 @@ class NavigationMigrationService extends Component
             return;
         }
 
-        $nav = Navigation::$plugin->getNavs()->getNavByHandle($this->nodeMenuNavHandle);
-        if ($nav === null) {
-            $report->warn(sprintf(
-                'NodeMenu target nav handle "%s" not found in verbb; NodeMenu pass skipped (re-run scaffolder + project-config/apply, or override Settings::nodeMenuNavHandle).',
-                $this->nodeMenuNavHandle,
-            ));
+        // Resolve which verbb nav handles need a page-tree seed. Today this
+        // covers two shapes in the portfolio:
+        //   - dewert: source uses NodeMenu (`.children | filter(isHiddenFromNav)`)
+        //     in templates, kuma_menu is empty. Scaffolder emits a single
+        //     `headerMain` nav. Target = ['headerMain'].
+        //   - simac: source uses `get_menu_items('default')` + `get_menu_items('secondary_top')`.
+        //     kuma_menu has rows ONLY for `secondary_top` — the `default`
+        //     menu was never populated in the editor. MenuBundle pass covers
+        //     `secondary_top`; NodeMenu pass needs to seed `default` from
+        //     the page tree. Target = ['default'].
+        //   - deklerk: `get_menu_items('main')` + `get_menu_items('top')`,
+        //     both populated. Target = [] (NodeMenu pass is a no-op).
+        $targetHandles = $this->resolveNodeMenuTargetHandles($report);
+        if ($targetHandles === []) {
             return;
         }
-        $navId = (int) $nav->id;
 
         $primarySite = Craft::$app->sites->getPrimarySite();
         $primarySiteId = (int) $primarySite->id;
@@ -683,6 +700,8 @@ class NavigationMigrationService extends Component
         // ahead of its parent in iteration order. Without a complete
         // exclusion set up front, the transitive-exclusion check on a
         // child would miss a parent that hasn't been processed yet.
+        // Computed once for the page tree — same exclusion result feeds
+        // every target nav handle.
         $parentMap = [];
         $directlyExcluded = [];
         foreach ($rows as $row) {
@@ -700,110 +719,234 @@ class NavigationMigrationService extends Component
             }
         }
 
-        // First pass: create / update one verbb Node per kuma_node, with
-        // parentId=null. Skipped for filter exclusions, including
-        // transitive exclusion — when a parent is filtered (e.g. dewert's
-        // 'dienst' top-level), every descendant is also dropped so we
-        // mirror the source template's `{% if internalName != 'dienst' %}`
-        // wrapper which gates the entire subtree's render.
-        $kumaNodeIdToVerbbId = [];
-        foreach ($rows as $row) {
-            $kumaNodeId = (int) ($row['id'] ?? 0);
-            if ($kumaNodeId <= 0) {
-                continue;
-            }
-
-            // Walk up the ancestry chain — if any ancestor is directly
-            // excluded, this descendant inherits the exclusion. Cycle
-            // guard via $seen Set in case of corrupt source tree.
-            $excludedByAncestor = false;
-            $cursor = $kumaNodeId;
-            $seen = [];
-            while ($cursor > 0 && !isset($seen[$cursor])) {
-                $seen[$cursor] = true;
-                if (isset($directlyExcluded[$cursor])) {
-                    $excludedByAncestor = true;
-                    break;
-                }
-                $cursor = $parentMap[$cursor] ?? 0;
-            }
-            if ($excludedByAncestor) {
-                $report->incr('skipped');
-                continue;
-            }
-
-            $fqcn = (string) ($row['ref_entity_name'] ?? '');
-
-            $refId = !empty($row['ref_id']) ? (int) $row['ref_id'] : null;
-            if ($refId === null || $fqcn === '') {
-                $report->incr('skipped');
+        // Seed each target handle independently. The page-tree rows + exclusion
+        // map are shared inputs; each handle gets its own (kumaNodeId →
+        // verbbNodeId) map and its own parent-linkage pass so two parallel
+        // trees of verbb nodes don't cross-link.
+        foreach ($targetHandles as $handle) {
+            $nav = Navigation::$plugin->getNavs()->getNavByHandle($handle);
+            if ($nav === null) {
                 $report->warn(sprintf(
-                    'kuma_node id=%d has no resolvable ref_id/ref_entity_name; skipping.',
-                    $kumaNodeId,
+                    'NodeMenu target nav handle "%s" not found in verbb; skipping (re-run scaffolder + project-config/apply, or override Settings::nodeMenuNavHandle).',
+                    $handle,
                 ));
                 continue;
             }
+            $navId = (int) $nav->id;
 
-            try {
-                $verbbId = $this->upsertNodeMenuNode(
-                    kumaNodeId: $kumaNodeId,
-                    refId: $refId,
-                    fqcn: $fqcn,
-                    navId: $navId,
-                    primarySiteId: $primarySiteId,
-                    opts: $opts,
-                    report: $report,
-                );
-                if ($verbbId !== null) {
-                    $kumaNodeIdToVerbbId[$kumaNodeId] = $verbbId;
-                }
-            } catch (Throwable $e) {
-                $report->incr('failed');
-                $report->warn(sprintf(
-                    'NodeMenu node import failed for kuma_node id=%d: %s',
-                    $kumaNodeId,
-                    $e->getMessage(),
-                ));
-            }
-        }
-
-        // Second pass: parent linkage via kuma_nodes.parent_id chain.
-        // Top-level nodes have parent_id = root id (often 1), which is
-        // NOT in our verbb map — they correctly stay at root level.
-        if (!$opts->dryRun && $kumaNodeIdToVerbbId !== []) {
+            // First pass: create / update one verbb Node per kuma_node, with
+            // parentId=null. Skipped for filter exclusions, including
+            // transitive exclusion — when a parent is filtered (e.g. dewert's
+            // 'dienst' top-level), every descendant is also dropped so we
+            // mirror the source template's `{% if internalName != 'dienst' %}`
+            // wrapper which gates the entire subtree's render.
+            $kumaNodeIdToVerbbId = [];
             foreach ($rows as $row) {
                 $kumaNodeId = (int) ($row['id'] ?? 0);
-                $kumaParentId = (int) ($row['parent_id'] ?? 0);
-                $childVerbbId = $kumaNodeIdToVerbbId[$kumaNodeId] ?? null;
-                $parentVerbbId = $kumaNodeIdToVerbbId[$kumaParentId] ?? null;
+                if ($kumaNodeId <= 0) {
+                    continue;
+                }
 
-                if ($childVerbbId === null || $parentVerbbId === null) {
+                // Walk up the ancestry chain — if any ancestor is directly
+                // excluded, this descendant inherits the exclusion. Cycle
+                // guard via $seen Set in case of corrupt source tree.
+                $excludedByAncestor = false;
+                $cursor = $kumaNodeId;
+                $seen = [];
+                while ($cursor > 0 && !isset($seen[$cursor])) {
+                    $seen[$cursor] = true;
+                    if (isset($directlyExcluded[$cursor])) {
+                        $excludedByAncestor = true;
+                        break;
+                    }
+                    $cursor = $parentMap[$cursor] ?? 0;
+                }
+                if ($excludedByAncestor) {
+                    $report->incr('skipped');
+                    continue;
+                }
+
+                $fqcn = (string) ($row['ref_entity_name'] ?? '');
+
+                $refId = !empty($row['ref_id']) ? (int) $row['ref_id'] : null;
+                if ($refId === null || $fqcn === '') {
+                    $report->incr('skipped');
+                    $report->warn(sprintf(
+                        'kuma_node id=%d has no resolvable ref_id/ref_entity_name; skipping.',
+                        $kumaNodeId,
+                    ));
                     continue;
                 }
 
                 try {
-                    /** @var NavNode|null $child */
-                    $child = Craft::$app->elements->getElementById($childVerbbId, NavNode::class);
-                    if ($child === null) {
-                        continue;
-                    }
-                    $child->setParentId($parentVerbbId);
-                    Navigation::$plugin->getNodes()->setTempNodes([$child]);
-                    if (!Craft::$app->elements->saveElement($child, true, false)) {
-                        $report->warn(sprintf(
-                            'failed to set parent on nav node id=%d (kuma_node id=%d)',
-                            $childVerbbId,
-                            $kumaNodeId,
-                        ));
+                    $verbbId = $this->upsertNodeMenuNode(
+                        kumaNodeId: $kumaNodeId,
+                        refId: $refId,
+                        fqcn: $fqcn,
+                        navHandle: $handle,
+                        navId: $navId,
+                        primarySiteId: $primarySiteId,
+                        opts: $opts,
+                        report: $report,
+                    );
+                    if ($verbbId !== null) {
+                        $kumaNodeIdToVerbbId[$kumaNodeId] = $verbbId;
                     }
                 } catch (Throwable $e) {
+                    $report->incr('failed');
                     $report->warn(sprintf(
-                        'parent linkage failed for kuma_node id=%d: %s',
+                        'NodeMenu node import failed for kuma_node id=%d (nav=%s): %s',
                         $kumaNodeId,
+                        $handle,
                         $e->getMessage(),
                     ));
                 }
             }
+
+            // Second pass: parent linkage via kuma_nodes.parent_id chain.
+            // Top-level nodes have parent_id = root id (often 1), which is
+            // NOT in our verbb map — they correctly stay at root level.
+            if (!$opts->dryRun && $kumaNodeIdToVerbbId !== []) {
+                foreach ($rows as $row) {
+                    $kumaNodeId = (int) ($row['id'] ?? 0);
+                    $kumaParentId = (int) ($row['parent_id'] ?? 0);
+                    $childVerbbId = $kumaNodeIdToVerbbId[$kumaNodeId] ?? null;
+                    $parentVerbbId = $kumaNodeIdToVerbbId[$kumaParentId] ?? null;
+
+                    if ($childVerbbId === null || $parentVerbbId === null) {
+                        continue;
+                    }
+
+                    try {
+                        /** @var NavNode|null $child */
+                        $child = Craft::$app->elements->getElementById($childVerbbId, NavNode::class);
+                        if ($child === null) {
+                            continue;
+                        }
+                        $child->setParentId($parentVerbbId);
+                        Navigation::$plugin->getNodes()->setTempNodes([$child]);
+                        if (!Craft::$app->elements->saveElement($child, true, false)) {
+                            $report->warn(sprintf(
+                                'failed to set parent on nav node id=%d (kuma_node id=%d, nav=%s)',
+                                $childVerbbId,
+                                $kumaNodeId,
+                                $handle,
+                            ));
+                        }
+                    } catch (Throwable $e) {
+                        $report->warn(sprintf(
+                            'parent linkage failed for kuma_node id=%d (nav=%s): %s',
+                            $kumaNodeId,
+                            $handle,
+                            $e->getMessage(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Resolve which verbb nav handles should be seeded from the page tree.
+     *
+     * Auto-discovery: enumerate every verbb nav on the target, subtract any
+     * handle that has rows in `kuma_menu` (those are covered by the MenuBundle
+     * pass — populated by the editor in the source CMS, faithful per-locale
+     * trees). The remainder is the seed set.
+     *
+     * Back-compat: when verbb nav enumeration is empty or fails, fall back to
+     * `[$this->nodeMenuNavHandle]` so legacy operator configs (and the
+     * fixture-only test setup) still work.
+     *
+     * @return list<string>
+     */
+    private function resolveNodeMenuTargetHandles(MigrationReport $report): array
+    {
+        $covered = $this->loadMenuBundleHandles();
+        $verbbHandles = $this->loadVerbbNavHandles($report);
+
+        // null sentinel from loadVerbbNavHandles signals "enumeration failed,
+        // back-compat fallback" — return the legacy single-handle target.
+        if ($verbbHandles === null) {
+            return [$this->nodeMenuNavHandle];
+        }
+
+        // No verbb navs at all — back-compat fallback for fixtures / tests
+        // that don't apply project-config. Preserves the old single-handle
+        // path so existing callers keep working.
+        if ($verbbHandles === []) {
+            return [$this->nodeMenuNavHandle];
+        }
+
+        $targets = [];
+        foreach ($verbbHandles as $handle) {
+            if (!isset($covered[$handle])) {
+                $targets[] = $handle;
+            }
+        }
+        return $targets;
+    }
+
+    /**
+     * Set of nav handles that already have MenuBundle rows in the source —
+     * those are populated by the MenuBundle pass. Returns map for O(1) lookup.
+     *
+     * Returns empty map when `kuma_menu` is missing or empty (no MenuBundle
+     * usage in the source). The MenuBundle pass tolerates the same shape.
+     *
+     * Extracted as a protected seam so test subclasses can stub the legacy
+     * DB without spinning up the full Craft + Yii DB stack.
+     *
+     * @return array<string, true>
+     */
+    protected function loadMenuBundleHandles(): array
+    {
+        $covered = [];
+        try {
+            $rows = $this->legacyDb->queryAll(
+                'SELECT DISTINCT name FROM ' . $this->menuTableName,
+            );
+        } catch (Throwable) {
+            return [];
+        }
+        foreach ($rows as $row) {
+            $name = (string) ($row['name'] ?? '');
+            if ($name !== '') {
+                $covered[$name] = true;
+            }
+        }
+        return $covered;
+    }
+
+    /**
+     * Enumerate every verbb nav handle on the target. Returns null on
+     * enumeration failure (signals a back-compat fallback to the legacy
+     * single-handle path); empty array means "no navs exist" (also falls
+     * back).
+     *
+     * Extracted as a protected seam so test subclasses can stub the verbb
+     * lookup without spinning up Navigation::$plugin.
+     *
+     * @return list<string>|null
+     */
+    protected function loadVerbbNavHandles(MigrationReport $report): ?array
+    {
+        try {
+            $handles = [];
+            foreach (Navigation::$plugin->getNavs()->getAllNavs() as $nav) {
+                $handle = (string) $nav->handle;
+                if ($handle !== '') {
+                    $handles[] = $handle;
+                }
+            }
+            return $handles;
+        } catch (Throwable $e) {
+            $report->warn(sprintf(
+                'Could not enumerate verbb navs for NodeMenu seeding (%s); falling back to Settings::nodeMenuNavHandle="%s".',
+                $e->getMessage(),
+                $this->nodeMenuNavHandle,
+            ));
+            return null;
         }
     }
 
@@ -818,13 +961,27 @@ class NavigationMigrationService extends Component
         int $kumaNodeId,
         int $refId,
         string $fqcn,
+        string $navHandle,
         int $navId,
         int $primarySiteId,
         MigrationOptions $opts,
         MigrationReport $report,
     ): ?int {
-        $stateKey = 'kuma_node:' . $kumaNodeId;
+        // State key encodes the target nav handle so seeding multiple
+        // verbb navs from the same page tree (simac: `default`; dewert:
+        // `headerMain`) doesn't collide on the same kuma_node id.
+        $stateKey = 'kuma_node:' . $navHandle . ':' . $kumaNodeId;
         $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
+
+        // Legacy-key read fallback for the single-handle era (pre-multi-handle
+        // commit). Sites already migrated under the old key shape would
+        // otherwise produce duplicate verbb nodes on re-run for the same
+        // kuma_node id. Only consults the legacy key when seeding the default
+        // nav handle (the one the old code always wrote to), so non-default
+        // handles can't accidentally bind to a node from a different keyspace.
+        if ($existingNodeId === null && $navHandle === $this->nodeMenuNavHandle) {
+            $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, 'kuma_node:' . $kumaNodeId);
+        }
 
         $stateSource = str_replace('\\', '_', trim($fqcn, '\\'));
         $entryId = $this->stateService->getTargetId($stateSource, (string) $refId);
@@ -889,6 +1046,7 @@ class NavigationMigrationService extends Component
             meta: [
                 'kumaNodeId' => $kumaNodeId,
                 'navId' => $navId,
+                'navHandle' => $navHandle,
                 'refId' => $refId,
                 'refEntityName' => $fqcn,
                 'kind' => 'nodeMenu',
