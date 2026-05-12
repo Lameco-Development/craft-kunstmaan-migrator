@@ -397,6 +397,7 @@ class TaxonomyMigrationService extends Component
         // taxonomy entry types do NOT have it attached (v1 docblock lines
         // 41-45). State-table is the only identity record.
         $title = '';
+        $slug = '';
         $fieldValues = [];
         foreach ($fieldsMap as $legacyCol => $craftHandle) {
             $legacyCol = (string) $legacyCol;
@@ -411,6 +412,14 @@ class TaxonomyMigrationService extends Component
 
             if ($craftHandle === 'title') {
                 $title = $resolved;
+                continue;
+            }
+            if ($craftHandle === 'slug') {
+                // Slug is a native Entry attribute, NOT a custom-field-behaviour
+                // property. Passing through setFieldValues raises
+                // `Setting unknown property: craft\behaviors\CustomFieldBehavior::slug`
+                // — capture and apply directly to $entry->slug below.
+                $slug = $resolved;
                 continue;
             }
             if ($resolved !== '') {
@@ -455,7 +464,24 @@ class TaxonomyMigrationService extends Component
         if ($title === '') {
             $title = sprintf('[legacy id %d]', $legacyId);
         }
+        // Craft's native title attribute caps at 255 chars; long source
+        // values (FAQ question text, CKEditor descriptions, etc.) flowing
+        // through the last-resort fallback would otherwise trip the
+        // validator and the per-row transaction throws. Truncate at the
+        // last word boundary under 252 chars + ellipsis so the CP-side
+        // identity stays human-readable.
+        if (mb_strlen($title) > 255) {
+            $trimmed = mb_substr($title, 0, 252);
+            $lastSpace = mb_strrpos($trimmed, ' ');
+            if ($lastSpace !== false && $lastSpace > 50) {
+                $trimmed = mb_substr($trimmed, 0, $lastSpace);
+            }
+            $title = $trimmed . '…';
+        }
         $entry->title = $title;
+        if ($slug !== '') {
+            $entry->slug = $slug;
+        }
         if ($fieldValues !== []) {
             $entry->setFieldValues($fieldValues);
         }
