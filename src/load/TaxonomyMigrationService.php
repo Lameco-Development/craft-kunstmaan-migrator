@@ -437,6 +437,22 @@ class TaxonomyMigrationService extends Component
             }
         }
         if ($title === '') {
+            // Last-resort: ANY non-empty string field-value beats
+            // `[legacy id N]` for CP-side identification. Catches entities
+            // whose primary identifier isn't title/name/label — berkvens
+            // FaqItem (question), Document/BackendDocument (originalFileName),
+            // ProductProfilePanel (path). Skips non-string values (relation
+            // ids, booleans, numbers) since those are even less useful as
+            // titles than the legacy-id sentinel.
+            foreach ($fieldValues as $handle => $value) {
+                if (!is_string($value) || $value === '') {
+                    continue;
+                }
+                $title = $value;
+                break;
+            }
+        }
+        if ($title === '') {
             $title = sprintf('[legacy id %d]', $legacyId);
         }
         $entry->title = $title;
