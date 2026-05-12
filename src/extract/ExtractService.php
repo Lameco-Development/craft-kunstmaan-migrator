@@ -1025,15 +1025,25 @@ class ExtractService extends Component
     }
 
     /**
-     * Canonicalise a Kunstmaan pagepart-context name. Dashes and underscores
-     * are interchangeable across the Kunstmaan layers (entity-class methods
-     * declare one form; YAML configs and the kuma_page_part_refs.context
-     * column may store the other) — normalise to a single representation
-     * before comparing.
+     * Canonicalise a Kunstmaan pagepart-context name. Separators are
+     * interchangeable across the Kunstmaan layers:
+     *   - Entity-class `getPagePartAdminConfigurations()` may return one
+     *     form (e.g. `footercolumn1` — concatenated, no separators);
+     *   - YAML pagepart `context:` value uses another (e.g. `footer-column-1`);
+     *   - `kuma_page_part_refs.context` stores the YAML form.
+     * Strip ALL separators (-, _, whitespace) before comparing so the three
+     * conventions collide:
+     *   - `footercolumn1`     → `footercolumn1`
+     *   - `footer-column-1`   → `footercolumn1`
+     *   - `footer_column_1`   → `footercolumn1`
+     * Previous impl only swapped `-` → `_` which left
+     * `footercolumn1 ≠ footer_column_1` — silently dropped every footer
+     * pp_ref on berkvens-shaped sites where the entity declares
+     * concatenated handles and pp_refs store dashed.
      */
     private static function normaliseContextKey(string $context): string
     {
-        return strtolower(strtr($context, ['-' => '_']));
+        return strtolower((string) preg_replace('/[-_\s]+/', '', $context));
     }
 
     /**
