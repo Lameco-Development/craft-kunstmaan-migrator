@@ -198,12 +198,30 @@ class SeoMigrationService extends Component
             $sources = array_values(array_intersect($sources, $allowedSources));
         }
 
+        // Pre-fetch (ref_entity_name, ref_id) presence set so entries without
+        // any kuma_seo override skip the per-site Entry::find + saveElement
+        // loop entirely. Without this gate, every migrated entry per site is
+        // reloaded + resaved with an empty SEO payload — dominant cost on
+        // sites where most pages carry no editorial SEO overrides (typical:
+        // berkvens ~22k entries × 2 sites, only a few thousand have data).
+        $populatedSeoKeys = $this->fetchPopulatedSeoKeys();
+
         $rowCount = 0;
         foreach ($sources as $source) {
             foreach ($this->stateService->all($source) as $stateRow) {
                 $entryId = (int) ($stateRow['targetId'] ?? 0);
                 $sourceKey = (string) ($stateRow['sourceKey'] ?? '');
                 if ($entryId === 0 || ($stateRow['targetType'] ?? '') !== 'entry') {
+                    continue;
+                }
+
+                if (!$this->hasAnySeoRowForState(
+                    $populatedSeoKeys,
+                    $source,
+                    $sourceKey,
+                    $stateRow['meta'] ?? null,
+                )) {
+                    $report->incr('skipped');
                     continue;
                 }
 
@@ -488,6 +506,83 @@ class SeoMigrationService extends Component
         }
 
         return $written;
+    }
+
+    /**
+     * One-shot pre-fetch of every (ref_entity_name, ref_id) pair present in
+     * kuma_seo. Used by migrateAll() to skip the per-site reload+save loop
+     * for entries with no source SEO data. Returns a nested map:
+     *
+     *   $out['App\\Entity\\Pages\\NewsPage'][42] = true
+     *
+     * The map is intentionally presence-only (no row payload) — per-row data
+     * is still fetched lazily inside migrateForEntryInternal so this method
+     * stays a single cheap COUNT-like query over the SEO table.
+     *
+     * @return array<string, array<int, true>>
+     */
+    private function fetchPopulatedSeoKeys(): array
+    {
+        $rows = $this->legacyDb->queryAll(
+            'SELECT DISTINCT ref_entity_name, ref_id FROM ' . $this->seoTableName
+            . ' WHERE ref_entity_name IS NOT NULL AND ref_id IS NOT NULL',
+        );
+        $out = [];
+        foreach ($rows as $row) {
+            $class = (string) ($row['ref_entity_name'] ?? '');
+            $refId = (int) ($row['ref_id'] ?? 0);
+            if ($class === '' || $refId === 0) {
+                continue;
+            }
+            $out[$class][$refId] = true;
+        }
+        return $out;
+    }
+
+    /**
+     * Idempotency gate: returns true iff at least one per-locale ref_id of
+     * this state row matches a populated kuma_seo entry. When false,
+     * migrateAll() skips the row entirely — no Entry::find, no saveElement.
+     *
+     * Fail-open contract: when legacy class can't be derived (state row meta
+     * stale + sourceKey not numeric), return true so migrateForEntryInternal
+     * still runs and surfaces the warn line instead of being silently
+     * skipped here.
+     *
+     * @param array<string, array<int, true>> $populatedKeys
+     * @param array<string, mixed>|string|null $meta
+     */
+    private function hasAnySeoRowForState(
+        array $populatedKeys,
+        string $source,
+        string $sourceKey,
+        mixed $meta,
+    ): bool {
+        [$legacyClass, $legacyEntityId] = $this->resolveLegacyRef($source, $sourceKey, $meta);
+        if ($legacyClass === null) {
+            return true;
+        }
+        if (!isset($populatedKeys[$legacyClass])) {
+            return false;
+        }
+        if ($legacyEntityId > 0 && isset($populatedKeys[$legacyClass][$legacyEntityId])) {
+            return true;
+        }
+
+        // Translated locales carry distinct kuma_seo rows under their own
+        // per-locale ref_id — check every locale before deciding to skip.
+        $metaArr = is_array($meta)
+            ? $meta
+            : (is_string($meta) ? (array) (json_decode($meta, true) ?? []) : []);
+        $refIdsByLocale = (array) ($metaArr['refIdsByLocale'] ?? []);
+        foreach ($refIdsByLocale as $refId) {
+            $refIdInt = (int) $refId;
+            if ($refIdInt > 0 && isset($populatedKeys[$legacyClass][$refIdInt])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
