@@ -381,11 +381,20 @@ class EntryMigrationService extends Component
             // this site BEFORE applyPerSiteData runs setFieldValues — the
             // tracked set carries real blocks from previous runs (re-runs)
             // or is empty (first runs), so the wipe targets only ghosts.
-            $this->wipeStaleSecondarySiteBlocks(
-                $localised,
-                (array) ($perSite[$site->handle]['fieldValues'] ?? []),
-                (array) ($blockUidMap[$site->handle] ?? []),
-            );
+            //
+            // First-run skip: when $existingId is null the entry was created
+            // moments ago by the primary save above. The only blocks Craft
+            // could have auto-mirrored to this site are ones we just wrote
+            // — none predate this run, so there are no stale ghosts to
+            // delete. Skipping the per-matrix-field query loop avoids ~N
+            // wasted queries per secondary site per entry on fresh DBs.
+            if ($existingId !== null) {
+                $this->wipeStaleSecondarySiteBlocks(
+                    $localised,
+                    (array) ($perSite[$site->handle]['fieldValues'] ?? []),
+                    (array) ($blockUidMap[$site->handle] ?? []),
+                );
+            }
 
             $this->applyPerSiteData(
                 $localised,
