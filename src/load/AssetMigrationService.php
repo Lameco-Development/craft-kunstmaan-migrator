@@ -457,48 +457,75 @@ class AssetMigrationService extends Component
         $isRemoteVideo = str_starts_with($contentType, 'remote/')
             || (str_contains($contentType, 'video') && ($location === null || $location === ''));
 
-        // Remote video: parse metadata for video id, record state, no file copy.
+        // Remote video: parse metadata, materialise as an Embedded Assets
+        // JSON file (via spicyweb/craft-embedded-assets — already shipped
+        // by craft-starter-kit), persist the wrapping Craft Asset, record
+        // state. Phase 4's serialized-blob decoder still null-slots so
+        // existing wiring stays compatible; the inline fallback below
+        // (extractRemoteVideoMetadata) covers the kuma_media.metadata
+        // shape directly using PHP's native unserialize, so phase
+        // I-migrator doesn't need to wait on Phase 4 plumbing.
         if ($isRemoteVideo) {
-            // Serialized-blob decoder deferred to Phase 4 — null-slot guard.
-            // Without the decoder we cannot extract a video id from the
-            // serialized blob; emit a warning and skip until Phase 4 wires it.
+            $metadata = null;
             $videoId = null;
-            if ($this->serializedDecoder !== null && !empty($row['metadata'])) {
-                $metadata = $this->serializedDecoder->decode((string) $row['metadata']);
-                $videoId = $this->serializedDecoder->extractVideoId($metadata);
-            }
-
-            if ($videoId !== null) {
-                if (!$opts->dryRun) {
-                    $this->migrationState->record(
-                        self::STATE_SOURCE,
-                        $key,
-                        'video',
-                        0,
-                        null,
-                        null,
-                        [
-                            'kind'        => 'remote-video',
-                            'videoId'     => $videoId,
-                            'originalUrl' => $row['url'] ?? null,
-                            'contentType' => $contentType,
-                        ],
-                    );
+            $providerType = null;
+            if (!empty($row['metadata'])) {
+                if ($this->serializedDecoder !== null) {
+                    $metadata = $this->serializedDecoder->decode((string) $row['metadata']);
+                    $videoId = $this->serializedDecoder->extractVideoId($metadata);
+                    if (is_array($metadata)) {
+                        $providerType = is_string($metadata['type'] ?? null) ? $metadata['type'] : null;
+                    }
+                } else {
+                    $extracted = self::extractRemoteVideoMetadata((string) $row['metadata']);
+                    if ($extracted !== null) {
+                        $videoId = $extracted['code'];
+                        $providerType = $extracted['type'];
+                    }
                 }
-                // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
-                $counts['created'] = ($counts['created'] ?? 0) + 1;
-                return null; // no Asset element for remote videos
             }
 
-            // No extractable id (or decoder absent) — log and skip; don't
-            // persist a half-complete row.
-            // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
-            Craft::warning(
-                "kuma_media:{$mediaId} remote video has no extractable ID",
-                __METHOD__,
+            if ($videoId === null || $providerType === null) {
+                // No extractable id/type (or decoder absent and metadata
+                // shape unexpected) — log and skip; don't persist a
+                // half-complete row.
+                Craft::warning(
+                    "kuma_media:{$mediaId} remote video has no extractable ID/provider",
+                    __METHOD__,
+                );
+                $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
+                return null;
+            }
+
+            if ($opts->dryRun) {
+                $counts['created'] = ($counts['created'] ?? 0) + 1;
+                return null;
+            }
+
+            $asset = $this->createEmbeddedAssetForRemoteVideo(
+                $videoId,
+                $providerType,
+                (string) ($row['name'] ?? ''),
+                $mediaId,
             );
-            $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
-            return null;
+
+            $this->migrationState->record(
+                self::STATE_SOURCE,
+                $key,
+                $asset !== null ? 'asset' : 'video',
+                $asset !== null ? (int) $asset->id : 0,
+                $asset?->uid,
+                null,
+                [
+                    'kind'        => 'remote-video',
+                    'videoId'     => $videoId,
+                    'provider'    => $providerType,
+                    'originalUrl' => $row['url'] ?? null,
+                    'contentType' => $contentType,
+                ],
+            );
+            $counts['created'] = ($counts['created'] ?? 0) + 1;
+            return $asset;
         }
 
         // Local file path resolution with traversal guard.
@@ -706,6 +733,156 @@ class AssetMigrationService extends Component
         }
 
         return $safeName;
+    }
+
+    /**
+     * Decode a `kuma_media.metadata` serialized blob and pull out the
+     * provider type + video code. Mirrors what Kunstmaan's
+     * MediaBundle stored at upload time for `remote/video` content:
+     *
+     *   a:3:{s:4:"code";s:11:"iMW0NAGw9Gw";s:4:"type";s:7:"youtube";s:13:"thumbnail_url";s:56:"..."}
+     *
+     * Fallback path for installations that haven't wired the Phase 4
+     * `serializedDecoder` DI slot — directly unserialize-and-pluck so
+     * remote-video migration works on the standard portfolio.
+     *
+     * Returns null when the blob doesn't unserialize, isn't an array,
+     * or doesn't carry both `code` and `type` keys with a recognised
+     * provider value. Recognised providers: `youtube`, `vimeo`,
+     * `dailymotion` (the three the kumashim KumaEmbedHelperAdapter
+     * URL-regex covers — keeping the two ends symmetric).
+     *
+     * @return array{code: string, type: string}|null
+     */
+    private static function extractRemoteVideoMetadata(string $blob): ?array
+    {
+        if ($blob === '') {
+            return null;
+        }
+        // Disable PHP class instantiation — defensive against malicious
+        // legacy data. We only ever expect a flat associative array.
+        $decoded = @unserialize($blob, ['allowed_classes' => false]);
+        if (!is_array($decoded)) {
+            return null;
+        }
+        $code = is_string($decoded['code'] ?? null) ? trim($decoded['code']) : '';
+        $type = is_string($decoded['type'] ?? null) ? strtolower(trim($decoded['type'])) : '';
+        if ($code === '' || !in_array($type, ['youtube', 'vimeo', 'dailymotion'], true)) {
+            return null;
+        }
+        return ['code' => $code, 'type' => $type];
+    }
+
+    /**
+     * Materialise a `remote/video` kuma_media row as a Craft Asset
+     * backed by a SpicyWeb Embedded Assets JSON file. The starter-kit
+     * ships `spicyweb/craft-embedded-assets`; the asset is a regular
+     * Craft Asset element whose contents are oEmbed metadata read by
+     * `craft.embeddedAssets.get(asset)` at render time.
+     *
+     * Defensive: returns null when the plugin isn't installed (preserves
+     * the legacy state-only path so installs without the plugin keep
+     * compiling), or when any of the create / save steps fail.
+     *
+     * Phase I-migrator counterpart to phase I-porter on the scaffolder
+     * side. The porter rewrites the Kunstmaan `mediamanager.getHandler(X)
+     * .getFormHelper(X)` two-call shape to `kumaEmbedHelper(X)`, which
+     * reads `providerName` + `url` off the EmbeddedAsset model — same
+     * fields this method populates.
+     */
+    private function createEmbeddedAssetForRemoteVideo(string $videoId, string $providerType, string $title, int $mediaId): ?Asset
+    {
+        $pluginsService = Craft::$app->getPlugins();
+        $plugin = $pluginsService->getPlugin('embedded-assets');
+        if ($plugin === null) {
+            Craft::warning(
+                "kuma_media:{$mediaId} remote video — spicyweb/craft-embedded-assets not installed; recording state-only.",
+                __METHOD__,
+            );
+            return null;
+        }
+
+        // Canonical URL + iframe HTML per provider. Same shapes the
+        // kumashim KumaEmbedHelperAdapter's URL regex recognises.
+        $providerLabel = match ($providerType) {
+            'youtube' => 'YouTube',
+            'vimeo' => 'Vimeo',
+            'dailymotion' => 'Dailymotion',
+            default => ucfirst($providerType),
+        };
+        [$url, $iframeSrc, $providerUrl] = match ($providerType) {
+            'youtube' => [
+                'https://www.youtube.com/watch?v=' . $videoId,
+                'https://www.youtube.com/embed/' . $videoId,
+                'https://www.youtube.com/',
+            ],
+            'vimeo' => [
+                'https://vimeo.com/' . $videoId,
+                'https://player.vimeo.com/video/' . $videoId,
+                'https://vimeo.com/',
+            ],
+            'dailymotion' => [
+                'https://www.dailymotion.com/video/' . $videoId,
+                'https://www.dailymotion.com/embed/video/' . $videoId,
+                'https://www.dailymotion.com/',
+            ],
+            default => ['', '', ''],
+        };
+        if ($url === '') {
+            return null;
+        }
+
+        $safeTitle = $title !== '' ? $title : ($providerLabel . ' ' . $videoId);
+        $code = sprintf(
+            '<iframe src="%s" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>',
+            htmlspecialchars($iframeSrc, ENT_QUOTES, 'UTF-8'),
+        );
+
+        try {
+            $embeddedAsset = $plugin->methods->createEmbeddedAsset([
+                'title'        => $safeTitle,
+                'url'          => $url,
+                'type'         => 'video',
+                'code'         => $code,
+                'providerName' => $providerLabel,
+                'providerUrl'  => $providerUrl,
+            ]);
+            if ($embeddedAsset === null) {
+                Craft::warning(
+                    "kuma_media:{$mediaId} createEmbeddedAsset returned null (invalid data shape)",
+                    __METHOD__,
+                );
+                return null;
+            }
+
+            $volume = Craft::$app->getVolumes()->getVolumeByHandle($this->targetVolume);
+            if ($volume === null) {
+                Craft::warning(
+                    "kuma_media:{$mediaId} target volume '{$this->targetVolume}' not found — embedded asset skipped.",
+                    __METHOD__,
+                );
+                return null;
+            }
+            $folderPath = $this->targetSubfolder !== '' ? "{$this->targetSubfolder}/embeds" : 'embeds';
+            $folder = Craft::$app->getAssets()->ensureFolderByFullPathAndVolume($folderPath, $volume);
+
+            $asset = $plugin->methods->createAsset($embeddedAsset, $folder);
+            if (!Craft::$app->getElements()->saveElement($asset)) {
+                $errors = json_encode($asset->getErrors(), JSON_UNESCAPED_SLASHES);
+                Craft::warning(
+                    "kuma_media:{$mediaId} embedded-asset save failed: {$errors}",
+                    __METHOD__,
+                );
+                return null;
+            }
+            return $asset;
+        } catch (Throwable $e) {
+            Craft::warning(
+                "kuma_media:{$mediaId} embedded-asset creation threw: " . $e->getMessage(),
+                __METHOD__,
+            );
+            return null;
+        }
     }
 
     /**
