@@ -89,6 +89,8 @@ final class FinalizeWalker extends Component
         $progressTotal = $onProgress !== null ? (int) $query->count() : 0;
         $progressDone = 0;
 
+        $ckeFieldClassExists = class_exists(\craft\ckeditor\Field::class, true);
+
         foreach ($query->each(50) as $entry) {
             /** @var Entry $entry */
             $fieldLayout = $entry->getFieldLayout();
@@ -99,32 +101,50 @@ final class FinalizeWalker extends Component
             $entryDirty = false;
 
             foreach ($fieldLayout->getCustomFields() as $field) {
-                // Detect CKEditor field by class — class_exists guard avoids a hard composer
-                // dep at PHP-lint time. craftcms/ckeditor is required at runtime when any
-                // migrated entry actually carries a CKEditor field.
-                if (!class_exists(\craft\ckeditor\Field::class, true)) {
-                    continue;
-                }
-                if (!($field instanceof \craft\ckeditor\Field)) {
-                    continue;
+                // Combined CKEditor + plain-text placeholder rewriting per
+                // field. Folding both passes into one entry iteration halves
+                // the top-level walker cost: walkPlaceholders() now scopes
+                // itself to matrix-block child elements (which Entry::find()
+                // here doesn't return), so the only top-level work is this
+                // single combined pass.
+                $isCke = $ckeFieldClassExists && $field instanceof \craft\ckeditor\Field;
+
+                if ($isCke) {
+                    // CKEditor field values in Craft 5 are \craft\ckeditor\data\FieldData
+                    // objects, not strings. Cast to string for the rewriter input.
+                    $current = (string) $entry->getFieldValue($field->handle);
+                    if ($current === '') {
+                        continue;
+                    }
+                    $processed++;
+                    $rewrittenHtml = $this->rewriter->rewrite($current, $entry->siteId);
+                    $diagnosticSource = 'FinalizeWalker';
+                    $nextValue = $rewrittenHtml;
+                } else {
+                    $value = $entry->getFieldValue($field->handle);
+                    if (!is_scalar($value) && $value !== null) {
+                        continue;
+                    }
+                    $current = (string) ($value ?? '');
+                    if ($current === '' || preg_match(self::PLACEHOLDER_PROBE, $current) !== 1) {
+                        continue;
+                    }
+                    $processed++;
+                    $rewritten_value = $this->rewriter->rewrite($current, $entry->siteId);
+                    // PlainText fields don't trigger Craft's reference-token
+                    // resolver — emitted `{entry:N@S:url}` tokens must be
+                    // resolved to actual URLs here, mirroring the legacy
+                    // walkPlaceholders behaviour.
+                    $nextValue = $this->resolveEntryRefTokensToUrls($rewritten_value);
+                    $diagnosticSource = 'FinalizeWalker::walk';
                 }
 
-                $processed++;
-
-                // CKEditor field values in Craft 5 are \craft\ckeditor\data\FieldData
-                // objects, not strings. Cast to string for the rewriter input.
-                $current = (string) $entry->getFieldValue($field->handle);
-                if ($current === '') {
-                    continue;
-                }
-
-                $rewrittenHtml = $this->rewriter->rewrite($current, $entry->siteId);
                 foreach ($this->rewriter->consumeUnresolvedDiagnostics() as $diagnostic) {
                     $unresolvedDiagnostics[] = [
                         'entryId' => (int) $entry->id,
                         'siteId' => (int) $entry->siteId,
                         'fieldHandle' => (string) $field->handle,
-                        'source' => 'FinalizeWalker',
+                        'source' => $diagnosticSource,
                     ] + $diagnostic;
                 }
                 foreach ($this->rewriter->consumeOutOfScopeDiagnostics() as $diagnostic) {
@@ -132,20 +152,19 @@ final class FinalizeWalker extends Component
                         'entryId' => (int) $entry->id,
                         'siteId' => (int) $entry->siteId,
                         'fieldHandle' => (string) $field->handle,
-                        'source' => 'FinalizeWalker',
+                        'source' => $diagnosticSource,
                     ] + $diagnostic;
                 }
 
-                if (str_contains($rewrittenHtml, '<!-- MIGRATION:UNRESOLVED')) {
+                if (str_contains($nextValue, '<!-- MIGRATION:UNRESOLVED')) {
                     $unresolvable++;
                 }
 
-                if ($rewrittenHtml === $current) {
-                    // Idempotent re-run: nothing changed, no save needed.
+                if ($nextValue === $current) {
                     continue;
                 }
 
-                $entry->setFieldValue($field->handle, $rewrittenHtml);
+                $entry->setFieldValue($field->handle, $nextValue);
                 $entryDirty = true;
                 $rewritten++;
             }
@@ -193,20 +212,17 @@ final class FinalizeWalker extends Component
     private const PLACEHOLDER_PROBE = '/\[(?:NT|M)\d+\]|\{entry:\d+@\d+:url\}/';
 
     /**
-     * Second finalize pass — placeholder rewriting in NON-CKEditor string
-     * fields. The primary `walk()` only touches `craft\ckeditor\Field`
-     * instances, so PlainText fields carrying `[NT<id>]` / `[M<id>]`
-     * placeholders (Lameco's footer-link `linkPagePart.url` is the
-     * canonical example — Kunstmaan source stored these as plain text
-     * with a render-time `replace_url` filter) leak through unresolved.
+     * Second finalize pass — placeholder rewriting in matrix-block child
+     * elements only. Top-level entry coverage (CKEditor + non-CKEditor
+     * placeholder fields) is folded into `walk()`; this method handles
+     * the remainder: nested matrix-block entries with `[NT<id>]` /
+     * `[M<id>]` / `{entry:N@S:url}` placeholders that Entry::find()'s
+     * default scope never reaches.
      *
-     * Coverage difference vs walk():
-     *   - walk(): top-level entries only (Entry::find() default), CKEditor
-     *     fields only.
-     *   - walkPlaceholders(): top-level + matrix-block entries (queried
-     *     via direct SQL against `elements_sites.content` placeholder
-     *     LIKE), every NON-CKEditor field (avoids double-rewriting
-     *     CKEditor fields walk() already handled).
+     * Lameco's footer-link `linkPagePart.url` is the canonical example —
+     * Kunstmaan source stored these as plain text with a render-time
+     * `replace_url` filter, and the URL lives on a matrix-block child
+     * entry below the page.
      *
      * Conservative: only rewrites a field's value when it actually
      * matches PLACEHOLDER_PROBE. Plain strings without placeholders are
@@ -283,6 +299,15 @@ final class FinalizeWalker extends Component
             // (primaryOwnerId IS NOT NULL) without scoping.
             $element = Craft::$app->elements->getElementById($elementId, null, $siteId);
             if (!($element instanceof Entry)) {
+                $progressDone++;
+                continue;
+            }
+            // Skip top-level entries — walk() handles those in a single
+            // combined pass over CKEditor + non-CKEditor fields. Nested
+            // matrix-block child entries have sectionId === null and
+            // primaryOwnerId set; that's the remaining surface this pass
+            // owns.
+            if ($element->sectionId !== null) {
                 $progressDone++;
                 continue;
             }
