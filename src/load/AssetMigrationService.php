@@ -793,7 +793,9 @@ class AssetMigrationService extends Component
     private function createEmbeddedAssetForRemoteVideo(string $videoId, string $providerType, string $title, int $mediaId): ?Asset
     {
         $pluginsService = Craft::$app->getPlugins();
-        $plugin = $pluginsService->getPlugin('embedded-assets');
+        // Plugin handle is `embeddedassets` (no hyphen) per the plugin's
+        // composer.json — easy to typo as `embedded-assets`.
+        $plugin = $pluginsService->getPlugin('embeddedassets');
         if ($plugin === null) {
             Craft::warning(
                 "kuma_media:{$mediaId} remote video — spicyweb/craft-embedded-assets not installed; recording state-only.",
@@ -839,11 +841,25 @@ class AssetMigrationService extends Component
         );
 
         try {
+            // The plugin's EmbeddedAsset model declares typed `string`
+            // properties (no `?`) for title/description/url/image/
+            // authorName/authorUrl/providerName/providerUrl — Yii's
+            // populate path reads them via `__get` during validate(),
+            // which throws PHP 7.4+ "must not be accessed before
+            // initialization" if any are unset. Set every typed-string
+            // field to a safe default so creation never partial-fails.
             $embeddedAsset = $plugin->methods->createEmbeddedAsset([
                 'title'        => $safeTitle,
+                'description'  => '',
                 'url'          => $url,
                 'type'         => 'video',
                 'code'         => $code,
+                'width'        => 1280,
+                'height'       => 720,
+                'aspectRatio'  => 720 / 1280 * 100,
+                'image'        => '',
+                'authorName'   => '',
+                'authorUrl'    => '',
                 'providerName' => $providerLabel,
                 'providerUrl'  => $providerUrl,
             ]);
