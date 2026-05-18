@@ -47,6 +47,26 @@ final class MigrationFiltersTest extends TestCase
         self::assertSame('2025-01-01', $f->since);
     }
 
+    public function testIsNarrowedFalseWhenNoScopingActive(): void
+    {
+        self::assertFalse((new MigrationFilters())->isNarrowed());
+    }
+
+    public function testIsNarrowedTrueForEachScopingAxis(): void
+    {
+        self::assertTrue((new MigrationFilters(entities: ['NewsPage']))->isNarrowed());
+        self::assertTrue((new MigrationFilters(locales: ['nl']))->isNarrowed());
+        self::assertTrue((new MigrationFilters(since: '2025-01-01'))->isNarrowed());
+    }
+
+    public function testIsNarrowedIgnoresNoSeoAndNoRetourToggles(): void
+    {
+        // --no-seo / --no-retour are CLI overrides for sidecar stages
+        // themselves, not run-scoping flags. They don't imply a narrowed
+        // entry slice, so isNarrowed() must NOT short-circuit on them.
+        self::assertFalse((new MigrationFilters(noSeo: true, noRetour: true))->isNarrowed());
+    }
+
     public function testClassHasExpectedPublicProperties(): void
     {
         // D-12: --max-per-entity is DROPPED.

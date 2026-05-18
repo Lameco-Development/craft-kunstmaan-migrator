@@ -366,9 +366,41 @@ class MigrateWorkflow extends Component
             return ExitCode::CONFIG;
         }
         $this->clearFullPipelineArtifacts($storageDir);
+
+        // Mapping-hash auto-force gate: when mapping.yaml changed since the
+        // last successful migrate (e.g. operator re-ran the scaffolder's
+        // generate-schema + emit-migrator-mapping after adding new
+        // childCollection rows from a Doctrine-introspector inventory),
+        // every previously-migrated entry would otherwise be silently
+        // skipped by `AtomicMigrationService`'s state-row idempotency
+        // gate — and the newly-mapped nested matrix data never reaches the
+        // existing entries. Auto-imply `--force` in that case so existing
+        // entries get re-processed with the new mapping.
+        //
+        // First-run safety: no stored hash → no auto-force (the gate has
+        // nothing to skip anyway). Operator can still pass `--force`
+        // explicitly to override.
+        $effectiveForce = $this->force;
+        $currentMappingHash = $this->computeMappingHash($mappingPath);
+        $storedMappingHash = $this->readMappingHash($storageDir);
+        if (
+            !$effectiveForce
+            && $storedMappingHash !== null
+            && $currentMappingHash !== $storedMappingHash
+        ) {
+            $effectiveForce = true;
+            $this->stdout(
+                "  WARN mapping.yaml changed since last migrate (hash "
+                . substr($storedMappingHash, 0, 8) . "… → "
+                . substr($currentMappingHash, 0, 8) . "…) — auto-forcing existing-entry overwrite "
+                . "so new childCollection / field mappings reach already-migrated pages\n",
+                Console::FG_YELLOW,
+            );
+        }
+
         $opts = new MigrationOptions(
             dryRun: !$this->live,
-            force: $this->force,
+            force: $effectiveForce,
             skipAssets: false,
         );
 
@@ -564,12 +596,48 @@ class MigrateWorkflow extends Component
             );
         }
 
+        // Sidecar gate: when the operator narrows the run (--entities,
+        // --locales, --since, --limit, --only-id), the four global-scope
+        // sidecars (seo, retour, translations, navigation) rebuild from
+        // full source tables and would push duplicate rows over a partial
+        // entry slice. Skip them with a WARN pointing at the standalone
+        // sub-actions for global rebuilds.
+        $narrowed = $filters->isNarrowed() || $this->limit !== null || $this->onlyId !== null;
+        $sidecarSkipReason = null;
+        if ($narrowed) {
+            $reasons = [];
+            if ($filters->entities !== []) {
+                $reasons[] = '--entities';
+            }
+            if ($filters->locales !== []) {
+                $reasons[] = '--locales';
+            }
+            if ($filters->since !== null) {
+                $reasons[] = '--since';
+            }
+            if ($this->limit !== null) {
+                $reasons[] = '--limit';
+            }
+            if ($this->onlyId !== null) {
+                $reasons[] = '--only-id';
+            }
+            $sidecarSkipReason = sprintf(
+                'skipped (%s active — run migrate/seo, migrate/retour, migrate/translations, or migrate/navigation standalone for full rebuilds)',
+                implode(', ', $reasons),
+            );
+        }
+
         // Step 6.5 (D-55): SEO stage — runs AFTER finalize so all entries+assets exist
         // and kuma_seo image refs resolve via the state map. The service short-circuits
         // internally with a WARN when SEOmatic is absent (D-56).
         // Phase 4.1 / D-26: --no-seo bypasses adapter execution per-run with distinct
         // warn-line copy (different from Settings-disabled and plugin-not-installed).
-        if ($this->live) {
+        if ($this->live && $narrowed) {
+            $this->stdout(
+                "  WARN seo {$sidecarSkipReason}\n",
+                Console::FG_YELLOW,
+            );
+        } elseif ($this->live) {
             if ($filters->noSeo) {
                 $report->warn(self::cliBypassSeoWarnLine());
                 $this->stdout(
@@ -602,7 +670,12 @@ class MigrateWorkflow extends Component
 
         // Step 6.6 (D-55): Retour stage — same shape; service short-circuits when Retour absent.
         // Phase 4.1 / D-26: --no-retour bypasses adapter execution per-run with distinct copy.
-        if ($this->live) {
+        if ($this->live && $narrowed) {
+            $this->stdout(
+                "  WARN retour {$sidecarSkipReason}\n",
+                Console::FG_YELLOW,
+            );
+        } elseif ($this->live) {
             if ($filters->noRetour) {
                 $report->warn(self::cliBypassRetourWarnLine());
                 $this->stdout(
@@ -640,7 +713,12 @@ class MigrateWorkflow extends Component
         // every literal key like `service.heading` renders as the key
         // itself rather than the translated string. Independent of
         // entry/asset migration; runs after retour for log readability.
-        if ($this->live) {
+        if ($this->live && $narrowed) {
+            $this->stdout(
+                "  WARN translations {$sidecarSkipReason}\n",
+                Console::FG_YELLOW,
+            );
+        } elseif ($this->live) {
             try {
                 $tReport = $plugin->translationMigrationService->migrateAll($opts);
             } catch (Throwable $e) {
@@ -670,7 +748,12 @@ class MigrateWorkflow extends Component
         // ordering is just for log readability).
         // No --no-nav CLI flag in v0.1; per-run opt-out is via
         // Settings::navigationEnabled.
-        if ($this->live) {
+        if ($this->live && $narrowed) {
+            $this->stdout(
+                "  WARN navigation {$sidecarSkipReason}\n",
+                Console::FG_YELLOW,
+            );
+        } elseif ($this->live) {
             $plugin->navigationMigrationService->filters = $filters;
             try {
                 $navReport = $plugin->navigationMigrationService->migrateAll($opts);
@@ -696,10 +779,50 @@ class MigrateWorkflow extends Component
         // Step 7: REPORT.md (D-50 failures + D-52 counts + D-68 three new sections).
         $this->writeReport($storageDir, $report, $filters, $tRunStart);
 
+        // Persist mapping hash so the next migrate can detect whether the
+        // operator re-emitted mapping.yaml between runs (and auto-imply
+        // --force). Written AFTER report so failures still let the operator
+        // re-run without an artificial hash-stale signal.
+        $this->writeMappingHash($storageDir, $currentMappingHash);
+
         $tRunMs = (int) round((microtime(true) - $tRunStart) * 1000);
         $this->logLine(sprintf('actionIndex complete in %dms', $tRunMs), 1);
 
         return $this->reportExitCode($report);
+    }
+
+    /**
+     * SHA-256 of mapping.yaml — used by the mapping-hash auto-force gate to
+     * detect changes between migrate runs. SHA-256 is deterministic, fast on
+     * sub-MB files, and overkill for collisions in this context (a fixed
+     * source file).
+     */
+    private function computeMappingHash(string $mappingPath): string
+    {
+        $body = @file_get_contents($mappingPath);
+        if (!is_string($body) || $body === '') {
+            return '';
+        }
+        return hash('sha256', $body);
+    }
+
+    private function readMappingHash(string $storageDir): ?string
+    {
+        $path = rtrim($storageDir, '/') . '/.last-mapping-hash';
+        if (!is_file($path)) {
+            return null;
+        }
+        $body = trim((string) @file_get_contents($path));
+        return $body !== '' ? $body : null;
+    }
+
+    private function writeMappingHash(string $storageDir, string $hash): void
+    {
+        if ($hash === '') {
+            return;
+        }
+        $path = rtrim($storageDir, '/') . '/.last-mapping-hash';
+        @file_put_contents($path, $hash);
     }
 
     /**

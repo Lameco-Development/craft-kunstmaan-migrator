@@ -77,6 +77,20 @@ final class MigrationFilters
     }
 
     /**
+     * Returns true when ANY scoping filter is active (entities, locales, or
+     * since). Used by MigrateWorkflow to gate global-scope sidecar stages
+     * (seo, retour, translations, navigation) — those rebuild from full
+     * source tables (kuma_seo, kuma_redirects, kuma_translation, kuma_menu)
+     * and would push duplicate rows when the operator is targeting an
+     * entity slice. When narrowed, operators run the sidecar sub-actions
+     * (`migrate/seo`, `migrate/retour`, etc.) standalone for full rebuilds.
+     */
+    public function isNarrowed(): bool
+    {
+        return $this->entities !== [] || $this->locales !== [] || $this->since !== null;
+    }
+
+    /**
      * Compute (and memoize) the set of FQCNs reachable from `$entities` via the
      * relation graph. Iterative DFS with a visited-set guard so cycles in the
      * graph (A → B → A) don't loop forever.

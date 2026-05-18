@@ -82,4 +82,25 @@ final class MigrateWorkflowTest extends TestCase
         self::assertStringContainsString('MigrationOptions', $source);
         self::assertStringContainsString('MigrationReport', $source);
     }
+
+    public function testMigrateWorkflowGatesSidecarsWhenNarrowed(): void
+    {
+        // When --entities / --locales / --since / --limit / --only-id is
+        // active the four global-scope sidecars (seo, retour, translations,
+        // navigation) must skip with a WARN — they rebuild from full source
+        // tables and otherwise push duplicate rows into a partial slice.
+        // See MigrationFilters::isNarrowed() and the sidecar gate just
+        // before the SEO stage in MigrateWorkflow::run().
+        $source = (string) file_get_contents(__DIR__ . '/../../../src/workflow/MigrateWorkflow.php');
+
+        self::assertStringContainsString('$filters->isNarrowed()', $source);
+        self::assertStringContainsString('$sidecarSkipReason', $source);
+        foreach (['seo', 'retour', 'translations', 'navigation'] as $stage) {
+            self::assertStringContainsString(
+                "WARN {$stage} {\$sidecarSkipReason}",
+                $source,
+                "Expected MigrateWorkflow to gate the {$stage} stage on the narrowed-filter check",
+            );
+        }
+    }
 }
