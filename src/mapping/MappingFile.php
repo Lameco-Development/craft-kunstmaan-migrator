@@ -55,6 +55,19 @@ class MappingFile extends Component
         if (!is_array($parsed)) {
             return ['proposals' => []];
         }
+        // Fail loud on the scaffolder's v1 human-reference skeleton — it has no
+        // `proposals:` list (the only thing we consume) yet carries v1 markers
+        // (`meta.map_schema_version`, top-level `entry_types`/`custom_entities`).
+        // Silently treating it as empty would compile to 0 nodeClasses.
+        if (!isset($parsed['proposals']) && self::looksLikeV1Skeleton($parsed)) {
+            throw new \RuntimeException(sprintf(
+                'Mapping file %s is the scaffolder\'s v1 human-reference skeleton '
+                . '(no `proposals:` list), not a migrator input. Run '
+                . '`./bin/scaffold emit-migrator-mapping --craft-target=<target>` to '
+                . 'produce the compile-ready mapping.',
+                $path,
+            ));
+        }
         // Normalize proposals to a list (drop string keys; preserve order).
         $rows = [];
         if (isset($parsed['proposals']) && is_array($parsed['proposals'])) {
@@ -66,6 +79,21 @@ class MappingFile extends Component
         }
         $parsed['proposals'] = $rows;
         return $parsed;
+    }
+
+    /**
+     * The scaffolder's `emit-mapping` v1 skeleton carries `meta.map_schema_version`
+     * and top-level `entry_types`/`custom_entities`. Detecting it lets load() reject
+     * the footgun shape (no `proposals[]`) loudly instead of compiling to nothing.
+     *
+     * @param array<string, mixed> $parsed
+     */
+    private static function looksLikeV1Skeleton(array $parsed): bool
+    {
+        if (isset($parsed['meta']) && is_array($parsed['meta']) && isset($parsed['meta']['map_schema_version'])) {
+            return true;
+        }
+        return isset($parsed['entry_types']) || isset($parsed['custom_entities']);
     }
 
     /**

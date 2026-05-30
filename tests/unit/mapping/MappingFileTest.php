@@ -369,6 +369,48 @@ final class MappingFileTest extends TestCase
         self::assertSame('kuma_news_page', $data['proposals'][0]['table']);
     }
 
+    public function testLoadThrowsOnV1HumanReferenceSkeleton(): void
+    {
+        // The scaffolder's `emit-mapping` writes a v1 skeleton: meta.map_schema_version
+        // + top-level entry_types/custom_entities and NO `proposals:` list. We consume
+        // only proposals[], so silently loading it as empty yields 0 nodeClasses at
+        // compile. Fail loud and point at the command that emits a real mapping.
+        $mf = new MappingFile();
+        $path = $this->tmpDir . '/v1.yaml';
+        $yaml = "meta:\n  map_schema_version: 1.0.0\nentry_types:\n  newsArticle:\n    handle: newsArticle\ncustom_entities: {}\n";
+        file_put_contents($path, $yaml);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/emit-migrator-mapping/');
+        $mf->load($path);
+    }
+
+    public function testLoadDoesNotThrowWhenProposalsPresentEvenWithV1Markers(): void
+    {
+        // The guard keys on the ABSENCE of proposals, not the presence of v1 markers —
+        // a real mapping that happens to carry sibling blocks must still load.
+        $mf = new MappingFile();
+        $path = $this->tmpDir . '/mixed.yaml';
+        $yaml = "meta:\n  map_schema_version: 1.0.0\nproposals:\n  - table: kuma_news_page\n    column: body\n    status: accepted\n";
+        file_put_contents($path, $yaml);
+
+        $data = $mf->load($path);
+        self::assertCount(1, $data['proposals']);
+    }
+
+    public function testLoadStaysLenientOnNonV1FileWithoutProposals(): void
+    {
+        // A file that is neither a v1 skeleton nor a proposals mapping keeps the
+        // existing lenient behaviour (empty proposals) — the guard is scoped to the
+        // specific v1 footgun, not "any file without proposals".
+        $mf = new MappingFile();
+        $path = $this->tmpDir . '/other.yaml';
+        file_put_contents($path, "somethingElse: true\n");
+
+        $data = $mf->load($path);
+        self::assertSame([], $data['proposals']);
+    }
+
     public function testBuildRowEmitsExplicitColumnKindDiscriminator(): void
     {
         // D-34: buildRow now emits an explicit `kind: column` discriminator so the
