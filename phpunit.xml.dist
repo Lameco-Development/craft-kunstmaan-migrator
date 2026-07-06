@@ -21,6 +21,7 @@
             <directory>src/fields</directory>
             <directory>src/finalize</directory>
             <directory>src/safety</directory>
+            <directory>src/payload</directory>
         </include>
     </source>
     <coverage>
