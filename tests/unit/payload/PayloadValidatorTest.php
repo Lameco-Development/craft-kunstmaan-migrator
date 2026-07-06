@@ -262,4 +262,44 @@ final class PayloadValidatorTest extends TestCase
         $payload = Payload::fromArray($raw);
         self::assertSame([], $payload->aliases);
     }
+
+    public function testTrailingNewlineInSourceUidProducesBadSourceUidViolation(): void
+    {
+        $raw = $this->validPayloadArray();
+        $raw['sourceUid'] = "kuma:COM:nt_page:143\n";
+        $violations = $this->validator->validate(Payload::fromArray($raw));
+        self::assertCount(1, $violations);
+        self::assertSame('BAD_SOURCE_UID', $violations[0]->code);
+    }
+
+    public function testTypelessBlockProducesUnknownBlockTypeViolation(): void
+    {
+        $raw = $this->validPayloadArray();
+        $raw['sites']['en']['fieldValues']['pageBuilder'][] = [
+            'fields' => ['heading' => 'No type key on this block'],
+        ];
+        $violations = $this->validator->validate(Payload::fromArray($raw));
+        self::assertCount(1, $violations);
+        self::assertSame('UNKNOWN_BLOCK_TYPE', $violations[0]->code);
+    }
+
+    public function testNumericRefProducesBadRefViolation(): void
+    {
+        $raw = $this->validPayloadArray();
+        $raw['sites']['en']['fieldValues']['relatedPages'][0]['_ref'] = 123;
+        $violations = $this->validator->validate(Payload::fromArray($raw));
+        self::assertCount(1, $violations);
+        self::assertSame('BAD_REF', $violations[0]->code);
+    }
+
+    public function testMissingTitleIsSkippedWhenSiteIsDisabled(): void
+    {
+        $raw = $this->validPayloadArray();
+        $raw['sites']['en']['enabled'] = false;
+        $raw['sites']['en']['title'] = null;
+        $violations = $this->validator->validate(Payload::fromArray($raw));
+        $codes = array_map(static fn (\lameco\kunstmaanmigrator\payload\Violation $v): string => $v->code, $violations);
+        self::assertNotContains('MISSING_TITLE', $codes);
+        self::assertContains('NO_ENABLED_SITE', $codes);
+    }
 }

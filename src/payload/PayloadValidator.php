@@ -11,7 +11,7 @@ namespace lameco\kunstmaanmigrator\payload;
  */
 final class PayloadValidator
 {
-    private const SOURCE_UID_PATTERN = '/^kuma:[A-Za-z0-9_-]+:[a-z0-9_]+:\d+$/';
+    private const SOURCE_UID_PATTERN = '/^kuma:[A-Za-z0-9_-]+:[a-z0-9_]+:\d+$/D';
 
     public function __construct(private readonly SchemaGateway $gateway)
     {
@@ -128,11 +128,11 @@ final class PayloadValidator
         $violations = [];
         foreach ($value as $block) {
             $type = is_array($block) ? ($block['type'] ?? null) : null;
-            if ($type !== null && !in_array($type, $allowed, true)) {
+            if ($type === null || $type === '' || !in_array($type, $allowed, true)) {
                 $violations[] = $this->violation(
                     $p,
                     'UNKNOWN_BLOCK_TYPE',
-                    sprintf('Block type "%s" is not allowed on field "%s" (site "%s").', (string) $type, $fieldHandle, $siteHandle),
+                    sprintf('Block type "%s" is not allowed on field "%s" (site "%s").', $this->describe($type), $fieldHandle, $siteHandle),
                 );
             }
         }
@@ -157,11 +157,11 @@ final class PayloadValidator
         }
 
         foreach ($this->findRefs($data['fieldValues']) as $ref) {
-            if (!$this->isValidUid($ref)) {
+            if (!is_string($ref) || !$this->isValidUid($ref)) {
                 $violations[] = $this->violation(
                     $p,
                     'BAD_REF',
-                    sprintf('_ref "%s" on site "%s" does not match the sourceUid grammar.', $ref, $siteHandle),
+                    sprintf('_ref "%s" on site "%s" does not match the sourceUid grammar.', $this->describe($ref), $siteHandle),
                 );
             }
         }
@@ -171,16 +171,18 @@ final class PayloadValidator
 
     /**
      * Recursively collect every `_ref` value nested anywhere inside a
-     * fieldValues hash (matrix blocks, relation lists, ...).
+     * fieldValues hash (matrix blocks, relation lists, ...). Non-string
+     * values are collected too (not skipped) so the caller can flag them
+     * as BAD_REF instead of letting them silently escape validation.
      *
      * @param array<mixed> $value
-     * @return list<string>
+     * @return list<mixed>
      */
     private function findRefs(array $value): array
     {
         $refs = [];
         foreach ($value as $key => $item) {
-            if ($key === '_ref' && is_string($item)) {
+            if ($key === '_ref') {
                 $refs[] = $item;
                 continue;
             }
@@ -209,7 +211,7 @@ final class PayloadValidator
 
     private function isValidIso8601(string $value): bool
     {
-        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/', $value, $m) !== 1) {
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/D', $value, $m) !== 1) {
             return false;
         }
         [, $year, $month, $day, $hour, $minute, $second] = $m;
@@ -221,6 +223,15 @@ final class PayloadValidator
     private function hasNonEmptyString(?string $value): bool
     {
         return $value !== null && trim($value) !== '';
+    }
+
+    /**
+     * Safe stringification for violation messages when a value that should
+     * have been a string (block `type`, `_ref`) turns out not to be one.
+     */
+    private function describe(mixed $value): string
+    {
+        return is_scalar($value) ? (string) $value : gettype($value);
     }
 
     private function violation(Payload $p, string $code, string $message): Violation
