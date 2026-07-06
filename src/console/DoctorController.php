@@ -6,32 +6,26 @@ namespace lameco\kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
-use craft\helpers\App;
 use craft\helpers\Console;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\locale\LocalePreflight;
-use lameco\kunstmaanmigrator\source\KunstmaanCoreTables;
+use lameco\kunstmaanmigrator\db\KunstmaanCoreTables;
 use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Doctor — preflight diagnostics for the migrator. Eleven checks (D-17 + Phase 2 / Plan 05 + Phase 02.1 / D-31 + Phase 3 / Plan 03-13 + Phase 4 / Plan 04-11 / D-69 + Phase 8 / Plan 08-14 / D-09):
+ * Doctor — preflight diagnostics for the migrator. v2 loader prune: the
+ * analyze/mapping/locale-detection checks (Anthropic key, mapping.yaml health,
+ * Kunstmaan source path, .env source presence, LocalePreflight Rung 0) are
+ * removed along with their backing classes. Six checks remain (D-17 + Phase 2 /
+ * Plan 05 + Phase 3 / Plan 03-13 + Phase 4 / Plan 04-11 / D-69 + Phase 8 / Plan
+ * 08-14 / D-09):
  *   1. Legacy DB reachability (SELECT 1)
- *   2. Anthropic key presence (Settings override OR env; never echoes the value — T-1-03)
- *   3. storage/migration/ writable (auto-creates if missing — D-18 greenfield behavior)
- *   4. mapping.yaml health (deferred from Phase 1 / D-17 — landed alongside MappingFile in Phase 2)
- *   5. Kunstmaan source path (D-31 — KUNSTMAAN_SOURCE_PATH env or kunstmaanSourcePath Settings)
- *   6. State table reachability (Phase 3 / CONTEXT Discretion — catches Phase 1 install drift before migrate runs)
- *   7. Adapter plugin health (D-69 — SEOmatic + Retour optional, INFO on absence per ADP-01..03)
- *   8. Verify baseline presence (D-69 — INFO when storage/migration/baseline.json missing)
- *   9. Kunstmaan .env source presence (Phase 4.1 / D-10 — INFO/OK; never FAILs.
- *      Reports .env / .env.example presence + which whitelisted keys (DATABASE_URL,
- *      DEFAULT_LOCALE) were found + DSN-host vs Settings::legacyDbServer mismatch.)
- *  10. LocalePreflight Rung 0 advisory consult (Phase 4.1 / D-11..D-13 — INFO/WARN/silent;
- *      never FAILs. Compares env DEFAULT_LOCALE against Settings::localeMap first key.
- *      Silent when env unset (D-13); WARN on mismatch (D-12 verbatim copy).)
- *  11. ext_translations presence (Phase 8 / Plan 08-14 / TAX-09 / D-09 — INFO/WARN/OK;
+ *   2. storage/migration/ writable (auto-creates if missing — D-18 greenfield behavior)
+ *   3. State table reachability (Phase 3 / CONTEXT Discretion — catches Phase 1 install drift before migrate runs)
+ *   4. Adapter plugin health (D-69 — SEOmatic + Retour optional, INFO on absence per ADP-01..03)
+ *   5. Verify baseline presence (D-69 — INFO when storage/migration/baseline.json missing)
+ *   6. ext_translations presence (Phase 8 / Plan 08-14 / TAX-09 / D-09 — INFO/WARN/OK;
  *      never FAILs. Empty table → WARN (Gedmo overlay falls back to source-locale-only
  *      per D-09's pragmatic monolingual-Kunstmaan default); missing table → INFO (Gedmo
  *      Translatable absent); populated → OK with row count.)
@@ -74,19 +68,12 @@ class DoctorController extends Controller
         // operators want the full report, not a short-circuited tail.
         $ok = true;
         $ok = $this->checkLegacyDb()             && $ok;
-        $ok = $this->checkApiKey()               && $ok;
         $ok = $this->checkStorageDir()           && $ok;
-        $ok = $this->checkMappingFile()          && $ok;
-        $ok = $this->checkKunstmaanSourcePath()  && $ok;
         $ok = $this->checkStateTable()           && $ok;
         // Phase 4 extensions — D-69. Both always return true (INFO not FAIL):
         $ok = $this->checkAdapterPlugins()       && $ok;
         $ok = $this->checkVerifyBaseline()       && $ok;
-        // Phase 4.1 / D-10 (9th — info only, never blocks):
-        $ok = $this->checkKunstmaanEnvSource()   && $ok;
-        // Phase 4.1 / D-11..D-13 (10th — info/warn/silent; never blocks):
-        $ok = $this->checkLocalePreflightRung0() && $ok;
-        // Phase 8 / Plan 08-14 / TAX-09 / D-09 (11th — info/warn/ok; never blocks):
+        // Phase 8 / Plan 08-14 / TAX-09 / D-09 (info/warn/ok; never blocks):
         $ok = $this->checkExtTranslations()      && $ok;
 
         $this->stdout(
@@ -101,8 +88,8 @@ class DoctorController extends Controller
      * Check #1: legacy DB reachable AND a default schema is selected.
      *
      * `SELECT 1` only proves the connection opens (host/port/user/pass valid).
-     * Every downstream stage (LocalePreflight, KunstmaanSchemaDumper, ...) issues
-     * unqualified queries that need a default schema, so we also verify
+     * Every downstream load-side query issues unqualified SQL that needs a
+     * default schema, so we also verify
      * `SELECT DATABASE()` is non-null. Catches the case where
      * `CRAFT_LEGACY_DB_DATABASE` is unset and the DSN ends with `dbname=`.
      */
@@ -132,28 +119,7 @@ class DoctorController extends Controller
     }
 
     /**
-     * Check #2: Anthropic key presence — Settings override OR env (D-14).
-     * T-1-03 mitigation: report PRESENCE only. Never echo or log the value.
-     */
-    private function checkApiKey(): bool
-    {
-        $fromSettings = (string) (Plugin::getInstance()->getSettings()->anthropicApiKey ?? '');
-        $fromEnv      = (string) (App::env('ANTHROPIC_API_KEY') ?? '');
-        $hasKey = $fromSettings !== '' || $fromEnv !== '';
-
-        if ($hasKey) {
-            $this->stdout("  OK   ANTHROPIC_API_KEY set\n", Console::FG_GREEN);
-            return true;
-        }
-        $this->stderr(
-            "  FAIL ANTHROPIC_API_KEY missing — set in .env or plugin Settings (analyze will fail without it).\n",
-            Console::FG_RED,
-        );
-        return false;
-    }
-
-    /**
-     * Check #3: storage/migration/ exists and is writable.
+     * Check #2: storage/migration/ exists and is writable.
      * D-18: auto-create the directory under Craft's storage tree (one less manual op step).
      * Side-effecting, but only creates a known-good directory under storage/.
      */
@@ -182,69 +148,7 @@ class DoctorController extends Controller
     }
 
     /**
-     * Check #4 (deferred from Phase 1 / D-17): mapping.yaml health.
-     *
-     * Soft-warn on missing file (analyze creates it, not doctor); hard-fail on parse error
-     * or missing top-level `proposals:` key.
-     */
-    private function checkMappingFile(): bool
-    {
-        $path = Plugin::getInstance()->mappingFile->resolvePath();
-        try {
-            if (!is_file($path)) {
-                $this->stdout("  WARN mapping.yaml not found at {$path} (run analyze first)\n", Console::FG_YELLOW);
-                return true; // WARN-only — file is created by analyze, not by doctor
-            }
-            $parsed = \Symfony\Component\Yaml\Yaml::parseFile($path);
-            if (!is_array($parsed) || !array_key_exists('proposals', $parsed)) {
-                $this->stderr("  FAIL mapping.yaml at {$path} missing top-level 'proposals:' key\n", Console::FG_RED);
-                return false;
-            }
-            $rowCount = is_array($parsed['proposals']) ? count($parsed['proposals']) : 0;
-            $this->stdout("  OK   mapping.yaml at {$path} ({$rowCount} rows)\n", Console::FG_GREEN);
-            return true;
-        } catch (Throwable $e) {
-            $this->stderr("  FAIL mapping.yaml parse error: {$e->getMessage()}\n", Console::FG_RED);
-            return false;
-        }
-    }
-
-    /**
-     * Check #5 (Phase 02.1 / D-31): Kunstmaan source path resolves and contains src/Entity/.
-     *
-     * FAIL when KUNSTMAAN_SOURCE_PATH is unset or invalid — analyze cannot proceed
-     * (greenfield-fallback dropped per D-31). WARN when config/kunstmaancms/pageparts/
-     * is absent (PHP-only fallback for KunstmaanPageStructureScanner is still viable —
-     * D-31 Discretion).
-     */
-    private function checkKunstmaanSourcePath(): bool
-    {
-        $resolver = Plugin::getInstance()->kunstmaanSourcePathResolver;
-        $path = $resolver->resolve();
-        if ($path === null) {
-            $this->stderr(
-                "  FAIL KUNSTMAAN_SOURCE_PATH unset or invalid — analyze cannot proceed.\n"
-                . "       Set KUNSTMAAN_SOURCE_PATH in .env (or kunstmaanSourcePath in plugin settings).\n"
-                . "       Path must exist, be readable, and contain src/Entity/.\n",
-                Console::FG_RED,
-            );
-            return false;
-        }
-        // YAML config absence is WARN-only (D-31 Discretion locked in Plan 01):
-        // KunstmaanPageStructureScanner falls back to PHP-only scan via
-        // getPagePartAdminConfigurations() when the YAML dir is missing.
-        if (!is_dir($path . '/config/kunstmaancms/pageparts')) {
-            $this->stdout(
-                "  WARN config/kunstmaancms/pageparts/ not found at {$path} — falling back to PHP-only page-part scan\n",
-                Console::FG_YELLOW,
-            );
-        }
-        $this->stdout("  OK   Kunstmaan source path → {$path}\n", Console::FG_GREEN);
-        return true;
-    }
-
-    /**
-     * Check #6 (Phase 3 / Plan 03-13 — CONTEXT Discretion): state-table reachability.
+     * Check #3 (Phase 3 / Plan 03-13 — CONTEXT Discretion): state-table reachability.
      *
      * Catches the case where Phase 1 install drifted (table missing or schema-incompatible)
      * before migrate runs. Cheap, deterministic. FAIL when missing — operator must run
@@ -273,7 +177,7 @@ class DoctorController extends Controller
     }
 
     /**
-     * Check #7 (D-69): adapter plugin presence — informational only.
+     * Check #4 (D-69): adapter plugin presence — informational only.
      * SEOmatic + Retour are optional per ADP-01..03; absence is not a FAIL.
      */
     private function checkAdapterPlugins(): bool
@@ -297,7 +201,7 @@ class DoctorController extends Controller
     }
 
     /**
-     * Check #8 (D-69): verify baseline presence — informational only.
+     * Check #5 (D-69): verify baseline presence — informational only.
      * Operators may run doctor before capturing baseline.
      *
      * Phase 4.1 / D-30 — escalates from INFO/OK to WARN when baseline.json's
@@ -449,127 +353,7 @@ class DoctorController extends Controller
     }
 
     /**
-     * Check #9 (Phase 4.1 / D-10): Kunstmaan .env source presence + whitelisted keys.
-     *
-     * INFO-only, never FAILs. Reports:
-     *   - whether .env / .env.example exist at the resolved source path
-     *   - which whitelisted keys (DATABASE_URL, DEFAULT_LOCALE) were found
-     *   - if DATABASE_URL parsed: whether the parsed host differs from
-     *     Settings::legacyDbServer (operator-supplied value wins per D-07)
-     *
-     * T-04.1-01-04 mitigation: lists FILE NAMES and HOST only — never
-     * passwords or full DSN. Operator can verify by reading the
-     * implementation — only the host accessor is consulted.
-     */
-    private function checkKunstmaanEnvSource(): bool
-    {
-        $plugin = Plugin::getInstance();
-        $reader = $plugin->kunstmaanEnvReader;
-        $sourcePath = $plugin->kunstmaanSourcePathResolver->resolve();
-        if ($sourcePath === null) {
-            $this->stdout("  INFO Kunstmaan source path unset — env reader inert\n", Console::FG_YELLOW);
-            return true;
-        }
-
-        $envExample = is_file($sourcePath . '/.env.example') ? '.env.example' : null;
-        $env        = is_file($sourcePath . '/.env')         ? '.env'         : null;
-        $found = array_values(array_filter([$envExample, $env]));
-        if ($found === []) {
-            $this->stdout("  INFO no .env / .env.example at {$sourcePath}\n", Console::FG_YELLOW);
-            return true;
-        }
-        $this->stdout(sprintf("  OK   Kunstmaan env source: %s\n", implode(' + ', $found)), Console::FG_GREEN);
-
-        $dsn = $reader->getDatabaseUrl();
-        if ($dsn !== null && $dsn !== '') {
-            $parsedHost = $reader->getDsnHost();
-            $settingsHost = (string) ($plugin->getSettings()->legacyDbServer ?? '');
-            if ($parsedHost !== null && $settingsHost !== '' && $parsedHost !== $settingsHost) {
-                $this->stdout(
-                    sprintf(
-                        "  INFO DATABASE_URL host=%s differs from Settings::legacyDbServer=%s (operator value wins)\n",
-                        $parsedHost,
-                        $settingsHost,
-                    ),
-                    Console::FG_YELLOW,
-                );
-            } else {
-                $this->stdout("  OK   DATABASE_URL parsed\n", Console::FG_GREEN);
-            }
-        } else {
-            $this->stdout("  INFO DATABASE_URL not set in .env/.env.example\n", Console::FG_YELLOW);
-        }
-
-        $defaultLocale = $reader->getDefaultLocale();
-        if ($defaultLocale !== null && $defaultLocale !== '') {
-            $this->stdout(
-                sprintf("  OK   DEFAULT_LOCALE found: %s\n", $defaultLocale),
-                Console::FG_GREEN,
-            );
-        } else {
-            $this->stdout("  INFO DEFAULT_LOCALE not set in .env/.env.example\n", Console::FG_YELLOW);
-        }
-
-        return true; // D-10: info only — never blocks.
-    }
-
-    /**
-     * Check #10 (Phase 4.1 / D-11..D-13): LocalePreflight Rung 0 advisory consult.
-     *
-     * Compares the Kunstmaan project's env DEFAULT_LOCALE against the first key
-     * of Settings::localeMap. Three outcomes:
-     *   - env null/blank        → silent (D-13: no row)
-     *   - env present, no map   → INFO (operator hasn't curated localeMap yet)
-     *   - env matches firstKey  → OK
-     *   - env differs           → WARN with verbatim D-12 copy. NEVER FAIL.
-     *
-     * Per D-11 the existing 3-rung matching ladder in LocalePreflight::resolve()
-     * is unchanged — Rung 0 is purely advisory at this doctor seam. Per D-12
-     * NL-default Kunstmaan migrating into an EN-primary Craft instance is a
-     * real and intentional pattern; we do not second-guess the operator.
-     *
-     * T-04.1-03-01 mitigation: row content is locale codes only (e.g. "nl") —
-     * no file paths, no DSNs, no secrets.
-     */
-    private function checkLocalePreflightRung0(): bool
-    {
-        $plugin = Plugin::getInstance();
-        $envLocale = $plugin->kunstmaanEnvReader->getDefaultLocale();
-        $localeMap = (array) $plugin->getSettings()->localeMap;
-        $result = LocalePreflight::compareEnvDefaultLocaleToLocaleMap($envLocale, $localeMap);
-
-        switch ($result['status']) {
-            case 'silent':
-                return true; // D-13: no row when env signal absent.
-            case 'no-map':
-                $this->stdout(
-                    sprintf("  INFO DEFAULT_LOCALE=%s but no localeMap configured\n", $result['envLocale']),
-                    Console::FG_YELLOW,
-                );
-                return true;
-            case 'ok':
-                $this->stdout(
-                    sprintf("  OK   DEFAULT_LOCALE=%s aligns with localeMap[0]\n", $result['envLocale']),
-                    Console::FG_GREEN,
-                );
-                return true;
-            case 'warn':
-                // D-12: verbatim WARN copy — DO NOT paraphrase.
-                $this->stdout(
-                    sprintf(
-                        "  WARN Kunstmaan default locale `%s` but operator's `localeMap` lists `%s` first (Craft-primary). Reorder localeMap or confirm intent.\n",
-                        $result['envLocale'],
-                        $result['firstHandle'],
-                    ),
-                    Console::FG_YELLOW,
-                );
-                return true; // D-12: WARN, never FAIL.
-        }
-        return true;
-    }
-
-    /**
-     * Check #11 (Phase 8 / Plan 08-14 / TAX-09 / D-09): ext_translations presence.
+     * Check #6 (Phase 8 / Plan 08-14 / TAX-09 / D-09): ext_translations presence.
      *
      * D-09 mandate: WARN-only when empty (NEVER FAIL). The Gedmo Translatable
      * table is optional in Kunstmaan deployments — many sites are monolingual,
@@ -583,8 +367,8 @@ class DoctorController extends Controller
      *                 not installed at all). Detected via Throwable on the count
      *                 query (table-not-found → SQLSTATE[42S02]).
      *
-     * Surfaces the operator-visible signal that Phase 8's monolingual-fallback
-     * path was taken in TaxonomyMigrationService (Plan 08-11).
+     * Surfaces the operator-visible signal that a monolingual-fallback path
+     * would be taken by any taxonomy-relation load logic (Plan 08-11).
      */
     private function checkExtTranslations(): bool
     {

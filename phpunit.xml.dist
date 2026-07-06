@@ -17,11 +17,10 @@
     </testsuites>
     <source>
         <include>
-            <file>src/filter/MigrationFilters.php</file>
-            <file>src/mapping/MappingFile.php</file>
-            <file>src/finalize/CkeditorRewriterService.php</file>
-            <file>src/analyze/HeuristicProposer.php</file>
-            <directory>src/fields/handlers</directory>
+            <directory>src/load</directory>
+            <directory>src/fields</directory>
+            <directory>src/finalize</directory>
+            <directory>src/safety</directory>
         </include>
     </source>
     <coverage>

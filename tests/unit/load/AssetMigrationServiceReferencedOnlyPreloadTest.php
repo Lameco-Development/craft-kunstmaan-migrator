@@ -4,14 +4,12 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\unit\load;
 
-use lameco\kunstmaanmigrator\console\MigrateController;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use PHPUnit\Framework\TestCase;
-use ReflectionMethod;
 
 /**
  * Phase 9 / Plan 09-05 — --preload-assets must remain page-driven and
@@ -103,35 +101,5 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
         $service->ingestReferenced(new MigrationOptions(dryRun: true), new MigrationFilters(), []);
 
         self::assertSame([], $legacyDb->queries);
-    }
-
-    public function testPayloadCollectorFindsDeferredAndCkeditorAssetTokens(): void
-    {
-        $method = new ReflectionMethod(MigrateController::class, 'collectReferencedAssetIdsFromPayload');
-        $payload = [
-            'fieldValues' => [
-                'nl' => [
-                    'heroImage' => ['asset:42'],
-                    'body' => '<p>[M99] and repeated asset:42</p>',
-                    'matrix' => [
-                        ['fields' => ['image' => ['asset:7']]],
-                    ],
-                ],
-            ],
-            'referencedMediaIds' => [123, '456'],
-            'ignored' => '[NT12]',
-        ];
-
-        self::assertSame([7, 42, 99, 123, 456], $method->invoke(null, $payload));
-    }
-
-    public function testMigrateControllerPassesCollectedIdsToPreload(): void
-    {
-        $source = (string) file_get_contents(
-            (new \ReflectionClass(MigrateController::class))->getFileName(),
-        );
-
-        self::assertStringContainsString('collectReferencedAssetIdsFromPayloadDirectory($transformedDir, $filters)', $source);
-        self::assertStringContainsString('ingestReferenced($opts, $filters, $referencedAssetIds)', $source);
     }
 }

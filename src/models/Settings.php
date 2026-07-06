@@ -8,13 +8,14 @@ use craft\base\Model;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
 use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\source\KunstmaanEnvReader;
+use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 
 /**
- * Plugin Settings — shared seam between env vars, config/kunstmaan-migrator.php,
- * and the (Phase 4) CP Settings page. Phase 1 reads only the legacyDb* fields and
- * anthropicApiKey; the rest are declared upfront per D-15 so Phase 4 / CFG-01
- * plugs in without a refactor.
+ * Plugin Settings — shared seam between env vars and config/kunstmaan-migrator.php.
+ * v2 loader prune: analyze/compile/CP-queue-only properties (Anthropic key,
+ * mapping-stage config, source-checkout path, Phase 12 CP/queue gates) are
+ * removed — this model now declares only what src/load/, src/fields/, and
+ * src/safety/ actually read.
  */
 class Settings extends Model
 {
@@ -26,19 +27,6 @@ class Settings extends Model
     public ?string $legacyDbPassword     = null;
     public string  $legacyDbCharset      = 'utf8mb4';
     public string  $legacyDbTablePrefix  = '';
-
-    // Anthropic key (D-14). Defaults to ANTHROPIC_API_KEY.
-    public ?string $anthropicApiKey      = null;
-
-    // Phase 2-4 fields (D-15) — declared, unused until later phases.
-    public ?string $llmModel             = null;
-    public ?int    $llmTimeout           = null;
-    public ?int    $llmInterChunkDelay   = null;
-    public ?string $mappingPath          = null;
-    // Phase 02.1 / D-30 (Kunstmaan source path). Defaults to KUNSTMAAN_SOURCE_PATH env.
-    public ?string $kunstmaanSourcePath  = null;
-    public array   $defaultEntities      = [];
-    public array   $defaultLocales       = [];
 
     /**
      * Explicit locale override map: legacy Kunstmaan locale → Craft site handle.
@@ -75,69 +63,6 @@ class Settings extends Model
      * already-curated source content.
      */
     public bool    $skipAssetSizeValidation = false;
-
-    public ?string $defaultSince         = null;
-    public ?int    $defaultMaxPerEntity  = null;
-    public bool    $dryRunDefault        = true;
-
-    /**
-     * Phase 6 — graceful-fallback handles for the AI mapping flow. When the
-     * entity-level LLM step returns low/empty confidence for a given Kunstmaan
-     * Page FQCN (or page-part), the compiler falls back to these handles
-     * instead of letting the row die at load time. The compiled mapping flags
-     * the fallback in its compile report so the operator can review.
-     *
-     * Both null by default → keeps the existing fail-loud behavior. Set to a
-     * real Craft entry-type / block-type handle to opt in to graceful fallback.
-     *
-     * Typical values are a generic catch-all entry type and rich-text block
-     * handle from the project's Craft schema.
-     */
-    public ?string $defaultEntryType     = null;
-    public ?string $defaultBlockType     = null;
-
-    /**
-     * Optional operator overrides for generic rich-text fallback blocks.
-     *
-     * Shape:
-     * [
-     *   'pageBuilder' => ['blockType' => 'richTextBlock', 'fieldHandle' => 'bodyCopy'],
-     * ]
-     *
-     * Intended for config/kunstmaan-migrator.php when a site's Craft schema has
-     * ambiguous Matrix block names and the introspection heuristic needs a hint.
-     *
-     * @var array<string, array{blockType?: string, fieldHandle?: string}>
-     */
-    public array $genericContentBlockOverrides = [];
-
-    /**
-     * Optional relation mirror rules for Craft-native presentation fields.
-     *
-     * Use this when a project intentionally stores the same migrated relation
-     * in a second nested Matrix field, e.g. copying an accepted page-level
-     * relation into a CTA block. The compiler copies the first relation field
-     * matching the rule into `targetField`; it never invents source data.
-     *
-     * Shape:
-     * [
-     *   [
-     *     'targetField' => 'ctaPanel.primaryContact',
-     *     'sourceField' => 'relatedContacts',
-     *   ],
-     * ]
-     *
-     * Supported matchers: entryTypes, sourceField, sourceFieldContains,
-     * sourceColumn, sourceColumnContains, stateSource, stateSourceContains.
-     *
-     * @var list<array<string, mixed>>
-     */
-    public array $relationMirrorRules = [];
-
-    // Phase 4 / D-60 — verify-stage tolerances. Defaults: ±1% count tolerance,
-    // 5% URL-diff threshold. CLI `--count-tolerance` overrides at controller seam.
-    public float $verifyCountTolerance = 0.01;
-    public float $verifyUrlDiffThreshold = 0.05;
 
     // Phase 4 / D-57 — adapter source-table overrides for variant Kunstmaan
     // flavours. Defaults match the canonical kuma_* schema; operators flip via
@@ -184,43 +109,6 @@ class Settings extends Model
     public bool $navigationEnabled = true;
     public bool $translationsEnabled = true;
 
-    // Phase 8 / D-14 — AI proposer scope gates. Defaults to true (proposers run);
-    // flip to false to disable per Settings persistence. CLI --no-layout / --no-providers
-    // bypass per-run.
-    public bool $proposeLayout = true;
-    public bool $proposeProviders = true;
-
-    // Phase 8.5 / D-24 — optional Doctrine ManyToOne FK relation expansion.
-    // Defaults false so extracted JSON stays source-faithful: raw FK columns
-    // such as `employee_id` are present, while synthetic `_rel:<prop>.<col>`
-    // helper columns are opt-in for operator/debug workflows.
-    public bool $joinFkRelations = false;
-
-    // Phase 12 / Plan 05 — stable CP execution knobs. Queue-backed safe stages
-    // are allowed by default, but live queued migration must be explicitly
-    // enabled by the operator and remains behind downstream live gates.
-    public bool $allowCpQueueActions = true;
-    public bool $allowCpLiveQueueAction = false;
-
-    // Phase 12 / Plan 05 — run/log artifact retention defaults for future CP
-    // cleanup surfaces. Defaults are intentionally conservative and site-safe.
-    public int $runRecordRetentionDays = 30;
-    public int $artifactRetentionDays = 30;
-
-    /**
-     * Stable CP defaults for workflow filters. Advanced mapping/project-shape
-     * hints stay in config-only fields such as genericContentBlockOverrides and
-     * relationMirrorRules.
-     *
-     * @var array<string, mixed>
-     */
-    public array $defaultFilters = [];
-
-    // Phase 10 — full taxonomy vocabulary import is opt-in. Default false keeps
-    // canonical migration page-driven/referenced-only; CLI
-    // --include-unreferenced-taxonomies can enable it per run.
-    public bool $includeUnreferencedTaxonomies = false;
-
     public function behaviors(): array
     {
         return [
@@ -229,9 +117,6 @@ class Settings extends Model
                 'attributes' => [
                     'legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyDbPassword',
                     'legacyDbCharset', 'legacyDbTablePrefix',
-                    'anthropicApiKey',
-                    'llmModel', 'mappingPath', 'defaultSince',
-                    'kunstmaanSourcePath',
                     // Phase 4 / D-57 — adapter table-name env overrides. The
                     // Phase 4 / D-60 verify-tolerance floats deliberately stay
                     // out of this list; env-parse of float values is fragile
@@ -265,13 +150,6 @@ class Settings extends Model
         if (is_string($envPrefix)) {
             $this->legacyDbTablePrefix = $envPrefix;
         }
-        // D-14: ANTHROPIC_API_KEY env fallback. Settings property override wins when present.
-        // Never logged by this class; doctor reports presence only (T-1-03).
-        $this->anthropicApiKey ??= App::env('ANTHROPIC_API_KEY') ?: null;
-        // D-30: Kunstmaan source-checkout path (Phase 02.1). KUNSTMAAN_SOURCE_PATH env
-        // fallback; Settings property override wins. Resolver validates the path
-        // (realpath + is_dir + src/Entity/) — see KunstmaanSourcePathResolver.
-        $this->kunstmaanSourcePath ??= App::env('KUNSTMAAN_SOURCE_PATH') ?: null;
     }
 
     /**
@@ -354,17 +232,9 @@ class Settings extends Model
             [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
-            [['anthropicApiKey', 'llmModel', 'mappingPath', 'defaultSince', 'kunstmaanSourcePath', 'defaultEntryType', 'defaultBlockType'], 'string'],
-            [['llmTimeout', 'llmInterChunkDelay', 'defaultMaxPerEntity', 'runRecordRetentionDays', 'artifactRetentionDays'], 'integer'],
-            [['defaultEntities', 'defaultLocales', 'localeMap', 'defaultFilters', 'genericContentBlockOverrides', 'relationMirrorRules'], 'safe'],
-            [['dryRunDefault'], 'boolean'],
+            [['localeMap'], 'safe'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
-            // Phase 8 / D-14 — AI proposer scope gates (proposeLayout, proposeProviders).
-            // Phase 8.5 / D-24 — joinFkRelations (Doctrine ManyToOne join gate).
-            // Phase 12 / Plan 05 — CP queue/action gates.
-            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'proposeLayout', 'proposeProviders', 'joinFkRelations', 'allowCpQueueActions', 'allowCpLiveQueueAction', 'includeUnreferencedTaxonomies'], 'boolean'],
-            // Phase 4 / D-60 — verify-stage tolerances pinned to [0, 1].
-            [['verifyCountTolerance', 'verifyUrlDiffThreshold'], 'number', 'min' => 0, 'max' => 1],
+            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled'], 'boolean'],
             // Phase 4 / D-57 — adapter source-table overrides.
             [['seoTableName', 'redirectsTableName', 'menuTableName', 'menuItemTableName', 'nodesTableName', 'nodeMenuNavHandle', 'translationTableName'], 'string'],
             [['nodeMenuExcludedInternalNames', 'translationDomains'], 'safe'],

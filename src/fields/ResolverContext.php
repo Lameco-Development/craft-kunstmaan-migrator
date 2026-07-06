@@ -9,7 +9,6 @@ use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\load\AssetPathResolver;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\load\TaxonomyMigrationService;
 
 /**
  * Immutable per-call context passed to every FieldHandler::resolve().
@@ -22,8 +21,8 @@ use lameco\kunstmaanmigrator\load\TaxonomyMigrationService;
  *  - siteMap (legacy-locale → Craft siteId) for cross-site lookups
      *  - optional LegacyDbService for handlers that need sibling-row reads
      *    (MatrixHandler streams child rows via this)
-     *  - optional TaxonomyMigrationService/report/dryRun triplet for page-rooted
-     *    taxonomy relation misses. RelationHandler delegates to the service;
+     *  - optional TaxonomyRelationResolver/report/dryRun triplet for page-rooted
+     *    taxonomy relation misses. RelationHandler delegates to the resolver;
      *    the handler never writes taxonomy entries directly.
  *
  * All properties are readonly — constructing a new context is the only
@@ -42,7 +41,7 @@ final class ResolverContext
         public readonly AssetPathResolver $paths,
         public readonly array $siteMap,
         public readonly ?LegacyDbService $legacyDb = null,
-        public readonly ?TaxonomyMigrationService $taxonomyResolver = null,
+        public readonly ?TaxonomyRelationResolver $taxonomyResolver = null,
         public readonly bool $dryRun = true,
         public readonly ?MigrationReport $report = null,
     ) {

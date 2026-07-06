@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\source;
+namespace lameco\kunstmaanmigrator\db;
 
 use Craft;
 use lameco\kunstmaanmigrator\Plugin;
@@ -36,12 +36,13 @@ use yii\base\Component;
  *   - each component is `urldecode()`'d (Symfony DSNs URL-encode `@`, `/`,
  *     `:` in passwords)
  *
- * Consumers (read at command-invocation time, not boot — D-05):
- *   - Plan 04.1-02: Settings::beforeValidate() auto-fills blank
- *     legacyDb* fields from getDsnHost / getDsnUser / etc.
- *   - Plan 04.1-03: LocalePreflight Rung 0 advisory consults
- *     getDefaultLocale()
- *   - DoctorController::checkKunstmaanEnvSource (this plan, Task 3)
+ * Relocated from src/source/ to src/db/ in the v2 loader prune. The v1.x
+ * `ensureLoaded()` runtime path resolved the Kunstmaan source checkout via
+ * `KunstmaanSourcePathResolver` (analyze-stage machinery, removed in this
+ * prune); that component is no longer registered, so the resolver lookup
+ * below throws and `ensureLoaded()` degrades to "no .env found" rather than
+ * crashing. `Settings::beforeValidate()` is the sole production consumer,
+ * via the `loadFromPath()` test seam / DI.
  */
 final class KunstmaanEnvReader extends Component
 {

@@ -6,7 +6,6 @@ namespace lameco\kunstmaanmigrator\db;
 
 use Craft;
 use Generator;
-use lameco\kunstmaanmigrator\source\KunstmaanCoreTables;
 use yii\base\Component;
 use yii\db\Connection;
 

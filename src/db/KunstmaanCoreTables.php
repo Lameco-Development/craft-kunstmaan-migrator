@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\source;
+namespace lameco\kunstmaanmigrator\db;
 
 /**
  * Kunstmaan core table-name constants.
@@ -11,13 +11,9 @@ namespace lameco\kunstmaanmigrator\source;
  * `LegacyDbService` and any downstream Core\ query builder references these
  * constants instead of inlining `'kuma_*'` string literals (CORE-01).
  *
- * Introduced in Phase 5 Plan 02 during the pure-Core infra extraction
- * (D-01 Step 1). Table names are fixed by the Kunstmaan schema; if a
- * consuming project uses a non-standard prefix, override at the query
- * level — this constants class intentionally carries only the canonical
- * upstream names.
- *
- * Ported verbatim under v2's flat `source` namespace per D-41.
+ * Relocated from src/source/ to src/db/ in the v2 loader prune — this is
+ * shared DB-schema infrastructure consumed by LegacyDbService, DoctorController,
+ * and the load-side adapters, not analyze-stage code.
  */
 final class KunstmaanCoreTables
 {

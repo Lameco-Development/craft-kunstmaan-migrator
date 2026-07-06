@@ -11,14 +11,14 @@ use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\load\AssetPathResolver;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\MigrationStateReader;
-use lameco\kunstmaanmigrator\load\TaxonomyMigrationService;
+use lameco\kunstmaanmigrator\fields\TaxonomyRelationResolver;
 use PHPUnit\Framework\TestCase;
 
 final class RelationHandlerTaxonomyResolverTest extends TestCase
 {
     private function ctx(
         ?MigrationStateReader $state = null,
-        ?TaxonomyMigrationService $taxonomyResolver = null,
+        ?TaxonomyRelationResolver $taxonomyResolver = null,
         ?MigrationReport $report = null,
         bool $dryRun = false,
     ): ResolverContext {
@@ -41,7 +41,7 @@ final class RelationHandlerTaxonomyResolverTest extends TestCase
         $state = $this->createStub(MigrationStateReader::class);
         $state->method('getTargetId')->willReturn(null);
 
-        $resolver = $this->createMock(TaxonomyMigrationService::class);
+        $resolver = $this->createMock(TaxonomyRelationResolver::class);
         $resolver->expects($this->once())
             ->method('resolveReferenced')
             ->with('App\\Entity\\TopicTaxonomy', 42)
@@ -60,7 +60,7 @@ final class RelationHandlerTaxonomyResolverTest extends TestCase
         $state = $this->createStub(MigrationStateReader::class);
         $state->method('getTargetId')->willReturn(null);
 
-        $resolver = $this->createMock(TaxonomyMigrationService::class);
+        $resolver = $this->createMock(TaxonomyRelationResolver::class);
         $resolver->expects($this->never())->method('resolveReferenced');
 
         $result = (new RelationHandler())->resolve(42, $this->ctx($state, $resolver), [
@@ -72,7 +72,7 @@ final class RelationHandlerTaxonomyResolverTest extends TestCase
 
     public function testEmptyTaxonomyValueDoesNotInvokeResolver(): void
     {
-        $resolver = $this->createMock(TaxonomyMigrationService::class);
+        $resolver = $this->createMock(TaxonomyRelationResolver::class);
         $resolver->expects($this->never())->method('resolveReferenced');
 
         $result = (new RelationHandler())->resolve('', $this->ctx(taxonomyResolver: $resolver), [
@@ -88,7 +88,7 @@ final class RelationHandlerTaxonomyResolverTest extends TestCase
         $state = $this->createStub(MigrationStateReader::class);
         $state->method('getTargetId')->willReturn(null);
 
-        $resolver = $this->createMock(TaxonomyMigrationService::class);
+        $resolver = $this->createMock(TaxonomyRelationResolver::class);
         $resolver->method('resolveReferenced')->willReturn(null);
 
         $report = new MigrationReport();

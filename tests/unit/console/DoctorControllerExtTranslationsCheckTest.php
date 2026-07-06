@@ -10,7 +10,7 @@ use ReflectionMethod;
 
 /**
  * Phase 8 / Plan 08-14 / TAX-09 / D-09 — characterization test for the
- * 11th DoctorController check: ext_translations presence.
+ * DoctorController check: ext_translations presence.
  *
  * Why source-shape characterisation rather than runtime invocation:
  *   - DoctorController::check* methods touch Plugin::getInstance() (Craft bootstrap),
@@ -122,21 +122,17 @@ final class DoctorControllerExtTranslationsCheckTest extends TestCase
         );
     }
 
-    public function testCheckIsTheEleventhCheckInDispatcher(): void
+    public function testCheckIsTheLastCheckInDispatcher(): void
     {
-        // Order matters for the operator-visible report. Plan 08-14 specifies
-        // checkExtTranslations() as the 11th check — appended after Rung 0.
+        // Order matters for the operator-visible report. v2 loader prune:
+        // checkExtTranslations() is the last remaining check after the
+        // analyze/mapping/locale-detection checks were removed.
         $checks = [
             'checkLegacyDb',
-            'checkApiKey',
             'checkStorageDir',
-            'checkMappingFile',
-            'checkKunstmaanSourcePath',
             'checkStateTable',
             'checkAdapterPlugins',
             'checkVerifyBaseline',
-            'checkKunstmaanEnvSource',
-            'checkLocalePreflightRung0',
             'checkExtTranslations',
         ];
         $lastPos = -1;

@@ -5,77 +5,68 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\integration;
 
 use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\utilities\KunstmaanMappingUtility;
+use lameco\kunstmaanmigrator\console\DoctorController;
+use lameco\kunstmaanmigrator\console\MigrateController;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
 /**
- * Phase 12 CP console registration contract.
+ * v2 loader prune — console-surface contract. This suite does not bootstrap
+ * a Craft web application, so these tests inspect Plugin.php source instead.
  *
- * These tests intentionally inspect Plugin.php source because this suite does
- * not bootstrap a Craft web application. The goal is to lock the CP surface:
- * keep the existing Utility registration, wire Phase 12 siblings, and never
- * add a top-level CP nav section for the migration console.
+ * The CP Utility (KunstmaanMappingUtility) and its console-shell templates
+ * are removed along with src/utilities/ and templates/ — the v2 loader core
+ * has no CP surface at all. `doctor` and `migrate` remain the only console
+ * commands.
  */
 final class PluginConsoleRegistrationTest extends TestCase
 {
-    public function testUtilityRegistrationRemainsTheOnlyCpEntryPoint(): void
+    public function testNoCpSurfaceIsRegistered(): void
     {
         $source = $this->pluginSource();
 
         self::assertStringContainsString(
+            'public bool $hasCpSettings = false',
+            $source,
+            'v2 loader core has no CP settings page.',
+        );
+        self::assertStringNotContainsString(
             'Utilities::EVENT_REGISTER_UTILITIES',
             $source,
-            'Plugin::init() must keep registering the Craft Utility event.',
+            'The CP Utility (KunstmaanMappingUtility) is removed — no CP Utility event registration should remain.',
         );
-        self::assertStringContainsString(
-            'KunstmaanMappingUtility::class',
+        self::assertStringNotContainsString(
+            'EVENT_REGISTER_CP_TEMPLATE_ROOTS',
             $source,
-            'KunstmaanMappingUtility must remain the registered CP Utility.',
+            'templates/ is removed — no CP template roots should be registered.',
         );
         self::assertStringNotContainsString(
             'EVENT_REGISTER_CP_NAV_ITEMS',
             $source,
-            'Phase 12 must not register a top-level CP nav item.',
+            'The v2 loader core must not register a top-level CP nav item.',
         );
         self::assertStringNotContainsString(
             'Cp::EVENT_REGISTER_CP_NAV_ITEMS',
             $source,
-            'Phase 12 must not register a Craft CP section/nav event.',
+            'The v2 loader core must not register a Craft CP section/nav event.',
         );
     }
 
-    public function testUtilityRendersMigrationConsoleShell(): void
-    {
-        $utilitySource = (string) file_get_contents((new ReflectionClass(KunstmaanMappingUtility::class))->getFileName());
-        $templateSource = (string) file_get_contents(dirname(__DIR__, 2) . '/templates/_console/index.twig');
-
-        self::assertStringContainsString('Kunstmaan Migration Console', $utilitySource);
-        self::assertStringContainsString('shuffle', $utilitySource);
-        self::assertStringContainsString('_console/index', $utilitySource);
-        self::assertStringContainsString('MigrationConsoleController::utilityVariables', $utilitySource);
-        self::assertStringContainsString('View::TEMPLATE_MODE_CP', $utilitySource);
-        self::assertStringContainsString('Kunstmaan Migration Console', $templateSource);
-        self::assertStringContainsString("{% include 'kunstmaan-migrator/_console/_tabs' ignore missing", $templateSource);
-        self::assertStringContainsString('CLI remains the canonical workflow.', $templateSource);
-    }
-
-    public function testMigrationGateServiceSiblingDependenciesAreWired(): void
+    public function testConsoleRequestsGetTheConsoleControllerNamespace(): void
     {
         $source = $this->pluginSource();
 
-        foreach ([
-            'migrationGateService->migrationRunService = $this->migrationRunService',
-            'migrationGateService->mappingFile = $this->mappingFile',
-            'migrationGateService->settings = $settings',
-            'migrationGateService->migrationSafety = $this->migrationSafety',
-        ] as $wire) {
-            self::assertStringContainsString(
-                $wire,
-                $source,
-                "Plugin::init() must wire {$wire}.",
-            );
-        }
+        self::assertStringContainsString(
+            "\$this->controllerNamespace = 'lameco\\\\kunstmaanmigrator\\\\console'",
+            $source,
+            'Console requests must resolve controllers under lameco\\kunstmaanmigrator\\console.',
+        );
+    }
+
+    public function testDoctorAndMigrateConsoleCommandsAreLoadable(): void
+    {
+        self::assertTrue(class_exists(DoctorController::class, true), 'DoctorController must autoload via PSR-4');
+        self::assertTrue(class_exists(MigrateController::class, true), 'MigrateController must autoload via PSR-4');
     }
 
     private function pluginSource(): string

@@ -1,6 +1,7 @@
 {
     "name": "lameco/craft-kunstmaan-migrator",
-    "description": "Kunstmaan → Craft CMS migration plugin — knowledge-first ETL with AI-assisted mapping proposals.",
+    "description": "Thin payload loader for Kunstmaan→Craft migrations",
+    "version": "2.0.0-alpha.1",
     "type": "craft-plugin",
     "license": "MIT",
     "authors": [

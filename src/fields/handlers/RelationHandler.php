@@ -36,8 +36,8 @@ use RuntimeException;
  *                    the `targetColumn` value is used as the real state key.
  *   taxonomySource   (string, optional) — marks this relation as taxonomy-backed.
  *                    On non-empty state miss, RelationHandler delegates to
- *                    TaxonomyMigrationService via ResolverContext. The handler
- *                    does not create taxonomy entries directly.
+ *                    the TaxonomyRelationResolver injected via ResolverContext.
+ *                    The handler does not create taxonomy entries directly.
  *
  * Input normalisation:
  *   - scalar      → [int $id]
@@ -183,7 +183,8 @@ final class RelationHandler implements FieldHandler
     }
 
     /**
-     * Delegate a taxonomy-backed non-empty state miss to TaxonomyMigrationService.
+     * Delegate a taxonomy-backed non-empty state miss to the injected
+     * TaxonomyRelationResolver.
      *
      * @param array<string, mixed> $options
      */
