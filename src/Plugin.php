@@ -39,7 +39,7 @@ use yii\db\Connection;
  * settings-page surface are removed. What remains is the load-side core —
  * MigrationStateService, EntryMigrationService, the field-handler registry,
  * CkeditorRewriterService, the load-side adapters, and the `doctor` +
- * `migrate` console commands — the base later tasks build the
+ * `load` console commands — the base later tasks build the
  * payload-driven loader on top of.
  *
  * @property-read LegacyDbService $legacyDbService

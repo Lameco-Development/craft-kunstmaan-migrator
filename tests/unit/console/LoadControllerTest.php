@@ -9,6 +9,7 @@ use lameco\kunstmaanmigrator\payload\PayloadValidator;
 use lameco\kunstmaanmigrator\payload\SchemaGateway;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use ReflectionProperty;
 use yii\console\ExitCode;
 
 /**
@@ -45,6 +46,33 @@ final class AllowAllSchemaGateway implements SchemaGateway
 }
 
 /**
+ * Captures stdout()/stderr() writes into properties instead of hitting the
+ * real streams (both ultimately `fwrite(STDOUT|STDERR, ...)`, which PHPUnit's
+ * output buffering can't intercept) — mirrors NeverProductionFixture's
+ * technique in NeverProductionTraitTest, applied to a real LoadController
+ * instance so control-flow paths that write to the console are assertable.
+ */
+final class OutputCapturingLoadController extends LoadController
+{
+    public string $capturedStdout = '';
+    public string $capturedStderr = '';
+
+    public function stdout($string)
+    {
+        $this->capturedStdout .= $string;
+
+        return strlen($string);
+    }
+
+    public function stderr($string)
+    {
+        $this->capturedStderr .= $string;
+
+        return strlen($string);
+    }
+}
+
+/**
  * Task 3 — arg-parsing + report-shape coverage for LoadController.
  *
  * `LoadController` extends `craft\console\Controller`, whose constructor
@@ -61,6 +89,11 @@ final class LoadControllerTest extends TestCase
     private function uninitializedController(): LoadController
     {
         return (new ReflectionClass(LoadController::class))->newInstanceWithoutConstructor();
+    }
+
+    private function outputCapturingController(): OutputCapturingLoadController
+    {
+        return (new ReflectionClass(OutputCapturingLoadController::class))->newInstanceWithoutConstructor();
     }
 
     private function validatorAllowingAll(): PayloadValidator
@@ -165,6 +198,74 @@ final class LoadControllerTest extends TestCase
 
         $this->expectException(\yii\base\NotSupportedException::class);
         $controller->actionEntry();
+    }
+
+    /**
+     * A typo'd/deleted --payload path is a plausible operator mistake, not a
+     * per-record data problem — it must degrade the same way the missing
+     * --payload flag does (USAGE + stderr), not crash with an uncaught
+     * InvalidArgumentException out of readRecords().
+     */
+    public function testActionEntryReturnsUsageExitCodeWhenPayloadFileDoesNotExist(): void
+    {
+        $controller = $this->outputCapturingController();
+        $controller->payload = sys_get_temp_dir() . '/kuma-loader-does-not-exist-' . uniqid() . '.json';
+        $controller->dryRun = true;
+
+        $exitCode = $controller->actionEntry();
+
+        self::assertSame(ExitCode::USAGE, $exitCode);
+        self::assertStringContainsString('Payload file not found', $controller->capturedStderr);
+        self::assertSame('', $controller->capturedStdout);
+    }
+
+    // --- production guard (NeverProductionTrait integration) ---------------
+
+    /**
+     * Craft's own `ControllerTrait::runAction()` would coerce a bare
+     * `beforeAction()` `false` into `ExitCode::OK` — `runAction()`'s override
+     * (see class docblock) re-asserts the stashed exit code instead, which is
+     * what makes the refusal observable. This repo never boots a live Craft
+     * console dispatch in tests (see PluginBootstrapTest), so — per the
+     * reviewer's note that this guard is a plain env-var read that never
+     * touches `$action` — this exercises `beforeAction()` directly and reads
+     * back the stashed code `runAction()` returns, rather than the full
+     * dispatch chain (which needs a booted `Yii::$app`).
+     */
+    public function testBeforeActionRefusesAndStashesNonZeroExitCodeWhenEnvironmentIsProduction(): void
+    {
+        $hadPrevious = array_key_exists('CRAFT_ENVIRONMENT', $_SERVER);
+        $previous = $_SERVER['CRAFT_ENVIRONMENT'] ?? null;
+        $_SERVER['CRAFT_ENVIRONMENT'] = 'production';
+
+        try {
+            $controller = $this->outputCapturingController();
+            $controller->payload = $this->writeTemp('.json', json_encode($this->validPayloadArray('kuma:COM:nt_page:1')));
+            $controller->dryRun = true;
+
+            self::assertFalse($controller->beforeAction('entry'), 'beforeAction() must refuse to run in production.');
+            self::assertStringContainsString(
+                'Refusing to run against CRAFT_ENVIRONMENT=production',
+                $controller->capturedStderr,
+            );
+
+            $stashedExitCode = (new ReflectionProperty(LoadController::class, 'neverProductionExitCode'))
+                ->getValue($controller);
+
+            self::assertSame(ExitCode::UNSPECIFIED_ERROR, $stashedExitCode);
+            self::assertNotSame(ExitCode::OK, $stashedExitCode);
+
+            // beforeAction() returning false means Yii's own runAction() never
+            // calls the action method — actionEntry() (and so buildReport()/any
+            // save) never runs; nothing was written to stdout here either.
+            self::assertSame('', $controller->capturedStdout);
+        } finally {
+            if ($hadPrevious) {
+                $_SERVER['CRAFT_ENVIRONMENT'] = $previous;
+            } else {
+                unset($_SERVER['CRAFT_ENVIRONMENT']);
+            }
+        }
     }
 
     /**

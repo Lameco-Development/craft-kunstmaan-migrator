@@ -73,6 +73,12 @@ class LoadController extends Controller
             return ExitCode::USAGE;
         }
 
+        if (!is_file($this->payload)) {
+            $this->stderr(sprintf("Payload file not found: %s\n", $this->payload), Console::FG_RED);
+
+            return ExitCode::USAGE;
+        }
+
         if (!$this->dryRun) {
             throw new NotSupportedException('live load lands in Task 4');
         }
