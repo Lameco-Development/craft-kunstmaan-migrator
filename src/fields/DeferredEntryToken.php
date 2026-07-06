@@ -21,10 +21,14 @@ namespace lameco\kunstmaanmigrator\fields;
  *      fixup and stripped from the payload so Craft's Entries field
  *      validator doesn't choke on string values.
  *
- *   2. Post-load fixup pass (MigrateWorkflow::resolveDeferredEntryRelations)
- *      runs after every entry has saved at least once. The state table is
- *      now fully populated so unresolved tokens from pass 1 can be looked
- *      up and the owning matrix block re-saved with proper relation IDs.
+ *   2. Post-load fixup pass — meant to run after every entry has saved at
+ *      least once, once the state table is fully populated, to look up
+ *      pass-1's unresolved tokens and re-save the owning matrix block with
+ *      proper relation IDs. v2 loader prune: the class that ran this pass
+ *      (`MigrateWorkflow`) was removed; a replacement drain path
+ *      (`load/fixup`) is planned for a later task. Until then,
+ *      `AtomicMigrationService::$entryRelationFixupQueue` accumulates
+ *      unresolved tokens undrained.
  *
  * The 3-part format (vs DeferredAssetToken's 2-part `asset:N`) carries the
  * stateSource alongside the legacy id because Page, PagePart, and Custom
@@ -70,6 +74,7 @@ final class DeferredEntryToken
 }
 
 // PAIRED REGEX CONTRACT (load-bearing): the format defined here is
-// consumed by AtomicMigrationService::ingestAndResolveEntryRelations()
-// and MigrateWorkflow::resolveDeferredEntryRelations(). Any change to the
-// emitted format MUST update both consumers.
+// consumed by AtomicMigrationService::ingestAndResolveEntryRelations().
+// The other consumer (MigrateWorkflow's post-load fixup pass) was removed
+// in the v2 loader prune; its planned replacement (`load/fixup`, a later
+// task) MUST honor this same format when it's built.

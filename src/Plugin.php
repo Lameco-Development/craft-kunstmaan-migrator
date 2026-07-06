@@ -198,7 +198,10 @@ class Plugin extends BasePlugin
         $this->seoMigrationService->stateService = $this->migrationStateService;
         $this->seoMigrationService->seoPayload   = $this->seomaticPayloadBuilder;
         $this->seoMigrationService->sites        = $this->resolveSitesMap();
-        // $filters wired via FilterFactory at command-invocation time, not init() (Phase 02.1 pattern).
+        // $filters is intentionally left null here — FilterFactory (which used to wire it
+        // at command-invocation time) was removed in the v2 loader prune; no replacement
+        // wiring exists yet, so every consumer's ?MigrationFilters $filters defaults to
+        // "unbounded" until a later task reintroduces command-line filter wiring.
 
         // RedirectMigrationService — 3 sibling deps + sites map.
         $this->redirectMigrationService->legacyDb     = $this->legacyDbService;

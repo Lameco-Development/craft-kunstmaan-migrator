@@ -64,7 +64,9 @@ class EntryMigrationService extends Component
 {
     /**
      * kuma_locale (string) → Craft site handle (string).
-     * Populated by Plugin::init() (Plan 03-14) from LocalePreflight::detect() + Settings::$localeMap.
+     * Populated by Plugin::init() (Plan 03-14) via Plugin::resolveSitesMap(),
+     * which reads only the operator-curated Settings::$localeMap (v2 loader
+     * prune — locale auto-detection was analyze-stage machinery, removed).
      * Empty default — saveEntryForSites() throws if accessed while empty.
      *
      * Example: `['nl' => 'default', 'en' => 'en']`

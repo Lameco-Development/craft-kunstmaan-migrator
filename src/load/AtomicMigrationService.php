@@ -53,8 +53,8 @@ class AtomicMigrationService extends Component
      *
      * Stored statically so it survives across `migrateOneEntry()` calls in
      * the same process — they're invoked one-at-a-time per transformed JSON
-     * by MigrateWorkflow's load loop, but each runs in a fresh transaction
-     * scope where instance state would be lost.
+     * by the console load path (`MigrateController::runLoadEntries`), but
+     * each runs in a fresh transaction scope where instance state would be lost.
      *
      * @var array<int, int>
      */
@@ -78,9 +78,11 @@ class AtomicMigrationService extends Component
      * entry token (`entry:<source>:<id>`) whose target hasn't been saved yet,
      * we strip the token from the field payload (so Craft's setFieldValues
      * accepts the integer-only Entries field) and record the fix-up here.
-     * After all entries are saved, MigrateWorkflow walks the queue, resolves
-     * each token via the now-populated state, and re-saves the owning matrix
-     * block with the resolved relation id.
+     * v2 loader prune: `MigrateWorkflow`, the class that used to drain this
+     * queue post-load, was removed — nothing currently resolves the deferred
+     * tokens recorded here. A replacement drain path (`load/fixup`) is
+     * planned for a later task; `pendingEntryRelationFixups()` below exposes
+     * the queue for that future consumer.
      *
      * Each entry: [
      *   'parentStateSource' => 'App_Entity_Pages_TextPage',
@@ -220,8 +222,10 @@ class AtomicMigrationService extends Component
         // currently-populated state; tokens that still don't resolve (target
         // not yet saved this load) are recorded into $entryRelationFixupQueue
         // and stripped from the payload so Craft's setFieldValues accepts
-        // the integer-only Entries field. The post-load fix-up pass in
-        // MigrateWorkflow walks the queue once every entry has saved.
+        // the integer-only Entries field. v2 loader prune: the post-load
+        // fix-up pass that used to walk this queue (`MigrateWorkflow`) was
+        // removed; a replacement drain path (`load/fixup`) is planned for a
+        // later task — until then the queue accumulates unresolved tokens.
         $perSite = $this->ingestAndResolveEntryRelations(
             (array) ($transformed['perSite'] ?? []),
             $sourceStream,
@@ -467,15 +471,17 @@ class AtomicMigrationService extends Component
      *   1. Tokens that resolve against the currently-populated state →
      *      replaced inline with the resolved Craft entry id.
      *   2. Tokens that don't resolve → stripped from the payload + recorded
-     *      into self::$entryRelationFixupQueue so MigrateWorkflow's
-     *      post-load fix-up pass can re-resolve and re-save the owning
-     *      matrix block once every entry has saved at least once.
+     *      into self::$entryRelationFixupQueue for a post-load fix-up pass to
+     *      re-resolve and re-save the owning matrix block once every entry
+     *      has saved at least once. v2 loader prune: that pass (`MigrateWorkflow`)
+     *      was removed; a replacement drain path (`load/fixup`) is planned for
+     *      a later task, so recorded fix-ups currently go undrained.
      *
      * The recursion shape mirrors ingestAndResolveAssets — outer loop over
      * perSite/fieldValues, inner recursion that descends into matrix-block
      * payloads via `$item['fields']`. Each token-bearing list carries its
      * field handle + sourceRef (from the enclosing block's
-     * `_sourcePartRef`) into the fix-up record so the post-load pass can
+     * `_sourcePartRef`) into the fix-up record so a future drain pass can
      * locate the saved block by `state.meta.blockIds[sourceRef]`.
      *
      * @param  array<string, mixed> $perSite

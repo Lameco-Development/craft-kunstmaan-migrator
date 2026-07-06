@@ -132,7 +132,6 @@ final class DoctorControllerExtTranslationsCheckTest extends TestCase
             'checkStorageDir',
             'checkStateTable',
             'checkAdapterPlugins',
-            'checkVerifyBaseline',
             'checkExtTranslations',
         ];
         $lastPos = -1;

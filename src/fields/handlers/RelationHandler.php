@@ -105,8 +105,10 @@ final class RelationHandler implements FieldHandler
      * Output is a mixed list of resolved Craft ids (int) and deferred
      * entry tokens (string of the form `entry:<source>:<id>`). The
      * load-time consumer (AtomicMigrationService::ingestAndResolveEntryRelations)
-     * resolves what state has and records the rest for the post-load
-     * fixup pass (MigrateWorkflow::resolveDeferredEntryRelations).
+     * resolves what state has and records the rest into
+     * `$entryRelationFixupQueue` for a post-load fixup pass. v2 loader
+     * prune: that pass (`MigrateWorkflow`) was removed; a replacement
+     * drain path (`load/fixup`) is planned for a later task.
      *
      * @return list<int|string>
      */
