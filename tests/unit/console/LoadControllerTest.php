@@ -190,15 +190,18 @@ final class LoadControllerTest extends TestCase
         self::assertSame(ExitCode::USAGE, $controller->actionEntry());
     }
 
-    public function testActionEntryThrowsNotSupportedExceptionWhenNotDryRun(): void
-    {
-        $controller = $this->uninitializedController();
-        $controller->payload = $this->writeTemp('.json', json_encode($this->validPayloadArray('kuma:COM:nt_page:1')));
-        $controller->dryRun = false;
-
-        $this->expectException(\yii\base\NotSupportedException::class);
-        $controller->actionEntry();
-    }
+    /**
+     * Task 4 removed the `NotSupportedException('live load lands in Task 4')`
+     * stub — `actionEntry()`'s live branch now wires a real
+     * `PayloadEntrySaver` via `Plugin::getInstance()`, which needs a booted
+     * Craft application this bare test environment doesn't provide (same
+     * reason `beforeAction()`'s full dispatch isn't exercised here either —
+     * see the class docblock). `LoadControllerTest` therefore stops at
+     * `buildReport()`/`exitCodeFor()`/the pre-`Plugin::getInstance()` guard
+     * clauses; `buildLiveReport()`'s actual save-loop control flow (batch
+     * validation gate, fail-forward per payload) is exercised directly,
+     * Craft-app-free, in `tests/integration/load/LoadEntryLiveTest.php`.
+     */
 
     /**
      * A typo'd/deleted --payload path is a plausible operator mistake, not a

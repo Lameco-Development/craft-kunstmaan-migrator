@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\load\MigrationStateReader;
+use lameco\kunstmaanmigrator\payload\RefResolver;
 use Craft;
 use craft\db\Connection;
 use craft\db\Query;
@@ -211,6 +212,50 @@ class MigrationStateService extends Component implements MigrationStateReader
             ],
             ['id' => $existing['id']],
         )->execute();
+    }
+
+    /**
+     * Task 4 — resolve a `sourceUid` (`kuma:<ENV>:<table>:<id>`) straight to
+     * the Craft target id it currently resolves to, or null when the target
+     * hasn't been migrated yet. Delegates the grammar parsing to
+     * `RefResolver::parse()` (single source of truth for the regex — see
+     * that class) and only adds the state-table lookup.
+     */
+    public function resolveSourceUid(string $uid): ?int
+    {
+        $parsed = RefResolver::parse($uid);
+        if ($parsed === null) {
+            return null;
+        }
+
+        return $this->getTargetId($parsed['source'], $parsed['key']);
+    }
+
+    /**
+     * Task 4 — record an extra state row for an alias `sourceUid` (e.g. a
+     * duplicated node across environments/locales, per docs/loader-contract.md)
+     * pointing at the same Craft target as its primary `sourceUid`. Meta
+     * carries `alias_of` so a state dump can tell an alias row from a
+     * primary one.
+     *
+     * Silently no-ops on a malformed `aliasUid` — validation of the
+     * `sourceUid` grammar for every alias already happened upstream in
+     * `PayloadValidator` before a live save is ever attempted.
+     */
+    public function recordAlias(string $aliasUid, string $primaryUid, int $targetId): void
+    {
+        $parsed = RefResolver::parse($aliasUid);
+        if ($parsed === null) {
+            return;
+        }
+
+        $this->record(
+            source: $parsed['source'],
+            key: $parsed['key'],
+            targetType: 'entry',
+            targetId: $targetId,
+            meta: ['alias_of' => $primaryUid],
+        );
     }
 
     public function forget(string $source, string $key, ?int $siteId = null): void
