@@ -10,6 +10,7 @@ use InvalidArgumentException;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
+use lameco\kunstmaanmigrator\payload\FixupService;
 use lameco\kunstmaanmigrator\payload\Payload;
 use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
 use lameco\kunstmaanmigrator\payload\PayloadValidator;
@@ -101,6 +102,22 @@ class LoadController extends Controller
         $this->stdout(json_encode($report, JSON_UNESCAPED_SLASHES) . PHP_EOL);
 
         return self::exitCodeFor($report);
+    }
+
+    /**
+     * Second pass (docs/loader-contract.md "Two-pass `_ref` resolution
+     * semantics") — drains every state row's `pendingRefs` left behind by
+     * `load/entry`, re-resolving and patching whatever's now resolvable.
+     * Run once every payload in a batch has been through `load/entry`.
+     */
+    public function actionFixup(): int
+    {
+        $plugin = Plugin::getInstance();
+        $service = new FixupService($plugin->migrationStateService, $plugin->entryMigrationService);
+        $report = $service->run();
+        $this->stdout(json_encode($report, JSON_UNESCAPED_SLASHES) . PHP_EOL);
+
+        return self::exitCodeForFixup($report);
     }
 
     /**
@@ -205,6 +222,14 @@ class LoadController extends Controller
     public static function exitCodeFor(array $report): int
     {
         return ($report['violations'] === [] && $report['failed'] === []) ? ExitCode::OK : ExitCode::UNSPECIFIED_ERROR;
+    }
+
+    /**
+     * @param array{orphans: list<mixed>} $report
+     */
+    public static function exitCodeForFixup(array $report): int
+    {
+        return $report['orphans'] === [] ? ExitCode::OK : ExitCode::UNSPECIFIED_ERROR;
     }
 
     /**

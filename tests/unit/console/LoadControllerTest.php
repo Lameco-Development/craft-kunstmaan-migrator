@@ -180,6 +180,18 @@ final class LoadControllerTest extends TestCase
         self::assertSame(ExitCode::UNSPECIFIED_ERROR, LoadController::exitCodeFor($report));
     }
 
+    public function testExitCodeForFixupWithNoOrphansIsOk(): void
+    {
+        self::assertSame(ExitCode::OK, LoadController::exitCodeForFixup(['patched' => 1, 'orphans' => []]));
+    }
+
+    public function testExitCodeForFixupWithOrphansIsUnspecifiedError(): void
+    {
+        $report = ['patched' => 0, 'orphans' => [['sourceUid' => 'x', 'field' => 'f', 'ref' => 'r', 'path' => []]]];
+
+        self::assertSame(ExitCode::UNSPECIFIED_ERROR, LoadController::exitCodeForFixup($report));
+    }
+
     // --- actionEntry() wiring, exercised directly (bypasses Yii dispatch) ---
 
     public function testActionEntryReturnsUsageExitCodeWhenPayloadOptionMissing(): void

@@ -457,6 +457,82 @@ class EntryMigrationService extends Component
     }
 
     // --------------------------------------------------------------------------
+    // Task 5 (`load/fixup`) — single-field/parent patch-and-resave support
+    // --------------------------------------------------------------------------
+
+    /**
+     * Read a single field's CURRENT serialized value for one entry/site, so
+     * `FixupService` can navigate into it by `path` and append a
+     * newly-resolved relation id without touching the rest of the entry.
+     * Returns null when the entry/site doesn't resolve or the field has no
+     * array-shaped value yet (caller treats it as an empty container).
+     */
+    public function readEntryFieldValueForSite(int $entryId, string $siteHandle, string $fieldHandle): ?array
+    {
+        $entry = $this->loadEntryForSite($entryId, $siteHandle);
+        if ($entry === null) {
+            return null;
+        }
+
+        $value = $entry->getSerializedFieldValues([$fieldHandle])[$fieldHandle] ?? null;
+
+        return is_array($value) ? $value : null;
+    }
+
+    /**
+     * Write a single already-saved field back for one entry/site and re-save
+     * through the same Craft save call every other write in this class uses
+     * (propagateChanges=false, resaving=true — Pitfall 2). `setFieldValues()`
+     * with only this one handle leaves every other field on the entry
+     * untouched (`ElementTrait::setFieldValues()` loops just the given
+     * keys). Callers are expected to pass back `$value` built from
+     * `readEntryFieldValueForSite()`'s own output with only the target
+     * container mutated — Craft's Matrix field serializes nested blocks
+     * keyed by their real element id, so round-tripping that shape (rather
+     * than rebuilding it from scratch) is what keeps block identity stable
+     * across this re-save.
+     */
+    public function resaveEntryFieldForSite(int $entryId, string $siteHandle, string $fieldHandle, array $value): bool
+    {
+        $entry = $this->loadEntryForSite($entryId, $siteHandle);
+        if ($entry === null) {
+            return false;
+        }
+
+        $entry->setFieldValues([$fieldHandle => $value]);
+        $entry->resaving = true;
+
+        return (bool) Craft::$app->elements->saveElement($entry, true, false);
+    }
+
+    /**
+     * Set/patch the parent link for one entry/site — the `path === []` case
+     * (an unresolved `parentRef`) — and re-save the same way.
+     */
+    public function resaveEntryParentForSite(int $entryId, string $siteHandle, int $parentId): bool
+    {
+        $entry = $this->loadEntryForSite($entryId, $siteHandle);
+        if ($entry === null) {
+            return false;
+        }
+
+        $entry->setParentId($parentId);
+        $entry->resaving = true;
+
+        return (bool) Craft::$app->elements->saveElement($entry, true, false);
+    }
+
+    private function loadEntryForSite(int $entryId, string $siteHandle): ?Entry
+    {
+        $site = Craft::$app->sites->getSiteByHandle($siteHandle);
+        if ($site === null) {
+            return null;
+        }
+
+        return Entry::find()->id($entryId)->siteId($site->id)->status(null)->one();
+    }
+
+    // --------------------------------------------------------------------------
     // Private helpers
     // --------------------------------------------------------------------------
 
