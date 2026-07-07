@@ -91,7 +91,10 @@ final class PayloadEntrySaver
             if ($site['parentRef'] !== null) {
                 $parentId = $this->refResolver->resolve($site['parentRef']);
                 if ($parentId === null) {
-                    $deferredRefs[] = ['field' => 'parentId', 'site' => $handle, 'ref' => $site['parentRef']];
+                    // parentRef lives outside the fieldValues tree, so there is no
+                    // nested path to record — 'field' => 'parentId' is already the
+                    // full location.
+                    $deferredRefs[] = ['field' => 'parentId', 'site' => $handle, 'ref' => $site['parentRef'], 'path' => []];
                 }
             }
 
@@ -141,14 +144,14 @@ final class PayloadEntrySaver
      * class").
      *
      * @param array<string, mixed> $fieldValues
-     * @param list<array{field: string, site: string, ref: string}> $deferredRefs
+     * @param list<array{field: string, site: string, ref: string, path: list<int|string>}> $deferredRefs
      * @return array<string, mixed>
      */
     private function resolveFieldValues(array $fieldValues, string $siteHandle, array &$deferredRefs): array
     {
         $out = [];
         foreach ($fieldValues as $fieldHandle => $value) {
-            $resolved = $this->resolveNode($value, (string) $fieldHandle, $siteHandle, $deferredRefs);
+            $resolved = $this->resolveNode($value, (string) $fieldHandle, $siteHandle, $deferredRefs, [$fieldHandle]);
             if (!$resolved['present']) {
                 continue;
             }
@@ -159,10 +162,18 @@ final class PayloadEntrySaver
     }
 
     /**
-     * @param list<array{field: string, site: string, ref: string}> $deferredRefs
+     * @param list<int|string> $path Path from the site's `fieldValues` root
+     *   down to `$node` itself (i.e. `$node` lives at `fieldValues[...$path]`).
+     *   When `$node` turns out to be an unresolved `_ref`, the recorded
+     *   `path` drops this array's own last segment — the index/key that
+     *   addresses the `_ref` node within its immediate container — since
+     *   that node is spliced out of the saved payload and Task 5's fixup
+     *   pass patches by re-populating the container, not a now-stale slot
+     *   (see docs/loader-contract.md "Two-pass `_ref` resolution semantics").
+     * @param list<array{field: string, site: string, ref: string, path: list<int|string>}> $deferredRefs
      * @return array{present: bool, value: mixed}
      */
-    private function resolveNode(mixed $node, string $fieldHandle, string $siteHandle, array &$deferredRefs): array
+    private function resolveNode(mixed $node, string $fieldHandle, string $siteHandle, array &$deferredRefs, array $path): array
     {
         if (!is_array($node)) {
             return ['present' => true, 'value' => $node];
@@ -171,7 +182,12 @@ final class PayloadEntrySaver
         if (array_key_exists('_ref', $node) && is_string($node['_ref'])) {
             $resolvedId = $this->refResolver->resolve($node['_ref']);
             if ($resolvedId === null) {
-                $deferredRefs[] = ['field' => $fieldHandle, 'site' => $siteHandle, 'ref' => $node['_ref']];
+                $deferredRefs[] = [
+                    'field' => $fieldHandle,
+                    'site' => $siteHandle,
+                    'ref' => $node['_ref'],
+                    'path' => array_slice($path, 0, -1),
+                ];
 
                 // Unresolved _ref: no bogus id is written — the node is
                 // dropped from its containing list/map entirely.
@@ -184,7 +200,7 @@ final class PayloadEntrySaver
         $isList = array_is_list($node);
         $out = [];
         foreach ($node as $key => $childValue) {
-            $child = $this->resolveNode($childValue, $fieldHandle, $siteHandle, $deferredRefs);
+            $child = $this->resolveNode($childValue, $fieldHandle, $siteHandle, $deferredRefs, [...$path, $key]);
             if (!$child['present']) {
                 continue;
             }

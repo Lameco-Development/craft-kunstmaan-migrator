@@ -14,6 +14,7 @@ use DateTime;
 use Generator;
 use JsonException;
 use RuntimeException;
+use Throwable;
 use yii\base\Component;
 
 /**
@@ -124,6 +125,14 @@ class MigrationStateService extends Component implements MigrationStateReader
     /**
      * Insert (or update-in-place) the mapping row.
      *
+     * Guards against last-write-wins repointing: when a row already exists
+     * at `(source, key, siteId)` recorded against a DIFFERENT `targetId`,
+     * the overwrite is skipped and a warning logged instead — this is the
+     * path `recordAlias()` hits when an alias `sourceUid` collides with a
+     * row already recorded under another primary's target. A re-record
+     * against the SAME `targetId` (the normal re-save/idempotent case)
+     * proceeds as before, including refreshing `meta`.
+     *
      * @param array<string, mixed>|null $meta arbitrary JSON-serialised payload
      */
     public function record(
@@ -135,8 +144,21 @@ class MigrationStateService extends Component implements MigrationStateReader
         ?int $siteId = null,
         ?array $meta = null,
     ): void {
-        $now = Db::prepareDateForDb(new DateTime());
         $existing = $this->get($source, $key, $siteId);
+
+        if ($existing !== null && $this->collidesWithDifferentTarget($existing, $targetId)) {
+            $this->warn(sprintf(
+                'MigrationStateService::record(): refusing to repoint %s:%s (siteId=%s) from targetId=%d to targetId=%d'
+                . ' — a different target is already recorded for this key. Skipping overwrite.',
+                $source,
+                $key,
+                $siteId !== null ? (string) $siteId : 'null',
+                (int) $existing['targetId'],
+                $targetId,
+            ));
+
+            return;
+        }
 
         // Schema note: targetUid is declared via Craft's $this->uid() migration
         // helper (src/migrations/Install.php) which renders as
@@ -146,6 +168,42 @@ class MigrationStateService extends Component implements MigrationStateReader
         // succeeds. Callers that do carry a real Craft uid continue to pass it
         // through verbatim.
         $targetUidSafe = $targetUid ?? '';
+
+        $this->persistRecord($existing, $source, $key, $targetType, $targetId, $targetUidSafe, $siteId, $meta);
+    }
+
+    /**
+     * Pure predicate for the record() collision guard — true when an
+     * existing row's targetId is set and differs from the one about to be
+     * written.
+     *
+     * @param array<string, mixed> $existing
+     */
+    private function collidesWithDifferentTarget(array $existing, int $targetId): bool
+    {
+        return $existing['targetId'] !== null && (int) $existing['targetId'] !== $targetId;
+    }
+
+    /**
+     * The actual DB write for record() — split out so tests can override
+     * just this primitive (see MigrationStateServiceRecordCollisionTest)
+     * and exercise the real collision-guard logic above it without a
+     * booted Craft application.
+     *
+     * @param array<string, mixed>|null $existing
+     * @param array<string, mixed>|null $meta
+     */
+    protected function persistRecord(
+        ?array $existing,
+        string $source,
+        string $key,
+        string $targetType,
+        int $targetId,
+        string $targetUidSafe,
+        ?int $siteId,
+        ?array $meta,
+    ): void {
+        $now = Db::prepareDateForDb(new DateTime());
 
         // Meta column is MySQL JSON; Yii's ColumnSchema auto-encodes arrays on
         // write and auto-decodes on read — pass the array straight through.
@@ -175,6 +233,22 @@ class MigrationStateService extends Component implements MigrationStateReader
             'dateCreated' => $now,
             'dateUpdated' => $now,
         ])->execute();
+    }
+
+    /**
+     * Overridable so tests can capture the message instead of routing
+     * through Craft::warning(), which needs a booted Craft application this
+     * repo's test suite doesn't provide (mirrors the fakeable-primitive
+     * convention used throughout tests/ — e.g. SchemaGateway fakes). The
+     * try/catch is a defensive fallback for any other bootless caller;
+     * production code always has Craft loaded.
+     */
+    protected function warn(string $message): void
+    {
+        try {
+            Craft::warning($message, 'kunstmaan-migrator');
+        } catch (Throwable) {
+        }
     }
 
     /**

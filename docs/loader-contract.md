@@ -121,16 +121,49 @@ circular reference, or simply file-order luck).
 
 - **Pass 1 (`load/entry`, Tasks 3–4):** for every `_ref`/`parentRef`, resolve
   the target `sourceUid` against the migration state table. If it already
-  resolves to a Craft entry, write the id immediately. If it doesn't yet
-  resolve, the field/parent link is left unset for now and the unresolved
-  reference is recorded (state meta `pendingRefs`) rather than failing the
-  whole payload.
+  resolves to a Craft entry, write the id immediately — this happens
+  regardless of nesting depth: a `_ref` inside a Matrix block's `fields` (or
+  nested arbitrarily deep) resolves exactly like a top-level one, since
+  topological/file-order luck already made the target resolvable. If it
+  doesn't yet resolve, the field/parent link is left unset for now and the
+  unresolved reference is recorded (state meta `pendingRefs`) rather than
+  failing the whole payload. In other words: nested `_ref`s resolving
+  correctly at save time — driven by whatever load order the orchestration
+  side happens to produce — is the *primary* resolution mechanism; deferral
+  only kicks in for genuine forward/cyclic references.
 - **Pass 2 (`load/fixup`, Task 5):** run once every payload in the batch has
   been through pass 1. For each recorded `pendingRefs` entry, re-resolve the
   target `sourceUid`; if it now resolves, patch the field/parent on the
-  already-saved entry and clear it from `pendingRefs`. Anything still
-  unresolved after pass 2 is reported as an orphan reference.
+  already-saved entry (using `path` to locate the right container, including
+  inside nested Matrix blocks — see below) and clear it from `pendingRefs`.
+  Anything still unresolved after pass 2 is reported as an orphan reference.
 
 This lets the loader accept payload files in whatever order they're
 generated without requiring the orchestration side to compute a dependency
 graph first.
+
+### `pendingRefs` entry shape
+
+Each unresolved `_ref`/`parentRef` recorded during pass 1 is one entry in the
+list persisted under state meta `pendingRefs` (and mirrored in
+`SaveResult::$deferredRefs`):
+
+```json
+{
+  "field": "pageBuilder",
+  "site": "en",
+  "ref": "kuma:COM:nt_page:900",
+  "path": ["pageBuilder", 2, "fields", "relatedEntries"]
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `field` | The entry's own top-level field handle the ref was found under (or the literal string `parentId` for an unresolved `parentRef`). Kept for flat fields and reporting, even though `path` is now the authoritative location. |
+| `site` | The site handle the ref belongs to. |
+| `ref` | The unresolved `sourceUid`. |
+| `path` | Ordered list of array keys/indices from the site's `fieldValues` root down to the **container** holding the unresolved `_ref` (e.g. `["pageBuilder", 2, "fields", "relatedEntries"]` for a `_ref` nested inside the 3rd `pageBuilder` block's `relatedEntries` relation). Empty (`[]`) for a `parentId` entry, since `parentRef` lives outside `fieldValues`. The path deliberately stops at the container, not the ref's own slot within it — an unresolved `_ref` is dropped entirely from the saved payload (no bogus id written), so its original index is already stale by the time anything reads `pendingRefs` back; `load/fixup` (Task 5) locates the container via `path` and re-populates it once the target resolves. |
+
+`path` is what makes a nested `_ref` (unlike a flat top-level one) locatable
+by Task 5 at all — without it, only the top-level field handle would be
+known, which isn't enough to find the right slot inside a Matrix block.

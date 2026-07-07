@@ -282,7 +282,12 @@ final class PayloadEntrySaverTest extends TestCase
 
         $result = $saver->save($payload);
 
-        $expectedDeferred = [['field' => 'relatedPages', 'site' => 'en', 'ref' => 'kuma:COM:nt_page:999']];
+        $expectedDeferred = [[
+            'field' => 'relatedPages',
+            'site' => 'en',
+            'ref' => 'kuma:COM:nt_page:999',
+            'path' => ['relatedPages'],
+        ]];
         self::assertSame($expectedDeferred, $result->deferredRefs);
 
         // The entry was still saved (fail-forward at the field level, not the payload level) —
@@ -292,6 +297,81 @@ final class PayloadEntrySaverTest extends TestCase
         $row = $state->get('COM:nt_page', '200');
         self::assertNotNull($row);
         self::assertSame($expectedDeferred, $row['meta']['pendingRefs']);
+    }
+
+    /**
+     * @param array<string, mixed> $overrides
+     * @return array<string, mixed>
+     */
+    private function payloadWithNestedRef(string $sourceUid, array $overrides = []): array
+    {
+        return $this->payloadArray($sourceUid, array_replace_recursive([
+            'sites' => [
+                'en' => [
+                    'fieldValues' => [
+                        'pageBuilder' => [
+                            [
+                                'type' => 'contentBlock',
+                                'fields' => [
+                                    'relatedEntries' => [['_ref' => 'kuma:COM:nt_page:900']],
+                                ],
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ], $overrides));
+    }
+
+    public function testNestedRefInsideMatrixBlockResolvesIntoCorrectNestedSlotWhenTargetAlreadyExists(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        // Pre-seed the target so the nested _ref resolves directly at save time.
+        $state->record('COM:nt_page', '900', 'entry', 555);
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $payload = Payload::fromArray($this->payloadWithNestedRef('kuma:COM:nt_page:300'));
+
+        $result = $saver->save($payload);
+
+        self::assertSame([], $result->deferredRefs, 'A resolvable nested ref must not be recorded as pending.');
+        self::assertSame(
+            555,
+            $entryService->lastPerSite['en']['fieldValues']['pageBuilder'][0]['fields']['relatedEntries'][0],
+            'The resolved element id must land in the exact nested slot the _ref occupied.',
+        );
+    }
+
+    public function testNestedRefInsideMatrixBlockRecordsPendingRefWithExactPathWhenUnresolved(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $payload = Payload::fromArray($this->payloadWithNestedRef('kuma:COM:nt_page:301'));
+
+        $result = $saver->save($payload);
+
+        // Entry still saves — fail-forward at the field level, not the payload level.
+        self::assertCount(1, $result->deferredRefs);
+        $deferred = $result->deferredRefs[0];
+        self::assertSame('pageBuilder', $deferred['field']);
+        self::assertSame('en', $deferred['site']);
+        self::assertSame('kuma:COM:nt_page:900', $deferred['ref']);
+        self::assertSame(['pageBuilder', 0, 'fields', 'relatedEntries'], $deferred['path']);
+
+        // No bogus id written — the unresolved node is dropped, leaving an empty relation list.
+        self::assertSame(
+            [],
+            $entryService->lastPerSite['en']['fieldValues']['pageBuilder'][0]['fields']['relatedEntries'],
+        );
+
+        $row = $state->get('COM:nt_page', '301');
+        self::assertNotNull($row);
+        self::assertSame([$deferred], $row['meta']['pendingRefs']);
     }
 
     public function testAliasSourceUidResolvesToTheSameEntryIdAsThePrimarySourceUid(): void

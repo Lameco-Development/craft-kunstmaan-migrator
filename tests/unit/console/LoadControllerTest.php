@@ -200,7 +200,7 @@ final class LoadControllerTest extends TestCase
      * `buildReport()`/`exitCodeFor()`/the pre-`Plugin::getInstance()` guard
      * clauses; `buildLiveReport()`'s actual save-loop control flow (batch
      * validation gate, fail-forward per payload) is exercised directly,
-     * Craft-app-free, in `tests/integration/load/LoadEntryLiveTest.php`.
+     * Craft-app-free, in `tests/integration/load/PayloadEntrySaverTest.php`.
      */
 
     /**
