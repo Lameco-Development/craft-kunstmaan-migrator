@@ -10,7 +10,6 @@ use yii\base\Component;
 use craft\helpers\FileHelper;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 
 /**
  * TranslationMigrationService — imports Kunstmaan TranslatorBundle data
@@ -48,8 +47,7 @@ use lameco\kunstmaanmigrator\filter\MigrationFilters;
  * either way; only the CP editing UI is gated.
  *
  * State key: `('translation', "kuma_translation:{$kumaId}")` per
- * source row. truncate() deletes the per-locale `site.php` files this
- * migrator owns and forgets the matching state rows.
+ * source row.
  *
  * Domain handling: only `messages` domain (Symfony default — the one
  * `{% trans %}` calls without explicit domain use) is migrated. Other
@@ -61,7 +59,6 @@ class TranslationMigrationService extends Component
 {
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
-    public ?MigrationFilters $filters = null;
 
     /**
      * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
@@ -264,46 +261,6 @@ class TranslationMigrationService extends Component
         }
 
         return $report;
-    }
-
-    /**
-     * Delete every per-locale `site.php` file this migrator owns and
-     * forget the matching state rows. Operator-edited translations
-     * outside this migrator are unaffected at the file level (we
-     * unconditionally rewrite the file from scratch on each migrate).
-     *
-     * Returns the number of catalog files deleted.
-     */
-    public function truncate(): int
-    {
-        $deleted = 0;
-        $touchedLangs = [];
-        foreach ($this->stateService->all(self::STATE_SOURCE) as $row) {
-            $sourceKey = (string) ($row['sourceKey'] ?? '');
-            $meta = is_array($row['meta'] ?? null) ? $row['meta'] : null;
-            if (is_string($meta)) {
-                $decoded = json_decode($meta, true);
-                $meta = is_array($decoded) ? $decoded : [];
-            }
-            $craftLang = is_array($meta) ? (string) ($meta['craftLang'] ?? '') : '';
-            if ($craftLang !== '') {
-                $touchedLangs[$craftLang] = true;
-            }
-            if ($sourceKey !== '') {
-                $this->stateService->forget(self::STATE_SOURCE, $sourceKey);
-            }
-        }
-
-        $sitePath = Craft::$app->getPath()->getSiteTranslationsPath();
-        foreach (array_keys($touchedLangs) as $lang) {
-            $file = $sitePath . DIRECTORY_SEPARATOR . $lang . DIRECTORY_SEPARATOR . 'site.php';
-            if (is_file($file)) {
-                if (@unlink($file)) {
-                    $deleted++;
-                }
-            }
-        }
-        return $deleted;
     }
 
     // --------------------------------------------------------------------------

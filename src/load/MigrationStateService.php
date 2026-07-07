@@ -12,7 +12,6 @@ use craft\db\Query;
 use craft\helpers\Db;
 use DateTime;
 use Generator;
-use JsonException;
 use RuntimeException;
 use Throwable;
 use yii\base\Component;
@@ -424,58 +423,6 @@ class MigrationStateService extends Component implements MigrationStateReader
             return false;
         }
         return ($decoded['terminalState'] ?? null) === 'permanently_failed';
-    }
-
-    /**
-     * Return the most recent state-row meta as an associative array, or null
-     * if the state table is empty / the newest row has no meta payload.
-     *
-     * Intended for D-17 drift detection (Plan 05.5-06 Task 3) — comparing
-     * last-run filter settings against current CP settings. Reads
-     * the newest row by `dateUpdated DESC` — matches the column declared in
-     * the install migration.
-     *
-     * Decodes JSON only; never calls PHP native deserialize (central-decode policy
-     * preserved). Yii's MySQL driver returns JSON columns already decoded,
-     * but we defensively re-decode in case a row was written through a
-     * different path.
-     *
-     * IMPORTANT: the meta column must be set by the run recorder at migrate
-     * time for this method to return non-null. If no service records a
-     * "run start" row with filter meta, the drift-detection caller falls
-     * back to a warning-only path (see MigrateController::actionCheck).
-     *
-     * @see .planning/phases/05.5-harden-migrator-plugin-error-handling/05.5-CONTEXT.md §D-17
-     * @return array<string, mixed>|null
-     */
-    public function getLastRunMeta(): ?array
-    {
-        $table = $this->table();
-        $row = $this->db()->createCommand(
-            "SELECT meta FROM {$table} ORDER BY dateUpdated DESC LIMIT 1"
-        )->queryOne();
-        if (!$row || !array_key_exists('meta', $row) || $row['meta'] === null) {
-            return null;
-        }
-
-        // Yii may hand back an already-decoded array for MySQL JSON columns.
-        if (is_array($row['meta'])) {
-            return $row['meta'];
-        }
-
-        $raw = (string) $row['meta'];
-        if ($raw === '') {
-            return null;
-        }
-
-        try {
-            $decoded = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
-        } catch (JsonException $e) {
-            Craft::warning("getLastRunMeta: JSON decode failed: {$e->getMessage()}", __METHOD__);
-            return null;
-        }
-
-        return is_array($decoded) ? $decoded : null;
     }
 
     /**

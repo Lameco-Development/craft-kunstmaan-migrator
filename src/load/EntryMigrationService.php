@@ -438,24 +438,6 @@ class EntryMigrationService extends Component
         return $entry;
     }
 
-    /**
-     * Save a promoted/shared relation target through the same idempotent
-     * stateSource/stateKey state-row path as owner entries.
-     *
-     * @param array<string, array<string, mixed>> $perSite
-     */
-    public function savePromotedTargetForSites(
-        int $sectionId,
-        int $typeId,
-        string $stateSource,
-        string|int $stateKey,
-        array $perSite,
-        bool $force = false,
-        ?MigrationReport $report = null,
-    ): Entry {
-        return $this->saveEntryForSites($sectionId, $typeId, $stateSource, $stateKey, $perSite, $force, $report);
-    }
-
     // --------------------------------------------------------------------------
     // Task 5 (`load/fixup`) — single-field/parent patch-and-resave support
     // --------------------------------------------------------------------------
@@ -818,9 +800,8 @@ class EntryMigrationService extends Component
      *    each block, but the project config never added it to the 50 matrix
      *    block entry types — so Craft's CustomFieldBehavior rejects it as
      *    an unknown property. Stripping it loses idempotent UID threading
-     *    on re-runs, but a full truncate (see `AssetMigrationService::truncate()`
-     *    and the sibling `truncate()` methods) is expected before any
-     *    re-run, so this is OK.
+     *    on re-runs; a clean re-run currently requires resetting the
+     *    affected Craft elements + state rows by hand.
      *
      * 2. Lift `title` (and `heading`, which was a typo in CasesMigration's
      *    newsGridBlock payload) from `fields` to peer-level. Matrix block

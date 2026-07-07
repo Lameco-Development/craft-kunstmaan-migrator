@@ -11,7 +11,6 @@ use lameco\kunstmaanmigrator\load\MigrationOptions;
 use yii\db\Query;
 use Craft;
 use craft\elements\Entry;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use yii\base\Component;
 
 /**
@@ -43,12 +42,6 @@ class SeoMigrationService extends Component
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
     public SeomaticPayloadBuilder $seoPayload;
-
-    /**
-     * Filter state wired in Plugin::init() per D-13. When null, the service
-     * behaves as if all filters are disabled (legacy behavior).
-     */
-    public ?MigrationFilters $filters = null;
 
     /**
      * Legacy SEO table name (unwrapped — passed verbatim into raw SQL).
@@ -248,84 +241,6 @@ class SeoMigrationService extends Component
         return $report;
     }
 
-    /**
-     * Scoped variant — write SEO for a single Craft entry id. Useful for
-     * debugging and for re-running a specific entry after editorial fixes
-     * (there is no standalone console subcommand for this — call the method
-     * directly). Returns the number of sites where SEO was written.
-     *
-     * @param array<string, int>|null $refIdsByLocale When called from
-     *        AtomicMigrationService during the same DB transaction that
-     *        writes the state row, the state meta may not yet be readable
-     *        by the cursor opened inside this method. Passing refIdsByLocale
-     *        directly bypasses the state-meta read for the current run while
-     *        still keeping the persisted value for future standalone re-runs.
-     *
-     * CONFIG-08: returns 0 silently if SEOmatic is not installed.
-     */
-    public function migrateForEntry(int $craftEntryId, MigrationOptions $opts, ?array $refIdsByLocale = null): int
-    {
-        // CONFIG-08 gate — no-op when SEOmatic absent.
-        if (Craft::$app->plugins->getPlugin('seomatic') === null) {
-            Craft::warning(
-                'SEOmatic plugin not installed; migrateForEntry() returning 0.',
-                'kunstmaanmigrator',
-            );
-            return 0;
-        }
-
-        $report = new MigrationReport();
-
-        // D-08-19 — same per-site fan-out as migrateAll(). See buildSiteList()
-        // for the sites: block resolution. Each entry's locale lets
-        // migrateForEntryInternal resolve the correct per-site ref_id from
-        // meta.refIdsByLocale written by AtomicMigrationService.
-        $siteList = $this->buildSiteList($report);
-        if ($siteList === []) {
-            return 0;
-        }
-        /** @var array<int, string> $siteLocales */
-        $siteLocales = [];
-        $siteIds = [];
-        foreach ($siteList as $entry) {
-            $siteLocales[$entry['siteId']] = $entry['locale'];
-            $siteIds[] = $entry['siteId'];
-        }
-
-        // Locate the matching state row across all entry sources.
-        // See migrateAll() above for why we query the state table rather than
-        // iterating a hardcoded alias list.
-        $sources = array_column(
-            (new Query())
-                ->select('source')
-                ->distinct()
-                ->from('{{%kunstmaanmigrator_state}}')
-                ->where(['targetType' => 'entry'])
-                ->all(),
-            'source',
-        );
-        foreach ($sources as $source) {
-            foreach ($this->stateService->all($source) as $row) {
-                if ((int) ($row['targetId'] ?? 0) === $craftEntryId
-                    && ($row['targetType'] ?? '') === 'entry'
-                ) {
-                    return $this->migrateForEntryInternal(
-                        $craftEntryId,
-                        $source,
-                        (string) ($row['sourceKey'] ?? ''),
-                        $row['meta'] ?? null,
-                        $siteIds,
-                        $siteLocales,
-                        $opts,
-                        $report,
-                        $refIdsByLocale,
-                    );
-                }
-            }
-        }
-        return 0;
-    }
-
     // --------------------------------------------------------------------------
     // Private — core per-entry write
     // --------------------------------------------------------------------------
@@ -361,11 +276,11 @@ class SeoMigrationService extends Component
             return 0;
         }
 
-        // Per-locale ref_id map. Prefer the value passed directly by
-        // AtomicMigrationService (avoids reading a state-meta write made
-        // earlier in the same DB transaction, which may not be visible to
-        // the streaming cursor opened by all()). Fall back to whatever was
-        // persisted in meta for standalone re-runs of this method.
+        // Per-locale ref_id map. $directRefIdsByLocale lets a caller bypass
+        // the state-meta read when it already has the value in hand (e.g.
+        // from the same DB transaction that wrote it, before it's visible
+        // to a streaming cursor). No current caller passes one; migrateAll()
+        // always falls back to whatever was persisted in meta.
         $metaArr = is_array($meta) ? $meta : (is_string($meta) ? (array) (json_decode($meta, true) ?? []) : []);
         $refIdsByLocale = $directRefIdsByLocale !== null && $directRefIdsByLocale !== []
             ? $directRefIdsByLocale

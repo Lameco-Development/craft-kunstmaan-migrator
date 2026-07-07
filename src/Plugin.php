@@ -9,16 +9,8 @@ use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\fields\FieldHandlerRegistry;
-use lameco\kunstmaanmigrator\fields\handlers\AssetHandler;
-use lameco\kunstmaanmigrator\fields\handlers\MatrixHandler;
-use lameco\kunstmaanmigrator\fields\handlers\PlainTextHandler;
-use lameco\kunstmaanmigrator\fields\handlers\RelationHandler;
-use lameco\kunstmaanmigrator\fields\handlers\SplitNameHandler;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
-use lameco\kunstmaanmigrator\load\AtomicMigrationService;
-use lameco\kunstmaanmigrator\load\AttachService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\NavigationMigrationService;
@@ -27,7 +19,6 @@ use lameco\kunstmaanmigrator\load\TranslationMigrationService;
 use lameco\kunstmaanmigrator\load\SeoMigrationService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
 use lameco\kunstmaanmigrator\models\Settings;
-use lameco\kunstmaanmigrator\safety\MigrationSafety;
 use PDO;
 use yii\db\Connection;
 
@@ -36,37 +27,33 @@ use yii\db\Connection;
  *
  * v2 loader prune: the analyze / compile / mapping / extract / transform /
  * verify / locale / workflow / queue / audit stages and their CP console +
- * settings-page surface are removed. What remains is the load-side core —
- * MigrationStateService, EntryMigrationService, the field-handler registry,
- * CkeditorRewriterService, the load-side adapters, and the `doctor` +
- * `load` console commands — the base later tasks build the
- * payload-driven loader on top of.
+ * settings-page surface are removed. Task 9 additionally removed the
+ * orchestration-era per-entry pipeline that the payload-driven loader
+ * (Task 8) replaced — the field-handler registry (never read; the live
+ * path resolves assets/relations via AssetMigrationService/
+ * EntryMigrationService directly), the old atomic per-entry orchestrator,
+ * and the unused CP/job-only production guard (NeverProductionTrait
+ * remains the live console guard). What remains is the load-side core —
+ * MigrationStateService, EntryMigrationService, CkeditorRewriterService,
+ * the load-side adapters, and the `doctor` + `load` + `state` console
+ * commands.
  *
  * @property-read LegacyDbService $legacyDbService
  * @property-read KunstmaanEnvReader $kunstmaanEnvReader
- * @property-read FieldHandlerRegistry $fieldHandlerRegistry
- * @property-read PlainTextHandler $plainTextHandler
- * @property-read AssetHandler $assetHandler
- * @property-read RelationHandler $relationHandler
- * @property-read MatrixHandler $matrixHandler
- * @property-read SplitNameHandler $splitNameHandler
  * @property-read MigrationStateService $migrationStateService
  * @property-read CkeditorRewriterService $ckeditorRewriterService
- * @property-read AtomicMigrationService $atomicMigrationService
  * @property-read AssetMigrationService $assetMigrationService
  * @property-read EntryMigrationService $entryMigrationService
- * @property-read AttachService $attachService
  * @property-read SeoMigrationService $seoMigrationService
  * @property-read SeomaticPayloadBuilder $seomaticPayloadBuilder
  * @property-read RedirectMigrationService $redirectMigrationService
  * @property-read NavigationMigrationService $navigationMigrationService
  * @property-read TranslationMigrationService $translationMigrationService
- * @property-read MigrationSafety $migrationSafety
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
 {
-    // D-08: v2 starts below v1.x's 2.0.0; Phase 12 bumps for run-record migrations.
+    // D-08: v2 starts below v1.x's 2.0.0.
     public string $schemaVersion = '1.1.0';
 
     // No CP settings page in the v2 loader core — settings come from env vars
@@ -79,26 +66,16 @@ class Plugin extends BasePlugin
             'components' => [
                 'legacyDbService' => LegacyDbService::class,      // Phase 1 (literal preserved for PluginBootstrapTest)
                 'kunstmaanEnvReader' => KunstmaanEnvReader::class, // Settings::beforeValidate() DSN auto-fill seam
-                // Phase 3 additions — field handlers + finalize.
-                'fieldHandlerRegistry'    => FieldHandlerRegistry::class,
-                'plainTextHandler'        => PlainTextHandler::class,    // mode='plain' default; init() registers 4 modes
-                'assetHandler'            => AssetHandler::class,
-                'relationHandler'         => RelationHandler::class,
-                'matrixHandler'           => MatrixHandler::class,
-                'splitNameHandler'        => SplitNameHandler::class,
                 'migrationStateService'   => MigrationStateService::class,
                 'ckeditorRewriterService' => CkeditorRewriterService::class,
-                'atomicMigrationService'  => AtomicMigrationService::class,
                 'assetMigrationService'   => AssetMigrationService::class,
                 'entryMigrationService'   => EntryMigrationService::class,
-                'attachService'           => AttachService::class,
                 // Phase 4 additions — load-side adapter services.
                 'seoMigrationService'        => SeoMigrationService::class,
                 'seomaticPayloadBuilder'     => SeomaticPayloadBuilder::class,
                 'redirectMigrationService'   => RedirectMigrationService::class,
                 'navigationMigrationService' => NavigationMigrationService::class,
                 'translationMigrationService' => TranslationMigrationService::class,
-                'migrationSafety'      => MigrationSafety::class,
             ],
         ];
     }
@@ -139,26 +116,6 @@ class Plugin extends BasePlugin
             $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\console';
         }
 
-        // Field handler registry — register all PlainTextHandler modes and the 4 other
-        // typed handlers. PlainTextHandler is parametric on its mode constructor arg
-        // ('plain' / 'ckeditor' / 'link' / 'dropdown'); each mode registers under its
-        // own id() so the registry can dispatch by handler-name from mapping data.
-        $registry = $this->fieldHandlerRegistry;
-        $registry->register(new PlainTextHandler('plain'));
-        $registry->register(new PlainTextHandler('date'));
-        $registry->register(new PlainTextHandler('ckeditor'));
-        $registry->register(new PlainTextHandler('link'));
-        $registry->register(new PlainTextHandler('email'));
-        $registry->register(new PlainTextHandler('url'));
-        $registry->register(new PlainTextHandler('dropdown'));
-        $registry->register($this->assetHandler);
-        $registry->register($this->relationHandler);
-        $registry->register($this->matrixHandler);
-        $registry->register($this->splitNameHandler);
-
-        // AssetHandler resolves deferred asset tokens via AssetMigrationService.
-        $this->assetHandler->assetResolver = $this->assetMigrationService;
-
         // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
         // ?object — AssetMigrationService satisfies the duck-typed surface.
         $this->ckeditorRewriterService->migrationState = $this->migrationStateService;
@@ -174,11 +131,6 @@ class Plugin extends BasePlugin
         }
         $this->assetMigrationService->skipAssetSizeValidation =
             (bool) ($this->getSettings()->skipAssetSizeValidation ?? false);
-
-        // AtomicMigrationService deps — orchestrates per-entry transactional load.
-        $this->atomicMigrationService->migrationStateService = $this->migrationStateService;
-        $this->atomicMigrationService->entryMigrationService = $this->entryMigrationService;
-        $this->atomicMigrationService->assetMigrationService = $this->assetMigrationService;
 
         // EntryMigrationService deps. $sites is the kuma_locale → Craft site handle map
         // composed from Settings::$localeMap (D-28 ladder, simplified — see
@@ -198,21 +150,16 @@ class Plugin extends BasePlugin
         $this->seoMigrationService->stateService = $this->migrationStateService;
         $this->seoMigrationService->seoPayload   = $this->seomaticPayloadBuilder;
         $this->seoMigrationService->sites        = $this->resolveSitesMap();
-        // $filters is intentionally left null here — FilterFactory (which used to wire it
-        // at command-invocation time) was removed in the v2 loader prune; no replacement
-        // wiring exists yet, so every consumer's ?MigrationFilters $filters defaults to
-        // "unbounded" until a later task reintroduces command-line filter wiring.
 
         // RedirectMigrationService — 3 sibling deps + sites map.
         $this->redirectMigrationService->legacyDb     = $this->legacyDbService;
         $this->redirectMigrationService->stateService = $this->migrationStateService;
         $this->redirectMigrationService->sites        = $this->resolveSitesMap();
-        // $filters wired at invocation time.
 
         // NavigationMigrationService — same shape as Redirect adapter.
         // verbb/navigation node migration. Reads kuma_menu + kuma_menu_item,
-        // resolves entry-typed nodes via state map. $filters wired at
-        // invocation time. Source-table overrides flow from Settings below.
+        // resolves entry-typed nodes via state map. Source-table overrides
+        // flow from Settings below.
         $this->navigationMigrationService->legacyDb     = $this->legacyDbService;
         $this->navigationMigrationService->stateService = $this->migrationStateService;
         $this->navigationMigrationService->sites        = $this->resolveSitesMap();

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use Craft;
 use craft\elements\Asset;
 use craft\helpers\App;
@@ -19,13 +18,14 @@ use yii\base\Component;
  *
  * v2 reshape (FH-03 — JIT default + --preload-assets opt-in):
  *  - JIT entry point: resolveFromLegacyId(int $legacyId): int — materialises a
- *    single asset on demand. Called from AssetHandler (state-lookup miss path)
- *    and AtomicMigrationService::ingestAndResolveAssets via the `asset:N`
- *    deferred-token list.
- *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, MigrationFilters, list<int>)
+ *    single asset on demand. Called from CkeditorRewriterService::rewriteCurlyMediaTokens
+ *    for `{{kuma:media:<id>}}` tokens.
+ *  - resolveFromLegacyUrl(string $legacyUrl): int — the `_asset` JIT path,
+ *    called from PayloadEntrySaver and CkeditorRewriterService.
+ *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, list<int>)
  *    pre-walks the in-scope referenced kuma_media ids before the entries loop.
- *    Repurposed from v1's batch-by-default; v2 makes it opt-in only (called
- *    when MigrateController parses --preload-assets).
+ *    Repurposed from v1's batch-by-default; v2 makes it opt-in only. Not
+ *    currently wired to a console flag (no caller sets it up yet).
  *
  * Each successful ingest writes a state row via MigrationStateService:
  *   source='media', sourceKey='kuma_media:{id}',
@@ -62,7 +62,6 @@ use yii\base\Component;
  *    becomes a local `$counts[...]` accumulator; `$report->warn(...)` becomes
  *    `Craft::warning(...)`. Plan 03-14 wires the VO and re-binds these markers.
  *  - Drop the v1 typed-config-error import → \RuntimeException.
- *  - ingestReferenced() signature now threads MigrationFilters per FILT-02.
  */
 class AssetMigrationService extends Component
 {
@@ -131,9 +130,8 @@ class AssetMigrationService extends Component
      * row is missing, the file cannot be located, or the asset is a remote
      * video (state row written but no Craft Asset element exists).
      *
-     * Called from AssetHandler (state-lookup miss path) and from
-     * AtomicMigrationService::ingestAndResolveAssets via the `asset:N`
-     * deferred-token list.
+     * Called from CkeditorRewriterService::rewriteCurlyMediaTokens for
+     * `{{kuma:media:<id>}}` tokens.
      *
      * Idempotent: if a state row already exists for this kuma_media id, the
      * stored Craft asset id is returned without re-ingesting (unless force
@@ -225,7 +223,7 @@ class AssetMigrationService extends Component
      * @param list<int> $referencedIds in-scope kuma_media ids collected from
      *                                 transformed/extracted payload references
      */
-    public function ingestReferenced(MigrationOptions $opts, MigrationFilters $filters, array $referencedIds = []): void
+    public function ingestReferenced(MigrationOptions $opts, array $referencedIds = []): void
     {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
@@ -245,7 +243,6 @@ class AssetMigrationService extends Component
         // full-table `SELECT id FROM kuma_media` prewalk. Empty referenced set
         // means there is nothing to preload; JIT resolution still handles any
         // asset token encountered during load.
-        unset($filters);
         $ids = self::normalizeReferencedIds($referencedIds);
         $total = count($ids);
 
@@ -862,36 +859,4 @@ class AssetMigrationService extends Component
         return [];
     }
 
-    /**
-     * Deletes every Craft Asset whose state row has source='media' AND
-     * targetType='asset'. Video-type state rows are just unlinked from
-     * state — there's no element to remove.
-     *
-     * Not wired to a console command; call directly to reset assets so a
-     * re-run starts from a clean Craft DB but leaves the legacy MySQL
-     * untouched.
-     */
-    public function truncate(): int
-    {
-        $deleted = 0;
-        foreach ($this->migrationState->all(self::STATE_SOURCE) as $stateRow) {
-            $targetId = $stateRow['targetId'] ?? null;
-            $targetType = $stateRow['targetType'] ?? null;
-
-            if ($targetType === 'asset' && $targetId) {
-                $asset = Asset::find()->id((int) $targetId)->one();
-                if ($asset) {
-                    Craft::$app->elements->deleteElement($asset, hardDelete: true);
-                    $deleted++;
-                }
-            }
-
-            $this->migrationState->forget(
-                self::STATE_SOURCE,
-                (string) $stateRow['sourceKey'],
-                $stateRow['siteId'] !== null ? (int) $stateRow['siteId'] : null,
-            );
-        }
-        return $deleted;
-    }
 }

@@ -9,7 +9,6 @@ use Throwable;
 use yii\base\Component;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use craft\elements\Entry;
 use verbb\navigation\Navigation;
 use verbb\navigation\elements\Node as NavNode;
@@ -53,16 +52,12 @@ use verbb\navigation\elements\Node as NavNode;
  * When false, the pass is skipped with a distinct warn line so REPORT.md
  * can distinguish operator-opted-out from plugin-not-installed.
  *
- * State key: `('navigation', "kuma_menu_item:{$id}")`. truncate() iterates
- * these state rows and deletes the matching verbb Node elements (which
- * also removes the structureelements + navigation_nodes rows via verbb's
- * deleteElement hook).
+ * State key: `('navigation', "kuma_menu_item:{$id}")`.
  *
  * Two-pass save: first pass creates every node with parentId=null and
  * builds a `kumaItemId → nodeId` map; second pass walks rows with
  * non-null parent_id and re-saves the child with `setParentId()` resolved
- * via the map. Mirrors the AtomicMigrationService hierarchy fix-up
- * pattern — necessary because `kuma_menu_item.parent_id` is a self-FK
+ * via the map — necessary because `kuma_menu_item.parent_id` is a self-FK
  * that must wait for the parent's verbb node to exist.
  *
  * Sites with no MenuBundle data (dewert uses NodeMenu/page-tree instead):
@@ -75,13 +70,6 @@ class NavigationMigrationService extends Component
 {
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
-
-    /**
-     * Filter state wired in Plugin::init() per D-13. Currently informational
-     * only — locale filtering of menus could be wired here later but isn't
-     * needed for v0.1.
-     */
-    public ?MigrationFilters $filters = null;
 
     /**
      * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
@@ -299,51 +287,6 @@ class NavigationMigrationService extends Component
         $this->migrateNodeMenu($localeToSiteId, $opts, $report);
 
         return $report;
-    }
-
-    /**
-     * Delete every verbb Node element this migrator owns (per state.source='navigation')
-     * and forget the matching state rows. Manually-created nav nodes are
-     * unaffected.
-     *
-     * Returns the count of deleted nodes.
-     */
-    public function truncate(): int
-    {
-        if (Craft::$app->plugins->getPlugin('navigation') === null
-            || !class_exists(Navigation::class)
-            || Navigation::$plugin === null
-        ) {
-            return 0;
-        }
-
-        $deleted = 0;
-        foreach ($this->stateService->all(self::STATE_SOURCE) as $row) {
-            $nodeId = (int) ($row['targetId'] ?? 0);
-            $sourceKey = (string) ($row['sourceKey'] ?? '');
-            if ($nodeId > 0) {
-                try {
-                    $node = Craft::$app->elements->getElementById($nodeId, NavNode::class);
-                    if ($node !== null) {
-                        Craft::$app->elements->deleteElement($node, true);
-                        $deleted++;
-                    }
-                } catch (Throwable $e) {
-                    Craft::warning(
-                        sprintf(
-                            'NavigationMigrationService::truncate: could not delete node id=%d — %s',
-                            $nodeId,
-                            $e->getMessage(),
-                        ),
-                        __METHOD__,
-                    );
-                }
-            }
-            if ($sourceKey !== '') {
-                $this->stateService->forget(self::STATE_SOURCE, $sourceKey);
-            }
-        }
-        return $deleted;
     }
 
     // --------------------------------------------------------------------------
@@ -596,7 +539,7 @@ class NavigationMigrationService extends Component
      *     `globalSettings` — never as nav rows)
      *
      * Idempotent: re-running updates existing nodes via state map keyed
-     * by `kuma_node:<id>`. truncate() walks the same state-source slug.
+     * by `kuma_node:<id>`.
      *
      * Locale strategy — KEY DIFFERENCE FROM SLICE 1:
      * MenuBundle pass emits one verbb node per (item, locale) and disables

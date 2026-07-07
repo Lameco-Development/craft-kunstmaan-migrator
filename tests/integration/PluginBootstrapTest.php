@@ -51,13 +51,12 @@ final class PluginBootstrapTest extends TestCase
         );
     }
 
-    public function testPluginSchemaVersionBumpedForPhase12Migrations(): void
+    public function testPluginSchemaVersionMatchesComposerJson(): void
     {
         $pluginSource = (string) file_get_contents((new ReflectionClass(Plugin::class))->getFileName());
         $composerSource = (string) file_get_contents(dirname(__DIR__, 2) . '/composer.json');
 
         self::assertStringContainsString("public string \$schemaVersion = '1.1.0'", $pluginSource);
         self::assertStringContainsString('"schemaVersion": "1.1.0"', $composerSource);
-        self::assertStringContainsString('m260429_000001_create_migration_runs', (string) file_get_contents(dirname(__DIR__, 2) . '/src/migrations/m260429_000001_create_migration_runs.php'));
     }
 }

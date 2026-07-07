@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\load;
 
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
@@ -64,7 +63,6 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
 
         $service->ingestReferenced(
             new MigrationOptions(dryRun: true),
-            new MigrationFilters(since: '2026-01-01'),
             [7, 3, 7],
         );
 
@@ -98,7 +96,7 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
             }
         };
 
-        $service->ingestReferenced(new MigrationOptions(dryRun: true), new MigrationFilters(), []);
+        $service->ingestReferenced(new MigrationOptions(dryRun: true), []);
 
         self::assertSame([], $legacyDb->queries);
     }

@@ -9,10 +9,9 @@ use Throwable;
 /**
  * Per-run counters + warnings + failures accumulator.
  *
- * Consumed by:
- *  - AtomicMigrationService::migrateOneEntry (Plan 03-12) — inline incr/warn during per-entry pipeline.
- *  - AssetMigrationService (Plan 03-05) — re-binds deferred markers to incr/warn calls (Plan 03-14 wires).
- *  - MigrateController (Plan 03-14) — renders REPORT.md per D-50 (failures) + D-52 (counts).
+ * Consumed by the load-side adapter services' migrateAll() passes (Seo,
+ * Redirect, Navigation, Translation) and AssetMigrationService's batch
+ * ingest path — each accumulates incr/warn calls into one report per run.
  *
  * Greenfield-from-v1 VO: the v1 plugin's `lameco\kunstmaanmigrator\models\MigrationReport`
  * carried per-run counters + warnings; this file rebuilds the same minimal surface in v2's
