@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\console;
 
+use Craft;
 use craft\console\Controller;
+use craft\elements\Entry;
 use craft\helpers\Console;
 use InvalidArgumentException;
+use lameco\kunstmaanmigrator\load\RedirectMigrationService;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
@@ -14,6 +17,7 @@ use lameco\kunstmaanmigrator\payload\FixupService;
 use lameco\kunstmaanmigrator\payload\Payload;
 use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
 use lameco\kunstmaanmigrator\payload\PayloadValidator;
+use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\payload\Violation;
 use Throwable;
 use yii\console\ExitCode;
@@ -118,6 +122,215 @@ class LoadController extends Controller
         $this->stdout(json_encode($report, JSON_UNESCAPED_SLASHES) . PHP_EOL);
 
         return self::exitCodeForFixup($report);
+    }
+
+    /**
+     * Task 6 — payload-driven redirect loader. Each NDJSON line is
+     * `{"from":"/old","to":"kuma:<ENV>:<table>:<id>"|"/new","siteHandle":"en","type":301}`.
+     * A `to` matching the sourceUid grammar is resolved via `RefResolver` to
+     * the target entry's URI on `siteHandle`; a plain path is used verbatim.
+     * Retour is used when installed; when it isn't, every row is reported
+     * `SKIPPED_NO_RETOUR` rather than failing the run (docs/loader-contract.md
+     * optional-adapter convention — see `RedirectMigrationService::isRetourAvailable()`,
+     * reused here rather than re-derived).
+     */
+    public function actionRedirects(): int
+    {
+        if ($this->payload === null || $this->payload === '') {
+            $this->stderr("Missing required --payload=<file.ndjson>\n", Console::FG_RED);
+
+            return ExitCode::USAGE;
+        }
+
+        if (!is_file($this->payload)) {
+            $this->stderr(sprintf("Payload file not found: %s\n", $this->payload), Console::FG_RED);
+
+            return ExitCode::USAGE;
+        }
+
+        $plugin = Plugin::getInstance();
+        $refResolver = new RefResolver($plugin->migrationStateService);
+        $retourAvailable = RedirectMigrationService::isRetourAvailable();
+
+        $report = self::buildRedirectsReport(
+            $this->payload,
+            $refResolver,
+            $retourAvailable,
+            static function (int $entryId, string $siteHandle): ?string {
+                $site = Craft::$app->sites->getSiteByHandle($siteHandle);
+                if ($site === null) {
+                    return null;
+                }
+
+                $entry = Entry::find()->id($entryId)->siteId((int) $site->id)->status(null)->one();
+                if ($entry === null || $entry->uri === null) {
+                    return null;
+                }
+
+                return '/' . ltrim($entry->uri, '/');
+            },
+            static function (string $srcUrl, string $destUrl, int $httpCode, string $stateKey, array $extraMeta) use ($plugin): array {
+                $result = $plugin->redirectMigrationService->importOne($srcUrl, $destUrl, $httpCode, $stateKey, $extraMeta);
+                if (($result->counts['created'] ?? 0) > 0) {
+                    return ['outcome' => 'created'];
+                }
+                if (($result->counts['updated'] ?? 0) > 0) {
+                    return ['outcome' => 'updated'];
+                }
+
+                return ['outcome' => 'failed', 'message' => $result->warnings[0] ?? 'Retour refused to save the redirect.'];
+            },
+        );
+
+        $this->stdout(json_encode($report, JSON_UNESCAPED_SLASHES) . PHP_EOL);
+
+        return self::exitCodeForRedirects($report);
+    }
+
+    /**
+     * @param callable(int, string): ?string $resolveEntryUri Resolves an
+     *   already-resolved sourceUid's entry id + siteHandle to a destination
+     *   URI, or null when the entry has no URI on that site.
+     * @param callable(string, string, int, string, array<string, mixed>): array{outcome: string, message?: string} $saveRedirect
+     *   Persists one already-resolved (srcUrl, destUrl) pair — only invoked
+     *   when `$retourAvailable` is true.
+     * @return array{processed: int, created: int, updated: int, resolved: int, skipped: int, report: list<array{from: ?string, to: ?string, siteHandle: ?string, status: string, message?: string}>}
+     */
+    public static function buildRedirectsReport(
+        string $path,
+        RefResolver $refResolver,
+        bool $retourAvailable,
+        callable $resolveEntryUri,
+        callable $saveRedirect,
+    ): array {
+        $records = self::readRecords($path);
+
+        $created = 0;
+        $updated = 0;
+        $resolved = 0;
+        $skipped = 0;
+        $report = [];
+
+        foreach ($records as $raw) {
+            $row = self::parseRedirectRow($raw);
+            if ($row === null) {
+                $report[] = [
+                    'from' => self::stringOrNull($raw, 'from'),
+                    'to' => self::stringOrNull($raw, 'to'),
+                    'siteHandle' => self::stringOrNull($raw, 'siteHandle'),
+                    'status' => 'MALFORMED',
+                    'message' => 'Redirect record must be a JSON object with string from/to/siteHandle and an int type.',
+                ];
+                continue;
+            }
+
+            ['from' => $from, 'to' => $to, 'siteHandle' => $siteHandle, 'type' => $type] = $row;
+
+            if (!$retourAvailable) {
+                $skipped++;
+                $report[] = ['from' => $from, 'to' => $to, 'siteHandle' => $siteHandle, 'status' => 'SKIPPED_NO_RETOUR'];
+                continue;
+            }
+
+            $destUrl = $to;
+            if (RefResolver::parse($to) !== null) {
+                $entryId = $refResolver->resolve($to);
+                if ($entryId === null) {
+                    $report[] = [
+                        'from' => $from,
+                        'to' => $to,
+                        'siteHandle' => $siteHandle,
+                        'status' => 'UNRESOLVED_REF',
+                        'message' => 'sourceUid has not been migrated yet.',
+                    ];
+                    continue;
+                }
+
+                $uri = $resolveEntryUri($entryId, $siteHandle);
+                if ($uri === null) {
+                    $report[] = [
+                        'from' => $from,
+                        'to' => $to,
+                        'siteHandle' => $siteHandle,
+                        'status' => 'UNRESOLVED_REF',
+                        'message' => sprintf('Entry %d has no URI on site "%s".', $entryId, $siteHandle),
+                    ];
+                    continue;
+                }
+
+                $destUrl = $uri;
+                $resolved++;
+            }
+
+            $stateKey = sprintf('payload:%s:%s', $siteHandle, $from);
+            $outcome = $saveRedirect($from, $destUrl, $type, $stateKey, ['siteHandle' => $siteHandle, 'to' => $to]);
+
+            if (($outcome['outcome'] ?? null) === 'created') {
+                $created++;
+            } elseif (($outcome['outcome'] ?? null) === 'updated') {
+                $updated++;
+            } else {
+                $report[] = [
+                    'from' => $from,
+                    'to' => $to,
+                    'siteHandle' => $siteHandle,
+                    'status' => 'SAVE_FAILED',
+                    'message' => (string) ($outcome['message'] ?? 'Retour refused to save the redirect.'),
+                ];
+            }
+        }
+
+        return [
+            'processed' => count($records),
+            'created' => $created,
+            'updated' => $updated,
+            'resolved' => $resolved,
+            'skipped' => $skipped,
+            'report' => $report,
+        ];
+    }
+
+    /**
+     * @return array{from: string, to: string, siteHandle: string, type: int}|null
+     */
+    private static function parseRedirectRow(mixed $raw): ?array
+    {
+        if (!is_array($raw)) {
+            return null;
+        }
+
+        $from = $raw['from'] ?? null;
+        $to = $raw['to'] ?? null;
+        $siteHandle = $raw['siteHandle'] ?? null;
+        $type = $raw['type'] ?? null;
+
+        if (!is_string($from) || $from === '' || !is_string($to) || $to === '' || !is_string($siteHandle) || $siteHandle === '') {
+            return null;
+        }
+        if (!is_int($type) && !(is_string($type) && ctype_digit($type))) {
+            return null;
+        }
+
+        return ['from' => $from, 'to' => $to, 'siteHandle' => $siteHandle, 'type' => (int) $type];
+    }
+
+    private static function stringOrNull(mixed $raw, string $key): ?string
+    {
+        return (is_array($raw) && is_string($raw[$key] ?? null)) ? $raw[$key] : null;
+    }
+
+    /**
+     * @param array{report: list<array{status: string}>} $report
+     */
+    public static function exitCodeForRedirects(array $report): int
+    {
+        foreach ($report['report'] as $entry) {
+            if (($entry['status'] ?? null) !== 'SKIPPED_NO_RETOUR') {
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+        }
+
+        return ExitCode::OK;
     }
 
     /**

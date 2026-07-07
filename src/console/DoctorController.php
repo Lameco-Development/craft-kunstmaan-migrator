@@ -6,241 +6,171 @@ namespace lameco\kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
-use craft\helpers\Console;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\db\KunstmaanCoreTables;
 use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Doctor — preflight diagnostics for the migrator. v2 loader prune: the
- * analyze/mapping/locale-detection checks (Anthropic key, mapping.yaml health,
- * Kunstmaan source path, .env source presence, LocalePreflight Rung 0) are
- * removed along with their backing classes. The verify-baseline check is also
- * removed (the `src/verify/` subsystem and its `capture-baseline` command are
- * gone). Five checks remain (D-17 + Phase 2 / Plan 05 + Phase 3 / Plan 03-13 +
- * Phase 8 / Plan 08-14 / D-09):
- *   1. Legacy DB reachability (SELECT 1)
- *   2. storage/migration/ writable (auto-creates if missing — D-18 greenfield behavior)
- *   3. State table reachability (Phase 3 / CONTEXT Discretion — catches Phase 1 install drift before migrate runs)
- *   4. Adapter plugin health (D-69 — SEOmatic + Retour optional, INFO on absence per ADP-01..03)
- *   5. ext_translations presence (Phase 8 / Plan 08-14 / TAX-09 / D-09 — INFO/WARN/OK;
- *      never FAILs. Empty table → WARN (Gedmo overlay falls back to source-locale-only
- *      per D-09's pragmatic monolingual-Kunstmaan default); missing table → INFO (Gedmo
- *      Translatable absent); populated → OK with row count.)
+ * Doctor — preflight diagnostics for the v2 loader-only core (Task 6
+ * rewrite). Emits a single JSON array of `{check, ok, detail}` rows on
+ * stdout and exits non-zero if any row's `ok` is false — every other
+ * console command in this plugin already emits machine-readable
+ * JSON/NDJSON; doctor now matches instead of writing ANSI-colored prose.
  *
- * Drops from v1: checkQueueWorker (PROJECT.md Key Decisions — v2 is CLI-inline).
+ * v2 loader prune: the legacy-DB reachability check, the SEOmatic
+ * informational check, and the ext_translations presence check are all
+ * removed — analyze/mapping/taxonomy-stage machinery that has no place in
+ * a loader-only world (the Anthropic-key check and the mapping-file check
+ * never existed in this class to begin with; both were pruned before
+ * Task 6). Four checks remain, each independent — no early-exit, every
+ * check always runs so the operator gets the full report in one pass:
  *
- * FILT-03: declares --entities / --locales / --since for command-surface uniformity but
- * ignores them — doctor doesn't read legacy data.
+ *   1. checkStateTable      — the plugin is installed (Craft's plugin
+ *                             service has it registered) AND the
+ *                             kunstmaanmigrator_state table exists and is
+ *                             reachable.
+ *   2. checkStorageWritable — storage/migration/ exists (auto-creating it
+ *                             if missing) and is writable.
+ *   3. checkNotProduction   — CRAFT_ENVIRONMENT must not be 'production'.
+ *                             Reuses NeverProductionTrait::enforceNeverProduction()
+ *                             as the single source of truth for that
+ *                             predicate — still "the production guard",
+ *                             just surfaced as a check row instead of an
+ *                             early hard-exit (every write command still
+ *                             hard-refuses via the trait itself).
+ *   4. checkRetourPresence  — informational only (always ok=true): reports
+ *                             whether the Retour plugin is installed —
+ *                             `load/redirects` reports SKIPPED_NO_RETOUR
+ *                             per row when it isn't.
  */
 class DoctorController extends Controller
 {
     use NeverProductionTrait;
 
-    // FILT-03: doctor accepts the three filter flags for command-surface
-    // uniformity with the other console commands. They are no-ops here —
-    // doctor doesn't read legacy data. (The Phase 4.1 / D-30 verify-baseline
-    // check that once made them load-bearing was removed in the v2 prune
-    // along with the `src/verify/` subsystem it gated.)
-    public ?string $entities = null;
-    public ?string $locales  = null;
-    public ?string $since    = null;
-
-    public function options($actionID): array
-    {
-        return array_merge(parent::options($actionID), ['entities', 'locales', 'since']);
-    }
-
     public function actionIndex(): int
     {
-        // FND-04 / D-20: NeverProduction guard FIRST — before any check runs.
-        if (($gate = $this->enforceNeverProduction()) !== null) {
-            return $gate;
-        }
+        $checks = [
+            $this->checkStateTable(),
+            $this->checkStorageWritable(),
+            $this->checkNotProduction(),
+            $this->checkRetourPresence(),
+        ];
 
-        $this->stdout("Doctor: preflight diagnostics\n", Console::FG_CYAN);
+        $this->stdout(json_encode($checks, JSON_UNESCAPED_SLASHES) . PHP_EOL);
 
-        // `&&` against $ok so every check still executes even after a failure;
-        // operators want the full report, not a short-circuited tail.
-        $ok = true;
-        $ok = $this->checkLegacyDb()             && $ok;
-        $ok = $this->checkStorageDir()           && $ok;
-        $ok = $this->checkStateTable()           && $ok;
-        // Phase 4 extensions — D-69. Both always return true (INFO not FAIL):
-        $ok = $this->checkAdapterPlugins()       && $ok;
-        // Phase 8 / Plan 08-14 / TAX-09 / D-09 (info/warn/ok; never blocks):
-        $ok = $this->checkExtTranslations()      && $ok;
-
-        $this->stdout(
-            "\n" . ($ok ? "Doctor: PASS\n" : "Doctor: FAIL — fix the above before running migrate\n"),
-            $ok ? Console::FG_GREEN : Console::FG_RED,
-        );
-
-        return $ok ? ExitCode::OK : ExitCode::UNSPECIFIED_ERROR;
+        return self::exitCodeFor($checks);
     }
 
     /**
-     * Check #1: legacy DB reachable AND a default schema is selected.
-     *
-     * `SELECT 1` only proves the connection opens (host/port/user/pass valid).
-     * Every downstream load-side query issues unqualified SQL that needs a
-     * default schema, so we also verify
-     * `SELECT DATABASE()` is non-null. Catches the case where
-     * `CRAFT_LEGACY_DB_DATABASE` is unset and the DSN ends with `dbname=`.
+     * @param list<array{check: string, ok: bool, detail: string}> $checks
      */
-    private function checkLegacyDb(): bool
+    public static function exitCodeFor(array $checks): int
     {
-        try {
-            $svc = Plugin::getInstance()->legacyDbService;
-            $svc->queryOne('SELECT 1 AS ok');
-            $dbname = $svc->queryScalar('SELECT DATABASE()');
-            if ($dbname === null || $dbname === '') {
-                $this->stderr(
-                    "  FAIL legacyDb connected but no default schema selected — "
-                    . "set CRAFT_LEGACY_DB_DATABASE in .env (or legacyDbDatabase in plugin settings)\n",
-                    Console::FG_RED,
-                );
-                return false;
+        foreach ($checks as $check) {
+            if (($check['ok'] ?? true) === false) {
+                return ExitCode::UNSPECIFIED_ERROR;
             }
-            $this->stdout("  OK   legacyDb reachable\n", Console::FG_GREEN);
-            return true;
+        }
+
+        return ExitCode::OK;
+    }
+
+    /**
+     * Check #1: the plugin is registered with Craft AND the migrator state
+     * table exists and is reachable.
+     */
+    private function checkStateTable(): array
+    {
+        $tableName = '{{%kunstmaanmigrator_state}}';
+
+        try {
+            if (Craft::$app->plugins->getPlugin('kunstmaan-migrator') === null) {
+                return $this->result('state_table', false, 'kunstmaan-migrator plugin is not installed.');
+            }
+
+            if (!Craft::$app->db->getTableSchema($tableName)) {
+                return $this->result(
+                    'state_table',
+                    false,
+                    "State table '{$tableName}' is missing — run `./craft plugin/install kunstmaan-migrator` "
+                    . '(Craft\'s native plugin install runs the migration that creates it).',
+                );
+            }
+
+            Craft::$app->db->createCommand("SELECT COUNT(*) FROM {$tableName}")->queryScalar();
+
+            return $this->result('state_table', true, "kunstmaanmigrator_state table reachable ({$tableName}).");
         } catch (Throwable $e) {
-            // Connection error message may include host/port; we let it through because the
-            // operator needs to see WHAT broke. We do NOT echo password / DSN — Yii's
-            // Connection exception messages do not include credentials by default.
-            $this->stderr("  FAIL legacyDb unreachable: {$e->getMessage()}\n", Console::FG_RED);
-            return false;
+            return $this->result('state_table', false, "state table check failed: {$e->getMessage()}");
         }
     }
 
     /**
-     * Check #2: storage/migration/ exists and is writable.
-     * D-18: auto-create the directory under Craft's storage tree (one less manual op step).
-     * Side-effecting, but only creates a known-good directory under storage/.
+     * Check #2: storage/migration/ exists and is writable, auto-creating it
+     * under Craft's storage tree if missing.
      */
-    private function checkStorageDir(): bool
+    private function checkStorageWritable(): array
     {
-        // T-1-04 mitigation: path is constrained to Craft's storage tree — no user input
-        // feeds the path; Craft owns getStoragePath() and we append a fixed literal.
         $dir = Craft::$app->path->getStoragePath() . '/migration';
+
         try {
             if (!is_dir($dir)) {
                 if (!@mkdir($dir, 0755, true) && !is_dir($dir)) {
-                    $this->stderr("  FAIL could not create {$dir}\n", Console::FG_RED);
-                    return false;
+                    return $this->result('storage_writable', false, "could not create {$dir}");
                 }
             }
             if (!is_writable($dir)) {
-                $this->stderr("  FAIL {$dir} not writable\n", Console::FG_RED);
-                return false;
+                return $this->result('storage_writable', false, "{$dir} is not writable");
             }
-            $this->stdout("  OK   storage/migration writable ({$dir})\n", Console::FG_GREEN);
-            return true;
+
+            return $this->result('storage_writable', true, "{$dir} is writable");
         } catch (Throwable $e) {
-            $this->stderr("  FAIL storage check error: {$e->getMessage()}\n", Console::FG_RED);
-            return false;
+            return $this->result('storage_writable', false, "storage check failed: {$e->getMessage()}");
         }
     }
 
     /**
-     * Check #3 (Phase 3 / Plan 03-13 — CONTEXT Discretion): state-table reachability.
-     *
-     * Catches the case where Phase 1 install drifted (table missing or schema-incompatible)
-     * before migrate runs. Cheap, deterministic. FAIL when missing — operator must run
-     * `./craft kunstmaan-migrator/migrate/install` to recreate.
+     * Check #3: NOT production. Delegates the predicate to
+     * NeverProductionTrait::enforceNeverProduction() (which also writes the
+     * refusal line to stderr on a hit) rather than re-reading
+     * CRAFT_ENVIRONMENT independently — one canonical guard, surfaced here
+     * as a check row instead of an early hard-exit.
      */
-    private function checkStateTable(): bool
+    private function checkNotProduction(): array
     {
-        try {
-            $tableName = '{{%kunstmaanmigrator_state}}';
-            if (!Craft::$app->db->getTableSchema($tableName)) {
-                $this->stderr(
-                    "  FAIL state table '{$tableName}' missing — run "
-                    . "`./craft kunstmaan-migrator/migrate/install` first.\n",
-                    Console::FG_RED,
-                );
-                return false;
-            }
-            // Probe reachability with a no-op SELECT against the table.
-            Craft::$app->db->createCommand("SELECT COUNT(*) FROM {$tableName}")->queryScalar();
-            $this->stdout("  OK   kunstmaanmigrator_state table reachable\n", Console::FG_GREEN);
-            return true;
-        } catch (Throwable $e) {
-            $this->stderr("  FAIL state table check: {$e->getMessage()}\n", Console::FG_RED);
-            return false;
-        }
+        $blocked = $this->enforceNeverProduction() !== null;
+
+        return $this->result(
+            'not_production',
+            !$blocked,
+            $blocked
+                ? 'CRAFT_ENVIRONMENT=production — migrator commands refuse to run here.'
+                : 'CRAFT_ENVIRONMENT is not production.',
+        );
     }
 
     /**
-     * Check #4 (D-69): adapter plugin presence — informational only.
-     * SEOmatic + Retour are optional per ADP-01..03; absence is not a FAIL.
+     * Check #4: Retour presence — informational only, always ok=true.
      */
-    private function checkAdapterPlugins(): bool
+    private function checkRetourPresence(): array
     {
-        $seomatic = Craft::$app->plugins->getPlugin('seomatic');
-        if ($seomatic !== null) {
-            $version = (string) $seomatic->getVersion();
-            $this->stdout("  OK   seomatic v{$version} installed\n", Console::FG_GREEN);
-        } else {
-            $this->stdout("  INFO seomatic not installed (adapter will skip)\n", Console::FG_YELLOW);
-        }
-
         $retour = Craft::$app->plugins->getPlugin('retour');
         if ($retour !== null) {
-            $version = (string) $retour->getVersion();
-            $this->stdout("  OK   retour v{$version} installed\n", Console::FG_GREEN);
-        } else {
-            $this->stdout("  INFO retour not installed (adapter will skip)\n", Console::FG_YELLOW);
+            return $this->result('retour_presence', true, 'retour v' . (string) $retour->getVersion() . ' installed.');
         }
-        return true; // D-69: always OK — adapter absence is informational.
+
+        return $this->result(
+            'retour_presence',
+            true,
+            'retour not installed — load/redirects will report SKIPPED_NO_RETOUR for every row.',
+        );
     }
 
     /**
-     * Check #5 (Phase 8 / Plan 08-14 / TAX-09 / D-09): ext_translations presence.
-     *
-     * D-09 mandate: WARN-only when empty (NEVER FAIL). The Gedmo Translatable
-     * table is optional in Kunstmaan deployments — many sites are monolingual,
-     * which Phase 8 treats as a first-class default rather than an error. The
-     * three branches (each returns true):
-     *
-     *   - Populated → OK with row count.
-     *   - Empty     → WARN: Gedmo Translatable taxonomy migration will fall back
-     *                 to source-locale-only (D-09 monolingual-Kunstmaan default).
-     *   - Missing   → INFO: table not present in legacy DB (Gedmo Translatable
-     *                 not installed at all). Detected via Throwable on the count
-     *                 query (table-not-found → SQLSTATE[42S02]).
-     *
-     * Surfaces the operator-visible signal that a monolingual-fallback path
-     * would be taken by any taxonomy-relation load logic (Plan 08-11).
+     * @return array{check: string, ok: bool, detail: string}
      */
-    private function checkExtTranslations(): bool
+    private function result(string $check, bool $ok, string $detail): array
     {
-        try {
-            $svc = Plugin::getInstance()->legacyDbService;
-            $count = (int) $svc->queryScalar(
-                'SELECT COUNT(*) FROM ' . KunstmaanCoreTables::EXT_TRANSLATIONS,
-            );
-            if ($count === 0) {
-                $this->stdout(
-                    "  WARN ext_translations is empty — Gedmo Translatable taxonomy migration will fall back "
-                    . "to source-locale-only (D-09 monolingual-Kunstmaan default).\n",
-                    Console::FG_YELLOW,
-                );
-                return true;
-            }
-            $this->stdout(
-                sprintf("  OK   ext_translations populated (%d rows)\n", $count),
-                Console::FG_GREEN,
-            );
-            return true;
-        } catch (Throwable) {
-            $this->stdout(
-                "  INFO ext_translations table not present in legacy DB — Gedmo Translatable absent\n",
-                Console::FG_YELLOW,
-            );
-            return true;
-        }
+        return ['check' => $check, 'ok' => $ok, 'detail' => $detail];
     }
 }

@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\tests\integration;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\console\DoctorController;
 use lameco\kunstmaanmigrator\console\LoadController;
+use lameco\kunstmaanmigrator\console\StateController;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -16,9 +17,10 @@ use ReflectionClass;
  *
  * The CP Utility (KunstmaanMappingUtility) and its console-shell templates
  * are removed along with src/utilities/ and templates/ — the v2 loader core
- * has no CP surface at all. `doctor` and `load` are the only console
- * commands (Task 3 replaces `migrate` with the payload-driven `load/entry`
- * command and deletes MigrateController entirely).
+ * has no CP surface at all. `doctor`, `load`, and `state` (Task 6 —
+ * state/export) are the only console commands (Task 3 replaces `migrate`
+ * with the payload-driven `load/entry` command and deletes MigrateController
+ * entirely).
  */
 final class PluginConsoleRegistrationTest extends TestCase
 {
@@ -68,6 +70,7 @@ final class PluginConsoleRegistrationTest extends TestCase
     {
         self::assertTrue(class_exists(DoctorController::class, true), 'DoctorController must autoload via PSR-4');
         self::assertTrue(class_exists(LoadController::class, true), 'LoadController must autoload via PSR-4');
+        self::assertTrue(class_exists(StateController::class, true), 'StateController must autoload via PSR-4');
     }
 
     private function pluginSource(): string

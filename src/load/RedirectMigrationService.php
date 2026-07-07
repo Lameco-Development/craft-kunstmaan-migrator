@@ -154,6 +154,26 @@ class RedirectMigrationService extends Component
     }
 
     /**
+     * Task 6 — canonical Retour-presence predicate, reused by `truncate()`
+     * below and by `LoadController::actionRedirects()` (payload-driven
+     * `load/redirects`) so there is exactly one place that decides whether
+     * Retour is actually usable, rather than every caller re-deriving the
+     * same three-part check.
+     *
+     * `migrateAll()` deliberately keeps its own two-branch version of this
+     * check (see above) — it needs to tell "plugin not installed" (soft
+     * warn) apart from "plugin registered but not loaded" (hard failure)
+     * for its own report semantics, a distinction this single boolean
+     * collapses.
+     */
+    public static function isRetourAvailable(): bool
+    {
+        return Craft::$app->plugins->getPlugin('retour') !== null
+            && class_exists(Retour::class)
+            && Retour::$plugin !== null;
+    }
+
+    /**
      * Delete every Retour row this migrator owns (per state.source='redirect')
      * and forget the matching state rows. Manually-created Retour redirects
      * are unaffected.
@@ -162,10 +182,7 @@ class RedirectMigrationService extends Component
      */
     public function truncate(): int
     {
-        if (Craft::$app->plugins->getPlugin('retour') === null
-            || !class_exists(Retour::class)
-            || Retour::$plugin === null
-        ) {
+        if (!self::isRetourAvailable()) {
             return 0;
         }
 
@@ -196,6 +213,36 @@ class RedirectMigrationService extends Component
             }
         }
         return $deleted;
+    }
+
+    /**
+     * Task 6 — payload-driven single-redirect import behind
+     * `LoadController::actionRedirects()`. Reuses `upsertRetourRedirect()`
+     * verbatim — the same idempotent lookup-by-srcUrl-then-save-or-update
+     * logic (Pitfall 5 avoidance) and `self::STATE_SOURCE` state recording
+     * the legacy `migrateAll()` pass already relies on — so this does not
+     * duplicate any Retour-save or state-recording logic, only gives a
+     * payload caller (which has already resolved `srcUrl`/`destUrl` itself,
+     * e.g. via `RefResolver`) a public entry point into it for one
+     * already-resolved pair.
+     *
+     * Caller MUST check `isRetourAvailable()` first — this method assumes
+     * Retour is present and will fail via the underlying Retour calls if it
+     * isn't installed.
+     *
+     * @param array<string, mixed> $extraMeta merged into the state row's meta
+     */
+    public function importOne(
+        string $srcUrl,
+        string $destUrl,
+        int $httpCode,
+        string $stateKey,
+        array $extraMeta = [],
+    ): MigrationReport {
+        $report = new MigrationReport();
+        $this->upsertRetourRedirect($srcUrl, $destUrl, $httpCode, $stateKey, new MigrationOptions(), $report, $extraMeta);
+
+        return $report;
     }
 
     // --------------------------------------------------------------------------
