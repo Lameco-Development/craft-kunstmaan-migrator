@@ -101,7 +101,13 @@ class LoadController extends Controller
         }
 
         $plugin = Plugin::getInstance();
-        $saver = new PayloadEntrySaver($gateway, $plugin->entryMigrationService, $plugin->migrationStateService);
+        $saver = new PayloadEntrySaver(
+            $gateway,
+            $plugin->entryMigrationService,
+            $plugin->migrationStateService,
+            $plugin->assetMigrationService,
+            $plugin->ckeditorRewriterService,
+        );
         $report = self::buildLiveReport($this->payload, $validator, $saver);
         $this->stdout(json_encode($report, JSON_UNESCAPED_SLASHES) . PHP_EOL);
 
@@ -376,7 +382,7 @@ class LoadController extends Controller
      * exception for one payload is recorded in `failed[]` and the loop
      * continues rather than aborting the run.
      *
-     * @return array{processed: int, violations: list<array{sourceUid: string, code: string, message: string}>, saved: int, failed: list<array{sourceUid: string, error: string}>}
+     * @return array{processed: int, violations: list<array{sourceUid: string, code: string, message: string}>, saved: int, failed: list<array{sourceUid: string, error: string}>, unresolvedAssets: list<array<string, mixed>>, mediaTokenIssues: list<array<string, mixed>>}
      */
     public static function buildLiveReport(string $path, PayloadValidator $validator, PayloadEntrySaver $saver): array
     {
@@ -409,12 +415,20 @@ class LoadController extends Controller
 
         $saved = 0;
         $failed = [];
+        $unresolvedAssets = [];
+        $mediaTokenIssues = [];
 
         if ($violations === []) {
             foreach ($payloads as $p) {
                 try {
-                    $saver->save($p);
+                    $result = $saver->save($p);
                     $saved++;
+                    foreach ($result->unresolvedAssets as $entry) {
+                        $unresolvedAssets[] = ['sourceUid' => $p->sourceUid] + $entry;
+                    }
+                    foreach ($result->mediaTokenIssues as $entry) {
+                        $mediaTokenIssues[] = ['sourceUid' => $p->sourceUid] + $entry;
+                    }
                 } catch (Throwable $e) {
                     $failed[] = ['sourceUid' => $p->sourceUid, 'error' => $e->getMessage()];
                 }
@@ -426,6 +440,8 @@ class LoadController extends Controller
             'violations' => $violations,
             'saved' => $saved,
             'failed' => $failed,
+            'unresolvedAssets' => $unresolvedAssets,
+            'mediaTokenIssues' => $mediaTokenIssues,
         ];
     }
 

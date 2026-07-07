@@ -6,6 +6,8 @@ namespace lameco\kunstmaanmigrator\tests\integration\load;
 
 use craft\elements\Entry;
 use lameco\kunstmaanmigrator\console\LoadController;
+use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
+use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
@@ -193,15 +195,24 @@ final class FakeEntryMigrationService extends EntryMigrationService
 
 final class PayloadEntrySaverTest extends TestCase
 {
-    private function makeSaver(EntryMigrationService $entryService, MigrationStateService $stateService): PayloadEntrySaver
-    {
+    private function makeSaver(
+        EntryMigrationService $entryService,
+        MigrationStateService $stateService,
+        ?AssetMigrationService $assetService = null,
+    ): PayloadEntrySaver {
         // Passthrough transaction runner — the production default wraps
         // Craft::$app->getDb()->transaction(), which this Craft-app-free
-        // suite never boots.
+        // suite never boots. A bare AssetMigrationService/CkeditorRewriterService
+        // pair is safe by default here: most of this file's payloads carry no
+        // `_asset` node or `{{kuma:media:}}` token, so neither collaborator is
+        // ever actually invoked — see AssetResolutionTest.php /
+        // MediaTokenRewriteTest.php for the Task 8 coverage of those paths.
         return new PayloadEntrySaver(
             new SaverFakeSchemaGateway(),
             $entryService,
             $stateService,
+            $assetService ?? new AssetMigrationService(),
+            new CkeditorRewriterService(),
             static fn (callable $fn) => $fn(),
         );
     }
@@ -469,5 +480,38 @@ final class PayloadEntrySaverTest extends TestCase
             $state->getTargetId('COM:nt_page', '1'),
             'A save failure for one payload must not stop the others in the same batch from saving (fail-forward).',
         );
+    }
+
+    public function testBuildLiveReportAggregatesUnresolvedAssetsAcrossTheBatchWithSourceUidAttached(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new class extends AssetMigrationService {
+            public function resolveFromLegacyUrl(string $legacyUrl): int
+            {
+                return 0; // every _asset in this test is genuinely missing
+            }
+        };
+        $saver = $this->makeSaver($entryService, $state, $assetService);
+        $validator = new PayloadValidator(new SaverFakeSchemaGateway());
+
+        $payload = $this->payloadArray('kuma:COM:nt_page:500', [
+            'sites' => ['en' => ['fieldValues' => ['relatedPages' => ['_asset' => '/uploads/media/gone.jpg']]]],
+        ]);
+        $path = $this->writeTempNdjson([$payload]);
+
+        $report = LoadController::buildLiveReport($path, $validator, $saver);
+
+        self::assertSame(1, $report['saved'], 'An unresolved asset is reported, not fatal — the entry still saves.');
+        self::assertSame(ExitCode::OK, LoadController::exitCodeFor($report), 'Unresolved assets do not flip the exit code, matching deferred _ref semantics.');
+        self::assertSame([[
+            'sourceUid' => 'kuma:COM:nt_page:500',
+            'field' => 'relatedPages',
+            'site' => 'en',
+            'path' => [],
+            'asset' => '/uploads/media/gone.jpg',
+        ]], $report['unresolvedAssets']);
+        self::assertSame([], $report['mediaTokenIssues']);
     }
 }

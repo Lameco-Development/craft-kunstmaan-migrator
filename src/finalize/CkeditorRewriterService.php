@@ -63,6 +63,17 @@ class CkeditorRewriterService extends Component
     public const KUMA_NT_PLACEHOLDER_REGEX = '~(?:\[|%5B)NT(\d+)(?:\]|%5D)~i';
 
     /**
+     * Task 8 / docs/loader-contract.md — the v2 loader's OWN normalized
+     * in-payload media token, e.g. `{{kuma:media:123}}`. Distinct from
+     * KUMA_MEDIA_PLACEHOLDER_REGEX's `[M<id>]`/`%5BM<id>%5D`, which is
+     * Kunstmaan's legacy CKEditor-plugin output surviving in already-migrated
+     * HTML — this is the loader's canonical intermediate representation,
+     * embedded directly into a payload's `fieldValues` body text by the
+     * orchestration side wherever a legacy media reference sits inline.
+     */
+    public const KUMA_MEDIA_TOKEN_REGEX = '~\{\{kuma:media:(\d+)\}\}~';
+
+    /**
      * MigrationStateService — injected by the module. Null-safe: when absent
      * (e.g., tests without a container), cache-warming methods short-circuit.
      */
@@ -134,6 +145,11 @@ class CkeditorRewriterService extends Component
         // Step 1c — rewrite Kunstmaan `[NT<id>]` internal-link placeholders.
         // NT<id> = kuma_node_translations.id → kuma_nodes → migrated entry.
         $html = $this->rewriteNodeTranslationPlaceholders($html, $siteId);
+
+        // Step 1d — rewrite the loader's own `{{kuma:media:<id>}}` payload
+        // tokens (docs/loader-contract.md), distinct from the legacy
+        // `[M<id>]` placeholder handled by Step 1b.
+        $html = $this->rewriteCurlyMediaTokens($html, $siteId);
 
         // Step 2 — rewrite <a href="/internal/path"> when path resolves to a migrated entry
         if (!empty($entryUrlToId)) {
@@ -342,6 +358,44 @@ class CkeditorRewriterService extends Component
                 }
                 $this->recordUnresolvedDiagnostic('nt', $ntId, $siteId, (string) $m[0], 'kuma_node_translation:' . $ntId, 'no matching Craft entry id');
                 return $m[0] . $this->unresolvedMarker('kuma_node_translation:' . $ntId);
+            },
+            $html,
+        ) ?? $html;
+    }
+
+    /**
+     * Rewrite `{{kuma:media:<id>}}` loader payload tokens to Craft asset ref
+     * tokens. Reuses the exact same `kumaMediaIdCache`/`resolveKumaMediaId()`
+     * plumbing as `rewriteMediaPlaceholders()` — only the surface regex
+     * differs, since this is a distinct token grammar (see
+     * KUMA_MEDIA_TOKEN_REGEX docblock).
+     */
+    private function rewriteCurlyMediaTokens(string $html, int $siteId): string
+    {
+        if (!str_contains($html, '{{kuma:media:')) {
+            return $html;
+        }
+
+        return preg_replace_callback(
+            self::KUMA_MEDIA_TOKEN_REGEX,
+            function ($m) use ($siteId) {
+                $kumaMediaId = (int) $m[1];
+                $craftAssetId = $this->resolveKumaMediaId($kumaMediaId);
+                if ($craftAssetId !== null) {
+                    return '{asset:' . $craftAssetId . '@' . $siteId . ':url}';
+                }
+                $this->recordUnresolvedDiagnostic(
+                    'media_token',
+                    $kumaMediaId,
+                    $siteId,
+                    (string) $m[0],
+                    'kuma_media:' . $kumaMediaId,
+                    'no matching Craft asset id',
+                );
+                // Inert visible marker: `{{...}}` is not a Craft ref-tag
+                // grammar (single braces), so the original token surviving
+                // verbatim can never be mistaken for a resolved reference.
+                return $m[0] . $this->unresolvedMarker('kuma_media:' . $kumaMediaId);
             },
             $html,
         ) ?? $html;

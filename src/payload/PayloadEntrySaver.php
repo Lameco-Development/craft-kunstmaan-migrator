@@ -6,6 +6,8 @@ namespace lameco\kunstmaanmigrator\payload;
 
 use Craft;
 use DateTimeImmutable;
+use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
+use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use RuntimeException;
@@ -19,6 +21,13 @@ use RuntimeException;
  * duplicate any of that save logic, only the payload → `$perSite` mapping
  * and the two-pass deferred-ref bookkeeping (docs/loader-contract.md
  * "Two-pass `_ref` resolution semantics").
+ *
+ * Task 8 extends the same `fieldValues` walk to resolve the two other
+ * legacy-media references the contract promises: `{"_asset": "<path>"}`
+ * nodes (via `AssetMigrationService::resolveFromLegacyUrl`, same
+ * present/omit contract as an unresolved `_ref`) and `{{kuma:media:<id>}}`
+ * tokens embedded in string field values (via
+ * `AssetMigrationService::resolveFromLegacyId` + `CkeditorRewriterService`).
  *
  * By design, `save()` is only ever called with a `Payload` that already
  * passed `PayloadValidator` — `LoadController`'s live branch validates the
@@ -45,6 +54,8 @@ final class PayloadEntrySaver
         private readonly SchemaGateway $gateway,
         private readonly EntryMigrationService $entryService,
         private readonly MigrationStateService $stateService,
+        private readonly AssetMigrationService $assetService,
+        private readonly CkeditorRewriterService $ckeditorRewriter,
         ?callable $transactionRunner = null,
     ) {
         $this->refResolver = new RefResolver($stateService);
@@ -85,6 +96,8 @@ final class PayloadEntrySaver
         $wasAlreadySaved = $this->stateService->getTargetId($stateSource, $stateKey) !== null;
 
         $deferredRefs = [];
+        $unresolvedAssets = [];
+        $mediaTokenIssues = [];
         $perSite = [];
         foreach ($p->sites as $handle => $site) {
             $parentId = null;
@@ -98,11 +111,24 @@ final class PayloadEntrySaver
                 }
             }
 
+            // Numeric site id for CkeditorRewriterService's ref-token format
+            // ({asset:<id>@<siteId>:url}) — siteByHandle() is guaranteed to
+            // resolve here since save() only ever runs against an
+            // already-PayloadValidator-checked Payload (see class docblock).
+            $siteId = (int) ($this->gateway->siteByHandle((string) $handle)['id'] ?? 0);
+
             $perSite[$handle] = [
                 'enabled' => $site['enabled'],
                 'title' => (string) ($site['title'] ?? ''),
                 'slug' => (string) ($site['slug'] ?? ''),
-                'fieldValues' => $this->resolveFieldValues($site['fieldValues'], (string) $handle, $deferredRefs),
+                'fieldValues' => $this->resolveFieldValues(
+                    $site['fieldValues'],
+                    (string) $handle,
+                    $siteId,
+                    $deferredRefs,
+                    $unresolvedAssets,
+                    $mediaTokenIssues,
+                ),
                 'parentId' => $parentId,
                 'postDate' => $site['postDate'] !== null ? new DateTimeImmutable($site['postDate']) : null,
             ];
@@ -132,26 +158,42 @@ final class PayloadEntrySaver
             entryId: (int) $entry->id,
             created: !$wasAlreadySaved,
             deferredRefs: $deferredRefs,
+            unresolvedAssets: $unresolvedAssets,
+            mediaTokenIssues: $mediaTokenIssues,
         );
     }
 
     /**
-     * Recursively resolve every `_ref` node anywhere in a site's fieldValues
-     * tree (top-level or nested inside a matrix block's `fields`, per
-     * docs/loader-contract.md). `_asset` nodes carry no `_ref` key so they
-     * fall through the generic recursion untouched, exactly as the contract
-     * requires ("resolved by the existing asset field handler, not by this
-     * class").
+     * Recursively resolve every `_ref`/`_asset` node and `{{kuma:media:<id>}}`
+     * string token anywhere in a site's fieldValues tree (top-level or
+     * nested inside a matrix block's `fields`, per docs/loader-contract.md).
      *
      * @param array<string, mixed> $fieldValues
      * @param list<array{field: string, site: string, ref: string, path: list<int|string>}> $deferredRefs
+     * @param list<array{field: string, site: string, path: list<int|string>, asset: string}> $unresolvedAssets
+     * @param list<array<string, mixed>> $mediaTokenIssues
      * @return array<string, mixed>
      */
-    private function resolveFieldValues(array $fieldValues, string $siteHandle, array &$deferredRefs): array
-    {
+    private function resolveFieldValues(
+        array $fieldValues,
+        string $siteHandle,
+        int $siteId,
+        array &$deferredRefs,
+        array &$unresolvedAssets,
+        array &$mediaTokenIssues,
+    ): array {
         $out = [];
         foreach ($fieldValues as $fieldHandle => $value) {
-            $resolved = $this->resolveNode($value, (string) $fieldHandle, $siteHandle, $deferredRefs, [$fieldHandle]);
+            $resolved = $this->resolveNode(
+                $value,
+                (string) $fieldHandle,
+                $siteHandle,
+                $siteId,
+                $deferredRefs,
+                $unresolvedAssets,
+                $mediaTokenIssues,
+                [$fieldHandle],
+            );
             if (!$resolved['present']) {
                 continue;
             }
@@ -164,17 +206,37 @@ final class PayloadEntrySaver
     /**
      * @param list<int|string> $path Path from the site's `fieldValues` root
      *   down to `$node` itself (i.e. `$node` lives at `fieldValues[...$path]`).
-     *   When `$node` turns out to be an unresolved `_ref`, the recorded
-     *   `path` drops this array's own last segment — the index/key that
-     *   addresses the `_ref` node within its immediate container — since
-     *   that node is spliced out of the saved payload and Task 5's fixup
-     *   pass patches by re-populating the container, not a now-stale slot
-     *   (see docs/loader-contract.md "Two-pass `_ref` resolution semantics").
+     *   When `$node` turns out to be an unresolved `_ref`/`_asset`, the
+     *   recorded `path` drops this array's own last segment — the index/key
+     *   that addresses the node within its immediate container — since that
+     *   node is spliced out of the saved payload (see docs/loader-contract.md
+     *   "Two-pass `_ref` resolution semantics").
      * @param list<array{field: string, site: string, ref: string, path: list<int|string>}> $deferredRefs
+     * @param list<array{field: string, site: string, path: list<int|string>, asset: string}> $unresolvedAssets
+     * @param list<array<string, mixed>> $mediaTokenIssues
      * @return array{present: bool, value: mixed}
      */
-    private function resolveNode(mixed $node, string $fieldHandle, string $siteHandle, array &$deferredRefs, array $path): array
-    {
+    private function resolveNode(
+        mixed $node,
+        string $fieldHandle,
+        string $siteHandle,
+        int $siteId,
+        array &$deferredRefs,
+        array &$unresolvedAssets,
+        array &$mediaTokenIssues,
+        array $path,
+    ): array {
+        if (is_string($node)) {
+            if (!str_contains($node, '{{kuma:media:')) {
+                return ['present' => true, 'value' => $node];
+            }
+
+            return [
+                'present' => true,
+                'value' => $this->rewriteMediaTokens($node, $fieldHandle, $siteHandle, $siteId, $path, $mediaTokenIssues),
+            ];
+        }
+
         if (!is_array($node)) {
             return ['present' => true, 'value' => $node];
         }
@@ -197,10 +259,38 @@ final class PayloadEntrySaver
             return ['present' => true, 'value' => $resolvedId];
         }
 
+        if (array_key_exists('_asset', $node) && is_string($node['_asset'])) {
+            $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset']);
+            if ($resolvedId <= 0) {
+                $unresolvedAssets[] = [
+                    'field' => $fieldHandle,
+                    'site' => $siteHandle,
+                    'path' => array_slice($path, 0, -1),
+                    'asset' => $node['_asset'],
+                ];
+
+                // Unresolved _asset: no bogus id is written — the node is
+                // dropped from its containing list/map entirely, same
+                // fail-forward contract as an unresolved _ref.
+                return ['present' => false, 'value' => null];
+            }
+
+            return ['present' => true, 'value' => $resolvedId];
+        }
+
         $isList = array_is_list($node);
         $out = [];
         foreach ($node as $key => $childValue) {
-            $child = $this->resolveNode($childValue, $fieldHandle, $siteHandle, $deferredRefs, [...$path, $key]);
+            $child = $this->resolveNode(
+                $childValue,
+                $fieldHandle,
+                $siteHandle,
+                $siteId,
+                $deferredRefs,
+                $unresolvedAssets,
+                $mediaTokenIssues,
+                [...$path, $key],
+            );
             if (!$child['present']) {
                 continue;
             }
@@ -212,5 +302,49 @@ final class PayloadEntrySaver
         }
 
         return ['present' => true, 'value' => $out];
+    }
+
+    /**
+     * Resolve every `{{kuma:media:<id>}}` token in a string field value
+     * (docs/loader-contract.md): pre-seed `CkeditorRewriterService`'s
+     * kuma-media-id cache from `AssetMigrationService::resolveFromLegacyId`
+     * for every id found, then drive the full `rewrite()` pass so the same
+     * token grammar Craft ref-tokens use comes out the other end. Unresolved
+     * ids are left as an inert visible marker by `rewrite()` itself (never
+     * silently dropped) — this method only adds `field`/`site`/`path`
+     * context to whatever diagnostics that pass produced.
+     *
+     * @param list<int|string> $path
+     * @param list<array<string, mixed>> $mediaTokenIssues
+     */
+    private function rewriteMediaTokens(
+        string $html,
+        string $fieldHandle,
+        string $siteHandle,
+        int $siteId,
+        array $path,
+        array &$mediaTokenIssues,
+    ): string {
+        if (preg_match_all('/\{\{kuma:media:(\d+)\}\}/', $html, $matches) > 0) {
+            $seed = [];
+            foreach (array_unique($matches[1]) as $idStr) {
+                $mediaId = (int) $idStr;
+                $resolvedId = $this->assetService->resolveFromLegacyId($mediaId);
+                if ($resolvedId > 0) {
+                    $seed[$mediaId] = $resolvedId;
+                }
+            }
+            if ($seed !== []) {
+                $this->ckeditorRewriter->seedKumaMediaIdCache($seed);
+            }
+        }
+
+        $rewritten = $this->ckeditorRewriter->rewrite($html, $siteId);
+
+        foreach ($this->ckeditorRewriter->consumeUnresolvedDiagnostics() as $diagnostic) {
+            $mediaTokenIssues[] = ['field' => $fieldHandle, 'site' => $siteHandle, 'path' => $path] + $diagnostic;
+        }
+
+        return $rewritten;
     }
 }

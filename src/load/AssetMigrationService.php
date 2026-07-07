@@ -66,7 +66,9 @@ use yii\base\Component;
  */
 class AssetMigrationService extends Component
 {
-    private const LEGACY_MEDIA_ROOT_ENV = 'LEGACY_MEDIA_PATH';
+    // Public: Task 8's DoctorController::checkLegacyMediaRoot() reuses this
+    // literal rather than duplicating it.
+    public const LEGACY_MEDIA_ROOT_ENV = 'LEGACY_MEDIA_PATH';
     private const STATE_SOURCE = 'media';
 
     /**

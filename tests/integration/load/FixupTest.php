@@ -6,6 +6,8 @@ namespace lameco\kunstmaanmigrator\tests\integration\load;
 
 use craft\elements\Entry;
 use Generator;
+use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
+use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
@@ -229,6 +231,8 @@ final class FixupTest extends TestCase
             new FixupFakeSchemaGateway(),
             $entryService,
             $stateService,
+            new AssetMigrationService(),
+            new CkeditorRewriterService(),
             static fn (callable $fn) => $fn(),
         );
     }

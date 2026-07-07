@@ -62,15 +62,17 @@ should become:
 
 - **Plain value** — scalar or CKEditor HTML string. CKEditor HTML may embed
   `{{kuma:media:<id>}}` placeholders the loader rewrites once the referenced
-  asset is migrated (unrelated to `_ref`, not validated by `PayloadValidator`).
+  asset is migrated (unrelated to `_ref`, not validated by `PayloadValidator`)
+  — see "Legacy-media resolution" below.
 - **Matrix field** — a list of blocks: `{"type": "<blockTypeHandle>", "fields": {...}}`.
   `type` must be one of the block types (nested entry types) allowed on that
   Matrix field.
 - **Relation to another migrated entry** — `{"_ref": "<sourceUid>"}`, anywhere
   in the fieldValues tree (top-level or nested inside a matrix block's
   `fields`). Same grammar as `sourceUid`.
-- **Asset relation** — `{"_asset": "<legacy asset path>"}`. Resolved by the
-  existing asset field handler, not by `PayloadValidator`.
+- **Asset relation** — `{"_asset": "<legacy asset path>"}`, anywhere in the
+  fieldValues tree. Resolved at save time — see "Legacy-media resolution"
+  below — not by `PayloadValidator`.
 
 ## `sourceUid` grammar
 
@@ -167,3 +169,101 @@ list persisted under state meta `pendingRefs` (and mirrored in
 `path` is what makes a nested `_ref` (unlike a flat top-level one) locatable
 by Task 5 at all — without it, only the top-level field handle would be
 known, which isn't enough to find the right slot inside a Matrix block.
+
+## Legacy-media resolution
+
+Implemented by `PayloadEntrySaver`'s `fieldValues` walk (same recursive pass
+that resolves `_ref`, extended in Task 8), driving two existing, independent
+collaborators — neither requires the other to be configured:
+
+- `lameco\kunstmaanmigrator\load\AssetMigrationService::resolveFromLegacyUrl(string): int`
+  — resolves `_asset`.
+- `lameco\kunstmaanmigrator\load\AssetMigrationService::resolveFromLegacyId(int): int`
+  plus `lameco\kunstmaanmigrator\finalize\CkeditorRewriterService::rewrite()`
+  — resolves `{{kuma:media:<id>}}`.
+
+### `_asset` — filesystem JIT, no legacy DB required
+
+`{"_asset": "<legacy asset path>"}` (e.g. `/uploads/media/swyx.jpg`) is
+resolved via `AssetMigrationService::resolveFromLegacyUrl()`, which strips
+the `/uploads/media/` URL prefix, joins the remainder onto the
+**`LEGACY_MEDIA_PATH`** env var (a plain filesystem root — no legacy MySQL
+connection needed), and JIT-ingests the file into Craft the first time it's
+seen (cached afterwards by state key `legacy_url:<sha1(path)>`).
+
+- Resolved (`> 0`) — the numeric Craft asset id is substituted for the node,
+  the same shape a resolved `_ref` produces.
+- Unresolved (`0`, meaning `LEGACY_MEDIA_PATH` is unset, the path isn't under
+  `/uploads/media/`, or the file is missing on disk) — no bogus id is ever
+  written; the node is dropped from its containing list/map entirely (same
+  fail-forward contract as an unresolved `_ref`) and one entry is appended to
+  the live report's `unresolvedAssets` list:
+
+  ```json
+  {
+    "sourceUid": "kuma:COM:nt_page:143",
+    "field": "media",
+    "site": "en",
+    "path": ["pageBuilder", 2, "fields"],
+    "asset": "/uploads/media/swyx.jpg"
+  }
+  ```
+
+  `path`/`field` follow the exact same convention as `pendingRefs` above
+  (path stops at the container, not the dropped node's own slot). Unlike
+  `_ref`, there is **no** two-pass fixup for `unresolvedAssets` — a missing
+  legacy file doesn't become resolvable by re-running `load/entry` in a
+  different file order, so this is a terminal report, not a deferred one.
+
+### `{{kuma:media:<id>}}` — legacy-DB JIT, rewritten through CkeditorRewriterService
+
+Every string field value is cheaply checked for the substring
+`{{kuma:media:`; when present, every `{{kuma:media:<id>}}` token's `<id>` is
+resolved via `AssetMigrationService::resolveFromLegacyId()` (a legacy-DB JIT
+lookup by `kuma_media.id`, requiring the legacy DB connection — see env vars
+below), the resolved ids are seeded into `CkeditorRewriterService`'s
+kuma-media-id cache, and the whole string is run through
+`CkeditorRewriterService::rewrite()` (the same "make it Craft-native" pass
+that also strips `kma-*` classes, drops empty `<p>`s, and rewrites the
+legacy `[M<id>]`/`[NT<id>]` CKEditor-plugin placeholders).
+
+- Resolved — the token is rewritten to a Craft ref-token,
+  `{asset:<craftAssetId>@<siteId>:url}`, identical in shape to every other
+  asset reference `CkeditorRewriterService` produces.
+- Unresolved — the original `{{kuma:media:<id>}}` token is left **verbatim**
+  as an inert, visible marker (double curly braces are not Craft's
+  single-brace ref-tag grammar, so it can never be mistaken for a resolved
+  reference) with a trailing `<!-- MIGRATION:UNRESOLVED sourceB64=... -->`
+  HTML comment, and one entry is appended to the live report's
+  `mediaTokenIssues` list:
+
+  ```json
+  {
+    "sourceUid": "kuma:COM:nt_page:143",
+    "field": "body",
+    "site": "en",
+    "path": ["body"],
+    "tokenFamily": "media_token",
+    "legacyId": 123,
+    "siteId": 1,
+    "token": "{{kuma:media:123}}",
+    "source": "kuma_media:123",
+    "reason": "no matching Craft asset id"
+  }
+  ```
+
+Neither `unresolvedAssets` nor `mediaTokenIssues` fail the save or flip
+`load/entry`'s exit code — matching the unresolved-`_ref` convention: a
+per-item miss is reported, not fatal.
+
+### Config env vars
+
+| Env var | Consumed by | Meaning when unset |
+|---|---|---|
+| `LEGACY_MEDIA_PATH` | `AssetMigrationService::resolveFromLegacyUrl` (and every other filesystem-based asset ingest) | Every `_asset` node resolves to `0` (reported unresolved); no crash. |
+| `CRAFT_LEGACY_DB_SERVER` / `CRAFT_LEGACY_DB_DATABASE` / `CRAFT_LEGACY_DB_USER` / `CRAFT_LEGACY_DB_PASSWORD` / `CRAFT_LEGACY_DB_PORT` / `CRAFT_LEGACY_DB_CHARSET` / `CRAFT_LEGACY_DB_TABLE_PREFIX` | `AssetMigrationService::resolveFromLegacyId` (via the legacy DB connection `Plugin::init()` registers from `Settings`) | Every `{{kuma:media:<id>}}` token whose id isn't already cached in state resolves to unresolved (inert marker + report entry); no crash. |
+
+`doctor` surfaces both as informational-only checks (`legacy_media_root`,
+`legacy_db`) — `ok=true` when either is simply absent, since a no-asset site
+needs neither; each only fails when it's configured but broken
+(unreadable directory / unreachable connection).
