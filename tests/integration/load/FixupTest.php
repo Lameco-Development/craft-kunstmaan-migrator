@@ -15,6 +15,7 @@ use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
 use lameco\kunstmaanmigrator\payload\SchemaGateway;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use RuntimeException;
 
 require_once __DIR__ . '/_craft_shim.php';
 
@@ -151,6 +152,14 @@ final class FixupFakeEntryMigrationService extends EntryMigrationService
     /** @var array<string, int> keyed by "entryId\0site" */
     public array $parentStore = [];
 
+    /**
+     * @var array<string, true> keyed by "entryId\0site\0field" — set by a
+     *   test to make `resaveEntryFieldForSite()` throw for that exact
+     *   (entry, site, field), exercising `FixupService::run()`'s per-ref
+     *   fail-forward isolation without needing a real Craft save failure.
+     */
+    public array $throwOnResave = [];
+
     public function saveEntryForSites(
         int $sectionId,
         int $typeId,
@@ -190,6 +199,10 @@ final class FixupFakeEntryMigrationService extends EntryMigrationService
 
     public function resaveEntryFieldForSite(int $entryId, string $siteHandle, string $fieldHandle, array $value): bool
     {
+        if (isset($this->throwOnResave[$this->key($entryId, $siteHandle) . "\0" . $fieldHandle])) {
+            throw new RuntimeException('simulated resave failure');
+        }
+
         $this->fieldStore[$this->key($entryId, $siteHandle)][$fieldHandle] = $value;
 
         return true;
@@ -279,6 +292,18 @@ final class FixupTest extends TestCase
             [555],
             $entryService->readEntryFieldValueForSite($entryAId, 'en', 'relatedPages'),
             "A's relation field on site en must now contain B's resolved id.",
+        );
+
+        // A third run must be a true no-op: the drained ref was removed from
+        // pendingRefs, so it must not be re-resolved and re-appended.
+        $report = $fixup->run();
+
+        self::assertSame(0, $report['patched']);
+        self::assertSame([], $report['orphans']);
+        self::assertSame(
+            [555],
+            $entryService->readEntryFieldValueForSite($entryAId, 'en', 'relatedPages'),
+            'A third run must not double-append the already-patched id.',
         );
     }
 
@@ -396,5 +421,127 @@ final class FixupTest extends TestCase
         $report = $fixup->run();
 
         self::assertSame(['patched' => 0, 'orphans' => []], $report);
+    }
+
+    public function testRefWhoseResaveThrowsIsOrphanedButOtherResolvableRefsInTheSameRunStillGetPatched(): void
+    {
+        $state = new FixupInMemoryMigrationStateService();
+        $entryService = new FixupFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+        $fixup = new FixupService($state, $entryService);
+
+        // A references B (999) — its re-save will be made to throw below.
+        $a = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:200', [
+            'sites' => ['en' => ['fieldValues' => [
+                'relatedPages' => [['_ref' => 'kuma:COM:nt_page:999']],
+            ]]],
+        ]));
+        $entryAId = $saver->save($a)->entryId;
+
+        // C references D (998) — this one must patch cleanly in the same run.
+        $c = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:201', [
+            'sites' => ['en' => ['fieldValues' => [
+                'relatedPages' => [['_ref' => 'kuma:COM:nt_page:998']],
+            ]]],
+        ]));
+        $entryCId = $saver->save($c)->entryId;
+
+        $state->record('COM:nt_page', '999', 'entry', 555);
+        $state->record('COM:nt_page', '998', 'entry', 556);
+
+        $entryService->throwOnResave[$entryAId . "\0" . 'en' . "\0" . 'relatedPages'] = true;
+
+        $report = $fixup->run();
+
+        self::assertSame(1, $report['patched'], "C's ref must still be patched even though A's re-save threw.");
+        self::assertCount(1, $report['orphans']);
+        self::assertSame('kuma:COM:nt_page:200', $report['orphans'][0]['sourceUid']);
+        self::assertSame('relatedPages', $report['orphans'][0]['field']);
+        self::assertSame('kuma:COM:nt_page:999', $report['orphans'][0]['ref']);
+        self::assertArrayHasKey('error', $report['orphans'][0]);
+        self::assertNotSame(
+            [],
+            $report['orphans'],
+            'Non-empty orphans is what makes LoadController::exitCodeForFixup() (see LoadControllerTest) return exit 1.',
+        );
+
+        self::assertSame(
+            [556],
+            $entryService->readEntryFieldValueForSite($entryCId, 'en', 'relatedPages'),
+            "C's relation field must genuinely be patched, not skipped because A threw first.",
+        );
+        self::assertSame(
+            [],
+            $entryService->readEntryFieldValueForSite($entryAId, 'en', 'relatedPages'),
+            "A's field must be untouched by the failed resave attempt.",
+        );
+
+        // The pass must always finish and print its report — the whole run
+        // did not abort — and A's ref stays pending, retryable next time.
+        unset($entryService->throwOnResave[$entryAId . "\0" . 'en' . "\0" . 'relatedPages']);
+        $retry = $fixup->run();
+
+        self::assertSame(1, $retry['patched']);
+        self::assertSame([], $retry['orphans']);
+        self::assertSame([555], $entryService->readEntryFieldValueForSite($entryAId, 'en', 'relatedPages'));
+    }
+
+    public function testPartialDrainAcrossDifferentContainersLeavesTheOtherPendingWithoutCorruptingEitherEntry(): void
+    {
+        $state = new FixupInMemoryMigrationStateService();
+        $entryService = new FixupFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+        $fixup = new FixupService($state, $entryService);
+
+        // One entry, two pending refs in two DIFFERENT containers: a
+        // top-level relation field and a nested Matrix-block field.
+        $a = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:300', [
+            'sites' => ['en' => ['fieldValues' => [
+                'relatedPages' => [['_ref' => 'kuma:COM:nt_page:910']],
+                'pageBuilder' => [[
+                    'type' => 'contentBlock',
+                    'fields' => ['relatedEntries' => [['_ref' => 'kuma:COM:nt_page:920']]],
+                ]],
+            ]]],
+        ]));
+        $entryAId = $saver->save($a)->entryId;
+
+        // Only the relatedPages target exists so far; pageBuilder's does not.
+        $state->record('COM:nt_page', '910', 'entry', 610);
+
+        $report = $fixup->run();
+
+        self::assertSame(1, $report['patched']);
+        self::assertCount(1, $report['orphans']);
+        self::assertSame('pageBuilder', $report['orphans'][0]['field']);
+        self::assertSame(['pageBuilder', 0, 'fields', 'relatedEntries'], $report['orphans'][0]['path']);
+
+        self::assertSame(
+            [610],
+            $entryService->readEntryFieldValueForSite($entryAId, 'en', 'relatedPages'),
+        );
+        $pageBuilder = $entryService->readEntryFieldValueForSite($entryAId, 'en', 'pageBuilder');
+        self::assertSame(
+            [],
+            $pageBuilder[0]['fields']['relatedEntries'],
+            'The still-unresolved container must not be corrupted by the neighboring container patching.',
+        );
+
+        // The second target now resolves; the previously-patched container
+        // must be left exactly as it was — no double-append.
+        $state->record('COM:nt_page', '920', 'entry', 620);
+        $report = $fixup->run();
+
+        self::assertSame(1, $report['patched']);
+        self::assertSame([], $report['orphans']);
+        $pageBuilder = $entryService->readEntryFieldValueForSite($entryAId, 'en', 'pageBuilder');
+        self::assertSame([620], $pageBuilder[0]['fields']['relatedEntries']);
+        self::assertSame(
+            [610],
+            $entryService->readEntryFieldValueForSite($entryAId, 'en', 'relatedPages'),
+            'The container patched in the first run must remain untouched by the second.',
+        );
     }
 }

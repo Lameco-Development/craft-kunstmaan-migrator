@@ -8,6 +8,7 @@ use Craft;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use RuntimeException;
+use Throwable;
 
 /**
  * Second-pass fixup (`load/fixup`, docs/loader-contract.md "Two-pass `_ref`
@@ -24,6 +25,13 @@ use RuntimeException;
  * resaveEntryFieldForSite()`/`resaveEntryParentForSite()`). Still-unresolved
  * or unpatchable refs are kept in `pendingRefs` and reported as orphans —
  * nothing is ever silently dropped.
+ *
+ * Per-ref fail-forward: a `Throwable` raised while resolving or re-saving
+ * one pending ref (stale site handle, DB deadlock, save failure) is caught
+ * and that ref alone is folded into `orphans` (with its error message) and
+ * kept in `pendingRefs` for the next run — it never aborts the rest of the
+ * pass, matching `LoadController::buildLiveReport()`'s per-payload
+ * fail-forward convention in pass 1.
  */
 final class FixupService
 {
@@ -37,12 +45,22 @@ final class FixupService
     }
 
     /**
-     * @return array{patched: int, orphans: list<array{sourceUid: string, field: string, ref: string, path: list<int|string>}>}
+     * @return array{patched: int, orphans: list<array{sourceUid: string, field: string, ref: string, path: list<int|string>, error?: string}>}
      */
     public function run(): array
     {
         $patched = 0;
         $orphans = [];
+        /**
+         * `updateMeta()` is a write; deferring every call until after this
+         * method's own foreach over `entryRows()` has fully exhausted (and
+         * so closed) that generator's streaming cursor removes any doubt
+         * about writing mid-iteration over an open read cursor on the same
+         * connection.
+         *
+         * @var list<array{source: string, key: string, remaining: list<mixed>}>
+         */
+        $metaUpdates = [];
 
         foreach ($this->stateService->entryRows() as $row) {
             $pendingRefs = $this->decodePendingRefs($row['meta'] ?? null);
@@ -65,15 +83,29 @@ final class FixupService
                 $ref = (string) ($pending['ref'] ?? '');
                 $path = (is_array($pending['path'] ?? null)) ? array_values($pending['path']) : [];
 
-                $resolvedId = $this->refResolver->resolve($ref);
+                $error = null;
+                try {
+                    $resolvedId = $this->refResolver->resolve($ref);
 
-                $ok = $resolvedId !== null
-                    && $targetId !== null
-                    && $this->applyPatch($targetId, $site, $path, $resolvedId, $sourceUid, $seenContainers);
+                    $ok = $resolvedId !== null
+                        && $targetId !== null
+                        && $this->applyPatch($targetId, $site, $path, $resolvedId, $sourceUid, $seenContainers);
+                } catch (Throwable $e) {
+                    // A stale site handle, a DB deadlock, or a save failure
+                    // for THIS ref must not abort the whole pass — every
+                    // other still-fixable ref gets its own chance, and the
+                    // pass always finishes and prints its JSON report.
+                    $ok = false;
+                    $error = $e->getMessage();
+                }
 
                 if (!$ok) {
                     $remaining[] = $pending;
-                    $orphans[] = ['sourceUid' => $sourceUid, 'field' => $field, 'ref' => $ref, 'path' => $path];
+                    $orphan = ['sourceUid' => $sourceUid, 'field' => $field, 'ref' => $ref, 'path' => $path];
+                    if ($error !== null) {
+                        $orphan['error'] = $error;
+                    }
+                    $orphans[] = $orphan;
                     continue;
                 }
 
@@ -81,8 +113,12 @@ final class FixupService
             }
 
             if (count($remaining) !== count($pendingRefs)) {
-                $this->stateService->updateMeta($source, $key, null, ['pendingRefs' => $remaining]);
+                $metaUpdates[] = ['source' => $source, 'key' => $key, 'remaining' => $remaining];
             }
+        }
+
+        foreach ($metaUpdates as $update) {
+            $this->stateService->updateMeta($update['source'], $update['key'], null, ['pendingRefs' => $update['remaining']]);
         }
 
         return ['patched' => $patched, 'orphans' => $orphans];
