@@ -11,7 +11,7 @@ use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 
 /**
- * Plugin Settings — shared seam between env vars and config/kunstmaan-migrator.php.
+ * Plugin Settings — shared seam between env vars and config/kuma-loader.php.
  * v2 loader prune: analyze/compile/CP-queue-only properties (Anthropic key,
  * mapping-stage config, source-checkout path, Phase 12 CP/queue gates) are
  * removed — this model now declares only what src/load/, src/fields/, and
@@ -42,7 +42,7 @@ class Settings extends Model
      * Craft volume handle assets land in when migrated. Defaults to
      * `uploads` — the starter-kit convention. Scaffolder-generated targets
      * use `media` (matches Kunstmaan's `kuma_media` semantics); override
-     * via `config/kunstmaan-migrator.php` to align with the actual handle.
+     * via `config/kuma-loader.php` to align with the actual handle.
      */
     public string  $targetVolume         = 'uploads';
 
@@ -58,7 +58,7 @@ class Settings extends Model
      * editor uploads but rejects valid pre-existing assets during migration.
      * Surfaced by deklerk's >10MB PDF on 2026-05-09.
      *
-     * Defaults false — opt-in via project's `config/kunstmaan-migrator.php`
+     * Defaults false — opt-in via project's `config/kuma-loader.php`
      * to acknowledge the operator is willingly bypassing the cap for
      * already-curated source content.
      */
@@ -66,7 +66,7 @@ class Settings extends Model
 
     // Phase 4 / D-57 — adapter source-table overrides for variant Kunstmaan
     // flavours. Defaults match the canonical kuma_* schema; operators flip via
-    // env vars or config/kunstmaan-migrator.php when the legacy DB diverges.
+    // env vars or config/kuma-loader.php when the legacy DB diverges.
     public string $seoTableName = 'kuma_seo';
     public string $redirectsTableName = 'kuma_redirects';
     public string $menuTableName = 'kuma_menu';
@@ -131,7 +131,7 @@ class Settings extends Model
     {
         parent::init();
 
-        // D-12: env-var fallback. config/kunstmaan-migrator.php overrides win when present
+        // D-12: env-var fallback. config/kuma-loader.php overrides win when present
         // (Craft loads the config file BEFORE init() and assigns to the public properties,
         // so `??=` only fills the unset cases).
         $this->legacyDbServer      ??= App::env('CRAFT_LEGACY_DB_SERVER') ?: null;

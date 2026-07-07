@@ -250,7 +250,7 @@ class SeoMigrationService extends Component
 
     /**
      * Scoped variant — write SEO for a single Craft entry id. Useful for
-     * `./craft kunstmaan-migrator/migrate/seo --entry={id}` debugging and
+     * `./craft kuma-loader/migrate/seo --entry={id}` debugging and
      * for re-running a specific entry after editorial fixes. Returns the
      * number of sites where SEO was written.
      *

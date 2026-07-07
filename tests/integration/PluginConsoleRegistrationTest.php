@@ -10,17 +10,19 @@ use lameco\kunstmaanmigrator\console\LoadController;
 use lameco\kunstmaanmigrator\console\StateController;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use ReflectionMethod;
 
 /**
  * v2 loader prune — console-surface contract. This suite does not bootstrap
- * a Craft web application, so these tests inspect Plugin.php source instead.
+ * a Craft web application, so these tests inspect Plugin.php / composer.json
+ * source instead.
  *
  * The CP Utility (KunstmaanMappingUtility) and its console-shell templates
  * are removed along with src/utilities/ and templates/ — the v2 loader core
- * has no CP surface at all. `doctor`, `load`, and `state` (Task 6 —
- * state/export) are the only console commands (Task 3 replaces `migrate`
- * with the payload-driven `load/entry` command and deletes MigrateController
- * entirely).
+ * has no CP surface at all. `doctor`, `load`, and `state` are the only
+ * console controllers, exposing exactly five commands under the `kuma-loader`
+ * handle (Task 7 rename, was `kunstmaan-migrator`): `load/entry`,
+ * `load/fixup`, `load/redirects`, `state/export`, `doctor`.
  */
 final class PluginConsoleRegistrationTest extends TestCase
 {
@@ -73,8 +75,85 @@ final class PluginConsoleRegistrationTest extends TestCase
         self::assertTrue(class_exists(StateController::class, true), 'StateController must autoload via PSR-4');
     }
 
+    /**
+     * Task 7 — the Craft console command prefix is the plugin's composer
+     * `extra.handle`. Asserting it directly (rather than only the derived
+     * `./craft kuma-loader/...` strings elsewhere) is what would have caught
+     * this task's rename at the source.
+     */
+    public function testComposerExtraHandleAndNameAreKumaLoader(): void
+    {
+        $composer = $this->composerManifest();
+
+        self::assertSame(
+            'kuma-loader',
+            $composer['extra']['handle'] ?? null,
+            'Plugin handle drives the console command prefix — must be kuma-loader, not kunstmaan-migrator.',
+        );
+        self::assertSame(
+            'Kuma Loader',
+            $composer['extra']['name'] ?? null,
+            'Plugin display name must be Kuma Loader.',
+        );
+        self::assertSame(
+            'lameco/craft-kunstmaan-migrator',
+            $composer['name'] ?? null,
+            'Composer package name is unaffected by the handle rename — it stays lameco/craft-kunstmaan-migrator.',
+        );
+    }
+
+    /**
+     * Task 7 — the v2 loader core exposes exactly five console commands:
+     * kuma-loader/load/entry, kuma-loader/load/fixup,
+     * kuma-loader/load/redirects, kuma-loader/state/export, kuma-loader/doctor.
+     * Enumerating every public actionXxx() method declared directly on the
+     * three controllers (excluding inherited ones) locks that count so a
+     * future addition/removal has to update this test deliberately.
+     */
+    public function testExactlyFiveConsoleActionsAcrossLoadStateAndDoctor(): void
+    {
+        $actions = [];
+        foreach ([DoctorController::class, LoadController::class, StateController::class] as $fqcn) {
+            $reflection = new ReflectionClass($fqcn);
+            foreach ($reflection->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+                if ($method->getDeclaringClass()->getName() !== $fqcn) {
+                    continue;
+                }
+                if (str_starts_with($method->getName(), 'action')) {
+                    $actions[] = $fqcn . '::' . $method->getName();
+                }
+            }
+        }
+        sort($actions);
+
+        self::assertSame(
+            [
+                DoctorController::class . '::actionIndex',
+                LoadController::class . '::actionEntry',
+                LoadController::class . '::actionFixup',
+                LoadController::class . '::actionRedirects',
+                StateController::class . '::actionExport',
+            ],
+            $actions,
+            'Expected exactly the five kuma-loader commands: doctor, load/entry, load/fixup, load/redirects, state/export.',
+        );
+    }
+
     private function pluginSource(): string
     {
         return (string) file_get_contents((new ReflectionClass(Plugin::class))->getFileName());
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function composerManifest(): array
+    {
+        $path = dirname(__DIR__, 2) . '/composer.json';
+        $decoded = json_decode((string) file_get_contents($path), true);
+
+        self::assertIsArray($decoded, 'composer.json must decode to an array');
+
+        return $decoded;
     }
 }

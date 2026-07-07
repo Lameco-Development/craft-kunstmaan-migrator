@@ -44,8 +44,8 @@
         ]
     },
     "extra": {
-        "handle": "kunstmaan-migrator",
-        "name": "Kunstmaan Migrator",
+        "handle": "kuma-loader",
+        "name": "Kuma Loader",
         "class": "lameco\\kunstmaanmigrator\\Plugin",
         "schemaVersion": "1.1.0",
         "developer": "Lameco Development"

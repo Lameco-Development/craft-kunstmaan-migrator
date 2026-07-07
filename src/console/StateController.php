@@ -82,7 +82,7 @@ class StateController extends Controller
                     'state/export: excluded %d state row(s) whose reconstructed sourceUid does not round-trip through RefResolver::parse() (composite-key bookkeeping rows, e.g. seo_meta).',
                     $excluded,
                 ),
-                'kunstmaan-migrator',
+                'kuma-loader',
             );
         }
 

@@ -39,8 +39,8 @@ class AttachService extends Component
         $entryType = Craft::$app->entries->getEntryTypeByUid($entryTypeUid);
         if ($entryType === null) {
             Craft::warning(
-                "kunstmaan-migrator AttachService: entryType UID {$entryTypeUid} not found; skipping attach",
-                'kunstmaan-migrator'
+                "kuma-loader AttachService: entryType UID {$entryTypeUid} not found; skipping attach",
+                'kuma-loader'
             );
             return false;
         }
@@ -70,8 +70,8 @@ class AttachService extends Component
 
         if (!is_array($entryTypeCfg) || !isset($entryTypeCfg['fieldLayouts']) || !is_array($entryTypeCfg['fieldLayouts'])) {
             Craft::warning(
-                "kunstmaan-migrator AttachService: entryType {$entryTypeUid} has no fieldLayouts in project-config; skipping",
-                'kunstmaan-migrator'
+                "kuma-loader AttachService: entryType {$entryTypeUid} has no fieldLayouts in project-config; skipping",
+                'kuma-loader'
             );
             return false;
         }
@@ -82,8 +82,8 @@ class AttachService extends Component
 
         if (!isset($layoutCfg['tabs']) || !is_array($layoutCfg['tabs']) || $layoutCfg['tabs'] === []) {
             Craft::warning(
-                "kunstmaan-migrator AttachService: entryType {$entryTypeUid} layout has no tabs; skipping",
-                'kunstmaan-migrator'
+                "kuma-loader AttachService: entryType {$entryTypeUid} layout has no tabs; skipping",
+                'kuma-loader'
             );
             return false;
         }
@@ -130,8 +130,8 @@ class AttachService extends Component
         $projectConfig->set($entryTypePath, $entryTypeCfg);
 
         Craft::info(
-            "kunstmaan-migrator AttachService: attached field UID {$fieldUid} to entryType {$entryTypeUid}",
-            'kunstmaan-migrator'
+            "kuma-loader AttachService: attached field UID {$fieldUid} to entryType {$entryTypeUid}",
+            'kuma-loader'
         );
         return true;
     }

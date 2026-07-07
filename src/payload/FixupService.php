@@ -144,7 +144,7 @@ final class FixupService
                 $sourceUid,
                 $site,
                 $path === [] ? '(parent)' : implode('.', $path),
-            ), 'kunstmaan-migrator');
+            ), 'kuma-loader');
         }
         $seenContainers[$containerKey] = true;
 
@@ -166,7 +166,7 @@ final class FixupService
         try {
             $mutated = self::appendAtPath([$topField => $current], $path, $resolvedId);
         } catch (RuntimeException $e) {
-            Craft::warning('FixupService: ' . $e->getMessage(), 'kunstmaan-migrator');
+            Craft::warning('FixupService: ' . $e->getMessage(), 'kuma-loader');
 
             return false;
         }

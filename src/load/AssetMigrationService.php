@@ -39,7 +39,7 @@ use yii\base\Component;
  * Default: `$targetVolume = 'uploads'`, `$targetSubfolder = 'migrated'`.
  * Assets land in `migrated/{year}/` inside the existing uploads volume so
  * no dedicated volume YAML is needed. Override via setComponents or the
- * `config/kunstmaan-migrator.php` config file.
+ * `config/kuma-loader.php` config file.
  *
  * Boundaries:
  *  - LEGACY_MEDIA_PATH env var roots the legacy file lookup.
@@ -294,13 +294,13 @@ class AssetMigrationService extends Component
                     );
                     // D-08-23b: verbose RCA trace for the residual 0.04% asset
                     // failure. Emits a structured Craft::error line tagged
-                    // `kunstmaan-migrator:asset-failure` so the next rehearsal's
+                    // `kuma-loader:asset-failure` so the next rehearsal's
                     // run log can be grepped for the exact source row id,
                     // exception class, resolved path context, and full
                     // trace without relying on --verbose.
                     Craft::error(
                         [
-                            'tag' => 'kunstmaan-migrator:asset-failure',
+                            'tag' => 'kuma-loader:asset-failure',
                             'kuma_media_id' => $row['id'] ?? null,
                             'location' => $row['location'] ?? null,
                             'file_name' => $row['file_name'] ?? null,
@@ -865,7 +865,7 @@ class AssetMigrationService extends Component
      * targetType='asset'. Video-type state rows are just unlinked from
      * state — there's no element to remove.
      *
-     * Used by kunstmaan-migrator/migrate/truncate so re-runs start from a
+     * Used by kuma-loader/migrate/truncate so re-runs start from a
      * clean Craft DB but leave the legacy MySQL untouched.
      */
     public function truncate(): int
