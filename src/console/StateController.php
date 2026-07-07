@@ -4,17 +4,20 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\console;
 
+use Craft;
 use craft\console\Controller;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
+use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\Plugin;
 use yii\console\ExitCode;
 
 /**
- * Task 6 — resume/verify export. `state/export` streams every entry-producing
+ * Task 6 — resume/verify export. `state/export` reads every entry-producing
  * state row (reusing MigrationStateService::entryRows() rather than
  * reimplementing the query — that generator already covers both primary
  * entries and alias rows, since MigrationStateService::recordAlias() also
- * writes targetType='entry') and reconstitutes each row's `sourceUid`.
+ * writes targetType='entry') into a materialized array and reconstitutes
+ * each row's `sourceUid` before `actionExport()` emits it as NDJSON.
  *
  * State-key encoding round-trip (see RefResolver, the single source of truth
  * for the grammar): a row is stored with `source = "<ENV>:<table>"`,
@@ -23,6 +26,18 @@ use yii\console\ExitCode;
  * concatenation (`"kuma:{$source}:{$sourceKey}"`), so
  * `RefResolver::resolve($exportedSourceUid)` always resolves back to the
  * same `entryId` this row carries — see StateExportTest's round-trip test.
+ *
+ * Not every `entryRows()` row fits that grammar, though: bookkeeping rows
+ * such as the ones `SeoMigrationService` writes under `source = 'seo_meta'`
+ * carry a COMPOSITE `sourceKey` (e.g. `'881:1'`, entryId:siteId), so naively
+ * concatenating them produces a `sourceUid` that `RefResolver::parse()`
+ * splits differently than it was written — it doesn't round-trip. Emitting
+ * those would hand a resume/verify consumer a line it can never resolve
+ * back to an entry, so `buildExportRows()` runs every candidate `sourceUid`
+ * back through `RefResolver::parse()` and only emits rows that match
+ * exactly (same convention `RedirectMigrationService::emitSectionMoveRedirects()`
+ * uses against the same generator, via an explicit `seo_meta`/`:`-in-key
+ * check rather than this round-trip check).
  *
  * Read-only and not legacy-DB-reading, so — unlike doctor and the write
  * commands in LoadController — this does not use NeverProductionTrait: an
@@ -48,11 +63,46 @@ class StateController extends Controller
     public static function buildExportRows(MigrationStateService $stateService): array
     {
         $rows = [];
+        $excluded = 0;
         foreach ($stateService->entryRows() as $row) {
+            $source = (string) ($row['source'] ?? '');
+            $key = (string) ($row['sourceKey'] ?? '');
+
+            if (!self::sourceUidRoundTrips($source, $key)) {
+                $excluded++;
+                continue;
+            }
+
             $rows[] = self::exportRow($row);
         }
 
+        if ($excluded > 0) {
+            Craft::warning(
+                sprintf(
+                    'state/export: excluded %d state row(s) whose reconstructed sourceUid does not round-trip through RefResolver::parse() (composite-key bookkeeping rows, e.g. seo_meta).',
+                    $excluded,
+                ),
+                'kunstmaan-migrator',
+            );
+        }
+
         return $rows;
+    }
+
+    /**
+     * A row's `sourceUid` is only safe to export when it genuinely
+     * round-trips: reconstructing `kuma:{$source}:{$key}` and parsing it
+     * back through `RefResolver::parse()` — the single source of truth for
+     * the grammar — must yield the exact same `(source, key)` pair. Rows
+     * that fail this (composite `sourceKey`s, or any source not shaped like
+     * `<ENV>:<table>`) are bookkeeping, not primary entry mappings, and a
+     * resume/verify consumer could never resolve them back anyway.
+     */
+    private static function sourceUidRoundTrips(string $source, string $key): bool
+    {
+        $parsed = RefResolver::parse(sprintf('kuma:%s:%s', $source, $key));
+
+        return $parsed !== null && $parsed['source'] === $source && $parsed['key'] === $key;
     }
 
     /**

@@ -231,4 +231,46 @@ final class StateExportTest extends TestCase
 
         self::assertSame([], StateController::buildExportRows($state));
     }
+
+    /**
+     * `SeoMigrationService` records bookkeeping rows under
+     * `source = 'seo_meta'` with a COMPOSITE `sourceKey` like `'881:1'`
+     * (entryId:siteId) and `targetType = 'entry'`, so they show up in
+     * `entryRows()` alongside genuine primary-entry rows. Naively
+     * reconstituting `kuma:seo_meta:881:1` produces a `sourceUid` that
+     * `RefResolver::parse()` splits as `source = 'seo_meta:881'`,
+     * `key = '1'` — it does not round-trip back to `source = 'seo_meta'`,
+     * `key = '881:1'`, so `RefResolver::resolve()` on it returns null.
+     * Export must exclude such rows rather than emit lines a resume/verify
+     * consumer can never resolve back to an entry.
+     */
+    public function testBookkeepingRowsThatDoNotRoundTripAreExcludedFromExport(): void
+    {
+        $state = new ExportFakeStateService();
+        $state->seedRows([
+            ...$this->rowsForOnePrimaryEntry(),
+            [
+                'source' => 'seo_meta',
+                'sourceKey' => '881:1',
+                'targetType' => 'entry',
+                'targetId' => 881,
+                'targetUid' => '',
+                'siteId' => null,
+                'meta' => null,
+            ],
+        ]);
+
+        $rows = StateController::buildExportRows($state);
+
+        self::assertCount(1, $rows);
+        self::assertSame('kuma:COM:nt_page:143', $rows[0]['sourceUid']);
+
+        foreach ($rows as $row) {
+            self::assertStringStartsNotWith('kuma:seo_meta:', $row['sourceUid']);
+        }
+
+        $resolver = new RefResolver($state);
+
+        self::assertSame(881, $resolver->resolve($rows[0]['sourceUid']));
+    }
 }
