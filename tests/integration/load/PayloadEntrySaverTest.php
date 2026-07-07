@@ -199,6 +199,7 @@ final class PayloadEntrySaverTest extends TestCase
         EntryMigrationService $entryService,
         MigrationStateService $stateService,
         ?AssetMigrationService $assetService = null,
+        ?CkeditorRewriterService $ckeditorRewriter = null,
     ): PayloadEntrySaver {
         // Passthrough transaction runner — the production default wraps
         // Craft::$app->getDb()->transaction(), which this Craft-app-free
@@ -212,7 +213,7 @@ final class PayloadEntrySaverTest extends TestCase
             $entryService,
             $stateService,
             $assetService ?? new AssetMigrationService(),
-            new CkeditorRewriterService(),
+            $ckeditorRewriter ?? new CkeditorRewriterService(),
             static fn (callable $fn) => $fn(),
         );
     }
@@ -513,5 +514,83 @@ final class PayloadEntrySaverTest extends TestCase
             'asset' => '/uploads/media/gone.jpg',
         ]], $report['unresolvedAssets']);
         self::assertSame([], $report['mediaTokenIssues']);
+    }
+
+    // --- Task 8 review Finding 1/3 — media-token rewrite must be scoped ----
+    //
+    // rewriteMediaTokens() must call ONLY CkeditorRewriterService's narrow
+    // curly-token rewrite, never the full rewrite() pipeline — a normal body
+    // sharing a paragraph with a `{{kuma:media:N}}` token must not have its
+    // `[NT<id>]` internal links, `kma-*` classes, or raw
+    // `<img src="/uploads/media/...">` markup touched.
+
+    public function testMediaTokenRewriteIsScopedToCurlyTokensAndLeavesNtBracketClassAndRawImgMarkupByteIdentical(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new class extends AssetMigrationService {
+            public function resolveFromLegacyId(int $legacyId): int
+            {
+                return $legacyId === 5 ? 501 : 0;
+            }
+        };
+        $ckeditorRewriter = new CkeditorRewriterService();
+        $ckeditorRewriter->assetResolver = $assetService;
+        $saver = $this->makeSaver($entryService, $state, $assetService, $ckeditorRewriter);
+
+        $html = '<p>See {{kuma:media:5}}. <a href="[NT80]">next</a> <span class="kma-foo">x</span> <img src="/uploads/media/x.jpg"></p>';
+        $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:600', [
+            'sites' => ['en' => ['fieldValues' => ['body' => $html]]],
+        ]));
+
+        $result = $saver->save($payload);
+        $rewritten = $entryService->lastPerSite['en']['fieldValues']['body'];
+
+        self::assertStringContainsString('{asset:501@1:url}', $rewritten);
+        self::assertStringNotContainsString('{{kuma:media:5}}', $rewritten);
+
+        // Everything else must be byte-identical to the source — proves the
+        // full [NT]/[M]/img/class-strip pipeline never runs on payload load.
+        self::assertStringContainsString('<a href="[NT80]">next</a>', $rewritten);
+        self::assertStringContainsString('<span class="kma-foo">x</span>', $rewritten);
+        self::assertStringContainsString('<img src="/uploads/media/x.jpg">', $rewritten);
+        self::assertSame([], $result->mediaTokenIssues);
+    }
+
+    public function testCurlyMediaTokenNestedInsideMatrixBlockRecordsFieldSiteAndPathContextOnAnUnresolvedId(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new class extends AssetMigrationService {
+            public function resolveFromLegacyId(int $legacyId): int
+            {
+                return 0; // genuinely unresolvable
+            }
+        };
+        $saver = $this->makeSaver($entryService, $state, $assetService);
+
+        $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:601', [
+            'sites' => [
+                'en' => [
+                    'fieldValues' => [
+                        'pageBuilder' => [
+                            ['type' => 'contentBlock', 'fields' => ['body' => '<p>{{kuma:media:777}}</p>']],
+                        ],
+                    ],
+                ],
+            ],
+        ]));
+
+        $result = $saver->save($payload);
+
+        self::assertCount(1, $result->mediaTokenIssues);
+        $issue = $result->mediaTokenIssues[0];
+        self::assertSame('pageBuilder', $issue['field']);
+        self::assertSame('en', $issue['site']);
+        self::assertSame(['pageBuilder', 0, 'fields', 'body'], $issue['path']);
+        self::assertSame('media_token', $issue['tokenFamily']);
+        self::assertSame(777, $issue['legacyId']);
     }
 }

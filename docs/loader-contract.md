@@ -178,9 +178,9 @@ collaborators — neither requires the other to be configured:
 
 - `lameco\kunstmaanmigrator\load\AssetMigrationService::resolveFromLegacyUrl(string): int`
   — resolves `_asset`.
-- `lameco\kunstmaanmigrator\load\AssetMigrationService::resolveFromLegacyId(int): int`
-  plus `lameco\kunstmaanmigrator\finalize\CkeditorRewriterService::rewrite()`
-  — resolves `{{kuma:media:<id>}}`.
+- `lameco\kunstmaanmigrator\finalize\CkeditorRewriterService::rewriteCurlyMediaTokens()`
+  (which lazily delegates to `AssetMigrationService::resolveFromLegacyId(int): int`
+  via its `assetResolver` slot) — resolves `{{kuma:media:<id>}}`.
 
 ### `_asset` — filesystem JIT, no legacy DB required
 
@@ -218,14 +218,25 @@ seen (cached afterwards by state key `legacy_url:<sha1(path)>`).
 ### `{{kuma:media:<id>}}` — legacy-DB JIT, rewritten through CkeditorRewriterService
 
 Every string field value is cheaply checked for the substring
-`{{kuma:media:`; when present, every `{{kuma:media:<id>}}` token's `<id>` is
-resolved via `AssetMigrationService::resolveFromLegacyId()` (a legacy-DB JIT
-lookup by `kuma_media.id`, requiring the legacy DB connection — see env vars
-below), the resolved ids are seeded into `CkeditorRewriterService`'s
-kuma-media-id cache, and the whole string is run through
-`CkeditorRewriterService::rewrite()` (the same "make it Craft-native" pass
-that also strips `kma-*` classes, drops empty `<p>`s, and rewrites the
-legacy `[M<id>]`/`[NT<id>]` CKEditor-plugin placeholders).
+`{{kuma:media:`; when present, the string is run through
+`CkeditorRewriterService::rewriteCurlyMediaTokens()` — a narrow primitive that
+ONLY matches the `{{kuma:media:<id>}}` grammar. Each `<id>` is resolved lazily
+via `AssetResolver::resolveFromLegacyId()` (a legacy-DB JIT lookup by
+`kuma_media.id`, requiring the legacy DB connection — see env vars below;
+wired to the same `AssetMigrationService` singleton `_asset` resolution uses),
+with both hits and misses cached per request so a given id costs at most one
+resolver call regardless of how many times it recurs.
+
+This is deliberately **not** the full `CkeditorRewriterService::rewrite()`
+pipeline — the payload-load path only ever promises `{{kuma:media:<id>}}`
+rewriting, so `rewriteCurlyMediaTokens()` leaves every other transformation
+`rewrite()` performs completely untouched: `[M<id>]`/`[NT<id>]`
+CKEditor-plugin placeholders, raw `<img src="/uploads/media/...">` rewriting,
+and `kma-*` class/empty-`<p>` stripping. A body that merely shares a paragraph
+with a media token — e.g. an `[NT<id>]` internal link or a `kma-*` class two
+sentences later — is saved byte-identical apart from the token itself.
+`rewrite()` itself is unchanged and still runs in full elsewhere (the
+transform-stage `MatrixHandler`/`PlainTextHandler` field handlers).
 
 - Resolved — the token is rewritten to a Craft ref-token,
   `{asset:<craftAssetId>@<siteId>:url}`, identical in shape to every other

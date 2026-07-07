@@ -335,4 +335,43 @@ final class AssetResolutionTest extends TestCase
             $entryService->lastPerSite['en']['fieldValues']['pageBuilder'][0]['fields'],
         );
     }
+
+    /**
+     * Task 8 review (Finding 4) — parity with
+     * testUnresolvedAssetNestedInsideAMatrixBlockRecordsTheContainerPath():
+     * same nested shape, but the file IS present on disk, so the resolved id
+     * must land in the exact nested slot rather than being dropped.
+     */
+    public function testResolvedAssetNestedInsideAMatrixBlockSubstitutesTheResolvedId(): void
+    {
+        file_put_contents($this->tempMediaRoot . '/present.jpg', 'fake-bytes');
+
+        $state = new AssetResolutionInMemoryMigrationStateService();
+        $entryService = new AssetResolutionFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new FakeAssetMigrationService();
+        $assetService->mediaRoot = $this->tempMediaRoot;
+        $assetService->resolvedUrlIds = ['/uploads/media/present.jpg' => 501];
+        $saver = $this->makeSaver($entryService, $state, $assetService);
+
+        $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:403', [
+            'sites' => [
+                'en' => [
+                    'fieldValues' => [
+                        'pageBuilder' => [
+                            ['type' => 'contentMediaBlock', 'fields' => ['media' => ['_asset' => '/uploads/media/present.jpg']]],
+                        ],
+                    ],
+                ],
+            ],
+        ]));
+
+        $result = $saver->save($payload);
+
+        self::assertSame([], $result->unresolvedAssets);
+        self::assertSame(
+            501,
+            $entryService->lastPerSite['en']['fieldValues']['pageBuilder'][0]['fields']['media'],
+        );
+    }
 }

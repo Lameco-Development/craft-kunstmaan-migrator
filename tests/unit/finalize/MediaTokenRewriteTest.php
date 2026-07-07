@@ -85,4 +85,52 @@ final class MediaTokenRewriteTest extends TestCase
         self::assertSame($html, $svc->rewrite($html, 1));
         self::assertSame([], $svc->consumeUnresolvedDiagnostics());
     }
+
+    /**
+     * Task 8 review (Finding 1) — `rewriteCurlyMediaTokens()` is the narrow
+     * primitive `PayloadEntrySaver` now calls directly instead of the full
+     * `rewrite()` pipeline. This locks in that the primitive itself only ever
+     * touches the `{{kuma:media:<id>}}` grammar: a `[NT<id>]` internal-link
+     * placeholder, a `kma-*` class, and a raw `<img src="/uploads/media/...">`
+     * sharing the same string must all survive byte-identical.
+     */
+    public function testRewriteCurlyMediaTokensOnlyTouchesTheCurlyTokenAndLeavesTheRestOfThePipelineUntouched(): void
+    {
+        $svc = $this->service();
+        $svc->seedKumaMediaIdCache([5 => 501]);
+
+        $html = '<p>See {{kuma:media:5}}. <a href="[NT80]">next</a> <span class="kma-foo">x</span> <img src="/uploads/media/x.jpg"></p>';
+        $out = $svc->rewriteCurlyMediaTokens($html, 7);
+
+        self::assertStringContainsString('{asset:501@7:url}', $out);
+        self::assertStringNotContainsString('{{kuma:media:5}}', $out);
+        self::assertStringContainsString('<a href="[NT80]">next</a>', $out);
+        self::assertStringContainsString('<span class="kma-foo">x</span>', $out);
+        self::assertStringContainsString('<img src="/uploads/media/x.jpg">', $out);
+    }
+
+    /**
+     * Task 8 review (Finding 2) — a broken media id must not trigger
+     * `AssetResolver::resolveFromLegacyId()` (the expensive legacy-DB JIT
+     * ingest attempt) more than once per rewrite pass, even when the same
+     * unresolved id appears twice in the same string.
+     */
+    public function testResolveKumaMediaIdOnlyCallsTheAssetResolverOnceForTheSameUnresolvedIdWithinOnePass(): void
+    {
+        $svc = $this->service();
+        $resolver = new class {
+            public int $calls = 0;
+
+            public function resolveFromLegacyId(int $kumaMediaId): int
+            {
+                $this->calls++;
+                return 0;
+            }
+        };
+        $svc->assetResolver = $resolver;
+
+        $svc->rewriteCurlyMediaTokens('<p>{{kuma:media:42}} and {{kuma:media:42}} again</p>', 1);
+
+        self::assertSame(1, $resolver->calls, 'resolveFromLegacyId() must be called at most once per distinct id per rewrite pass.');
+    }
 }

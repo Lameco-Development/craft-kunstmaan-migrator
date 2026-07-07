@@ -105,6 +105,15 @@ class CkeditorRewriterService extends Component
 
     private bool $kumaMediaCacheWarm = false;
 
+    /**
+     * @var array<int, true> kuma_media.id known to have no matching Craft
+     *   asset this request — Task 8 review Finding 2: without this, a broken
+     *   id occurring more than once (same string, different fields, or across
+     *   saves) would re-invoke AssetResolver::resolveFromLegacyId()'s
+     *   expensive legacy-DB ingest attempt every single time.
+     */
+    private array $kumaMediaIdMissCache = [];
+
     /** @var array<int, int> kuma_node_translations.id → Craft entry numeric id */
     private array $ntToEntryCache = [];
 
@@ -294,6 +303,7 @@ class CkeditorRewriterService extends Component
         $this->urlToKumaMediaIdCache = [];
         $this->kumaMediaIdCache = [];
         $this->kumaMediaCacheWarm = false;
+        $this->kumaMediaIdMissCache = [];
         $this->ntToEntryCache = [];
         $this->ntCacheWarm = false;
         $this->unresolvedDiagnostics = [];
@@ -369,8 +379,18 @@ class CkeditorRewriterService extends Component
      * plumbing as `rewriteMediaPlaceholders()` — only the surface regex
      * differs, since this is a distinct token grammar (see
      * KUMA_MEDIA_TOKEN_REGEX docblock).
+     *
+     * Public (Task 8 review Finding 1): `PayloadEntrySaver` calls this method
+     * directly instead of the full `rewrite()` pipeline — the loader-contract
+     * payload path only ever promises `{{kuma:media:<id>}}` rewriting, so it
+     * must not also run `rewrite()`'s `[NT<id>]`/`[M<id>]` placeholder
+     * resolution, raw `<img src="/uploads/media/...">` rewriting, or
+     * `kma-*` class/empty-`<p>` stripping — those remain full-pipeline-only
+     * concerns for whichever caller genuinely wants them (`rewrite()` itself,
+     * still used by `MatrixHandler`/`PlainTextHandler`'s transform-stage
+     * field handlers).
      */
-    private function rewriteCurlyMediaTokens(string $html, int $siteId): string
+    public function rewriteCurlyMediaTokens(string $html, int $siteId): string
     {
         if (!str_contains($html, '{{kuma:media:')) {
             return $html;
@@ -408,7 +428,9 @@ class CkeditorRewriterService extends Component
      * Phase 05.5-05 (D-05 / D-07): on cache miss, delegate to AssetResolver
      * so the asset materialises lazily. Positive hits are written back into
      * the rewriter's own per-request cache so subsequent lookups short-circuit
-     * without re-entering the resolver.
+     * without re-entering the resolver. Misses are cached too (Task 8 review
+     * Finding 2) so a genuinely broken id costs at most one resolver call
+     * per request, however many times it recurs.
      */
     private function resolveKumaMediaId(int $kumaMediaId): ?int
     {
@@ -418,6 +440,9 @@ class CkeditorRewriterService extends Component
         if (isset($this->kumaMediaIdCache[$kumaMediaId])) {
             return $this->kumaMediaIdCache[$kumaMediaId];
         }
+        if (isset($this->kumaMediaIdMissCache[$kumaMediaId])) {
+            return null;
+        }
         if ($this->assetResolver === null) {
             return null;
         }
@@ -425,6 +450,7 @@ class CkeditorRewriterService extends Component
         if ($resolved > 0) {
             return $this->kumaMediaIdCache[$kumaMediaId] = $resolved;
         }
+        $this->kumaMediaIdMissCache[$kumaMediaId] = true;
         return null;
     }
 

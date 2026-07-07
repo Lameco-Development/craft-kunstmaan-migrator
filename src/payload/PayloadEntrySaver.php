@@ -27,7 +27,9 @@ use RuntimeException;
  * nodes (via `AssetMigrationService::resolveFromLegacyUrl`, same
  * present/omit contract as an unresolved `_ref`) and `{{kuma:media:<id>}}`
  * tokens embedded in string field values (via
- * `AssetMigrationService::resolveFromLegacyId` + `CkeditorRewriterService`).
+ * `CkeditorRewriterService::rewriteCurlyMediaTokens()` — the narrow
+ * curly-token-only primitive, never the full `rewrite()` pipeline; see
+ * `rewriteMediaTokens()` below).
  *
  * By design, `save()` is only ever called with a `Payload` that already
  * passed `PayloadValidator` — `LoadController`'s live branch validates the
@@ -306,13 +308,26 @@ final class PayloadEntrySaver
 
     /**
      * Resolve every `{{kuma:media:<id>}}` token in a string field value
-     * (docs/loader-contract.md): pre-seed `CkeditorRewriterService`'s
-     * kuma-media-id cache from `AssetMigrationService::resolveFromLegacyId`
-     * for every id found, then drive the full `rewrite()` pass so the same
-     * token grammar Craft ref-tokens use comes out the other end. Unresolved
-     * ids are left as an inert visible marker by `rewrite()` itself (never
-     * silently dropped) — this method only adds `field`/`site`/`path`
-     * context to whatever diagnostics that pass produced.
+     * (docs/loader-contract.md) via `CkeditorRewriterService::rewriteCurlyMediaTokens()`
+     * — the narrow, curly-token-only primitive, NOT the full `rewrite()`
+     * pipeline (Task 8 review Finding 1). The payload load path only ever
+     * promises `{{kuma:media:<id>}}` rewriting, so it must never also run
+     * `rewrite()`'s `[NT<id>]`/`[M<id>]` placeholder resolution, raw
+     * `<img src="/uploads/media/...">` rewriting, or `kma-*` class/empty-`<p>`
+     * stripping — a normal body merely sharing a paragraph with a media token
+     * would otherwise get those unrelated transformations for free.
+     *
+     * Id resolution itself is left entirely to
+     * `CkeditorRewriterService::rewriteCurlyMediaTokens()`'s own lazy
+     * `AssetResolver::resolveFromLegacyId()` fallback (wired to the same
+     * `AssetMigrationService` singleton in production, `Plugin::init()`) —
+     * no pre-seeding here, so each distinct id costs at most one resolver
+     * call (Task 8 review Finding 2). Unresolved ids are left as an inert
+     * visible marker by that method itself (never silently dropped); this
+     * method only adds `field`/`site`/`path` context to whatever diagnostics
+     * it produced, filtered to the `media_token` family so a shared
+     * diagnostic buffer can never leak an unrelated token family's shape into
+     * `mediaTokenIssues`.
      *
      * @param list<int|string> $path
      * @param list<array<string, mixed>> $mediaTokenIssues
@@ -325,23 +340,12 @@ final class PayloadEntrySaver
         array $path,
         array &$mediaTokenIssues,
     ): string {
-        if (preg_match_all('/\{\{kuma:media:(\d+)\}\}/', $html, $matches) > 0) {
-            $seed = [];
-            foreach (array_unique($matches[1]) as $idStr) {
-                $mediaId = (int) $idStr;
-                $resolvedId = $this->assetService->resolveFromLegacyId($mediaId);
-                if ($resolvedId > 0) {
-                    $seed[$mediaId] = $resolvedId;
-                }
-            }
-            if ($seed !== []) {
-                $this->ckeditorRewriter->seedKumaMediaIdCache($seed);
-            }
-        }
-
-        $rewritten = $this->ckeditorRewriter->rewrite($html, $siteId);
+        $rewritten = $this->ckeditorRewriter->rewriteCurlyMediaTokens($html, $siteId);
 
         foreach ($this->ckeditorRewriter->consumeUnresolvedDiagnostics() as $diagnostic) {
+            if (($diagnostic['tokenFamily'] ?? null) !== 'media_token') {
+                continue;
+            }
             $mediaTokenIssues[] = ['field' => $fieldHandle, 'site' => $siteHandle, 'path' => $path] + $diagnostic;
         }
 
