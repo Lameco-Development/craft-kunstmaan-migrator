@@ -865,8 +865,9 @@ class AssetMigrationService extends Component
      * targetType='asset'. Video-type state rows are just unlinked from
      * state — there's no element to remove.
      *
-     * Used by kuma-loader/migrate/truncate so re-runs start from a
-     * clean Craft DB but leave the legacy MySQL untouched.
+     * Not wired to a console command; call directly to reset assets so a
+     * re-run starts from a clean Craft DB but leaves the legacy MySQL
+     * untouched.
      */
     public function truncate(): int
     {

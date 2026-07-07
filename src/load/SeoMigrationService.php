@@ -250,9 +250,9 @@ class SeoMigrationService extends Component
 
     /**
      * Scoped variant — write SEO for a single Craft entry id. Useful for
-     * `./craft kuma-loader/migrate/seo --entry={id}` debugging and
-     * for re-running a specific entry after editorial fixes. Returns the
-     * number of sites where SEO was written.
+     * debugging and for re-running a specific entry after editorial fixes
+     * (there is no standalone console subcommand for this — call the method
+     * directly). Returns the number of sites where SEO was written.
      *
      * @param array<string, int>|null $refIdsByLocale When called from
      *        AtomicMigrationService during the same DB transaction that
@@ -365,7 +365,7 @@ class SeoMigrationService extends Component
         // AtomicMigrationService (avoids reading a state-meta write made
         // earlier in the same DB transaction, which may not be visible to
         // the streaming cursor opened by all()). Fall back to whatever was
-        // persisted in meta for standalone re-runs via migrate/seo.
+        // persisted in meta for standalone re-runs of this method.
         $metaArr = is_array($meta) ? $meta : (is_string($meta) ? (array) (json_decode($meta, true) ?? []) : []);
         $refIdsByLocale = $directRefIdsByLocale !== null && $directRefIdsByLocale !== []
             ? $directRefIdsByLocale

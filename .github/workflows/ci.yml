@@ -66,5 +66,26 @@ jobs:
             echo "Doctor passed with explicit scratch-site configuration."
             exit 0
           fi
-          printf '%s\n' "$OUTPUT" | grep -E "Legacy DB|Kunstmaan source path|Anthropic|FAIL"
-          echo "Doctor failed for expected missing scratch-site migration configuration; plugin command loaded successfully."
+
+          # Doctor's own exit code isn't a reliable smoke signal here: a bare
+          # scratch install legitimately fails checks like state_table (the
+          # plugin hasn't been through `plugin/install`, so the migrator's
+          # state table doesn't exist yet). Task 6 rewrote doctor to emit
+          # pure JSON (rows shaped like {"check":"state_table","ok":...}),
+          # replacing the old "Legacy DB / Kunstmaan source path / Anthropic
+          # / FAIL" text this step used to grep for — that prose is gone, so
+          # grepping it would always miss and, under GitHub Actions' default
+          # `bash -eo pipefail`, abort this step on every single run. Assert
+          # the JSON shape instead, guarded by `if` (not a bare pipe) so a
+          # miss here fails the smoke job deliberately rather than via
+          # pipefail: this only trips on an unknown-command or fatal PHP
+          # error, which is what this smoke job actually needs to catch.
+          if ! printf '%s\n' "$OUTPUT" | php -r 'json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);' > /dev/null 2>&1; then
+            echo "::error::doctor did not emit valid JSON (unknown command or fatal error?)"
+            exit 1
+          fi
+          if ! printf '%s\n' "$OUTPUT" | grep -q '"check":"state_table"'; then
+            echo "::error::doctor JSON is missing the expected state_table check"
+            exit 1
+          fi
+          echo "Doctor ran and returned valid JSON with known checks (command exit status was ${STATUS}); plugin command loaded successfully."

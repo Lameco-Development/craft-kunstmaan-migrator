@@ -24,9 +24,10 @@ use yii\db\Query;
      * delimiter-safe source payload:
      *   <!-- MIGRATION:UNRESOLVED sourceB64=... -->
      * so editors can grep and tooling can recover the source. HTML Purifier
-     * strips comments on save, so rendered pages won't leak them — Plan 09's
-     * `kuma-loader/migrate/check` scans the raw DB column BEFORE the
-     * save-pipeline runs through Purifier.
+     * strips comments on save, so rendered pages won't leak them — scan the
+     * raw DB column for this marker BEFORE the save-pipeline runs through
+     * Purifier (no dedicated CLI command exists for this; grep the column
+     * directly).
  *
  * Ref-token format (Craft 5 CKEditor, imageMode=img):
  *   {asset:<numeric-id>@<siteId>:url}

@@ -818,8 +818,9 @@ class EntryMigrationService extends Component
      *    each block, but the project config never added it to the 50 matrix
      *    block entry types — so Craft's CustomFieldBehavior rejects it as
      *    an unknown property. Stripping it loses idempotent UID threading
-     *    on re-runs, but MIGRATION-README already mandates
-     *    `migrate/truncate --confirm` before any re-run, so this is OK.
+     *    on re-runs, but a full truncate (see `AssetMigrationService::truncate()`
+     *    and the sibling `truncate()` methods) is expected before any
+     *    re-run, so this is OK.
      *
      * 2. Lift `title` (and `heading`, which was a typo in CasesMigration's
      *    newsGridBlock payload) from `fields` to peer-level. Matrix block

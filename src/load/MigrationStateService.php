@@ -430,8 +430,8 @@ class MigrationStateService extends Component implements MigrationStateReader
      * Return the most recent state-row meta as an associative array, or null
      * if the state table is empty / the newest row has no meta payload.
      *
-     * Used by migrate/check D-17 drift detection (Plan 05.5-06 Task 3) to
-     * compare last-run filter settings against current CP settings. Reads
+     * Intended for D-17 drift detection (Plan 05.5-06 Task 3) — comparing
+     * last-run filter settings against current CP settings. Reads
      * the newest row by `dateUpdated DESC` — matches the column declared in
      * the install migration.
      *
