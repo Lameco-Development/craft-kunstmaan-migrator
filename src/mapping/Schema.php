@@ -25,6 +25,9 @@ final class Schema
 
     private const CHILD_KEYS = ['table', 'fk', 'order', 'map', 'ignore', 'todo'];
 
+    private const PAGE_KEYS = ['live', 'table', 'section', 'entryType', 'map', 'ignore',
+        'contexts', 'postDate', 'manual', 'drop', 'todo', 'note'];
+
     private const SEQUENCE_KEYS = ['id', 'match', 'guard', 'action', 'block', 'map', 'runs', 'else', 'note'];
 
     private const CONFLICT_KEYS = ['status', 'artifact', 'spec', 'note'];
@@ -39,6 +42,7 @@ final class Schema
         $this->checkTopLevel($mapping, $errors);
         $this->checkEnvironments($mapping, $errors);
         $this->checkParts($mapping, $errors);
+        $this->checkPages($mapping, $errors);
         $this->checkSequence($mapping, $errors);
         $this->checkLaneCollisions($mapping, $errors);
 
@@ -77,6 +81,53 @@ final class Schema
 
             if (($spec['locales'] ?? []) === []) {
                 $errors[] = sprintf('environment `%s` has no `locales:` — nothing would be written to any site', $env);
+            }
+        }
+    }
+
+    /**
+     * A page entity's own columns are content too.
+     *
+     * The map-or-ignore rule was enforced on `parts:` only, so a page could name a table and
+     * never say what to do with its columns. That is how 147 columns across 33 page tables —
+     * every partner address, every editorial summary and publication date — stayed unmapped
+     * while the mapping validated clean and coverage reported no holes.
+     *
+     * @param list<string> $errors
+     */
+    private function checkPages(Mapping $mapping, array &$errors): void
+    {
+        foreach ($mapping->pages() as $name => $spec) {
+            if (!is_array($spec)) {
+                $errors[] = sprintf('page `%s` is not a mapping', $name);
+
+                continue;
+            }
+
+            foreach (array_diff(array_keys($spec), self::PAGE_KEYS) as $key) {
+                $errors[] = sprintf('page `%s`: unknown key `%s`', $name, $key);
+            }
+
+            if (isset($spec['manual']) || isset($spec['drop'])) {
+                continue;
+            }
+
+            if (($spec['entryType'] ?? '') === '') {
+                $errors[] = sprintf('page `%s`: no `entryType:`', $name);
+            }
+
+            // `ignore: []` present-but-empty is a declaration in its own right: this table
+            // carries nothing beyond the columns the node already supplies. Absent is not the
+            // same as empty, so test for the key rather than its contents.
+            if (isset($spec['table'])
+                && ($spec['map'] ?? []) === []
+                && !array_key_exists('ignore', $spec)
+            ) {
+                $errors[] = sprintf(
+                    'page `%s`: names table `%s` but neither maps nor ignores any of its columns',
+                    $name,
+                    $spec['table'],
+                );
             }
         }
     }

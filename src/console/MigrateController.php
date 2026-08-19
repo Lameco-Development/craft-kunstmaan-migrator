@@ -41,8 +41,13 @@ final class MigrateController extends Controller
     /** Path to the mapping YAML. */
     public string $mapping = '';
 
-    /** Compile only this legacy environment. */
-    public ?string $env = null;
+    /**
+     * Compile only this legacy environment.
+     *
+     * Not `--env`: Craft's console controllers already own that option for selecting
+     * CRAFT_ENVIRONMENT, and the collision silently ignored the filter.
+     */
+    public ?string $legacyEnv = null;
 
     /** Stop after this many entries per environment. */
     public ?int $limit = null;
@@ -63,7 +68,7 @@ final class MigrateController extends Controller
     {
         return array_merge(
             parent::options($actionID),
-            ['mapping', 'env', 'limit', 'force', 'dryRun', 'dump', 'specs'],
+            ['mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'specs'],
         );
     }
 
@@ -115,7 +120,7 @@ final class MigrateController extends Controller
         $problems = [];
 
         foreach ($mapping->environments() as $env => $spec) {
-            if ($this->env !== null && $env !== $this->env) {
+            if ($this->legacyEnv !== null && $env !== $this->legacyEnv) {
                 continue;
             }
 

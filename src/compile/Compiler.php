@@ -72,7 +72,10 @@ final class Compiler
                     continue;
                 }
 
-                $sites[$site] = $this->site($translation, $node, $parts, $builder, $sequencer, $contexts, $published, $environment);
+                $sites[$site] = $this->site(
+                    $translation, $node, $parts, $builder, $sequencer,
+                    $contexts, $published, $environment, $spec,
+                );
             }
 
             if ($sites === []) {
@@ -100,6 +103,7 @@ final class Compiler
         array $contexts,
         array $published,
         string $environment,
+        array $pageSpec,
     ): array {
         $site = [
             'enabled' => true,
@@ -111,8 +115,28 @@ final class Compiler
             $site['parentRef'] = $this->uid($environment, $node['parentId']);
         }
 
-        if ($translation['created'] !== null) {
-            $site['postDate'] = date(DATE_ATOM, (int) strtotime($translation['created']));
+        // A page entity's own columns are content: the summary, the category, the overview
+        // image, and — for editorial types — the publication date. Reading only the node
+        // gives an entry that looks migrated and is missing most of itself.
+        $pageRow = isset($pageSpec['table'])
+            ? $parts->row((string) $pageSpec['table'], $translation['entityId'])
+            : null;
+
+        $pageFields = $pageRow !== null
+            ? $builder->fieldsFrom($pageSpec['map'] ?? [], $pageRow, $translation['entity'])
+            : [];
+
+        // The node's `created` is when the page was made, not when it was published. Editorial
+        // types carry their own date, and on the first real corpus the two disagreed on 279 of
+        // 434 blog posts — several by months.
+        $postDate = $translation['created'];
+
+        if ($pageRow !== null && isset($pageSpec['postDate'])) {
+            $postDate = $pageRow[(string) $pageSpec['postDate']] ?? $postDate;
+        }
+
+        if ($postDate !== null) {
+            $site['postDate'] = date(DATE_ATOM, (int) strtotime((string) $postDate));
         }
 
         $builderBlocks = [];
@@ -131,8 +155,12 @@ final class Compiler
         }
 
         if ($builderBlocks !== []) {
-            $field = (string) (reset($contexts)['field'] ?? 'commonPageBuilder');
-            $site['fieldValues'] = [$field => $builderBlocks];
+            $field = (string) (reset($contexts)['field'] ?? 'pageBuilder');
+            $pageFields[$field] = $builderBlocks;
+        }
+
+        if ($pageFields !== []) {
+            $site['fieldValues'] = $pageFields;
         }
 
         return $site;

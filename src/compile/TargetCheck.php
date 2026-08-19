@@ -38,6 +38,21 @@ final class TargetCheck
 
             if ($entryType !== '' && !$this->schema->hasEntryType($entryType)) {
                 $errors[] = sprintf('page `%s`: no entry type `%s` in Craft', $name, $entryType);
+
+                continue;
+            }
+
+            // A page's own columns land in real fields too, so they need the same check the
+            // parts get. Without it a page map is free to name fields that do not exist.
+            foreach (array_keys($spec['map'] ?? []) as $target) {
+                if ($this->schema->slot($entryType, (string) $target) === null) {
+                    $errors[] = sprintf(
+                        'page `%s`: entry type `%s` has no field `%s`',
+                        $name,
+                        $entryType,
+                        $target,
+                    );
+                }
             }
         }
 
