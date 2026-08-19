@@ -285,7 +285,8 @@ final class AssetResolutionTest extends TestCase
 
         $result = $saver->save($payload);
 
-        self::assertSame(501, $entryService->lastPerSite['en']['fieldValues']['media']);
+        // A relation field takes a list of element ids; a bare integer relates nothing.
+        self::assertSame([501], $entryService->lastPerSite['en']['fieldValues']['media']);
         self::assertSame([], $result->unresolvedAssets);
     }
 
@@ -387,7 +388,7 @@ final class AssetResolutionTest extends TestCase
 
         self::assertSame([], $result->unresolvedAssets);
         self::assertSame(
-            501,
+            [501],
             $entryService->lastPerSite['en']['fieldValues']['pageBuilder'][0]['fields']['media'],
         );
     }
