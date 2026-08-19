@@ -121,7 +121,7 @@ final class Compiler
             $sequence = $parts->sequence($translation['entity'], $translation['entityId'], (string) $context);
 
             foreach ($sequencer->apply($sequence) as $emission) {
-                $block = $this->blockFor($emission, $builder);
+                $block = $this->blockFor($emission, $builder, $builder->environment());
 
                 if ($block !== null) {
                     $builderBlocks[] = $block;
@@ -139,7 +139,7 @@ final class Compiler
     }
 
     /** @return array{type:string, fields:array<string,mixed>}|null */
-    private function blockFor(array $emission, BlockBuilder $builder): ?array
+    private function blockFor(array $emission, BlockBuilder $builder, string $environment): ?array
     {
         // A heading with nowhere to be absorbed becomes a block of its own.
         if (isset($emission['emit'])) {
@@ -155,7 +155,22 @@ final class Compiler
                 $fields[$path] = $value;
             }
 
-            return ['type' => (string) $emitted['block'], 'fields' => $this->nest($fields, (string) $emitted['block'])];
+            $nested = $this->nest($fields, (string) $emitted['block']);
+
+            // A block synthesised by a sequence rule still needs a stable identity, or a
+            // re-run appends a second copy of it. The head part it came from is that identity.
+            $headSpec = $this->mapping->parts()[$emission['part']] ?? [];
+
+            if (isset($headSpec['table'])) {
+                $nested['_sourcePartRef'] = sprintf(
+                    '%s:%s:%d',
+                    $environment,
+                    $headSpec['table'],
+                    $emission['id'],
+                );
+            }
+
+            return ['type' => (string) $emitted['block'], 'fields' => $nested];
         }
 
         $spec = $this->mapping->parts()[$emission['part']] ?? null;

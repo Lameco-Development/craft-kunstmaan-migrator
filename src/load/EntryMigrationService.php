@@ -837,6 +837,11 @@ class EntryMigrationService extends Component
                 unset($block['fields']['_sourcePartRef']);
                 unset($block['fields']['_suppressNativeTitleFallback']);
 
+                // Nested Matrix fields carry blocks of their own. A tag left behind in one
+                // reaches setFieldValues and Craft rejects it as an unknown custom field, so
+                // the strip has to follow the nesting rather than stop at the first level.
+                $block['fields'] = $this->stripSourcePartRefs($block['fields'], $report, $context);
+
                 // Lift native-property keys from fields → peer.
                 // Prefer existing peer-level value if the caller already set one.
                 foreach (['title', 'heading'] as $nativeKey) {

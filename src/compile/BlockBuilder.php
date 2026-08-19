@@ -46,6 +46,7 @@ final class BlockBuilder
 
         $this->block = (string) $block;
         $fields = $this->fieldsFrom($spec['map'] ?? [], $row, $partClass);
+        $fields['_sourcePartRef'] = $this->sourceRef((string) $table, $partId);
 
         foreach ($spec['children'] ?? [] as $field => $child) {
             $rows = $this->parts->children(
@@ -58,6 +59,8 @@ final class BlockBuilder
             $blocks = [];
 
             foreach ($rows as $childRow) {
+                // Refs are emitted only on top-level blocks, which is the level the loader
+                // tracks. A child row's stability follows from its parent block's.
                 $blocks[] = [
                     'type' => $this->childBlockType($field),
                     'fields' => $this->fieldsFrom($child['map'] ?? [], $childRow, $partClass . '.' . $field),
@@ -184,6 +187,20 @@ final class BlockBuilder
         }
 
         return $field;
+    }
+
+    /**
+     * A stable identity for one Matrix block, carried as `_sourcePartRef`.
+     *
+     * The loader strips this before saving, then uses it to match the blocks it just wrote
+     * back to their source rows so the next run updates them in place. Without it Craft has
+     * no way to recognise a block it already created, and a re-run appends instead of
+     * replacing. The legacy row's own primary key is the natural identity: it is stable for
+     * as long as the source database is.
+     */
+    private function sourceRef(string $table, int $id): string
+    {
+        return sprintf('%s:%s:%d', $this->environment, $table, $id);
     }
 
     public function environment(): string
