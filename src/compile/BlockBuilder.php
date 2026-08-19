@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\compile;
 
+use lameco\kunstmaanmigrator\legacy\MediaIndex;
 use lameco\kunstmaanmigrator\legacy\PartReader;
 
 /**
@@ -22,6 +23,7 @@ final class BlockBuilder
         private readonly string $environment,
         private readonly ?TargetModel $schema = null,
         private ?string $block = null,
+        private readonly ?MediaIndex $media = null,
     ) {
     }
 
@@ -109,6 +111,18 @@ final class BlockBuilder
         $value = $row[$column] ?? null;
 
         foreach ($parts as $transform) {
+            // A legacy media column holds an id; the loader resolves a path. Translating
+            // here keeps the `asset` transform itself free of any database access.
+            if ($transform === 'asset') {
+                $value = $this->media?->pathFor($value) ?? null;
+
+                if ($value === null) {
+                    $this->transforms->recordMissingAsset($context, $row[$column] ?? null);
+
+                    return null;
+                }
+            }
+
             $value = $this->transforms->apply($transform, $value, $context);
         }
 

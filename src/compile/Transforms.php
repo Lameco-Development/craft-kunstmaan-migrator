@@ -141,6 +141,17 @@ final class Transforms
         );
     }
 
+    /**
+     * A media column pointing at a row that is deleted or gone. Counted rather than dropped
+     * silently — a missing image is a content decision, not a detail.
+     */
+    public function recordMissingAsset(?string $context, mixed $id): void
+    {
+        if ($id !== null && $id !== '') {
+            $this->record('asset', 'media:' . (string) $id, 'unresolved', $context);
+        }
+    }
+
     private function record(string $transform, mixed $from, mixed $to, ?string $context): void
     {
         $this->lossReport[] = ['transform' => $transform, 'from' => $from, 'to' => $to, 'part' => $context];

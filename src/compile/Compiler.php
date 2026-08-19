@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\compile;
 
 use lameco\kunstmaanmigrator\legacy\LegacyDatabase;
+use lameco\kunstmaanmigrator\legacy\MediaIndex;
 use lameco\kunstmaanmigrator\legacy\PageReader;
 use lameco\kunstmaanmigrator\legacy\PartReader;
 use lameco\kunstmaanmigrator\mapping\Mapping;
@@ -40,7 +41,14 @@ final class Compiler
         $pdo = $db->pdo();
         $pages = new PageReader($pdo);
         $parts = new PartReader($pdo);
-        $builder = new BlockBuilder($parts, $this->transforms, $environment, $this->schema);
+        $builder = new BlockBuilder(
+            $parts,
+            $this->transforms,
+            $environment,
+            $this->schema,
+            null,
+            MediaIndex::load($pdo),
+        );
         $sequencer = new SequenceEngine($this->mapping->sequence(), $this->mapping->parts(), $parts, $builder, $this->schema);
 
         $locales = ($this->mapping->environments()[$environment] ?? [])['locales'] ?? [];
@@ -75,6 +83,7 @@ final class Compiler
                 $sites[$site] = $this->site(
                     $translation, $node, $parts, $builder, $sequencer,
                     $contexts, $published, $environment, $spec,
+                    (string) $spec['entryType'],
                 );
             }
 
@@ -104,6 +113,7 @@ final class Compiler
         array $published,
         string $environment,
         array $pageSpec,
+        string $entryType,
     ): array {
         $site = [
             'enabled' => true,
@@ -144,13 +154,35 @@ final class Compiler
         foreach ($contexts as $context => $target) {
             $sequence = $parts->sequence($translation['entity'], $translation['entityId'], (string) $context);
 
+            $field = (string) ($target['field'] ?? 'pageBuilder');
+
+            // Some entry types have no Page Builder at all — casePage and partnerPage carry
+            // their own structured fields instead. Emitting one anyway makes Craft reject the
+            // whole entry, so the parts are dropped here and counted.
+            if ($sequence !== [] && $this->schema !== null && $this->schema->slot($entryType, $field) === null) {
+                $this->skip(sprintf('%s has no %s — %d parts dropped', $entryType, $field, count($sequence)));
+
+                continue;
+            }
+
             foreach ($sequencer->apply($sequence) as $emission) {
                 $block = $this->blockFor($emission, $builder, $builder->environment());
 
-                if ($block !== null) {
-                    $builderBlocks[] = $block;
-                    $this->blocks++;
+                if ($block === null) {
+                    continue;
                 }
+
+                // A Page Builder does not accept every block: editorial entry types carry a
+                // deliberately narrower subset. Emitting a block the field disallows produces
+                // a payload Craft rejects wholesale, taking the rest of the page with it.
+                if (!$this->allows($entryType, $field, $block['type'])) {
+                    $this->skip(sprintf('%s not allowed on %s.%s', $block['type'], $entryType, $field));
+
+                    continue;
+                }
+
+                $builderBlocks[] = $block;
+                $this->blocks++;
             }
         }
 
@@ -256,6 +288,22 @@ final class Compiler
     private function uid(string $environment, int $nodeId): string
     {
         return sprintf('kuma:%s:kuma_nodes:%d', $environment, $nodeId);
+    }
+
+    /** Whether a Matrix field on this entry type accepts blocks of the given type. */
+    private function allows(string $entryType, string $field, string $blockType): bool
+    {
+        if ($this->schema === null) {
+            return true;
+        }
+
+        $slot = $this->schema->slot($entryType, $field);
+
+        if ($slot === null) {
+            return false;
+        }
+
+        return $slot['nested'] === [] || in_array($blockType, $slot['nested'], true);
     }
 
     private function skip(string $reason): void
