@@ -1,6 +1,6 @@
 {
     "name": "lameco/craft-kunstmaan-migrator",
-    "description": "Thin payload loader for Kunstmaan→Craft migrations",
+    "description": "Thin payload loader for Kunstmaan\u2192Craft migrations",
     "version": "2.0.0-alpha.1",
     "type": "craft-plugin",
     "license": "MIT",
@@ -14,7 +14,8 @@
         "php": "^8.3",
         "craftcms/cms": "^5.0",
         "craftcms/ckeditor": "^4.0 || ^5.0",
-        "symfony/dotenv": "^6.4 || ^7.0"
+        "symfony/dotenv": "^6.4 || ^7.0",
+        "symfony/yaml": "^6.4 || ^7.0"
     },
     "suggest": {
         "nystudio107/craft-seomatic": "Enables the SEOmatic adapter (^5.1).",

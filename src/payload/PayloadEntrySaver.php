@@ -59,11 +59,25 @@ final class PayloadEntrySaver
         private readonly AssetMigrationService $assetService,
         private readonly CkeditorRewriterService $ckeditorRewriter,
         ?callable $transactionRunner = null,
+        /**
+         * Refresh an entry that already exists.
+         *
+         * EntryMigrationService short-circuits on a re-run unless told otherwise, which is
+         * right for resuming an interrupted load and wrong for reloading after the payload
+         * changed. Without this the loader reports a save and writes nothing.
+         */
+        private readonly bool $force = false,
     ) {
         $this->refResolver = new RefResolver($stateService);
         $this->transactionRunner = $transactionRunner ?? static function (callable $fn) {
             return Craft::$app->getDb()->transaction($fn);
         };
+    }
+
+    /** Whether an already-existing entry is refreshed rather than left untouched. */
+    public function refreshesExisting(): bool
+    {
+        return $this->force;
     }
 
     public function save(Payload $p): SaveResult
@@ -142,6 +156,7 @@ final class PayloadEntrySaver
             $stateSource,
             $stateKey,
             $perSite,
+            $this->force,
         );
 
         // Reflects THIS run's deferred state, overwriting whatever a

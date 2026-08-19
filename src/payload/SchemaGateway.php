@@ -45,4 +45,17 @@ interface SchemaGateway
      * @return list<string> allowed block-type (nested entry type) handles for a Matrix field; [] when the field isn't a Matrix field or is unknown
      */
     public function blockTypesFor(string $entryTypeHandle, string $fieldHandle): array;
+
+    /**
+     * Every field placement on an entry type, with the detail the compile side needs to
+     * turn a legacy row into a block: whether a field is a Matrix (and what it nests),
+     * and whether the layout marks it required.
+     *
+     * Compiling against the live schema rather than a parse of `config/project/**` means
+     * the answer cannot lag an unapplied project config, and there is one implementation
+     * of "does this handle exist" instead of two.
+     *
+     * @return array<string, array{type: string, required: bool, nested: list<string>}> field handle => placement
+     */
+    public function fieldSlotsFor(string $entryTypeHandle): array;
 }

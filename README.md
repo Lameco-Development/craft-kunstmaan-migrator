@@ -28,6 +28,25 @@ composer require lameco/craft-kunstmaan-migrator
 ./craft plugin/install kuma-loader
 ```
 
+## One command
+
+```bash
+./craft kuma-loader/migrate --mapping=migration/mapping/site.yaml --force
+```
+
+Reads the legacy Kunstmaan database, compiles it against the mapping, and writes it into
+Craft — in one process. Validates the mapping's shape, then every handle it names against the
+*live* Craft schema, then refuses to run while any `conflict:` is still open.
+
+`--dump=<dir>` writes the compiled payloads out for inspection; `--dryRun` compiles and
+reports without writing; `--env` and `--limit` narrow the run.
+
+Compiling and loading were separate tools exchanging NDJSON. The file was a contract, and
+contracts drift: the compiler emitted the documented `{type, fields}` block shape while the
+loader needed a `sourceRef` marker the contract never mentioned, so Matrix rows updated
+partially and neither side could see why. Payloads are still available as an artifact — they
+are just no longer the seam.
+
 ## Commands
 
 | Command | Description |

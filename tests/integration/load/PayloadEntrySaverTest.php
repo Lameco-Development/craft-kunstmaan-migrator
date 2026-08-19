@@ -49,6 +49,23 @@ final class SaverFakeSchemaGateway implements SchemaGateway
         return $entryTypeHandle === 'contentPage' ? ['relatedPages'] : [];
     }
 
+    /** Derived from the same fixtures the other lookups use, so fakes stay consistent. */
+    public function fieldSlotsFor(string $entryTypeHandle): array
+    {
+        $slots = [];
+
+        foreach ($this->fieldHandlesFor($entryTypeHandle) as $handle) {
+            $nested = $this->blockTypesFor($entryTypeHandle, $handle);
+            $slots[$handle] = [
+                'type' => $nested === [] ? 'PlainText' : 'Matrix',
+                'required' => false,
+                'nested' => $nested,
+            ];
+        }
+
+        return $slots;
+    }
+
     public function blockTypesFor(string $entryTypeHandle, string $fieldHandle): array
     {
         return [];

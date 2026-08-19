@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\payload;
 
 use Craft;
+use craft\fieldlayoutelements\CustomField;
 use craft\fields\Matrix;
 
 /**
@@ -46,6 +47,41 @@ final class CraftSchemaGateway implements SchemaGateway
         }
 
         return ['id' => (int) $site->id, 'handle' => (string) $site->handle];
+    }
+
+    public function fieldSlotsFor(string $entryTypeHandle): array
+    {
+        $layout = $this->fieldLayoutFor($entryTypeHandle);
+        if ($layout === null) {
+            return [];
+        }
+
+        $slots = [];
+        foreach ($layout->getTabs() as $tab) {
+            foreach ($tab->getElements() as $element) {
+                if (!($element instanceof CustomField)) {
+                    continue;
+                }
+
+                $field = $element->getField();
+                $handle = (string) $field->handle;
+                $nested = [];
+
+                if ($field instanceof Matrix) {
+                    foreach ($field->getEntryTypes() as $entryType) {
+                        $nested[] = (string) $entryType->handle;
+                    }
+                }
+
+                $slots[$handle] = [
+                    'type' => (new \ReflectionClass($field))->getShortName(),
+                    'required' => (bool) $element->required,
+                    'nested' => $nested,
+                ];
+            }
+        }
+
+        return $slots;
     }
 
     public function fieldHandlesFor(string $entryTypeHandle): array

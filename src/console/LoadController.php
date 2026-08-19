@@ -44,12 +44,21 @@ class LoadController extends Controller
     public ?string $payload = null;
     public bool $dryRun = false;
 
+    /**
+     * Refresh entries that already exist.
+     *
+     * Off by default so an interrupted load can be resumed cheaply. Turn it on after the
+     * payload has changed — without it an existing entry is left exactly as it was, and the
+     * run still reports it as handled.
+     */
+    public bool $force = false;
+
     /** @see beforeAction() */
     private ?int $neverProductionExitCode = null;
 
     public function options($actionID): array
     {
-        return array_merge(parent::options($actionID), ['payload', 'dryRun']);
+        return array_merge(parent::options($actionID), ['payload', 'dryRun', 'force']);
     }
 
     /**
@@ -107,6 +116,8 @@ class LoadController extends Controller
             $plugin->migrationStateService,
             $plugin->assetMigrationService,
             $plugin->ckeditorRewriterService,
+            null,
+            $this->force,
         );
         $report = self::buildLiveReport($this->payload, $validator, $saver);
         $this->stdout(json_encode($report, JSON_UNESCAPED_SLASHES) . PHP_EOL);
@@ -414,6 +425,9 @@ class LoadController extends Controller
         }
 
         $saved = 0;
+        $created = 0;
+        $updated = 0;
+        $skipped = 0;
         $failed = [];
         $unresolvedAssets = [];
         $mediaTokenIssues = [];
@@ -423,6 +437,17 @@ class LoadController extends Controller
                 try {
                     $result = $saver->save($p);
                     $saved++;
+
+                    // "saved" alone hid the case this whole flag exists for: an existing
+                    // entry short-circuiting, reported as a success while nothing was
+                    // written. Split the count so a no-op is visible.
+                    if ($result->created) {
+                        $created++;
+                    } elseif ($saver->refreshesExisting()) {
+                        $updated++;
+                    } else {
+                        $skipped++;
+                    }
                     foreach ($result->unresolvedAssets as $entry) {
                         $unresolvedAssets[] = ['sourceUid' => $p->sourceUid] + $entry;
                     }
@@ -439,6 +464,9 @@ class LoadController extends Controller
             'processed' => count($records),
             'violations' => $violations,
             'saved' => $saved,
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => $skipped,
             'failed' => $failed,
             'unresolvedAssets' => $unresolvedAssets,
             'mediaTokenIssues' => $mediaTokenIssues,
