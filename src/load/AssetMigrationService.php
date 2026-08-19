@@ -68,6 +68,17 @@ class AssetMigrationService extends Component
     // Public: Task 8's DoctorController::checkLegacyMediaRoot() reuses this
     // literal rather than duplicating it.
     public const LEGACY_MEDIA_ROOT_ENV = 'LEGACY_MEDIA_PATH';
+
+    /**
+     * Media root for the environment currently being migrated.
+     *
+     * Each legacy site keeps its own uploads directory: on the first real corpus, the .com
+     * media resolved 1,045 of 1,046 references while .de resolved 163 of 438 and .lv none at
+     * all, because they are separate installs. A single global path can only ever be right
+     * for one of them, so the caller sets this per environment and the env var stays as the
+     * fallback for single-site migrations.
+     */
+    public ?string $legacyMediaRoot = null;
     private const STATE_SOURCE = 'media';
 
     /**
@@ -164,6 +175,11 @@ class AssetMigrationService extends Component
      * editor content as the source of truth while keeping the state key distinct
      * from real `kuma_media:{id}` rows.
      */
+    private function mediaRoot(): string
+    {
+        return $this->legacyMediaRoot ?? (string) (App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '');
+    }
+
     public function resolveFromLegacyUrl(string $legacyUrl): int
     {
         $path = parse_url($legacyUrl, PHP_URL_PATH);
@@ -181,7 +197,7 @@ class AssetMigrationService extends Component
             return (int) $existing;
         }
 
-        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '';
+        $rootDir = $this->mediaRoot();
         $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
         if ($sourcePath === null) {
             return 0;
@@ -227,7 +243,7 @@ class AssetMigrationService extends Component
     {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
-        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV);
+        $rootDir = $this->mediaRoot() ?: null;
         if (!is_string($rootDir) || $rootDir === '' || !is_dir($rootDir)) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
@@ -388,7 +404,7 @@ class AssetMigrationService extends Component
         if (!$row) {
             return null;
         }
-        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '';
+        $rootDir = $this->mediaRoot();
         return $this->ingestRow($row, $rootDir, $opts, $counts);
     }
 
@@ -724,7 +740,7 @@ class AssetMigrationService extends Component
     {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
-        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV);
+        $rootDir = $this->mediaRoot() ?: null;
         if (!is_string($rootDir) || $rootDir === '' || !is_dir($rootDir)) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(

@@ -121,8 +121,17 @@ final class Compiler
             'slug' => $translation['slug'],
         ];
 
-        if ($node['parentId'] !== null && isset($published[$node['parentId']])) {
-            $site['parentRef'] = $this->uid($environment, $node['parentId']);
+        // Kunstmaan hangs every page off the home node, but in Craft the home page is its
+        // own single section and a structure cannot parent across sections. Those pages are
+        // roots of the `pages` structure instead.
+        $parentId = $node['parentId'];
+
+        if ($parentId !== null && isset($published[$parentId])) {
+            $parentSection = $this->sectionOfNode($parentId, $published);
+
+            if ($parentSection !== null && $parentSection === ($pageSpec['section'] ?? 'pages')) {
+                $site['parentRef'] = $this->uid($environment, $parentId);
+            }
         }
 
         // A page entity's own columns are content: the summary, the category, the overview
@@ -288,6 +297,20 @@ final class Compiler
     private function uid(string $environment, int $nodeId): string
     {
         return sprintf('kuma:%s:kuma_nodes:%d', $environment, $nodeId);
+    }
+
+    /** The Craft section a published node's entry lands in, per the mapping. */
+    private function sectionOfNode(int $nodeId, array $published): ?string
+    {
+        $entity = $published[$nodeId] ?? null;
+
+        if (!is_string($entity)) {
+            return null;
+        }
+
+        $spec = $this->mapping->pages()[$entity] ?? null;
+
+        return is_array($spec) ? (string) ($spec['section'] ?? 'pages') : null;
     }
 
     /** Whether a Matrix field on this entry type accepts blocks of the given type. */

@@ -118,6 +118,7 @@ final class MigrateController extends Controller
 
         $counts = ['compiled' => 0, 'created' => 0, 'updated' => 0, 'skipped' => 0, 'invalid' => 0, 'failed' => 0];
         $problems = [];
+        $unresolvedAssets = [];
 
         foreach ($mapping->environments() as $env => $spec) {
             if ($this->legacyEnv !== null && $env !== $this->legacyEnv) {
@@ -125,10 +126,16 @@ final class MigrateController extends Controller
             }
 
             $db = LegacyDatabase::connect((string) $env, (string) $spec['database'], Dsn::fromEnvironment());
+
+            // Each legacy site has its own uploads directory, so the media root travels with
+            // the environment rather than being one global setting.
+            $plugin->assetMigrationService->legacyMediaRoot = isset($spec['mediaRoot'])
+                ? (string) $spec['mediaRoot']
+                : null;
             $writer = $this->dump !== null ? $this->writerFor((string) $env) : null;
 
             $compiler->compile($db, (string) $env, function (array $raw) use (
-                $validator, $saver, $writer, &$counts, &$problems
+                $validator, $saver, $writer, &$counts, &$problems, &$unresolvedAssets
             ): void {
                 $counts['compiled']++;
                 $writer?->write($raw);
@@ -153,6 +160,10 @@ final class MigrateController extends Controller
                 try {
                     $result = $saver->save($payload);
                     $counts[$result->created ? 'created' : ($this->force ? 'updated' : 'skipped')]++;
+
+                    foreach ($result->unresolvedAssets as $unresolved) {
+                        $unresolvedAssets[] = (string) ($unresolved['asset'] ?? '?');
+                    }
                 } catch (\Throwable $e) {
                     $counts['failed']++;
                     $problems[] = sprintf('%s: %s', $payload->sourceUid, $e->getMessage());
@@ -165,6 +176,8 @@ final class MigrateController extends Controller
             'lossyConversions' => $transforms->lossCount(),
             'losses' => $transforms->losses(),
             'skippedSources' => $compiler->skipped(),
+            'unresolvedAssets' => count($unresolvedAssets),
+            'unresolvedAssetSample' => array_slice(array_unique($unresolvedAssets), 0, 5),
             'problems' => array_slice($problems, 0, 40),
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
 

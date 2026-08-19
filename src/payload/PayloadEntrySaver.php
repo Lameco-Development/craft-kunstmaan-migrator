@@ -292,7 +292,10 @@ final class PayloadEntrySaver
                 return ['present' => false, 'value' => null];
             }
 
-            return ['present' => true, 'value' => $resolvedId];
+            // A relation field takes a list of element ids. Handing Craft a bare integer
+            // saved without complaint and related nothing: 80 assets were created and none
+            // were attached to the block that asked for them.
+            return ['present' => true, 'value' => [$resolvedId]];
         }
 
         $isList = array_is_list($node);

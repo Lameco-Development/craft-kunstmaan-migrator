@@ -70,13 +70,20 @@ final class PageReader
         return array_values($nodes);
     }
 
-    /** The set of node ids that are published, so a parentRef can be checked before it is emitted. */
+    /**
+     * Published node id => its page entity name.
+     *
+     * The entity is carried so a parentRef can be checked for more than existence: a parent
+     * whose entry lands in a different Craft section cannot be a structure parent.
+     *
+     * @return array<int, string>
+     */
     public function publishedNodeIds(): array
     {
         $ids = [];
 
         foreach ($this->nodes() as $node) {
-            $ids[$node['nodeId']] = true;
+            $ids[$node['nodeId']] = $node['entity'];
         }
 
         return $ids;
