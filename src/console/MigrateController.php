@@ -129,9 +129,22 @@ final class MigrateController extends Controller
 
             // Each legacy site has its own uploads directory, so the media root travels with
             // the environment rather than being one global setting.
-            $plugin->assetMigrationService->legacyMediaRoot = isset($spec['mediaRoot'])
-                ? (string) $spec['mediaRoot']
-                : null;
+            // Locale -> site is per environment, not global. COM's `en` is comEnUs while
+            // LV's is comLvEn, and one global localeMap cannot hold both: with COM's map
+            // configured, every LV entry failed with "unknown site handle comLvEn". The
+            // mapping already states this per environment, so read it from there.
+            $plugin->entryMigrationService->sites = array_filter(
+                array_map(
+                    static fn ($handle): string => is_string($handle) ? $handle : '',
+                    (array) ($spec['locales'] ?? []),
+                ),
+                static fn (string $handle): bool => $handle !== '',
+            );
+
+            $roots = $spec['mediaRoot'] ?? null;
+            $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [(string) $roots]);
+            $plugin->assetMigrationService->legacyMediaRoot = $roots[0] ?? null;
+            $plugin->assetMigrationService->legacyMediaFallbackRoots = array_slice($roots, 1);
             $writer = $this->dump !== null ? $this->writerFor((string) $env) : null;
 
             $compiler->compile($db, (string) $env, function (array $raw) use (

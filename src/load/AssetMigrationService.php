@@ -79,6 +79,17 @@ class AssetMigrationService extends Component
      * fallback for single-site migrations.
      */
     public ?string $legacyMediaRoot = null;
+
+    /**
+     * Additional roots tried, in order, when a reference is not under the primary one.
+     *
+     * Sites in a group share artwork: 163 of the .de references resolve only against the
+     * .com media directory, because that is where those files are actually hosted. Fetching
+     * a second copy would be inventing a file the source never had.
+     *
+     * @var list<string>
+     */
+    public array $legacyMediaFallbackRoots = [];
     private const STATE_SOURCE = 'media';
 
     /**
@@ -197,8 +208,20 @@ class AssetMigrationService extends Component
             return (int) $existing;
         }
 
-        $rootDir = $this->mediaRoot();
-        $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
+        $sourcePath = null;
+
+        foreach ([$this->mediaRoot(), ...$this->legacyMediaFallbackRoots] as $rootDir) {
+            if ($rootDir === '') {
+                continue;
+            }
+
+            $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
+
+            if ($sourcePath !== null) {
+                break;
+            }
+        }
+
         if ($sourcePath === null) {
             return 0;
         }

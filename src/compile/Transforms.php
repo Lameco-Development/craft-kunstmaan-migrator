@@ -30,6 +30,8 @@ final class Transforms
             'bool'        => $value !== null && (int) $value === 1,
             'ckeditor'    => $this->ckeditor($value),
             'inlineHtml'  => $this->inlineHtml($value),
+            'mailto'      => $this->scheme($value, 'mailto:'),
+            'tel'         => $this->scheme($value, 'tel:'),
             'asset'       => $value === null ? null : ['_asset' => (string) $value],
             'ref'         => $value === null ? null : ['_ref' => (string) $value],
             default       => throw new \InvalidArgumentException(sprintf('Unknown transform `%s`', $name)),
@@ -125,6 +127,29 @@ final class Transforms
         $text = trim(strip_tags($text, '<strong><b><em><i><br><span><sup><sub>'));
 
         return $text === '' ? null : $text;
+    }
+
+    /**
+     * A Link field restricted to `email` or `tel` stores its value with the scheme attached.
+     * A bare address reads as a URL and Craft rejects it — "Email no longer allows URL
+     * links" — which failed every DE partner page on a column holding a perfectly good
+     * address.
+     */
+    private function scheme(mixed $value, string $scheme): ?string
+    {
+        $text = trim((string) ($value ?? ''));
+
+        if ($text === '') {
+            return null;
+        }
+
+        if ($scheme === 'tel:') {
+            // A dialable value: keep digits and a leading +, drop the spacing and brackets
+            // people type into a CMS.
+            $text = (string) preg_replace('/(?!^\+)[^0-9+]/', '', str_replace(' ', '', $text));
+        }
+
+        return str_starts_with($text, $scheme) ? $text : $scheme . $text;
     }
 
     /** Legacy HTML, with media references parked for the loader to rewrite. */
