@@ -37,6 +37,16 @@ interface SchemaGateway
     public function siteByHandle(string $handle): ?array;
 
     /**
+     * The primary site's id.
+     *
+     * A Craft Address supports the primary site and no other — `Element::getSupportedSites()`
+     * is not overridden for it — so a field holding one is effectively untranslatable, and
+     * saving it against any other site throws. The loader needs to know which site that is.
+     */
+    /** @return array{id: int, handle: string} */
+    public function primarySite(): array;
+
+    /**
      * @return list<string> custom-field handles in the entry type's field layout; [] when the entry type is unknown
      */
     public function fieldHandlesFor(string $entryTypeHandle): array;

@@ -79,11 +79,20 @@ final class MigrateController extends Controller
      */
     public bool $entriesOnly = false;
 
+    /**
+     * Compile only these page entities / `entities:` names, comma separated.
+     *
+     * A full corpus takes over an hour, which is the wrong feedback loop for a fix that
+     * touches one page type: `--only=PartnerPage --legacyEnv=DE --entriesOnly` is the same
+     * code path over 423 rows instead of 2,000, and answers in a minute.
+     */
+    public ?string $only = null;
+
     public function options($actionID): array
     {
         return array_merge(
             parent::options($actionID),
-            ['mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'specs', 'entriesOnly'],
+            ['mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'specs', 'entriesOnly', 'only'],
         );
     }
 
@@ -116,8 +125,24 @@ final class MigrateController extends Controller
             );
         }
 
+        $only = $this->onlyList();
+
+        if ($only !== null) {
+            $known = [...array_keys($mapping->pages()), ...array_keys($mapping->entities())];
+            $unknown = array_diff($only, $known);
+
+            // A misspelled name would narrow the run to nothing and report a clean zero,
+            // which is the most convincing way to be wrong.
+            if ($unknown !== []) {
+                return $this->refuse(
+                    sprintf('--only names nothing in the mapping: %s', implode(', ', $unknown)),
+                    ['known names come from `pages:` and `entities:`'],
+                );
+            }
+        }
+
         $transforms = new Transforms($mapping->all()['transforms'] ?? []);
-        $compiler = new Compiler($mapping, $transforms, $target);
+        $compiler = new Compiler($mapping, $transforms, $target, $only);
         $plugin = Plugin::getInstance();
         $validator = new PayloadValidator($gateway);
 
@@ -134,6 +159,7 @@ final class MigrateController extends Controller
         $counts = ['compiled' => 0, 'created' => 0, 'updated' => 0, 'skipped' => 0, 'invalid' => 0, 'failed' => 0];
         $problems = [];
         $unresolvedAssets = [];
+        $droppedAddresses = [];
         $adapters = [];
 
         foreach ($mapping->environments() as $env => $spec) {
@@ -165,7 +191,7 @@ final class MigrateController extends Controller
             $writer = $this->dump !== null ? $this->writerFor((string) $env) : null;
 
             $compiler->compile($db, (string) $env, function (array $raw) use (
-                $validator, $saver, $writer, &$counts, &$problems, &$unresolvedAssets
+                $validator, $saver, $writer, &$counts, &$problems, &$unresolvedAssets, &$droppedAddresses
             ): void {
                 $counts['compiled']++;
                 $writer?->write($raw);
@@ -195,6 +221,11 @@ final class MigrateController extends Controller
                     foreach ($result->unresolvedAssets as $unresolved) {
                         $unresolvedAssets[] = (string) ($unresolved['asset'] ?? '?');
                     }
+
+                    foreach ($result->droppedAddresses as $dropped) {
+                        $key = sprintf('%s on %s', $dropped['field'], $dropped['site']);
+                        $droppedAddresses[$key] = ($droppedAddresses[$key] ?? 0) + 1;
+                    }
                 } catch (\Throwable $e) {
                     $counts['failed']++;
                     $problems[] = sprintf('%s: %s', $payload->sourceUid, $e->getMessage());
@@ -203,7 +234,7 @@ final class MigrateController extends Controller
             }, $this->limit);
 
             if (!$this->entriesOnly) {
-                $adapters[(string) $env] = $this->runAdapters($plugin, $db, (string) $env, new RedirectCompiler($mapping));
+                $adapters[(string) $env] = $this->runAdapters($plugin, $db, (string) $env, new RedirectCompiler($mapping, $only));
             }
         }
 
@@ -212,9 +243,11 @@ final class MigrateController extends Controller
             'lossyConversions' => $transforms->lossCount(),
             'losses' => $transforms->losses(),
             'skippedSources' => $compiler->skipped(),
+            'droppedAddresses' => $droppedAddresses,
             'unresolvedAssets' => count($unresolvedAssets),
             'unresolvedAssetSample' => array_slice(array_unique($unresolvedAssets), 0, 5),
             'problems' => array_slice($problems, 0, 40),
+            'only' => $only,
             'adapters' => $adapters,
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
 
@@ -371,6 +404,18 @@ final class MigrateController extends Controller
     private function reportProblem(string $problem): void
     {
         $this->stderr('  ! ' . $problem . "\n", Console::FG_YELLOW);
+    }
+
+    /** @return ?list<string> */
+    private function onlyList(): ?array
+    {
+        if ($this->only === null || trim($this->only) === '') {
+            return null;
+        }
+
+        $names = array_values(array_filter(array_map(trim(...), explode(',', $this->only)), static fn (string $n): bool => $n !== ''));
+
+        return $names === [] ? null : $names;
     }
 
     private function writerFor(string $env): PayloadWriter

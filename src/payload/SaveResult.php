@@ -37,6 +37,14 @@ final class SaveResult
         public readonly array $deferredRefs,
         public readonly array $unresolvedAssets = [],
         public readonly array $mediaTokenIssues = [],
+        /**
+         * Addresses this save could not write, because a Craft Address supports the primary
+         * site and no other, and the payload never names that site. A silent drop here reads
+         * as a clean run with no address, which is the failure this records rather than hides.
+         *
+         * @var list<array{field: string, site: string}>
+         */
+        public readonly array $droppedAddresses = [],
     ) {
     }
 }

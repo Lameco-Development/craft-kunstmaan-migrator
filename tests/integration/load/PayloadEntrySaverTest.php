@@ -39,7 +39,9 @@ final class SaverFakeSchemaGateway implements SchemaGateway
         return $handle === 'contentPage' ? ['id' => 1, 'handle' => 'contentPage', 'hasTitleFormat' => false] : null;
     }
 
-    public function siteByHandle(string $handle): ?array
+    public function primarySite(): array { return ['id' => 1, 'handle' => 'en']; }
+
+            public function siteByHandle(string $handle): ?array
     {
         return $handle === 'en' ? ['id' => 1, 'handle' => 'en'] : null;
     }
@@ -194,6 +196,16 @@ final class FakeEntryMigrationService extends EntryMigrationService
     public function readEntryFieldValueForSite(int $entryId, string $siteHandle, string $fieldHandle): ?array
     {
         return $this->currentFieldValues[sprintf('%d|%s|%s', $entryId, $siteHandle, $fieldHandle)] ?? null;
+    }
+
+    /** @var list<array{entryId: int, site: string, field: string, value: array<array-key, mixed>}> */
+    public array $resaved = [];
+
+    public function resaveEntryFieldForSite(int $entryId, string $siteHandle, string $fieldHandle, array $value): bool
+    {
+        $this->resaved[] = ['entryId' => $entryId, 'site' => $siteHandle, 'field' => $fieldHandle, 'value' => $value];
+
+        return true;
     }
 
     public function saveEntryForSites(
@@ -675,7 +687,11 @@ final class PayloadEntrySaverTest extends TestCase
         ])));
 
         self::assertSame(
-            ['new1' => ['addressLine1' => 'Schlossvorstadt 4', 'countryCode' => 'DE']],
+            ['new1' => [
+                'addressLine1' => 'Schlossvorstadt 4',
+                'countryCode' => 'DE',
+                'title' => 'Entry kuma:DE:partner_pages:1',
+            ]],
             $entryService->lastPerSite['en']['fieldValues']['partnerAddress'],
         );
     }
@@ -701,8 +717,108 @@ final class PayloadEntrySaverTest extends TestCase
         ])));
 
         self::assertSame(
-            [4242 => ['addressLine1' => 'Schlossvorstadt 4', 'countryCode' => 'DE']],
+            [4242 => [
+                'addressLine1' => 'Schlossvorstadt 4',
+                'countryCode' => 'DE',
+                'title' => 'Entry kuma:DE:partner_pages:1',
+            ]],
             $entryService->lastPerSite['en']['fieldValues']['partnerAddress'],
+        );
+    }
+
+    public function testAnAddressIsOmittedOnEverySiteButThePrimary(): void
+    {
+        // A Craft Address supports the primary site and no other, so saving one against any
+        // other site throws and takes the whole entry with it — 423 partner pages did exactly
+        // that. Omitting it elsewhere is what "not translatable" means.
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $payload = $this->payloadArray('kuma:DE:partner_pages:9', [
+            'sites' => [
+                'en' => ['fieldValues' => ['partnerAddress' => ['_address' => ['addressLine1' => 'Schlossvorstadt 4']]]],
+                'de' => ['fieldValues' => ['partnerAddress' => ['_address' => ['addressLine1' => 'Schlossvorstadt 4']]]],
+            ],
+        ]);
+
+        $saver->save(Payload::fromArray($payload));
+
+        self::assertArrayHasKey('partnerAddress', $entryService->lastPerSite['en']['fieldValues']);
+        self::assertArrayNotHasKey(
+            'partnerAddress',
+            $entryService->lastPerSite['de']['fieldValues'],
+            'A non-primary site must not carry the address.',
+        );
+    }
+
+    public function testAnAddressOnAPayloadThatNeverNamesThePrimarySiteIsStillWritten(): void
+    {
+        // Every DE partner page is published in `de` alone, so the per-site pass has nowhere
+        // to put the address — and dropping it produced a clean run that migrated no address
+        // at all. The entry exists on the primary site by propagation, so it goes there.
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $result = $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:10', [
+            'sites' => ['de' => ['fieldValues' => [
+                'partnerAddress' => ['_address' => ['addressLine1' => 'Holzhausenstr. 87', 'title' => 'Hauptsitz']],
+            ]]],
+        ])));
+
+        self::assertCount(1, $entryService->resaved, 'The address is written once, against the primary site.');
+        self::assertSame('en', $entryService->resaved[0]['site']);
+        self::assertSame('partnerAddress', $entryService->resaved[0]['field']);
+        self::assertSame(
+            ['new1' => ['addressLine1' => 'Holzhausenstr. 87', 'title' => 'Hauptsitz']],
+            $entryService->resaved[0]['value'],
+        );
+        self::assertSame([], $result->droppedAddresses, 'Nothing is left unwritten to report.');
+    }
+
+    public function testANestedAddressThatCannotBePlacedIsReportedRatherThanLostSilently(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $result = $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:11', [
+            'sites' => ['de' => ['fieldValues' => [
+                'partnerBranches' => [[
+                    'type' => 'partnerBranch',
+                    'fields' => ['branchAddress' => ['_address' => ['addressLine1' => 'Am Gierath 20d']]],
+                ]],
+            ]]],
+        ])));
+
+        self::assertSame([], $entryService->resaved, 'A nested address has no owner to write against yet.');
+        self::assertSame(
+            [['field' => 'branchAddress', 'site' => 'de']],
+            $result->droppedAddresses,
+        );
+    }
+
+    public function testALabelInThePayloadIsKeptRatherThanOverwrittenByTheOwnersTitle(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:3', [
+            'sites' => ['en' => ['fieldValues' => [
+                'partnerAddress' => ['_address' => ['title' => 'Hauptsitz', 'addressLine1' => 'Schlossvorstadt 4']],
+            ]]],
+        ])));
+
+        self::assertSame(
+            ['new1' => ['title' => 'Hauptsitz', 'addressLine1' => 'Schlossvorstadt 4']],
+            $entryService->lastPerSite['en']['fieldValues']['partnerAddress'],
+            'The mapping owns the label; the fallback only fills a blank one.',
         );
     }
 
@@ -726,7 +842,7 @@ final class PayloadEntrySaverTest extends TestCase
         ])));
 
         self::assertSame(
-            ['new1' => ['addressLine1' => 'Am Gierath 20d']],
+            ['new1' => ['addressLine1' => 'Am Gierath 20d', 'title' => 'Entry kuma:DE:partner_pages:2']],
             $entryService->lastPerSite['en']['fieldValues']['partnerBranches'][0]['fields']['branchAddress'],
         );
     }

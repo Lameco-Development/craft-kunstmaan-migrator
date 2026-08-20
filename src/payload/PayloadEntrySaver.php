@@ -115,6 +115,7 @@ final class PayloadEntrySaver
         $deferredRefs = [];
         $unresolvedAssets = [];
         $mediaTokenIssues = [];
+        $droppedAddresses = [];
         $perSite = [];
         foreach ($p->sites as $handle => $site) {
             $parentId = null;
@@ -146,6 +147,8 @@ final class PayloadEntrySaver
                     $unresolvedAssets,
                     $mediaTokenIssues,
                     $existingEntryId,
+                    (string) ($site['title'] ?? ''),
+                    $droppedAddresses,
                 ),
                 'parentId' => $parentId,
                 'postDate' => $site['postDate'] !== null ? new DateTimeImmutable($site['postDate']) : null,
@@ -160,6 +163,12 @@ final class PayloadEntrySaver
             $perSite,
             $this->force,
         );
+
+        // A Craft Address supports the primary site and no other, so an address on a payload
+        // that never names that site was dropped above. The entry itself does exist there —
+        // Craft propagates it across the section's sites — so the address is written once,
+        // against that row, which is what an untranslatable field means.
+        $droppedAddresses = $this->writeAddressesOnPrimarySite((int) $entry->id, $droppedAddresses);
 
         // Reflects THIS run's deferred state, overwriting whatever a
         // previous run left behind — Task 5's fixup pass owns clearing
@@ -179,6 +188,7 @@ final class PayloadEntrySaver
             deferredRefs: $deferredRefs,
             unresolvedAssets: $unresolvedAssets,
             mediaTokenIssues: $mediaTokenIssues,
+            droppedAddresses: $droppedAddresses,
         );
     }
 
@@ -201,6 +211,8 @@ final class PayloadEntrySaver
         array &$unresolvedAssets,
         array &$mediaTokenIssues,
         ?int $existingEntryId = null,
+        string $ownerTitle = '',
+        array &$droppedAddresses = [],
     ): array {
         $out = [];
         foreach ($fieldValues as $fieldHandle => $value) {
@@ -214,6 +226,8 @@ final class PayloadEntrySaver
                 $mediaTokenIssues,
                 [$fieldHandle],
                 $existingEntryId,
+                $ownerTitle,
+                $droppedAddresses,
             );
             if (!$resolved['present']) {
                 continue;
@@ -247,6 +261,8 @@ final class PayloadEntrySaver
         array &$mediaTokenIssues,
         array $path,
         ?int $existingEntryId = null,
+        string $ownerTitle = '',
+        array &$droppedAddresses = [],
     ): array {
         if (is_string($node)) {
             if (!str_contains($node, '{{kuma:media:')) {
@@ -264,9 +280,27 @@ final class PayloadEntrySaver
         }
 
         if (array_key_exists('_address', $node) && is_array($node['_address'])) {
+            // A Craft Address supports the primary site and no other, so an Addresses field is
+            // effectively untranslatable: saving one against any other site throws
+            // "Attempting to save an element in an unsupported site" and takes the whole entry
+            // with it. Every address already in this corpus sits on the primary site. So the
+            // address is written once, there, and omitted from the other sites' field values —
+            // which is what "not translatable" means, not a value being lost.
+            if ($siteId !== $this->gateway->primarySite()['id']) {
+                $droppedAddresses[] = [
+                    'field' => $fieldHandle,
+                    'site' => $siteHandle,
+                    'path' => $path,
+                    'parts' => $node['_address'],
+                    'ownerTitle' => $ownerTitle,
+                ];
+
+                return ['present' => false, 'value' => null];
+            }
+
             return [
                 'present' => true,
-                'value' => $this->addressValue($node['_address'], $fieldHandle, $siteHandle, $path, $existingEntryId),
+                'value' => $this->addressValue($node['_address'], $fieldHandle, $siteHandle, $path, $existingEntryId, $ownerTitle),
             ];
         }
 
@@ -323,6 +357,8 @@ final class PayloadEntrySaver
                 $mediaTokenIssues,
                 [...$path, $key],
                 $existingEntryId,
+                $ownerTitle,
+                $droppedAddresses,
             );
             if (!$child['present']) {
                 continue;
@@ -335,6 +371,62 @@ final class PayloadEntrySaver
         }
 
         return ['present' => true, 'value' => $out];
+    }
+
+    /**
+     * Write the addresses the per-site pass had to drop, against the primary site.
+     *
+     * Only a top-level address field can be placed this way: one nested inside a Matrix is
+     * owned by a block whose identity is not known here, so it stays dropped and stays
+     * counted. `partnerBranch.branchAddress` is the case that hits this.
+     *
+     * @param list<array{field: string, site: string, path: list<int|string>, parts: array<string, mixed>, ownerTitle: string}> $dropped
+     * @return list<array{field: string, site: string}> what is still unwritten, for the report
+     */
+    private function writeAddressesOnPrimarySite(int $entryId, array $dropped): array
+    {
+        $primary = $this->gateway->primarySite();
+        $unwritten = [];
+        $written = [];
+
+        foreach ($dropped as $address) {
+            $isTopLevel = $address['path'] === [$address['field']];
+
+            // One address per field is enough: the field is not translatable, so every site's
+            // copy holds the same value and the first is as good as the last.
+            if (!$isTopLevel || isset($written[$address['field']])) {
+                if (!$isTopLevel) {
+                    // `field` here is the top-level handle the resolver walked in from; the
+                    // path's last segment is the address field itself, which is what an
+                    // operator needs to find it.
+                    $unwritten[] = [
+                        'field' => (string) (end($address['path']) ?: $address['field']),
+                        'site' => $address['site'],
+                    ];
+                }
+
+                continue;
+            }
+
+            $value = $this->addressValue(
+                $address['parts'],
+                $address['field'],
+                $primary['handle'],
+                $address['path'],
+                $entryId,
+                $address['ownerTitle'],
+            );
+
+            if ($this->entryService->resaveEntryFieldForSite($entryId, $primary['handle'], $address['field'], $value)) {
+                $written[$address['field']] = true;
+
+                continue;
+            }
+
+            $unwritten[] = ['field' => $address['field'], 'site' => $primary['handle']];
+        }
+
+        return $unwritten;
     }
 
     /**
@@ -360,7 +452,17 @@ final class PayloadEntrySaver
         string $siteHandle,
         array $path,
         ?int $existingEntryId,
+        string $ownerTitle = '',
     ): array {
+        // Craft's Address layout marks its Label required by default, and an address with no
+        // label fails the *whole entry* — 423 partner pages, all with the same message and
+        // none of them naming the field that caused it. The mapping should supply a label;
+        // when the legacy column behind it is blank, the owner's own title is a better answer
+        // than losing the page.
+        if (trim((string) ($parts['title'] ?? '')) === '' && $ownerTitle !== '') {
+            $parts['title'] = $ownerTitle;
+        }
+
         $key = 'new1';
 
         if ($existingEntryId !== null && $path === [$fieldHandle]) {

@@ -49,6 +49,13 @@ final class CraftSchemaGateway implements SchemaGateway
         return ['id' => (int) $site->id, 'handle' => (string) $site->handle];
     }
 
+    public function primarySite(): array
+    {
+        $site = Craft::$app->getSites()->getPrimarySite();
+
+        return ['id' => (int) $site->id, 'handle' => (string) $site->handle];
+    }
+
     public function fieldSlotsFor(string $entryTypeHandle): array
     {
         $layout = $this->fieldLayoutFor($entryTypeHandle);

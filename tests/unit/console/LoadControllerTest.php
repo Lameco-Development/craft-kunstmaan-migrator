@@ -29,7 +29,9 @@ final class AllowAllSchemaGateway implements SchemaGateway
         return ['id' => 1, 'handle' => $handle, 'hasTitleFormat' => false];
     }
 
-    public function siteByHandle(string $handle): ?array
+    public function primarySite(): array { return ['id' => 11, 'handle' => 'en']; }
+
+            public function siteByHandle(string $handle): ?array
     {
         return ['id' => 1, 'handle' => $handle];
     }

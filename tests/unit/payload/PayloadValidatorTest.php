@@ -45,7 +45,9 @@ final class FakeSchemaGateway implements SchemaGateway
         return $this->entryTypes[$handle] ?? null;
     }
 
-    public function siteByHandle(string $handle): ?array
+    public function primarySite(): array { return ['id' => 11, 'handle' => 'en']; }
+
+            public function siteByHandle(string $handle): ?array
     {
         return $this->sites[$handle] ?? null;
     }

@@ -16,6 +16,8 @@ final class AllowedBlocksTest extends TestCase
         return new TargetModel(new class implements SchemaGateway {
             public function sectionByHandle(string $h): ?array { return null; }
             public function entryTypeByHandle(string $h): ?array { return null; }
+            public function primarySite(): array { return ['id' => 11, 'handle' => 'en']; }
+
             public function siteByHandle(string $h): ?array { return null; }
             public function fieldHandlesFor(string $t): array { return []; }
             public function blockTypesFor(string $t, string $f): array { return []; }
