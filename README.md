@@ -1,20 +1,17 @@
 # Kunstmaan Migrator
 
-A Craft CMS 5 plugin that loads fully-resolved, Craft-native JSON payloads
-produced by a legacy Kunstmaan (Symfony) site into Craft. Kunstmaan Migrator is
-deliberately thin: it validates a payload against the live Craft schema,
-saves it (upsert, idempotent), resolves cross-entry `_ref`s in a second
-pass, imports redirects, and reports state — nothing more.
+A Craft CMS 5 plugin that writes a legacy Kunstmaan (Symfony) site into Craft.
+Kunstmaan Migrator is deliberately thin: it validates a payload against the live
+Craft schema, saves it (upsert, idempotent), resolves cross-entry `_ref`s in a
+second pass, imports redirects, and reports state — nothing more.
 
-All migration intelligence — reading the legacy Kunstmaan database,
-proposing field/section mappings, and compiling those mappings into the
-payload files this plugin consumes — lives in the separate
-[`kuma-migrate`](https://github.com/lameco/kuma-migrate) orchestration repo.
-This plugin never reads the legacy database and makes no outbound AI calls;
-it is a runtime-zero-intelligence loader.
+All migration intelligence lives in [`lameco/kuma-compile`](https://github.com/lameco/kuma-compile),
+which this plugin requires: reading the legacy database, the mapping file and its
+shape rules, and compiling both into payloads. Nothing is decided at run time. The
+plugin contributes one thing kuma-compile cannot have — a `TargetSchema` that
+answers from the live Craft site rather than from a parse of `config/project/**`.
 
-See [`docs/loader-contract.md`](docs/loader-contract.md) for the payload
-schema this plugin expects `kuma-migrate` to produce.
+See [`docs/loader-contract.md`](docs/loader-contract.md) for the payload schema.
 
 ## Requirements
 

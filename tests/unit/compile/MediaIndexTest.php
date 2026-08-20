@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\unit\compile;
 
-use lameco\kunstmaanmigrator\legacy\MediaIndex;
+use Lameco\KumaCompile\Legacy\MediaIndex;
 use PDO;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;

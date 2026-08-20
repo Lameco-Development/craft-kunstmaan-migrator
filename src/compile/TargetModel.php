@@ -5,21 +5,22 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\compile;
 
 use lameco\kunstmaanmigrator\payload\SchemaGateway;
+use Lameco\KumaCompile\Target\Slot;
+use Lameco\KumaCompile\Target\TargetSchema;
 
 /**
- * The questions the compile side asks about the target content model.
+ * The `TargetSchema` a migration run answers from: the live Craft site.
  *
- * This replaces a parse of `config/project/**`. Reading the live schema through the same
- * gateway the validator and saver already use means there is one answer to "does this handle
- * exist" rather than two that can disagree — and it cannot lag a project config that has not
- * been applied.
+ * Its sibling, `CraftSchema`, parses `config/project/**` so authoring works before a target
+ * is installed. That parse can lag an unapplied project config, which is exactly the wrong
+ * answer during a load — so here the questions go through the same gateway the validator and
+ * saver already use, and "does this handle exist" has one answer rather than two.
  *
- * The gateway is an interface, so everything here stays testable against a fake without
- * booting Craft.
+ * The gateway is an interface, so this stays testable against a fake without booting Craft.
  */
-final class TargetModel
+final class TargetModel implements TargetSchema
 {
-    /** @var array<string, array<string, array{type: string, required: bool, nested: list<string>}>> */
+    /** @var array<string, array<string, Slot>> */
     private array $slots = [];
 
     public function __construct(private readonly SchemaGateway $gateway)
@@ -36,16 +37,15 @@ final class TargetModel
         return $this->gateway->sectionByHandle($handle) !== null;
     }
 
-    /** @return array{type: string, required: bool, nested: list<string>}|null */
-    public function slot(string $entryType, string $field): ?array
+    public function slot(string $entryType, string $field): ?Slot
     {
-        return $this->slotsOf($entryType)[$field] ?? null;
+        return $this->slots($entryType)[$field] ?? null;
     }
 
-    /** @return array<string, array{type: string, required: bool, nested: list<string>}> */
-    public function slotsOf(string $entryType): array
+    /** @return array<string, Slot> */
+    public function slots(string $entryType): array
     {
-        return $this->slots[$entryType] ??= $this->gateway->fieldSlotsFor($entryType);
+        return $this->slots[$entryType] ??= self::toSlots($this->gateway->fieldSlotsFor($entryType));
     }
 
     /** @return list<string> */
@@ -53,8 +53,8 @@ final class TargetModel
     {
         $required = [];
 
-        foreach ($this->slotsOf($entryType) as $handle => $slot) {
-            if ($slot['required']) {
+        foreach ($this->slots($entryType) as $handle => $slot) {
+            if ($slot->required) {
                 $required[] = $handle;
             }
         }
@@ -73,8 +73,8 @@ final class TargetModel
             return '';
         }
 
-        foreach ($this->slotsOf($entryType) as $handle => $slot) {
-            foreach ($slot['nested'] as $nested) {
+        foreach ($this->slots($entryType) as $handle => $slot) {
+            foreach ($slot->nested as $nested) {
                 if ($this->slot($nested, $field) !== null) {
                     return sprintf('%s[0]', $handle);
                 }
@@ -89,6 +89,25 @@ final class TargetModel
     {
         $slot = $this->slot($entryType, $field);
 
-        return $slot !== null && count($slot['nested']) === 1 ? $slot['nested'][0] : null;
+        return $slot !== null && count($slot->nested) === 1 ? $slot->nested[0] : null;
+    }
+
+    /**
+     * A live field layout carries no notion of the value Craft writes when a payload omits a
+     * field — that is a project-config reading, and `Readiness` is the only caller that wants
+     * it. Loading never asks, so the slot's default stays null here.
+     *
+     * @param array<string, array{type: string, required: bool, nested: list<string>}> $slots
+     * @return array<string, Slot>
+     */
+    private static function toSlots(array $slots): array
+    {
+        $out = [];
+
+        foreach ($slots as $handle => $slot) {
+            $out[$handle] = new Slot($handle, $slot['type'], $slot['required'], $slot['nested']);
+        }
+
+        return $out;
     }
 }

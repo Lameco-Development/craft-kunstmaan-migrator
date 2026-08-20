@@ -41,9 +41,9 @@ final class AllowedBlocksTest extends TestCase
     {
         self::assertSame(
             ['contentBlock', 'contactCardBlock', 'uspBlock'],
-            $this->model()->slot('contentPage', 'pageBuilder')['nested'],
+            $this->model()->slot('contentPage', 'pageBuilder')?->nested,
         );
-        self::assertSame(['contentBlock'], $this->model()->slot('blogPage', 'pageBuilder')['nested']);
+        self::assertSame(['contentBlock'], $this->model()->slot('blogPage', 'pageBuilder')?->nested);
     }
 
     #[Test]
