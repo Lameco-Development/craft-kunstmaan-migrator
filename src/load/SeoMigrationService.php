@@ -73,6 +73,31 @@ class SeoMigrationService extends Component
     private const SEO_FIELD_HANDLE = 'seo';
 
     /**
+     * Whether this entry already holds SEO worth clearing on this site.
+     *
+     * Reads the stored value rather than the rendered one: an empty SEOmatic bundle still
+     * normalises into a full object of defaults, so "is there anything here" has to be asked
+     * of the two fields a migration ever writes.
+     */
+    private function hasStoredSeo(Entry $entry): bool
+    {
+        try {
+            $value = $entry->getSerializedFieldValues([self::SEO_FIELD_HANDLE])[self::SEO_FIELD_HANDLE] ?? null;
+        } catch (\Throwable) {
+            return true;
+        }
+
+        if (!is_array($value)) {
+            return false;
+        }
+
+        $vars = $value['metaGlobalVars'] ?? [];
+
+        return trim((string) ($vars['seoTitle'] ?? '')) !== ''
+            || trim((string) ($vars['seoDescription'] ?? '')) !== '';
+    }
+
+    /**
      * D-08-19 — build the per-site list to fan out to. Each entry is
      * `{siteId, siteHandle, locale}`. Sites not present in $this->sites
      * are skipped (with a WARN logged into MigrationReport by the caller).
@@ -310,6 +335,7 @@ class SeoMigrationService extends Component
         }
 
         $written = 0;
+        $skippedEmpty = 0;
         foreach ($siteIds as $siteId) {
             $locale = $siteLocales[$siteId] ?? null;
             if ($locale === null) {
@@ -351,6 +377,18 @@ class SeoMigrationService extends Component
             }
 
             $payload = $this->seoPayload->build($seoRow, $siteId);
+
+            // A locale with no legacy SEO row gets an explicit empty payload, to clear
+            // anything Craft propagated from the primary site during the entry save. That is
+            // worth a full `saveElement()` when there is something to clear, and pure waste
+            // when there is not — and there usually is not: on the first real corpus 81% of
+            // these writes were empty-over-empty, ~11,500 of COM's 14,000, each one the most
+            // expensive call available. It put the SEO pass on a fifteen-hour trajectory.
+            if ($seoRow === null && !$this->hasStoredSeo($entry)) {
+                $skippedEmpty++;
+                continue;
+            }
+
             $entry->setFieldValue(self::SEO_FIELD_HANDLE, $payload);
 
             // SEOmatic's SeoSettings field normalizeValue pulls `metaSiteVars`
@@ -400,6 +438,10 @@ class SeoMigrationService extends Component
                     ),
                 );
             }
+        }
+
+        if ($skippedEmpty > 0) {
+            $report->incr('seo.skippedEmpty', $skippedEmpty);
         }
 
         return $written;
