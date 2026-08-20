@@ -81,6 +81,14 @@ class NavigationMigrationService extends Component
     public array $sites = [];
 
     /**
+     * The legacy environment being migrated, e.g. `COM`.
+     *
+     * Entries are recorded in state as `<ENV>:kuma_nodes` keyed by node id. Without knowing
+     * the environment this service cannot find a single one of them.
+     */
+    public string $environment = '';
+
+    /**
      * Source table-name overrides (passed verbatim into raw SQL).
      * Defaults match the canonical Kunstmaan MenuBundle schema.
      */
@@ -769,8 +777,7 @@ class NavigationMigrationService extends Component
         $stateKey = 'kuma_node:' . $kumaNodeId;
         $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
 
-        $stateSource = str_replace('\\', '_', trim($fqcn, '\\'));
-        $entryId = $this->stateService->getTargetId($stateSource, (string) $refId);
+        $entryId = $this->resolveEntryIdForNode($kumaNodeId, $refId, $fqcn);
         if ($entryId === null) {
             $report->incr('skipped');
             $report->warn(sprintf(
@@ -892,7 +899,7 @@ class NavigationMigrationService extends Component
     {
         try {
             $row = $this->legacyDb->queryOne(
-                'SELECT v.ref_id, v.ref_entity_name
+                'SELECT t.node_id, v.ref_id, v.ref_entity_name
                  FROM ' . $this->nodeTranslationTableName . ' t
                  JOIN ' . $this->nodeVersionTableName . ' v ON v.id = t.public_node_version_id
                  WHERE t.id = :id',
@@ -905,10 +912,42 @@ class NavigationMigrationService extends Component
             return null;
         }
 
-        $refId = (int) $row['ref_id'];
-        $stateSource = str_replace('\\', '_', trim((string) $row['ref_entity_name'], '\\'));
+        return $this->resolveEntryIdForNode(
+            (int) $row['node_id'],
+            (int) $row['ref_id'],
+            (string) $row['ref_entity_name'],
+        );
+    }
 
-        return $this->stateService->getTargetId($stateSource, (string) $refId);
+    /**
+     * The Craft entry a Kunstmaan node became.
+     *
+     * One node is one entry, recorded as `<ENV>:kuma_nodes` keyed by node id — that is the
+     * whole identity model, and it is what makes a re-run an update. This service used to ask
+     * for `App_Entity_Pages_BlogPage` keyed by the page entity's row id, which is the v1
+     * convention: nothing has written it since, so every menu item resolved to nothing and
+     * navigation migrated zero nodes across all three environments while reporting no failure.
+     *
+     * The old key is still tried, so a host still carrying v1 state rows keeps working.
+     */
+    private function resolveEntryIdForNode(int $kumaNodeId, int $refId, string $fqcn): ?int
+    {
+        if ($this->environment !== '' && $kumaNodeId > 0) {
+            $entryId = $this->stateService->getTargetId(
+                sprintf('%s:kuma_nodes', $this->environment),
+                (string) $kumaNodeId,
+            );
+
+            if ($entryId !== null) {
+                return $entryId;
+            }
+        }
+
+        if ($fqcn === '' || $refId <= 0) {
+            return null;
+        }
+
+        return $this->stateService->getTargetId(str_replace('\\', '_', trim($fqcn, '\\')), (string) $refId);
     }
 
     /**

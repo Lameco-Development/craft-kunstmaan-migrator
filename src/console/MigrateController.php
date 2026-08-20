@@ -182,7 +182,7 @@ final class MigrateController extends Controller
             // LV's is comLvEn, and one global map cannot hold both: with COM's configured,
             // every LV entry failed with "unknown site handle comLvEn". The mapping already
             // states this per environment, so it is the only source.
-            $this->applySites($plugin, (array) ($spec['locales'] ?? []));
+            $this->applySites($plugin, (array) ($spec['locales'] ?? []), (string) $env);
 
             $roots = $spec['mediaRoot'] ?? null;
             $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [(string) $roots]);
@@ -450,8 +450,10 @@ final class MigrateController extends Controller
      *
      * @param array<string, mixed> $locales
      */
-    private function applySites(Plugin $plugin, array $locales): void
+    private function applySites(Plugin $plugin, array $locales, string $environment = ''): void
     {
+        $plugin->navigationMigrationService->environment = $environment;
+
         $sites = array_filter(
             array_map(static fn ($handle): string => is_string($handle) ? $handle : '', $locales),
             static fn (string $handle): bool => $handle !== '',
