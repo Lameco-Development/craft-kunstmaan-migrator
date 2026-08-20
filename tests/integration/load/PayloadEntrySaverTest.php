@@ -92,6 +92,12 @@ final class InMemoryMigrationStateService extends MigrationStateService
         return $source . "\0" . $key . "\0" . ($siteId ?? '');
     }
 
+    /** How many bookkeeping rows exist — a re-run must not grow this. */
+    public function rowCount(): int
+    {
+        return count($this->rows);
+    }
+
     public function get(string $source, string $key, ?int $siteId = null): ?array
     {
         return $this->rows[$this->rowKey($source, $key, $siteId)] ?? null;
@@ -290,6 +296,35 @@ final class PayloadEntrySaverTest extends TestCase
         self::assertSame($first->entryId, $second->entryId);
         self::assertTrue($first->created, 'First save of a never-before-seen sourceUid must be reported as created.');
         self::assertFalse($second->created, 'Re-saving the same sourceUid must be reported as an update, not a create.');
+    }
+
+    public function testSavingSamePayloadTwiceWritesIdenticalFieldValues(): void
+    {
+        // Same entry id is not the same as same result. The one re-run defect found so far was
+        // nested Matrix block identity drifting between runs — same entry, different block ids,
+        // partially updated rows. That is invisible to an entry-id assertion, so compare what
+        // the save path was actually handed, and check the bookkeeping did not grow.
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:143'));
+
+        $saver->save($payload);
+        $afterFirst = $entryService->lastPerSite;
+        $rowsAfterFirst = $state->rowCount();
+
+        $saver->save($payload);
+        $afterSecond = $entryService->lastPerSite;
+
+        self::assertNotSame([], $afterFirst, 'the fixture wrote nothing — the check would pass vacuously');
+        self::assertSame(
+            json_encode($afterFirst),
+            json_encode($afterSecond),
+            'A second load of the same payload handed the save path different values.',
+        );
+        self::assertSame($rowsAfterFirst, $state->rowCount(), 'A re-run must not add bookkeeping rows.');
     }
 
     public function testUnresolvedRefIsOmittedFromFieldValuesAndRecordedAsPendingRef(): void
