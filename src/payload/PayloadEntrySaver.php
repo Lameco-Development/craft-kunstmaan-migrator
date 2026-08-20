@@ -109,7 +109,8 @@ final class PayloadEntrySaver
         // "created" is decided BEFORE the save — saveEntryForSites() records
         // into this exact (stateSource, stateKey) pair, so a pre-existing row
         // means this call is an update, not a create.
-        $wasAlreadySaved = $this->stateService->getTargetId($stateSource, $stateKey) !== null;
+        $existingEntryId = $this->stateService->getTargetId($stateSource, $stateKey);
+        $wasAlreadySaved = $existingEntryId !== null;
 
         $deferredRefs = [];
         $unresolvedAssets = [];
@@ -144,6 +145,7 @@ final class PayloadEntrySaver
                     $deferredRefs,
                     $unresolvedAssets,
                     $mediaTokenIssues,
+                    $existingEntryId,
                 ),
                 'parentId' => $parentId,
                 'postDate' => $site['postDate'] !== null ? new DateTimeImmutable($site['postDate']) : null,
@@ -198,6 +200,7 @@ final class PayloadEntrySaver
         array &$deferredRefs,
         array &$unresolvedAssets,
         array &$mediaTokenIssues,
+        ?int $existingEntryId = null,
     ): array {
         $out = [];
         foreach ($fieldValues as $fieldHandle => $value) {
@@ -210,6 +213,7 @@ final class PayloadEntrySaver
                 $unresolvedAssets,
                 $mediaTokenIssues,
                 [$fieldHandle],
+                $existingEntryId,
             );
             if (!$resolved['present']) {
                 continue;
@@ -242,6 +246,7 @@ final class PayloadEntrySaver
         array &$unresolvedAssets,
         array &$mediaTokenIssues,
         array $path,
+        ?int $existingEntryId = null,
     ): array {
         if (is_string($node)) {
             if (!str_contains($node, '{{kuma:media:')) {
@@ -256,6 +261,13 @@ final class PayloadEntrySaver
 
         if (!is_array($node)) {
             return ['present' => true, 'value' => $node];
+        }
+
+        if (array_key_exists('_address', $node) && is_array($node['_address'])) {
+            return [
+                'present' => true,
+                'value' => $this->addressValue($node['_address'], $fieldHandle, $siteHandle, $path, $existingEntryId),
+            ];
         }
 
         if (array_key_exists('_ref', $node) && is_string($node['_ref'])) {
@@ -310,6 +322,7 @@ final class PayloadEntrySaver
                 $unresolvedAssets,
                 $mediaTokenIssues,
                 [...$path, $key],
+                $existingEntryId,
             );
             if (!$child['present']) {
                 continue;
@@ -322,6 +335,44 @@ final class PayloadEntrySaver
         }
 
         return ['present' => true, 'value' => $out];
+    }
+
+    /**
+     * Turn an `_address` node into the shape Craft's Addresses field reads.
+     *
+     * The field takes `[<address id> => <parts>]` and treats an unrecognised key as a new
+     * address, deleting whatever it replaced. Left at `new1` every run, a re-load would
+     * therefore delete and recreate the address element each time — the values would come out
+     * identical and the element id would not, which is churn a migration should not produce.
+     * So an entry that already owns an address at this field reuses that id.
+     *
+     * Only a top-level address field can be matched this way. One nested inside a Matrix is
+     * owned by a block whose identity is not known until the block is saved, so it is written
+     * as new; `partnerBranch.branchAddress` is the case that hits this.
+     *
+     * @param array<string, mixed> $parts
+     * @param list<int|string> $path
+     * @return array<array-key, array<string, mixed>>
+     */
+    private function addressValue(
+        array $parts,
+        string $fieldHandle,
+        string $siteHandle,
+        array $path,
+        ?int $existingEntryId,
+    ): array {
+        $key = 'new1';
+
+        if ($existingEntryId !== null && $path === [$fieldHandle]) {
+            $current = $this->entryService->readEntryFieldValueForSite($existingEntryId, $siteHandle, $fieldHandle);
+            $existingId = $current === null ? null : array_key_first($current);
+
+            if (is_int($existingId) || (is_string($existingId) && ctype_digit($existingId))) {
+                $key = $existingId;
+            }
+        }
+
+        return [$key => $parts];
     }
 
     /**
