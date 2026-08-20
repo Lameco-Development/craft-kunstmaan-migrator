@@ -56,7 +56,7 @@ final class MigrateController extends Controller
      */
     public ?string $legacyEnv = null;
 
-    /** Stop after this many entries per environment. */
+    /** Stop after this many entries in total, across every environment the run covers. */
     public ?int $limit = null;
 
     /** Refresh entries that already exist. */
@@ -178,6 +178,7 @@ final class MigrateController extends Controller
 
                     foreach ($violations as $v) {
                         $problems[] = sprintf('%s %s', $v->code, $v->message);
+                        $this->reportProblem(sprintf('%s %s', $v->code, $v->message));
                     }
 
                     return;
@@ -197,6 +198,7 @@ final class MigrateController extends Controller
                 } catch (\Throwable $e) {
                     $counts['failed']++;
                     $problems[] = sprintf('%s: %s', $payload->sourceUid, $e->getMessage());
+                    $this->reportProblem(sprintf('%s: %s', $payload->sourceUid, $e->getMessage()));
                 }
             }, $this->limit);
 
@@ -356,6 +358,19 @@ final class MigrateController extends Controller
             'charset' => $dsn->charset,
             'attributes' => [\PDO::ATTR_EMULATE_PREPARES => false],
         ]);
+    }
+
+    /**
+     * A failure, said out loud the moment it happens.
+     *
+     * The JSON summary only reaches stdout once every environment has been walked, which on a
+     * real corpus is hours. Twenty-two taxonomy entries once failed to save on every one of
+     * them and nothing showed it until the run ended — a caught exception, a counter, and
+     * silence. stderr is free, so it is used.
+     */
+    private function reportProblem(string $problem): void
+    {
+        $this->stderr('  ! ' . $problem . "\n", Console::FG_YELLOW);
     }
 
     private function writerFor(string $env): PayloadWriter
