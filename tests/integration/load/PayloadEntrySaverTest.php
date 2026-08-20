@@ -181,6 +181,21 @@ final class FakeEntryMigrationService extends EntryMigrationService
      */
     public ?string $throwForStateKey = null;
 
+    /**
+     * What an already-migrated entry currently holds, keyed `<entryId>|<site>|<field>`.
+     *
+     * `_address` resolution reads this to decide whether it is updating the address the
+     * entry already owns or creating one.
+     *
+     * @var array<string, array<array-key, mixed>>
+     */
+    public array $currentFieldValues = [];
+
+    public function readEntryFieldValueForSite(int $entryId, string $siteHandle, string $fieldHandle): ?array
+    {
+        return $this->currentFieldValues[sprintf('%d|%s|%s', $entryId, $siteHandle, $fieldHandle)] ?? null;
+    }
+
     public function saveEntryForSites(
         int $sectionId,
         int $typeId,
@@ -644,5 +659,75 @@ final class PayloadEntrySaverTest extends TestCase
         self::assertSame(['pageBuilder', 0, 'fields', 'body'], $issue['path']);
         self::assertSame('media_token', $issue['tokenFamily']);
         self::assertSame(777, $issue['legacyId']);
+    }
+
+    public function testAnAddressOnANewEntryIsWrittenAsANewAddress(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:1', [
+            'sites' => ['en' => ['fieldValues' => [
+                'partnerAddress' => ['_address' => ['addressLine1' => 'Schlossvorstadt 4', 'countryCode' => 'DE']],
+            ]]],
+        ])));
+
+        self::assertSame(
+            ['new1' => ['addressLine1' => 'Schlossvorstadt 4', 'countryCode' => 'DE']],
+            $entryService->lastPerSite['en']['fieldValues']['partnerAddress'],
+        );
+    }
+
+    public function testAnAddressOnAnExistingEntryReusesTheAddressItAlreadyOwns(): void
+    {
+        // Craft's Addresses field deletes whatever key it does not recognise. Left at `new1`,
+        // every re-load would destroy and recreate the element — same values, new id, a row
+        // of garbage per run.
+        $state = new InMemoryMigrationStateService();
+        $state->record('DE:partner_pages', '1', 'entry', 777);
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $entryService->currentFieldValues['777|en|partnerAddress'] = [
+            4242 => ['addressLine1' => 'Schlossvorstadt 3', 'countryCode' => 'DE'],
+        ];
+        $saver = $this->makeSaver($entryService, $state);
+
+        $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:1', [
+            'sites' => ['en' => ['fieldValues' => [
+                'partnerAddress' => ['_address' => ['addressLine1' => 'Schlossvorstadt 4', 'countryCode' => 'DE']],
+            ]]],
+        ])));
+
+        self::assertSame(
+            [4242 => ['addressLine1' => 'Schlossvorstadt 4', 'countryCode' => 'DE']],
+            $entryService->lastPerSite['en']['fieldValues']['partnerAddress'],
+        );
+    }
+
+    public function testAnAddressNestedInAMatrixBlockIsWrittenAsNew(): void
+    {
+        // Its owner is a block whose identity is not known until the block is saved, so
+        // there is no id to reuse. Asserted so the limitation is visible rather than found.
+        $state = new InMemoryMigrationStateService();
+        $state->record('DE:partner_pages', '2', 'entry', 778);
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:2', [
+            'sites' => ['en' => ['fieldValues' => [
+                'partnerBranches' => [[
+                    'type' => 'partnerBranch',
+                    'fields' => ['branchAddress' => ['_address' => ['addressLine1' => 'Am Gierath 20d']]],
+                ]],
+            ]]],
+        ])));
+
+        self::assertSame(
+            ['new1' => ['addressLine1' => 'Am Gierath 20d']],
+            $entryService->lastPerSite['en']['fieldValues']['partnerBranches'][0]['fields']['branchAddress'],
+        );
     }
 }
