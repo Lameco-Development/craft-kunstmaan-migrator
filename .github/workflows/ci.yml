@@ -58,7 +58,7 @@ jobs:
           CRAFT_ENVIRONMENT: dev
         run: |
           set +e
-          OUTPUT="$(./craft kuma-loader/doctor 2>&1)"
+          OUTPUT="$(./craft kunstmaan-migrator/doctor 2>&1)"
           STATUS="$?"
           set -e
           printf '%s\n' "$OUTPUT"

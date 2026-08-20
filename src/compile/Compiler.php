@@ -11,7 +11,7 @@ use lameco\kunstmaanmigrator\legacy\PartReader;
 use lameco\kunstmaanmigrator\mapping\Mapping;
 
 /**
- * Compiles one legacy environment into Kuma Loader payloads.
+ * Compiles one legacy environment into Kunstmaan Migrator payloads.
  *
  * One Kunstmaan node becomes one Craft entry; its published translations become that entry's
  * sites. `sourceUid` is the node's identity, which is what makes a re-run an update rather

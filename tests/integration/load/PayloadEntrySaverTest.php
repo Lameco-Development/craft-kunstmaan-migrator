@@ -267,7 +267,7 @@ final class PayloadEntrySaverTest extends TestCase
      */
     private function writeTempNdjson(array $records): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'kuma-loader-live-') . '.ndjson';
+        $path = tempnam(sys_get_temp_dir(), 'kunstmaan-migrator-live-') . '.ndjson';
         $lines = array_map(static fn (array $r): string => json_encode($r), $records);
         file_put_contents($path, implode("\n", $lines) . "\n");
 
@@ -276,7 +276,7 @@ final class PayloadEntrySaverTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (glob(sys_get_temp_dir() . '/kuma-loader-live-*') ?: [] as $file) {
+        foreach (glob(sys_get_temp_dir() . '/kunstmaan-migrator-live-*') ?: [] as $file) {
             @unlink($file);
         }
     }

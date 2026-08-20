@@ -221,7 +221,7 @@ final class AssetResolutionTest extends TestCase
         // prefix and joins the remainder directly onto $rootDir — the root
         // IS the file's parent, not a grandparent containing an uploads/media
         // subtree (matches LEGACY_MEDIA_PATH's real production meaning).
-        $this->tempMediaRoot = sys_get_temp_dir() . '/kuma-loader-asset-root-' . uniqid();
+        $this->tempMediaRoot = sys_get_temp_dir() . '/kunstmaan-migrator-asset-root-' . uniqid();
         mkdir($this->tempMediaRoot, 0755, true);
     }
 

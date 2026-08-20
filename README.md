@@ -1,7 +1,7 @@
-# Kuma Loader
+# Kunstmaan Migrator
 
 A Craft CMS 5 plugin that loads fully-resolved, Craft-native JSON payloads
-produced by a legacy Kunstmaan (Symfony) site into Craft. Kuma Loader is
+produced by a legacy Kunstmaan (Symfony) site into Craft. Kunstmaan Migrator is
 deliberately thin: it validates a payload against the live Craft schema,
 saves it (upsert, idempotent), resolves cross-entry `_ref`s in a second
 pass, imports redirects, and reports state — nothing more.
@@ -25,13 +25,13 @@ schema this plugin expects `kuma-migrate` to produce.
 
 ```bash
 composer require lameco/craft-kunstmaan-migrator
-./craft plugin/install kuma-loader
+./craft plugin/install kunstmaan-migrator
 ```
 
 ## One command
 
 ```bash
-./craft kuma-loader/migrate --mapping=migration/mapping/site.yaml --force
+./craft kunstmaan-migrator/migrate --mapping=migration/mapping/site.yaml --force
 ```
 
 Reads the legacy Kunstmaan database, compiles it against the mapping, and writes it into
@@ -51,11 +51,11 @@ are just no longer the seam.
 
 | Command | Description |
 | --- | --- |
-| `kuma-loader/load/entry --payload=<file> [--dry-run]` | Validates a payload (JSON/NDJSON) against the live Craft schema and, unless `--dry-run` is passed, saves it — idempotent upsert by `sourceUid`, alias recording, deferred `_ref`s parked for the fixup pass. |
-| `kuma-loader/load/fixup` | Second pass: drains every state row's pending `_ref`s left behind by `load/entry` and patches them in now that the referenced entries exist. Run once every payload in a batch has gone through `load/entry`. |
-| `kuma-loader/load/redirects --payload=<file>` | Loads a redirects payload (NDJSON), resolving `kuma:<ENV>:<table>:<id>` targets to their migrated entry's URI and writing them via Retour when installed. |
-| `kuma-loader/state/export` | Streams the migrator's state table as NDJSON (`sourceUid` / `entryId` / `targetType` / `alias_of` per line) for resume/verify tooling. |
-| `kuma-loader/doctor` | Preflight checks: plugin installed + state table reachable, `storage/migration/` writable, not running in production, Retour presence. |
+| `kunstmaan-migrator/load/entry --payload=<file> [--dry-run]` | Validates a payload (JSON/NDJSON) against the live Craft schema and, unless `--dry-run` is passed, saves it — idempotent upsert by `sourceUid`, alias recording, deferred `_ref`s parked for the fixup pass. |
+| `kunstmaan-migrator/load/fixup` | Second pass: drains every state row's pending `_ref`s left behind by `load/entry` and patches them in now that the referenced entries exist. Run once every payload in a batch has gone through `load/entry`. |
+| `kunstmaan-migrator/load/redirects --payload=<file>` | Loads a redirects payload (NDJSON), resolving `kuma:<ENV>:<table>:<id>` targets to their migrated entry's URI and writing them via Retour when installed. |
+| `kunstmaan-migrator/state/export` | Streams the migrator's state table as NDJSON (`sourceUid` / `entryId` / `targetType` / `alias_of` per line) for resume/verify tooling. |
+| `kunstmaan-migrator/doctor` | Preflight checks: plugin installed + state table reachable, `storage/migration/` writable, not running in production, Retour presence. |
 
 Every command prints machine-readable JSON (or NDJSON) to stdout and exits
 non-zero on failure — no ANSI prose.

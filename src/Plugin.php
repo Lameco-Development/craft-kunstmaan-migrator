@@ -23,7 +23,7 @@ use PDO;
 use yii\db\Connection;
 
 /**
- * Kuma Loader plugin entrypoint (payload-driven Kunstmaan → Craft loader).
+ * Kunstmaan Migrator plugin entrypoint (payload-driven Kunstmaan → Craft loader).
  *
  * v2 loader prune: the analyze / compile / mapping / extract / transform /
  * verify / locale / workflow / queue / audit stages and their CP console +
@@ -57,7 +57,7 @@ class Plugin extends BasePlugin
     public string $schemaVersion = '1.1.0';
 
     // No CP settings page in the v2 loader core — settings come from env vars
-    // and config/kuma-loader.php only (see CLAUDE.md ground rules).
+    // and config/kunstmaan-migrator.php only (see CLAUDE.md ground rules).
     public bool $hasCpSettings = false;
 
     public static function config(): array

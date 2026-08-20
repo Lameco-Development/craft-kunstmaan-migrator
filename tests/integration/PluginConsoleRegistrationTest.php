@@ -20,7 +20,7 @@ use ReflectionMethod;
  * The CP Utility (KunstmaanMappingUtility) and its console-shell templates
  * are removed along with src/utilities/ and templates/ — the v2 loader core
  * has no CP surface at all. `doctor`, `load`, and `state` are the only
- * console controllers, exposing exactly five commands under the `kuma-loader`
+ * console controllers, exposing exactly five commands under the `kunstmaan-migrator`
  * handle (Task 7 rename, was `kunstmaan-migrator`): `load/entry`,
  * `load/fixup`, `load/redirects`, `state/export`, `doctor`.
  */
@@ -78,7 +78,7 @@ final class PluginConsoleRegistrationTest extends TestCase
     /**
      * Task 7 — the Craft console command prefix is the plugin's composer
      * `extra.handle`. Asserting it directly (rather than only the derived
-     * `./craft kuma-loader/...` strings elsewhere) is what would have caught
+     * `./craft kunstmaan-migrator/...` strings elsewhere) is what would have caught
      * this task's rename at the source.
      */
     public function testComposerExtraHandleAndNameAreKumaLoader(): void
@@ -86,14 +86,14 @@ final class PluginConsoleRegistrationTest extends TestCase
         $composer = $this->composerManifest();
 
         self::assertSame(
-            'kuma-loader',
+            'kunstmaan-migrator',
             $composer['extra']['handle'] ?? null,
-            'Plugin handle drives the console command prefix — must be kuma-loader, not kunstmaan-migrator.',
+            'Plugin handle drives the console command prefix — must be kunstmaan-migrator, not kunstmaan-migrator.',
         );
         self::assertSame(
-            'Kuma Loader',
+            'Kunstmaan Migrator',
             $composer['extra']['name'] ?? null,
-            'Plugin display name must be Kuma Loader.',
+            'Plugin display name must be Kunstmaan Migrator.',
         );
         self::assertSame(
             'lameco/craft-kunstmaan-migrator',
@@ -104,8 +104,8 @@ final class PluginConsoleRegistrationTest extends TestCase
 
     /**
      * Task 7 — the v2 loader core exposes exactly five console commands:
-     * kuma-loader/load/entry, kuma-loader/load/fixup,
-     * kuma-loader/load/redirects, kuma-loader/state/export, kuma-loader/doctor.
+     * kunstmaan-migrator/load/entry, kunstmaan-migrator/load/fixup,
+     * kunstmaan-migrator/load/redirects, kunstmaan-migrator/state/export, kunstmaan-migrator/doctor.
      * Enumerating every public actionXxx() method declared directly on the
      * three controllers (excluding inherited ones) locks that count so a
      * future addition/removal has to update this test deliberately.
@@ -135,7 +135,7 @@ final class PluginConsoleRegistrationTest extends TestCase
                 StateController::class . '::actionExport',
             ],
             $actions,
-            'Expected exactly the five kuma-loader commands: doctor, load/entry, load/fixup, load/redirects, state/export.',
+            'Expected exactly the five kunstmaan-migrator commands: doctor, load/entry, load/fixup, load/redirects, state/export.',
         );
     }
 

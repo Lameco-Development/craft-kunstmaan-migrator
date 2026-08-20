@@ -245,7 +245,7 @@ class MigrationStateService extends Component implements MigrationStateReader
     protected function warn(string $message): void
     {
         try {
-            Craft::warning($message, 'kuma-loader');
+            Craft::warning($message, 'kunstmaan-migrator');
         } catch (Throwable) {
         }
     }

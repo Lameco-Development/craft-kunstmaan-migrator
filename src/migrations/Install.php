@@ -17,7 +17,7 @@ class Install extends Migration
 {
     public const FIELD_HANDLE = 'kunstmaanSourceId';
     public const STATE_TABLE = '{{%kunstmaanmigrator_state}}';
-    public const PROJECT_CONFIG_UID_PATH = 'plugins.kuma-loader.kunstmaanSourceIdFieldUid';
+    public const PROJECT_CONFIG_UID_PATH = 'plugins.kunstmaan-migrator.kunstmaanSourceIdFieldUid';
 
     public function safeUp(): bool
     {
@@ -80,8 +80,8 @@ class Install extends Migration
         if ($existingField !== null) {
             $projectConfig->set(self::PROJECT_CONFIG_UID_PATH, $existingField->uid);
             Craft::info(
-                "kuma-loader Install: reusing existing field UID {$existingField->uid} for handle '" . self::FIELD_HANDLE . "'",
-                'kuma-loader',
+                "kunstmaan-migrator Install: reusing existing field UID {$existingField->uid} for handle '" . self::FIELD_HANDLE . "'",
+                'kunstmaan-migrator',
             );
             return;
         }
@@ -105,8 +105,8 @@ class Install extends Migration
 
         $projectConfig->set(self::PROJECT_CONFIG_UID_PATH, $field->uid);
         Craft::info(
-            "kuma-loader Install: minted new field UID {$field->uid} for handle '" . self::FIELD_HANDLE . "'",
-            'kuma-loader',
+            "kunstmaan-migrator Install: minted new field UID {$field->uid} for handle '" . self::FIELD_HANDLE . "'",
+            'kunstmaan-migrator',
         );
     }
 }

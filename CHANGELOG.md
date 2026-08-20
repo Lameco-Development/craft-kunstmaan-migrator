@@ -16,10 +16,10 @@ as the payload contract between the two repos.
 
 ### BREAKING
 
-- **Plugin handle renamed `kunstmaan-migrator` → `kuma-loader`.** Every
+- **Plugin handle renamed `kunstmaan-migrator` → `kunstmaan-migrator`.** Every
   console command moves from `./craft kunstmaan-migrator/...` to
-  `./craft kuma-loader/...`, including the install command
-  (`./craft plugin/install kuma-loader`). The composer package name
+  `./craft kunstmaan-migrator/...`, including the install command
+  (`./craft plugin/install kunstmaan-migrator`). The composer package name
   (`lameco/craft-kunstmaan-migrator`) and the PSR-4 namespace
   (`lameco\kunstmaanmigrator\`) are unchanged — only the plugin handle and
   human-facing name move.
@@ -31,16 +31,16 @@ as the payload contract between the two repos.
   compiles them into the JSON payloads this plugin loads. This plugin makes
   no outbound AI calls and never reads a legacy database.
 - **Command surface is now exactly five commands:**
-  - `kuma-loader/load/entry --payload=<file> [--dry-run]` — validate (and,
+  - `kunstmaan-migrator/load/entry --payload=<file> [--dry-run]` — validate (and,
     unless `--dry-run`, save) a payload: idempotent upsert by `sourceUid`,
     alias recording, deferred `_ref`s parked for `load/fixup`.
-  - `kuma-loader/load/fixup` — second pass, resolves and patches every
+  - `kunstmaan-migrator/load/fixup` — second pass, resolves and patches every
     pending `_ref` left behind by `load/entry`.
-  - `kuma-loader/load/redirects --payload=<file>` — loads a redirects
+  - `kunstmaan-migrator/load/redirects --payload=<file>` — loads a redirects
     payload, resolving `sourceUid` targets to migrated-entry URIs.
-  - `kuma-loader/state/export` — streams the migrator's state table as
+  - `kunstmaan-migrator/state/export` — streams the migrator's state table as
     NDJSON for resume/verify tooling.
-  - `kuma-loader/doctor` — preflight checks (plugin/state-table reachable,
+  - `kunstmaan-migrator/doctor` — preflight checks (plugin/state-table reachable,
     storage writable, not production, Retour presence).
 
 ### Removed (vs the pre-alpha plan)

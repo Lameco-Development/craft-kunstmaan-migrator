@@ -1,4 +1,4 @@
-# Kuma Loader payload contract
+# Kunstmaan Migrator payload contract
 
 Canonical schema for the JSON payload the `kuma-migrate` orchestration repo
 produces and this plugin's `load/entry` command (Task 3) consumes. This file

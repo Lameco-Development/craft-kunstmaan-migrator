@@ -218,7 +218,7 @@ final class DoctorControllerTest extends TestCase
     {
         $hadPrevious = array_key_exists('LEGACY_MEDIA_PATH', $_SERVER);
         $previous = $_SERVER['LEGACY_MEDIA_PATH'] ?? null;
-        $_SERVER['LEGACY_MEDIA_PATH'] = '/no/such/directory/kuma-loader-doctor-test';
+        $_SERVER['LEGACY_MEDIA_PATH'] = '/no/such/directory/kunstmaan-migrator-doctor-test';
 
         try {
             $controller = $this->outputCapturingController();
@@ -238,7 +238,7 @@ final class DoctorControllerTest extends TestCase
 
     public function testCheckLegacyMediaRootPassesWhenEnvVarPointsAtAReadableDirectory(): void
     {
-        $dir = sys_get_temp_dir() . '/kuma-loader-doctor-media-root-' . uniqid();
+        $dir = sys_get_temp_dir() . '/kunstmaan-migrator-doctor-media-root-' . uniqid();
         mkdir($dir);
         $hadPrevious = array_key_exists('LEGACY_MEDIA_PATH', $_SERVER);
         $previous = $_SERVER['LEGACY_MEDIA_PATH'] ?? null;

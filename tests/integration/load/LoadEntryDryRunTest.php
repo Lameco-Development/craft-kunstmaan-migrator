@@ -72,7 +72,7 @@ final class LoadEntryDryRunTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->dir = sys_get_temp_dir() . '/kuma-loader-dryrun-' . uniqid();
+        $this->dir = sys_get_temp_dir() . '/kunstmaan-migrator-dryrun-' . uniqid();
         mkdir($this->dir);
     }
 

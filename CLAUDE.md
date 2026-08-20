@@ -34,7 +34,7 @@ These are locked decisions (see `PROJECT.md` Key Decisions). Don't casually reve
 - **Atomic-always-on.** No `--atomic` flag. Per-entry atomic load is the default and only mode.
 - **JIT assets.** `--preload-assets` is opt-in. Don't silently revert to always-preload.
 - **Runtime-zero-AI.** Anthropic is called only during `analyze`. Every other stage must be deterministic.
-- **No `.claude/skills/` bundle.** Mapping review lives in the plugin's CP utility with `kuma-loader/map` as a CLI fallback; consumers don't need copied skill files.
+- **No `.claude/skills/` bundle.** Mapping review lives in the plugin's CP utility with `kunstmaan-migrator/map` as a CLI fallback; consumers don't need copied skill files.
 - **`NeverProductionTrait`** gates every legacy-reading and destructive command.
 
 ## Test discipline

@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Example plugin config — copy to `config/kuma-loader.php` in the
+ * Example plugin config — copy to `config/kunstmaan-migrator.php` in the
  * consumer Craft site to override Settings defaults.
  *
  * Multi-env keys: '*' is the base, then '.dev' / '.production' overlays
@@ -46,7 +46,7 @@ return [
         // Adapter Settings gates (Phase 4.1 / ADP-04). Default true preserves
         // current behavior — set false to disable the SEOmatic / Retour adapter
         // even when the respective plugin IS installed. Per-run override:
-        // `--no-seo` / `--no-retour` on `kuma-loader/migrate`.
+        // `--no-seo` / `--no-retour` on `kunstmaan-migrator/migrate`.
         'seoEnabled'              => true,
         'retourEnabled'           => true,
 

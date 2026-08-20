@@ -110,15 +110,15 @@ class DoctorController extends Controller
         $tableName = '{{%kunstmaanmigrator_state}}';
 
         try {
-            if (Craft::$app->plugins->getPlugin('kuma-loader') === null) {
-                return $this->result('state_table', false, 'kuma-loader plugin is not installed.');
+            if (Craft::$app->plugins->getPlugin('kunstmaan-migrator') === null) {
+                return $this->result('state_table', false, 'kunstmaan-migrator plugin is not installed.');
             }
 
             if (!Craft::$app->db->getTableSchema($tableName)) {
                 return $this->result(
                     'state_table',
                     false,
-                    "State table '{$tableName}' is missing — run `./craft plugin/install kuma-loader` "
+                    "State table '{$tableName}' is missing — run `./craft plugin/install kunstmaan-migrator` "
                     . '(Craft\'s native plugin install runs the migration that creates it).',
                 );
             }

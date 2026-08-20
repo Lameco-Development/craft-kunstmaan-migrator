@@ -120,7 +120,7 @@ final class LoadControllerTest extends TestCase
 
     private function writeTemp(string $suffix, string $contents): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'kuma-loader-') . $suffix;
+        $path = tempnam(sys_get_temp_dir(), 'kunstmaan-migrator-') . $suffix;
         file_put_contents($path, $contents);
 
         return $path;
@@ -128,7 +128,7 @@ final class LoadControllerTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach (glob(sys_get_temp_dir() . '/kuma-loader-*') ?: [] as $file) {
+        foreach (glob(sys_get_temp_dir() . '/kunstmaan-migrator-*') ?: [] as $file) {
             @unlink($file);
         }
     }
@@ -241,7 +241,7 @@ final class LoadControllerTest extends TestCase
     public function testActionEntryReturnsUsageExitCodeWhenPayloadFileDoesNotExist(): void
     {
         $controller = $this->outputCapturingController();
-        $controller->payload = sys_get_temp_dir() . '/kuma-loader-does-not-exist-' . uniqid() . '.json';
+        $controller->payload = sys_get_temp_dir() . '/kunstmaan-migrator-does-not-exist-' . uniqid() . '.json';
         $controller->dryRun = true;
 
         $exitCode = $controller->actionEntry();

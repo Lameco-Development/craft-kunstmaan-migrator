@@ -39,7 +39,7 @@ use yii\base\Component;
  * Default: `$targetVolume = 'uploads'`, `$targetSubfolder = 'migrated'`.
  * Assets land in `migrated/{year}/` inside the existing uploads volume so
  * no dedicated volume YAML is needed. Override via setComponents or the
- * `config/kuma-loader.php` config file.
+ * `config/kunstmaan-migrator.php` config file.
  *
  * Boundaries:
  *  - LEGACY_MEDIA_PATH env var roots the legacy file lookup.
@@ -332,13 +332,13 @@ class AssetMigrationService extends Component
                     );
                     // D-08-23b: verbose RCA trace for the residual 0.04% asset
                     // failure. Emits a structured Craft::error line tagged
-                    // `kuma-loader:asset-failure` so the next rehearsal's
+                    // `kunstmaan-migrator:asset-failure` so the next rehearsal's
                     // run log can be grepped for the exact source row id,
                     // exception class, resolved path context, and full
                     // trace without relying on --verbose.
                     Craft::error(
                         [
-                            'tag' => 'kuma-loader:asset-failure',
+                            'tag' => 'kunstmaan-migrator:asset-failure',
                             'kuma_media_id' => $row['id'] ?? null,
                             'location' => $row['location'] ?? null,
                             'file_name' => $row['file_name'] ?? null,
