@@ -4,6 +4,34 @@ All notable changes to `lameco/craft-kunstmaan-migrator` are documented in this
 file. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### BREAKING
+
+- **The plugin requires `lameco/kuma-compile`.** Twenty files existed in both repos and
+  had already drifted: the page-lane checks lived only here, the `unreviewed:` lane and
+  fill measurement only there. What stays here is what only a running Craft site can
+  answer — `TargetModel`, now the live-gateway implementation of `TargetSchema`,
+  returning `Slot` objects rather than arrays.
+
+### Added
+
+- `migrate` runs the four adapters that were configured in `Plugin::init()` and called
+  by nothing: SEO meta, redirects, navigation and translations. They run per environment
+  after that environment's entries, because each resolves a legacy id to an entry that
+  has to exist already. `--entriesOnly` skips them.
+- Redirects compile from the mapping's `redirects:` lane instead of a payload file
+  nothing ever wrote. `load/redirects --payload=` still reads that file; both paths meet
+  at `LoadController::reportForRedirects()`.
+- `_address` payload nodes resolve into Craft Address elements, reusing the id of an
+  address the entry already owns so a re-load updates rather than deletes and recreates.
+
+### Fixed
+
+- `legacyDb` is repointed per environment. It is registered once from one setting, which
+  is right for a one-database migration and wrong for a three-database one: a DE run read
+  COM's `kuma_seo`, `kuma_menu` and `kuma_translation` and reported them as migrated.
+
 ## 2.0.0-alpha.1 — 2026-07-07
 
 First alpha of the v2 rewrite. The plugin pivots from an all-in-one
