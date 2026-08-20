@@ -130,16 +130,10 @@ final class MigrateController extends Controller
             // Each legacy site has its own uploads directory, so the media root travels with
             // the environment rather than being one global setting.
             // Locale -> site is per environment, not global. COM's `en` is comEnUs while
-            // LV's is comLvEn, and one global localeMap cannot hold both: with COM's map
-            // configured, every LV entry failed with "unknown site handle comLvEn". The
-            // mapping already states this per environment, so read it from there.
-            $plugin->entryMigrationService->sites = array_filter(
-                array_map(
-                    static fn ($handle): string => is_string($handle) ? $handle : '',
-                    (array) ($spec['locales'] ?? []),
-                ),
-                static fn (string $handle): bool => $handle !== '',
-            );
+            // LV's is comLvEn, and one global map cannot hold both: with COM's configured,
+            // every LV entry failed with "unknown site handle comLvEn". The mapping already
+            // states this per environment, so it is the only source.
+            $this->applySites($plugin, (array) ($spec['locales'] ?? []));
 
             $roots = $spec['mediaRoot'] ?? null;
             $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [(string) $roots]);
@@ -218,5 +212,28 @@ final class MigrateController extends Controller
         }
 
         return ExitCode::UNSPECIFIED_ERROR;
+    }
+
+    /**
+     * Point every migration service at this environment's locale → site map.
+     *
+     * Entries were switched per environment while SEO, redirects, navigation and translations
+     * kept whatever a global setting had left them with — so a DE or LV run wrote those against
+     * COM's sites. One environment, one map, all five services.
+     *
+     * @param array<string, mixed> $locales
+     */
+    private function applySites(Plugin $plugin, array $locales): void
+    {
+        $sites = array_filter(
+            array_map(static fn ($handle): string => is_string($handle) ? $handle : '', $locales),
+            static fn (string $handle): bool => $handle !== '',
+        );
+
+        $plugin->entryMigrationService->sites = $sites;
+        $plugin->seoMigrationService->sites = $sites;
+        $plugin->redirectMigrationService->sites = $sites;
+        $plugin->navigationMigrationService->sites = $sites;
+        $plugin->translationMigrationService->sites = $sites;
     }
 }

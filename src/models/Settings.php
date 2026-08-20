@@ -29,16 +29,6 @@ class Settings extends Model
     public string  $legacyDbTablePrefix  = '';
 
     /**
-     * Explicit locale override map: legacy Kunstmaan locale → Craft site handle.
-     * Wins over both exact-match and language-prefix loose-match. Use when a
-     * single legacy locale needs to land on a specific Craft handle (e.g.
-     * `['nl' => 'nl-NL']` when Craft uses BCP 47 long-form handles).
-     *
-     * @var array<string, string>
-     */
-    public array   $localeMap            = [];
-
-    /**
      * Craft volume handle assets land in when migrated. Defaults to
      * `uploads` — the starter-kit convention. Scaffolder-generated targets
      * use `media` (matches Kunstmaan's `kuma_media` semantics); override
@@ -232,7 +222,6 @@ class Settings extends Model
             [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
-            [['localeMap'], 'safe'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled'], 'boolean'],
             // Phase 4 / D-57 — adapter source-table overrides.

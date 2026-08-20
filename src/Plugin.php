@@ -132,29 +132,29 @@ class Plugin extends BasePlugin
         $this->assetMigrationService->skipAssetSizeValidation =
             (bool) ($this->getSettings()->skipAssetSizeValidation ?? false);
 
-        // EntryMigrationService deps. $sites is the kuma_locale → Craft site handle map
-        // composed from Settings::$localeMap (D-28 ladder, simplified — see
-        // resolveSitesMap()). Empty map is tolerated at init() — saveEntryForSites()
-        // throws on first access if the operator hasn't configured locales yet,
-        // surfacing a clear error.
+        // $sites is the kuma_locale → Craft site handle map. It is deliberately empty here:
+        // locale → site is a per-environment fact (COM's `en` is comEnUs, LV's is comLvEn) and
+        // the mapping states it per environment, so MigrateController::applySites() fills it
+        // from there for the environment being run. Empty is tolerated at init() —
+        // saveEntryForSites() throws on first access if nothing has set it.
         $this->entryMigrationService->stateService = $this->migrationStateService;
-        $this->entryMigrationService->sites        = $this->resolveSitesMap();
+        $this->entryMigrationService->sites        = [];
 
         // Phase 4 Adapter wiring — D-54 / D-56 / D-57 / PATTERNS flag #7.
 
         // SeomaticPayloadBuilder needs migrationState for kuma_media → Craft asset id resolution.
         $this->seomaticPayloadBuilder->migrationState = $this->migrationStateService;
 
-        // SeoMigrationService — 5 sibling deps + sites map from resolveSitesMap() (PATTERNS flag #3).
+        // SeoMigrationService — 5 sibling deps + sites map set per environment.
         $this->seoMigrationService->legacyDb     = $this->legacyDbService;
         $this->seoMigrationService->stateService = $this->migrationStateService;
         $this->seoMigrationService->seoPayload   = $this->seomaticPayloadBuilder;
-        $this->seoMigrationService->sites        = $this->resolveSitesMap();
+        $this->seoMigrationService->sites        = [];
 
-        // RedirectMigrationService — 3 sibling deps + sites map.
+        // RedirectMigrationService — 3 sibling deps + sites map (per environment).
         $this->redirectMigrationService->legacyDb     = $this->legacyDbService;
         $this->redirectMigrationService->stateService = $this->migrationStateService;
-        $this->redirectMigrationService->sites        = $this->resolveSitesMap();
+        $this->redirectMigrationService->sites        = [];
 
         // NavigationMigrationService — same shape as Redirect adapter.
         // verbb/navigation node migration. Reads kuma_menu + kuma_menu_item,
@@ -162,14 +162,14 @@ class Plugin extends BasePlugin
         // flow from Settings below.
         $this->navigationMigrationService->legacyDb     = $this->legacyDbService;
         $this->navigationMigrationService->stateService = $this->migrationStateService;
-        $this->navigationMigrationService->sites        = $this->resolveSitesMap();
+        $this->navigationMigrationService->sites        = [];
 
         // TranslationMigrationService — kuma_translation → Craft site
         // translations PHP catalogs (+ enupal-translate DB rows). Same
         // wiring shape as the other adapters.
         $this->translationMigrationService->legacyDb     = $this->legacyDbService;
         $this->translationMigrationService->stateService = $this->migrationStateService;
-        $this->translationMigrationService->sites        = $this->resolveSitesMap();
+        $this->translationMigrationService->sites        = [];
 
         // D-57: Settings table-name overrides wired here so adapter services pick them up.
         $settings = $this->getSettings();
@@ -203,28 +203,6 @@ class Plugin extends BasePlugin
         }
     }
 
-    /**
-     * Build the kuma_locale → Craft site handle map used by EntryMigrationService::$sites.
-     *
-     * v2 loader prune: the mapping.yaml `sites:` block and LocalePreflight's
-     * detection/language-prefix ladder were analyze-stage machinery, removed
-     * along with src/mapping/ and src/locale/. The only remaining input is
-     * the operator-curated Settings::$localeMap explicit override; an empty
-     * map degrades to `[]` (EntryMigrationService throws a clear error on
-     * first access if the operator hasn't configured locales yet).
-     *
-     * @return array<string, string> kuma_locale code → Craft site handle
-     */
-    private function resolveSitesMap(): array
-    {
-        $out = [];
-        foreach ($this->getSettings()->localeMap as $legacy => $handle) {
-            if (is_string($legacy) && is_string($handle) && $legacy !== '' && $handle !== '') {
-                $out[$legacy] = $handle;
-            }
-        }
-        return $out;
-    }
 
     protected function createSettingsModel(): ?Model
     {
