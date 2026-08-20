@@ -673,6 +673,31 @@ final class PayloadEntrySaverTest extends TestCase
         self::assertSame(777, $issue['legacyId']);
     }
 
+    public function testTheLegacyIdentityIsRecordedSoTheSeoPassCanFindItsRows(): void
+    {
+        // Without this the SEO pass has nothing to look up: `refIdsByLocale` is what decides
+        // which `kuma_seo` row belongs to which site, and one shared id would leak the primary
+        // locale's meta into every other. 204 entries were written with empty SEO because
+        // nothing recorded it.
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $raw = $this->payloadArray('kuma:LV:kuma_nodes:2');
+        $raw['legacy'] = [
+            'class' => 'App\\Entity\\Pages\\ContentPage',
+            'refIds' => ['en' => 1, 'lv' => 19, 'ru' => 20],
+        ];
+
+        $saver->save(Payload::fromArray($raw));
+
+        $meta = $state->get('LV:kuma_nodes', '2')['meta'] ?? [];
+        self::assertSame('App\\Entity\\Pages\\ContentPage', $meta['legacyClass'] ?? null);
+        self::assertSame(['en' => 1, 'lv' => 19, 'ru' => 20], $meta['refIdsByLocale'] ?? null);
+        self::assertSame(1, $meta['legacyEntityId'] ?? null);
+    }
+
     public function testAnAddressOnANewEntryIsWrittenAsANewAddress(): void
     {
         $state = new InMemoryMigrationStateService();

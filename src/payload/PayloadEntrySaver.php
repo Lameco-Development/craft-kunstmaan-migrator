@@ -175,7 +175,26 @@ final class PayloadEntrySaver
         // individually-resolved entries between runs; a fresh pass-1 save
         // should never leave stale pendingRefs pointing at refs this save
         // already resolved directly.
-        $this->stateService->updateMeta($stateSource, $stateKey, null, ['pendingRefs' => $deferredRefs]);
+        $meta = ['pendingRefs' => $deferredRefs];
+
+        // What the SEO pass looks for. `SeoMigrationService` reads `refIdsByLocale` — its own
+        // comments call it "the authoritative per-locale ref_id map written by ExtractService",
+        // a v1 service that does not exist here, so nothing ever wrote it. The map was always
+        // empty, the service correctly refused to guess, and every entry got an explicit empty
+        // SEO payload that the report counted as `updated`. 204 of them, all blank.
+        //
+        // `legacyClass` matters just as much: without it `resolveLegacyRef` falls back to
+        // turning the state source into a class name, so `LV:kuma_nodes` became the class
+        // `LV:kuma\nodes` — which matches no row, and never warns.
+        $refIds = $p->legacy['refIds'];
+
+        if ($p->legacy['class'] !== '' && $refIds !== []) {
+            $meta['legacyClass'] = $p->legacy['class'];
+            $meta['legacyEntityId'] = reset($refIds);
+            $meta['refIdsByLocale'] = $refIds;
+        }
+
+        $this->stateService->updateMeta($stateSource, $stateKey, null, $meta);
 
         foreach ($p->aliases as $alias) {
             $this->stateService->recordAlias($alias, $p->sourceUid, (int) $entry->id);

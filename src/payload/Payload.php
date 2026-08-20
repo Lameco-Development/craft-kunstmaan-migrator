@@ -24,6 +24,14 @@ final class Payload
         public readonly string $section,
         public readonly string $entryType,
         public readonly array $sites,
+        /**
+         * The legacy identity this entry came from: the page class, and the entity row id per
+         * locale. `SeoMigrationService` keys `kuma_seo` on exactly these, and nothing in Craft
+         * can reconstruct them afterwards.
+         *
+         * @var array{class: string, refIds: array<string, int>}
+         */
+        public readonly array $legacy = ['class' => '', 'refIds' => []],
     ) {
     }
 
@@ -38,7 +46,31 @@ final class Payload
             section: self::requireString($raw, 'section'),
             entryType: self::requireString($raw, 'entryType'),
             sites: self::readSites($raw),
+            legacy: self::readLegacy($raw),
         );
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     * @return array{class: string, refIds: array<string, int>}
+     */
+    private static function readLegacy(array $raw): array
+    {
+        $legacy = $raw['legacy'] ?? [];
+
+        if (!is_array($legacy)) {
+            return ['class' => '', 'refIds' => []];
+        }
+
+        $refIds = [];
+
+        foreach ((array) ($legacy['refIds'] ?? []) as $locale => $refId) {
+            if (is_numeric($refId) && (int) $refId > 0) {
+                $refIds[(string) $locale] = (int) $refId;
+            }
+        }
+
+        return ['class' => (string) ($legacy['class'] ?? ''), 'refIds' => $refIds];
     }
 
     private static function requireString(array $raw, string $key): string
