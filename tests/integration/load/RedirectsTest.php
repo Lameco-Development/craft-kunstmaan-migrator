@@ -277,4 +277,53 @@ final class RedirectsTest extends TestCase
         self::assertSame([], $report['report']);
         self::assertSame(ExitCode::OK, LoadController::exitCodeForRedirects($report));
     }
+
+    public function testCompiledRecordsTakeTheSameResolutionPathAsAPayloadFile(): void
+    {
+        // `migrate` compiles redirects from the mapping instead of reading a file. The file
+        // was never a contract worth keeping between the two halves, but the ref resolution
+        // and the reporting around it are — so both paths have to meet in one place.
+        $records = [
+            ['from' => '/news-knowledge', 'to' => 'kuma:COM:kuma_nodes:15', 'siteHandle' => 'en', 'type' => 301],
+            ['from' => '/old-partner', 'to' => 'https://example.test/partner', 'siteHandle' => 'en', 'type' => 302],
+        ];
+
+        $saved = [];
+
+        $report = LoadController::reportForRedirects(
+            $records,
+            $this->refResolverWithTargets(['COM:kuma_nodes|15' => 4321]),
+            true,
+            static fn (int $entryId, string $site): ?string => $entryId === 4321 ? '/company/news' : null,
+            static function (string $from, string $to, int $code, string $key, array $meta) use (&$saved): array {
+                $saved[] = [$from, $to, $code];
+
+                return ['outcome' => 'created'];
+            },
+        );
+
+        self::assertSame(2, $report['processed']);
+        self::assertSame(2, $report['created']);
+        self::assertSame(1, $report['resolved'], 'Only the sourceUid destination needs resolving.');
+        self::assertSame([
+            ['/news-knowledge', '/company/news', 301],
+            ['/old-partner', 'https://example.test/partner', 302],
+        ], $saved, 'A sourceUid becomes the entry\'s current URI; a literal URL is passed through.');
+    }
+
+    public function testCompiledRecordWithAnUnmigratedTargetIsReportedRatherThanSavedWrong(): void
+    {
+        $report = LoadController::reportForRedirects(
+            [['from' => '/gone', 'to' => 'kuma:COM:kuma_nodes:99', 'siteHandle' => 'en', 'type' => 301]],
+            $this->refResolverWithTargets([]),
+            true,
+            static fn (int $entryId, string $site): ?string => null,
+            static function (): array {
+                self::fail('An unresolved destination must never reach Retour.');
+            },
+        );
+
+        self::assertSame(0, $report['created']);
+        self::assertSame('UNRESOLVED_REF', $report['report'][0]['status']);
+    }
 }

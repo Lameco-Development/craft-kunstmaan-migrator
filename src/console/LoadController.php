@@ -220,8 +220,34 @@ class LoadController extends Controller
         callable $resolveEntryUri,
         callable $saveRedirect,
     ): array {
-        $records = self::readRecords($path);
+        return self::reportForRedirects(
+            self::readRecords($path),
+            $refResolver,
+            $retourAvailable,
+            $resolveEntryUri,
+            $saveRedirect,
+        );
+    }
 
+    /**
+     * The same, for records already in memory.
+     *
+     * `migrate` compiles its redirects from the mapping rather than reading a file, and the
+     * file was never a contract worth keeping between the two halves — but the reporting and
+     * the ref-resolution around it are, so both paths meet here.
+     *
+     * @param list<mixed> $records
+     * @param callable(int, string): ?string $resolveEntryUri
+     * @param callable(string, string, int, string, array<string, mixed>): array{outcome: string, message?: string} $saveRedirect
+     * @return array{processed: int, created: int, updated: int, resolved: int, skipped: int, report: list<array{from: ?string, to: ?string, siteHandle: ?string, status: string, message?: string}>}
+     */
+    public static function reportForRedirects(
+        array $records,
+        RefResolver $refResolver,
+        bool $retourAvailable,
+        callable $resolveEntryUri,
+        callable $saveRedirect,
+    ): array {
         $created = 0;
         $updated = 0;
         $resolved = 0;

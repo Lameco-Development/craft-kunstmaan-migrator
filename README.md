@@ -35,8 +35,13 @@ Reads the legacy Kunstmaan database, compiles it against the mapping, and writes
 Craft — in one process. Validates the mapping's shape, then every handle it names against the
 *live* Craft schema, then refuses to run while any `conflict:` is still open.
 
+Per environment, in order: taxonomy entries, page entries with their blocks and assets, then
+SEO meta, redirects, navigation and translations. The four adapters run after that
+environment's entries because each of them resolves a legacy id to an entry that has to exist
+already; `--entriesOnly` skips them while you iterate on the entry pass.
+
 `--dump=<dir>` writes the compiled payloads out for inspection; `--dryRun` compiles and
-reports without writing; `--env` and `--limit` narrow the run.
+reports without writing; `--legacyEnv` and `--limit` narrow the run.
 
 Compiling and loading were separate tools exchanging NDJSON. The file was a contract, and
 contracts drift: the compiler emitted the documented `{type, fields}` block shape while the
@@ -50,7 +55,7 @@ are just no longer the seam.
 | --- | --- |
 | `kunstmaan-migrator/load/entry --payload=<file> [--dry-run]` | Validates a payload (JSON/NDJSON) against the live Craft schema and, unless `--dry-run` is passed, saves it — idempotent upsert by `sourceUid`, alias recording, deferred `_ref`s parked for the fixup pass. |
 | `kunstmaan-migrator/load/fixup` | Second pass: drains every state row's pending `_ref`s left behind by `load/entry` and patches them in now that the referenced entries exist. Run once every payload in a batch has gone through `load/entry`. |
-| `kunstmaan-migrator/load/redirects --payload=<file>` | Loads a redirects payload (NDJSON), resolving `kuma:<ENV>:<table>:<id>` targets to their migrated entry's URI and writing them via Retour when installed. |
+| `kunstmaan-migrator/load/redirects --payload=<file>` | Loads a redirects payload (NDJSON), resolving `kuma:<ENV>:<table>:<id>` targets to their migrated entry's URI and writing them via Retour when installed. `migrate` compiles the same records from the mapping's `redirects:` lane and loads them directly, so this is for a payload produced by other means. |
 | `kunstmaan-migrator/state/export` | Streams the migrator's state table as NDJSON (`sourceUid` / `entryId` / `targetType` / `alias_of` per line) for resume/verify tooling. |
 | `kunstmaan-migrator/doctor` | Preflight checks: plugin installed + state table reachable, `storage/migration/` writable, not running in production, Retour presence. |
 
