@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\load\MigrationStateReader;
+use lameco\kunstmaanmigrator\load\MigrationStateStream;
 use lameco\kunstmaanmigrator\payload\RefResolver;
 use Craft;
 use craft\db\Connection;
@@ -28,7 +29,7 @@ use yii\base\Component;
  * alike. The v1 hedge that an alternative `kunstmaanSourceId` custom-field
  * path replaced state lookups for entries no longer applies.
  */
-class MigrationStateService extends Component implements MigrationStateReader
+class MigrationStateService extends Component implements MigrationStateReader, MigrationStateStream
 {
     /**
      * Schema-sync invariant: $statePrefix MUST stay aligned with src/migrations/Install.php's
