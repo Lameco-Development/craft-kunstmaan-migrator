@@ -9,6 +9,7 @@ use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
+use lameco\kunstmaanmigrator\finalize\CkeditorFinalizeService;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
@@ -42,6 +43,7 @@ use yii\db\Connection;
  * @property-read KunstmaanEnvReader $kunstmaanEnvReader
  * @property-read MigrationStateService $migrationStateService
  * @property-read CkeditorRewriterService $ckeditorRewriterService
+ * @property-read CkeditorFinalizeService $ckeditorFinalizeService
  * @property-read AssetMigrationService $assetMigrationService
  * @property-read EntryMigrationService $entryMigrationService
  * @property-read SeoMigrationService $seoMigrationService
@@ -68,6 +70,7 @@ class Plugin extends BasePlugin
                 'kunstmaanEnvReader' => KunstmaanEnvReader::class, // Settings::beforeValidate() DSN auto-fill seam
                 'migrationStateService'   => MigrationStateService::class,
                 'ckeditorRewriterService' => CkeditorRewriterService::class,
+                'ckeditorFinalizeService' => CkeditorFinalizeService::class,
                 'assetMigrationService'   => AssetMigrationService::class,
                 'entryMigrationService'   => EntryMigrationService::class,
                 // Phase 4 additions — load-side adapter services.
@@ -118,6 +121,9 @@ class Plugin extends BasePlugin
 
         // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
         // ?object — AssetMigrationService satisfies the duck-typed surface.
+        // The finalize pass shares the one rewriter, so its lazily-warmed caches are warmed once.
+        $this->ckeditorFinalizeService->rewriter = $this->ckeditorRewriterService;
+
         $this->ckeditorRewriterService->migrationState = $this->migrationStateService;
         $this->ckeditorRewriterService->legacyDb       = $this->legacyDbService;
         $this->ckeditorRewriterService->assetResolver  = $this->assetMigrationService;

@@ -81,6 +81,15 @@ final class MigrateController extends Controller
     public bool $entriesOnly = false;
 
     /**
+     * Run only the finalize pass — rewrite legacy references left in migrated rich text — and
+     * nothing else. The pass is idempotent (it only touches rows that still carry a marker) and
+     * resolves against state that already exists, so it is safe to re-run on its own after a
+     * migration has completed. Also the only practical way to exercise it: the adapters that
+     * normally precede it take hours on a full corpus.
+     */
+    public bool $finalizeOnly = false;
+
+    /**
      * Compile only these page entities / `entities:` names, comma separated.
      *
      * A full corpus takes over an hour, which is the wrong feedback loop for a fix that
@@ -93,7 +102,7 @@ final class MigrateController extends Controller
     {
         return array_merge(
             parent::options($actionID),
-            ['mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'specs', 'entriesOnly', 'only'],
+            ['mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'specs', 'entriesOnly', 'finalizeOnly', 'only'],
         );
     }
 
@@ -103,6 +112,20 @@ final class MigrateController extends Controller
             $this->stderr("Missing or unreadable --mapping=<file.yaml>\n", Console::FG_RED);
 
             return ExitCode::USAGE;
+        }
+
+        // Finalize resolves against state that already exists — it reads no legacy database and
+        // compiles nothing — so it short-circuits before the mapping is even loaded.
+        if ($this->finalizeOnly) {
+            $plugin = Plugin::getInstance();
+            $report = $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $this->dryRun));
+
+            $this->stdout(json_encode([
+                'finalize' => $report->counts,
+                'problems' => array_slice($report->warnings, 0, 40),
+            ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
+
+            return ($report->counts['failed'] ?? 0) > 0 ? ExitCode::UNSPECIFIED_ERROR : ExitCode::OK;
         }
 
         $mapping = Mapping::fromFile($this->mapping);
@@ -258,9 +281,27 @@ final class MigrateController extends Controller
             }
         }
 
+        // Last, and only after every environment: `[NT<id>]` resolves a legacy node translation to
+        // the entry it became, and `/uploads/media/...` to a migrated asset. Neither can be
+        // answered until the entries and assets exist. The rewriter has always been able to do
+        // this and was called by nothing; see CkeditorFinalizeService.
+        $finalize = null;
+
+        if (!$this->entriesOnly) {
+            $finalizeReport = $plugin->ckeditorFinalizeService->run(
+                new MigrationOptions(dryRun: $this->dryRun),
+            );
+            $finalize = $finalizeReport->counts;
+
+            foreach (array_slice($finalizeReport->warnings, 0, 20) as $warning) {
+                $problems[] = $warning;
+            }
+        }
+
         $this->stdout(json_encode([
             'counts' => $counts,
             'fixup' => $fixup,
+            'finalize' => $finalize,
             'lossyConversions' => $transforms->lossCount(),
             'losses' => $transforms->losses(),
             'skippedSources' => $compiler->skipped(),
