@@ -32,6 +32,14 @@ final class Payload
          * @var array{class: string, refIds: array<string, int>}
          */
         public readonly array $legacy = ['class' => '', 'refIds' => []],
+        /**
+         * A path segment rather than a page: an ancestor that owns part of a URL but never
+         * became content of its own. It is disabled on every site — so Craft still computes
+         * its URI and still hands the segment to its descendants, while the URL itself 404s
+         * and falls through to Retour. That makes it the one payload allowed to be enabled
+         * nowhere; see `PayloadValidator::NO_ENABLED_SITE`.
+         */
+        public readonly bool $structural = false,
     ) {
     }
 
@@ -47,6 +55,7 @@ final class Payload
             entryType: self::requireString($raw, 'entryType'),
             sites: self::readSites($raw),
             legacy: self::readLegacy($raw),
+            structural: (bool) ($raw['structural'] ?? false),
         );
     }
 

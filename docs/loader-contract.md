@@ -50,6 +50,7 @@ should become:
 | `aliases` | list\<string\> | Other legacy identities (e.g. a duplicated node across environments/locales) that resolve to the same target entry. Same grammar as `sourceUid`. |
 | `section` | string | Target Craft section handle. |
 | `entryType` | string | Target Craft entry type handle within that section. |
+| `structural` | bool | Optional, default `false`. Marks a path-segment placeholder — see "Structural placeholders" below. The only payload permitted to be enabled on no site. |
 | `sites` | object | Keyed by Craft site handle. Every site the entry should exist on. |
 | `sites.*.enabled` | bool | Whether the entry is enabled for this site. |
 | `sites.*.title` | string\|null | Native `Entry::$title`. May be omitted only when the entry type auto-generates its title (`hasTitleField: false` + a `titleFormat`). |
@@ -57,6 +58,44 @@ should become:
 | `sites.*.parentRef` | string\|null | `sourceUid` of this site's parent entry (Structure sections). Resolved to a Craft entry id at load time — see "Two-pass `_ref` resolution" below. |
 | `sites.*.postDate` | string\|null | ISO 8601 datetime. |
 | `sites.*.fieldValues` | object | Custom-field handle → value. Handles must exist in the entry type's field layout. |
+
+### Structural placeholders
+
+A Kunstmaan URL is the slug chain of a node's ancestors, and an ancestor contributes its
+segment whether or not it is itself published and whether or not it becomes content. Three
+kinds routinely become nothing: a node with no online translation, a page type the mapping
+parks as unmapped, and — most often — a `RedirectPage`, which is how Kunstmaan gives a
+section its landing URL. Emit nothing for them and every descendant is re-rooted, losing
+that segment from its URL and colliding with whatever else now shares its parent.
+
+`"structural": true` marks an entry that exists only to own such a segment:
+
+```json
+{
+  "sourceUid": "kuma:com:kuma_nodes:28",
+  "section": "pages",
+  "entryType": "contentPage",
+  "structural": true,
+  "sites": {
+    "comEnUs": { "enabled": false, "title": "News & knowledge", "slug": "news-knowledge" },
+    "comNlNl": { "enabled": false, "title": "News & kennis",     "slug": "news-knowledge" }
+  }
+}
+```
+
+It carries no `fieldValues`, and it is disabled on every site. Being *listed* in `sites` is
+what matters: the loader pre-seeds `setEnabledForSite()` for every listed site before the
+first save, so Craft propagates the entry there, computes its URI, and hands the segment to
+its descendants — while the entry's own URL returns 404 (`Entry::route()` serves only
+`STATUS_LIVE`) and falls through to Retour. For a `RedirectPage` ancestor that is exactly the
+wanted behaviour: the segment survives, and the redirect still fires.
+
+Because it is enabled nowhere, `structural` is the one payload exempt from the
+`NO_ENABLED_SITE` violation. Every other rule still applies, so a site listed with a slug
+still needs a title unless the entry type has a `titleFormat`. List a site only where the
+ancestor genuinely has a slug in that locale: Kunstmaan omits the segment for a locale it was
+never translated into, and borrowing another locale's slug invents a path the old site never
+served.
 
 ### `fieldValues` value shapes
 

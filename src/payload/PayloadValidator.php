@@ -71,7 +71,9 @@ final class PayloadValidator
                 $anyEnabled = true;
             }
         }
-        if (!$anyEnabled) {
+        // A structural placeholder is enabled nowhere by design — that is what keeps its own
+        // URL a 404 while its slug still reaches its descendants.
+        if (!$anyEnabled && !$p->structural) {
             $violations[] = $this->violation($p, 'NO_ENABLED_SITE', 'No site is enabled for this payload.');
         }
 
