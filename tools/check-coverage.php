@@ -45,8 +45,8 @@ const MODULES = [
 // this file back in the list above — the number should move a long way in one go. Until then a
 // gate that cannot be met teaches people to ignore the gate.
 //
-// See docs/migration/ARCHITECTURE-REVIEW.md in the consuming project — this is that document's
-// central finding in one file.
+// See docs/migration/ARCHITECTURE-REVIEW.md §7 in the consuming project — that section is this
+// exemption written out in full, including why it is worth clearing before the larger write seam.
 const EXEMPT = [
     'src/finalize/CkeditorRewriterService.php' => 'no seam at Craft; see the note above',
 ];
