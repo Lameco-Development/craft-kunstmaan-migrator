@@ -25,7 +25,7 @@ final class AdapterRegistryTest extends TestCase
             (new AdapterRegistry())->all(),
         );
 
-        self::assertSame(['seo', 'redirects', 'navigation', 'forms', 'translations'], $handles);
+        self::assertSame(['seo', 'redirects', 'navigation', 'forms', 'globals', 'translations'], $handles);
     }
 
     public function testEverySettingsFlagAnAdapterNamesActuallyExists(): void
@@ -84,7 +84,7 @@ final class AdapterRegistryTest extends TestCase
         );
 
         self::assertSame('formie', $registry->byHandle('forms')?->pluginHandle);
-        self::assertCount(6, $registry->all());
+        self::assertCount(7, $registry->all());
     }
 
     public function testTheListIsBuiltOncePerRegistry(): void

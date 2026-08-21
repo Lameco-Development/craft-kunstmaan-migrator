@@ -113,6 +113,9 @@ class Settings extends Model
      */
     public bool $formsEnabled = true;
 
+    /** The `globals:` lane — the legacy footer, written into navs. */
+    public bool $globalsEnabled = true;
+
     /**
      * Adapter-owned preferences: adapter handle => setting handle => value.
      *
@@ -394,7 +397,7 @@ class Settings extends Model
                 'validateEnvReferenceResolves',
             ],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
-            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'formsEnabled'], 'boolean'],
+            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'formsEnabled', 'globalsEnabled'], 'boolean'],
             [['nodeMenuNavHandle', 'mappingPath'], 'string'],
             [['nodeMenuExcludedInternalNames', 'translationDomains', 'adapters'], 'safe'],
         ];

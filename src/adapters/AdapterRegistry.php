@@ -120,6 +120,16 @@ final class AdapterRegistry extends Component
                 ],
             ),
 
+            // The `globals:` lane. Its target is the navigation plugin, so it is
+            // gated on the same install the navigation pass needs.
+            new Adapter(
+                'globals',
+                'Globals',
+                'globalsEnabled',
+                'navigation',
+                static fn () => Plugin::getInstance()->globalsMigrationService,
+            ),
+
             new Adapter(
                 'translations',
                 'Translations',

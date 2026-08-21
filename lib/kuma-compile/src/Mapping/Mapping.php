@@ -124,6 +124,20 @@ final class Mapping
         return $this->data['forms']['fields'] ?? [];
     }
 
+    /**
+     * The `globals:` lane as declared: page type => contexts + parts.
+     *
+     * `globalParts()` below flattens every page's parts into one list, which is
+     * what the lane-collision check needs and the only thing that ever read this
+     * block — so the lane's own structure had no accessor at all.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function globals(): array
+    {
+        return $this->data['globals'] ?? [];
+    }
+
     /** @return array<string, array<string, mixed>> */
     public function globalParts(): array
     {
