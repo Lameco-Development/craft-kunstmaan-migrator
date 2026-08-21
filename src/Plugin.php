@@ -8,6 +8,7 @@ use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
 use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\finalize\CkeditorFinalizeService;
@@ -174,6 +175,7 @@ class Plugin extends BasePlugin
         $this->navigationMigrationService->legacyDb      = $this->legacyDbService;
         $this->navigationMigrationService->stateService  = $this->migrationStateService;
         $this->navigationMigrationService->elementWriter = new CraftElementWriter();
+        $this->navigationMigrationService->navigationGateway = new VerbbNavigationGateway();
         $this->navigationMigrationService->sites         = [];
 
         // TranslationMigrationService — kuma_translation → Craft site
