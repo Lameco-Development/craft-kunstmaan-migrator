@@ -28,6 +28,28 @@ const MODULES = [
     'src/finalize/CkeditorRewriterService.php',
 ];
 
+/**
+ * Reported, not gated — yet.
+ *
+ * These are the four largest and most defect-prone modules in the plugin, and
+ * every defect AUDIT.md found lives in them. They were unreachable without
+ * MySQL until the ElementWriter seam landed; the seam was built to buy exactly
+ * this and the gate was never extended to spend it.
+ *
+ * They are not in MODULES because nobody has measured them, and a threshold
+ * picked by guessing is how a gate ends up either red on arrival or set so low
+ * it certifies nothing. CI prints these numbers on every run: read them once,
+ * then move each module into MODULES at a threshold its real coverage supports
+ * and raise it from there. A file listed here that CI cannot find is a hard
+ * failure, same as one in MODULES — a stale list is worse than no list.
+ */
+const WATCHED = [
+    'src/payload/PayloadEntrySaver.php',
+    'src/load/EntryMigrationService.php',
+    'src/load/AssetMigrationService.php',
+    'src/load/NavigationMigrationService.php',
+];
+
 const HANDLERS_PREFIX = 'src/fields/handlers/';
 
 $cloverPath = __DIR__ . '/../build/coverage/clover.xml';
@@ -69,8 +91,10 @@ foreach ($fileNodes as $file) {
     if ($repoRoot !== false && str_starts_with($absPath, $repoRoot . '/')) {
         $rel = substr($absPath, strlen($repoRoot) + 1);
     }
-    $isModule = in_array($rel, MODULES, true) || str_starts_with($rel, HANDLERS_PREFIX);
-    if (!$isModule) {
+    $isModule  = in_array($rel, MODULES, true) || str_starts_with($rel, HANDLERS_PREFIX);
+    $isWatched = in_array($rel, WATCHED, true);
+
+    if (!$isModule && !$isWatched) {
         continue;
     }
 
@@ -88,8 +112,16 @@ foreach ($fileNodes as $file) {
         $rowsPrinted++;
         continue;
     }
-    $pct        = ($covered / $statements) * 100.0;
-    $marker     = $pct >= THRESHOLD ? 'OK  ' : 'FAIL';
+    $pct = ($covered / $statements) * 100.0;
+
+    if ($isWatched) {
+        // Reported so the number exists to act on, not gated: see WATCHED.
+        fwrite(STDOUT, sprintf("  WATCH %5.1f%%  %s\n", $pct, $rel));
+        $rowsPrinted++;
+        continue;
+    }
+
+    $marker = $pct >= THRESHOLD ? 'OK  ' : 'FAIL';
     fwrite(STDOUT, sprintf("  %s %5.1f%%  %s\n", $marker, $pct, $rel));
     $rowsPrinted++;
     if ($pct < THRESHOLD) {
@@ -104,10 +136,10 @@ if ($rowsPrinted === 0) {
 }
 
 // A module named here but absent from the report is a gate that silently guards nothing.
-$missing = array_values(array_diff(MODULES, array_keys($seen)));
+$missing = array_values(array_diff([...MODULES, ...WATCHED], array_keys($seen)));
 
 if ($missing !== []) {
-    fwrite(STDERR, "\nFAIL: gated module(s) not present in the coverage report:\n  - "
+    fwrite(STDERR, "\nFAIL: named module(s) not present in the coverage report:\n  - "
         . implode("\n  - ", $missing) . "\n");
     fwrite(STDERR, "  Either the file was moved or deleted and MODULES is stale, or it is missing\n");
     fwrite(STDERR, "  from phpunit.xml.dist <source><include>. Fix the list — do not leave it rotting.\n");

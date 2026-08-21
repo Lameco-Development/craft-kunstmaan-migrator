@@ -5,14 +5,14 @@
    and deployed — so the connection fields take the NAME of an environment
    variable, not its value, and the password field refuses anything else. #}
 
-<h2>{{ "Legacy database"|t('app') }}</h2>
+<h2>{{ "Legacy database"|t('kunstmaan-migrator') }}</h2>
 
 <p class="light">
-  {{ "These fields take an environment variable name, so the values stay in your .env and out of project config. Which database each environment reads comes from the mapping, not from here."|t('app') }}
+  {{ "These fields take an environment variable name, so the values stay in your .env and out of project config. Which database each environment reads comes from the mapping, not from here."|t('kunstmaan-migrator') }}
 </p>
 
 {{ forms.autosuggestField({
-  label: "Server"|t('app'),
+  label: "Server"|t('kunstmaan-migrator'),
   id: 'legacyDbServer',
   name: 'legacyDbServer',
   value: settings.legacyDbServer,
@@ -21,7 +21,7 @@
 }) }}
 
 {{ forms.textField({
-  label: "Port"|t('app'),
+  label: "Port"|t('kunstmaan-migrator'),
   id: 'legacyDbPort',
   name: 'legacyDbPort',
   type: 'number',
@@ -31,7 +31,7 @@
 }) }}
 
 {{ forms.autosuggestField({
-  label: "User"|t('app'),
+  label: "User"|t('kunstmaan-migrator'),
   id: 'legacyDbUser',
   name: 'legacyDbUser',
   value: settings.legacyDbUser,
@@ -40,8 +40,8 @@
 }) }}
 
 {{ forms.autosuggestField({
-  label: "Password"|t('app'),
-  instructions: "Must be an environment variable — a value typed here would be committed to project config."|t('app'),
+  label: "Password"|t('kunstmaan-migrator'),
+  instructions: "Must be an environment variable — a value typed here would be committed to project config."|t('kunstmaan-migrator'),
   id: 'legacyDbPassword',
   name: 'legacyDbPassword',
   value: settings.legacyDbPassword,
@@ -51,19 +51,19 @@
 
 <hr>
 
-<h2>{{ "Adapters"|t('app') }}</h2>
+<h2>{{ "Adapters"|t('kunstmaan-migrator') }}</h2>
 
 <p class="light">
-  {{ "Each adapter writes into a different plugin. Turning one off skips that pass; a plugin that is not installed skips it too, and the run says which."|t('app') }}
+  {{ "Each adapter writes into a different plugin. Turning one off skips that pass; a plugin that is not installed skips it too, and the run says which."|t('kunstmaan-migrator') }}
 </p>
 
 <table class="data fullwidth">
   <thead>
     <tr>
-      <th>{{ "Adapter"|t('app') }}</th>
-      <th>{{ "Requires"|t('app') }}</th>
-      <th>{{ "Detected"|t('app') }}</th>
-      <th>{{ "Enabled"|t('app') }}</th>
+      <th>{{ "Adapter"|t('kunstmaan-migrator') }}</th>
+      <th>{{ "Requires"|t('kunstmaan-migrator') }}</th>
+      <th>{{ "Detected"|t('kunstmaan-migrator') }}</th>
+      <th>{{ "Enabled"|t('kunstmaan-migrator') }}</th>
     </tr>
   </thead>
   <tbody>
@@ -74,7 +74,7 @@
           {% if adapter.pluginHandle %}
             <code>{{ adapter.pluginHandle }}</code>
           {% else %}
-            <span class="light">{{ "built in"|t('app') }}</span>
+            <span class="light">{{ "built in"|t('kunstmaan-migrator') }}</span>
           {% endif %}
         </td>
         <td>
@@ -83,7 +83,7 @@
           {% elseif detected[adapter.handle] %}
             <span data-icon="check"></span> {{ detected[adapter.handle] }}
           {% else %}
-            <span class="error">{{ "not installed"|t('app') }}</span>
+            <span class="error">{{ "not installed"|t('kunstmaan-migrator') }}</span>
           {% endif %}
         </td>
         <td>
@@ -100,11 +100,11 @@
 
 <hr>
 
-<h2>{{ "Environments"|t('app') }}</h2>
+<h2>{{ "Environments"|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.autosuggestField({
-  label: "Mapping file"|t('app'),
-  instructions: "The mapping owns which databases exist, where each one's uploads live, and which legacy locale writes to which Craft site. It is version-controlled next to the field mappings it travels with."|t('app'),
+  label: "Mapping file"|t('kunstmaan-migrator'),
+  instructions: "The mapping owns which databases exist, where each one's uploads live, and which legacy locale writes to which Craft site. It is version-controlled next to the field mappings it travels with."|t('kunstmaan-migrator'),
   id: 'mappingPath',
   name: 'mappingPath',
   value: settings.mappingPath,
@@ -114,20 +114,20 @@
 
 {% if environments is empty %}
   <p class="light">
-    {{ "Point at a mapping file and save to see the environments it declares."|t('app') }}
+    {{ "Point at a mapping file and save to see the environments it declares."|t('kunstmaan-migrator') }}
   </p>
 {% else %}
   <p class="light">
-    {{ "Read-only — edit the mapping file to change any of this."|t('app') }}
+    {{ "Read-only — edit the mapping file to change any of this."|t('kunstmaan-migrator') }}
   </p>
 
   <table class="data fullwidth">
     <thead>
       <tr>
-        <th>{{ "Environment"|t('app') }}</th>
-        <th>{{ "Database"|t('app') }}</th>
-        <th>{{ "Upload directories"|t('app') }}</th>
-        <th>{{ "Locale → site"|t('app') }}</th>
+        <th>{{ "Environment"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Database"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Upload directories"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Locale → site"|t('kunstmaan-migrator') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -137,7 +137,7 @@
           <td><code>{{ env.database ?? '—' }}</code></td>
           <td>
             {% for root in env.mediaRoot %}
-              <div><code>{{ root }}</code>{% if not loop.first %} <span class="light">{{ "(fallback)"|t('app') }}</span>{% endif %}</div>
+              <div><code>{{ root }}</code>{% if not loop.first %} <span class="light">{{ "(fallback)"|t('kunstmaan-migrator') }}</span>{% endif %}</div>
             {% else %}
               <span class="light">—</span>
             {% endfor %}
@@ -146,7 +146,7 @@
             {% for locale, handle in env.locales %}
               <div>
                 <code>{{ locale }}</code> →
-                {% if handle %}<code>{{ handle }}</code>{% else %}<span class="light">{{ "not migrated"|t('app') }}</span>{% endif %}
+                {% if handle %}<code>{{ handle }}</code>{% else %}<span class="light">{{ "not migrated"|t('kunstmaan-migrator') }}</span>{% endif %}
               </div>
             {% else %}
               <span class="light">—</span>

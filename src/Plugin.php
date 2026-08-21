@@ -36,20 +36,14 @@ use yii\base\Event;
 use yii\db\Connection;
 
 /**
- * Kunstmaan Migrator plugin entrypoint (payload-driven Kunstmaan → Craft loader).
+ * Kunstmaan Migrator plugin entrypoint.
  *
- * v2 loader prune: the analyze / compile / mapping / extract / transform /
- * verify / locale / workflow / queue / audit stages and their CP console +
- * settings-page surface are removed. Task 9 additionally removed the
- * orchestration-era per-entry pipeline that the payload-driven loader
- * (Task 8) replaced — the field-handler registry (never read; the live
- * path resolves assets/relations via AssetMigrationService/
- * EntryMigrationService directly), the old atomic per-entry orchestrator,
- * and the unused CP/job-only production guard (NeverProductionTrait
- * remains the live console guard). What remains is the load-side core —
- * MigrationStateService, EntryMigrationService, CkeditorRewriterService,
- * the load-side adapters, and the `doctor` + `load` + `state` console
- * commands.
+ * Reads a legacy Kunstmaan database, compiles it against a mapping, and writes
+ * it into Craft. The compile half lives in `lib/kuma-compile/` and knows nothing
+ * about Craft; this half owns the writing, the state table that makes it
+ * idempotent, the adapters that follow the entries, and the two operator
+ * surfaces — a console command and a control-panel utility, both running the
+ * same EnvironmentPipeline.
  *
  * @property-read LegacyDbService $legacyDbService
  * @property-read KunstmaanEnvReader $kunstmaanEnvReader
@@ -70,8 +64,12 @@ class Plugin extends BasePlugin
     // D-08: v2 starts below v1.x's 2.0.0.
     public string $schemaVersion = '1.1.0';
 
-    // No CP settings page in the v2 loader core — settings come from env vars
-    // and config/kunstmaan-migrator.php only (see CLAUDE.md ground rules).
+    /**
+     * The connection and the adapter switches are settings; the topology is not.
+     * Which databases exist, where their uploads are and which legacy locale
+     * writes to which Craft site all come from the mapping, which the settings
+     * screen shows read-only. See settingsHtml().
+     */
     public bool $hasCpSettings = true;
 
     public static function config(): array
@@ -128,8 +126,6 @@ class Plugin extends BasePlugin
         }
 
         // D-03: console controllerNamespace points at the flat src/console/ directory.
-        // No CP controllers/utility/settings surface remains in the v2 loader core.
-        // D-03: console controllerNamespace points at the flat src/console/ directory.
         $this->controllerNamespace = Craft::$app->request->getIsConsoleRequest()
             ? 'lameco\\kunstmaanmigrator\\console'
             : 'lameco\\kunstmaanmigrator\\controllers';
@@ -144,6 +140,27 @@ class Plugin extends BasePlugin
             },
         );
 
+        // Deferred: none of this is needed to answer a request that never reaches
+        // the migrator, and until now all twelve components were built and ~25
+        // properties patched onto them on every front-end render and every
+        // unrelated console command. onInit() runs once the application is up,
+        // which is early enough for a console command and late enough to cost a
+        // cached page nothing.
+        Craft::$app->onInit(function (): void {
+            $this->wireServices();
+        });
+    }
+
+    /**
+     * The object graph, assembled by hand.
+     *
+     * Property injection rather than constructors, which is a shallow seam: every
+     * dependency is a nullable public property, so every use site has to cope with
+     * "not wired yet" and no interface records what a module actually needs.
+     * Constructor injection against the named interfaces is the standing follow-up.
+     */
+    private function wireServices(): void
+    {
         // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
         // ?object — AssetMigrationService satisfies the duck-typed surface.
         // The finalize pass shares the one rewriter, so its lazily-warmed caches are warmed once.
@@ -223,7 +240,6 @@ class Plugin extends BasePlugin
             $this->translationMigrationService->allowedDomains = $settings->translationDomains;
         }
     }
-
 
     protected function createSettingsModel(): ?Model
     {
