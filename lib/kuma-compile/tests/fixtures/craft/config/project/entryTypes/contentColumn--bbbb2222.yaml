@@ -1,0 +1,15 @@
+handle: contentColumn
+name: Column
+fieldLayouts:
+  ffff6666:
+    - elements:
+        - __assoc__:
+            - [type, 'craft\fieldlayoutelements\CustomField']
+            - [fieldUid, cccc3333]
+            - [handle, heading]
+            - [required, false]
+        - __assoc__:
+            - [type, 'craft\fieldlayoutelements\CustomField']
+            - [fieldUid, eeee7777]
+            - [handle, content]
+            - [required, true]

@@ -1,0 +1,3 @@
+handle: commonCkeditorTitle
+name: Title
+type: craft\ckeditor\Field

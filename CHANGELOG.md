@@ -8,7 +8,22 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### BREAKING
 
-- **The plugin requires `lameco/kuma-compile`.** Twenty files existed in both repos and
+- **`lameco/kuma-compile` is no longer a dependency — its source now ships inside this
+  plugin** at `lib/kuma-compile/`, autoloaded through a second PSR-4 root. The package was
+  never published to a remote, so a `path` repository pointing at a checkout on one developer's
+  machine was the only way to satisfy the requirement: `composer install` failed anywhere else.
+  One repo, one install, one version.
+
+  The `Lameco\KumaCompile\` namespace is deliberately kept. The compile engine reads the legacy
+  database and knows nothing about Craft, and that boundary is worth keeping legible — it is why
+  its 113 tests run in under a tenth of a second with no Craft bootstrap. They run here as the
+  `Compile` suite. The standalone `kuma-compile` CLI still works and is still Craft-free; its
+  bootstrap now finds an autoloader from any of the four places it can now live.
+
+  Consumers drop the `kuma-compile` path repository from their `composer.json`; nothing else
+  changes, because no import moved.
+
+- **The plugin previously required `lameco/kuma-compile`.** Twenty files existed in both repos and
   had already drifted: the page-lane checks lived only here, the `unreviewed:` lane and
   fill measurement only there. What stays here is what only a running Craft site can
   answer — `TargetModel`, now the live-gateway implementation of `TargetSchema`,

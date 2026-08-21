@@ -1,0 +1,13 @@
+handle: layout
+name: Layout
+type: craft\fields\Dropdown
+settings:
+  options:
+    - __assoc__:
+        - [label, 'Simple grid']
+        - [value, simple]
+        - [default, false]
+    - __assoc__:
+        - [label, Carousel]
+        - [value, interactive]
+        - [default, true]

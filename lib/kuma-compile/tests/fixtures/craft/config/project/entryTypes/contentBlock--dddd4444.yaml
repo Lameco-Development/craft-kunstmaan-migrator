@@ -1,0 +1,10 @@
+handle: contentBlock
+name: Content
+fieldLayouts:
+  eeee5555:
+    - elements:
+        - __assoc__:
+            - [type, 'craft\fieldlayoutelements\CustomField']
+            - [fieldUid, aaaa1111]
+            - [handle, null]
+            - [required, true]
