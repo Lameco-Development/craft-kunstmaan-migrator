@@ -23,9 +23,40 @@ jobs:
           if-no-files-found: warn
 
   smoke:
-    name: Plugin-load smoke (scratch-Craft expected config gate)
+    name: Plugin-load smoke (scratch-Craft install + doctor gate)
     runs-on: ubuntu-latest
     needs: unit       # D-18: gate on unit pass; saves CI minutes on broken unit
+
+    # Craft reads its installed-plugin list from the `plugins` table, so a
+    # scratch site with no database loads no plugins and `kunstmaan-migrator/*`
+    # does not exist as a console command (issue #18). The smoke job therefore
+    # needs a real database, a real `install/craft`, and a real
+    # `plugin/install` before any plugin command can be invoked.
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: craft
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      CRAFT_ENVIRONMENT: dev          # doctor refuses to run under `production` (NeverProductionTrait)
+      CRAFT_DB_DRIVER: mysql
+      CRAFT_DB_SERVER: 127.0.0.1
+      CRAFT_DB_PORT: '3306'
+      CRAFT_DB_DATABASE: craft
+      CRAFT_DB_USER: root
+      CRAFT_DB_PASSWORD: root
+      CRAFT_DB_TABLE_PREFIX: ''
+      CRAFT_APP_ID: CraftCMS--smoke
+      CRAFT_SECURITY_KEY: smoke-key-not-a-secret
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +65,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
+          extensions: pdo_mysql, intl, zip
 
       - name: Bootstrap scratch Craft 5
         # Pin to the supported major (composer requires craftcms/cms ^5.0).
@@ -41,9 +73,13 @@ jobs:
         # the moment it ships, producing a confusing solver failure or a
         # half-installed scratch site (Phase 5 review MEDIUM #2). Bump
         # deliberately when Phase 6 / Craft 6 work begins.
+        #
+        # --no-scripts: the starter project's post-create hook is an
+        # interactive `setup/welcome`; the .env it would write is written
+        # below instead, from the same values the job env already carries.
         run: |
           composer create-project "craftcms/craft:^5.0" scratch-craft \
-            --no-interaction --prefer-dist --no-progress
+            --no-interaction --prefer-dist --no-progress --no-scripts
 
       - name: Register plugin as path repository + install
         working-directory: scratch-craft
@@ -52,34 +88,53 @@ jobs:
           composer require lameco/craft-kunstmaan-migrator @dev \
             --no-interaction --no-progress
 
-      - name: Plugin-load smoke (plugin installs; missing legacy config is expected)
+      - name: Install Craft against the scratch database
         working-directory: scratch-craft
-        env:
-          CRAFT_ENVIRONMENT: dev
+        run: |
+          # Craft's bootstrap loads .env immutably, so these duplicate the job
+          # env rather than override it — they exist so the file is present and
+          # a failing step's `cat .env` tells the whole story.
+          {
+            echo "CRAFT_ENVIRONMENT=${CRAFT_ENVIRONMENT}"
+            echo "CRAFT_APP_ID=${CRAFT_APP_ID}"
+            echo "CRAFT_SECURITY_KEY=${CRAFT_SECURITY_KEY}"
+            echo "CRAFT_DB_DRIVER=${CRAFT_DB_DRIVER}"
+            echo "CRAFT_DB_SERVER=${CRAFT_DB_SERVER}"
+            echo "CRAFT_DB_PORT=${CRAFT_DB_PORT}"
+            echo "CRAFT_DB_DATABASE=${CRAFT_DB_DATABASE}"
+            echo "CRAFT_DB_USER=${CRAFT_DB_USER}"
+            echo "CRAFT_DB_PASSWORD=${CRAFT_DB_PASSWORD}"
+          } > .env
+
+          php craft install/craft \
+            --interactive=0 \
+            --username=admin \
+            --email=admin@example.com \
+            --password=SmokeTest123! \
+            --site-name=Smoke \
+            --site-url=http://localhost:8080 \
+            --language=en-US
+
+      - name: Install the plugin into Craft
+        working-directory: scratch-craft
+        run: php craft plugin/install kunstmaan-migrator
+
+      - name: Plugin-load smoke (doctor emits its JSON check rows)
+        working-directory: scratch-craft
         run: |
           set +e
-          OUTPUT="$(./craft kunstmaan-migrator/doctor 2>&1)"
+          OUTPUT="$(php craft kunstmaan-migrator/doctor 2>&1)"
           STATUS="$?"
           set -e
           printf '%s\n' "$OUTPUT"
-          if [ "$STATUS" -eq 0 ]; then
-            echo "Doctor passed with explicit scratch-site configuration."
-            exit 0
-          fi
 
-          # Doctor's own exit code isn't a reliable smoke signal here: a bare
-          # scratch install legitimately fails checks like state_table (the
-          # plugin hasn't been through `plugin/install`, so the migrator's
-          # state table doesn't exist yet). Task 6 rewrote doctor to emit
-          # pure JSON (rows shaped like {"check":"state_table","ok":...}),
-          # replacing the old "Legacy DB / Kunstmaan source path / Anthropic
-          # / FAIL" text this step used to grep for — that prose is gone, so
-          # grepping it would always miss and, under GitHub Actions' default
-          # `bash -eo pipefail`, abort this step on every single run. Assert
-          # the JSON shape instead, guarded by `if` (not a bare pipe) so a
-          # miss here fails the smoke job deliberately rather than via
-          # pipefail: this only trips on an unknown-command or fatal PHP
-          # error, which is what this smoke job actually needs to catch.
+          # Doctor's own exit code isn't the smoke signal: a scratch site
+          # legitimately fails informational-turned-hard checks (no legacy DB,
+          # no LEGACY_MEDIA_PATH). What this job guards is that the plugin
+          # installs cleanly from a fresh Craft and its console command loads
+          # at all — so assert the JSON shape doctor emits, guarded by `if`
+          # (not a bare pipe) so a miss fails deliberately rather than via
+          # GitHub Actions' default `bash -eo pipefail`.
           if ! printf '%s\n' "$OUTPUT" | php -r 'json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);' > /dev/null 2>&1; then
             echo "::error::doctor did not emit valid JSON (unknown command or fatal error?)"
             exit 1
@@ -88,4 +143,8 @@ jobs:
             echo "::error::doctor JSON is missing the expected state_table check"
             exit 1
           fi
-          echo "Doctor ran and returned valid JSON with known checks (command exit status was ${STATUS}); plugin command loaded successfully."
+          if ! printf '%s\n' "$OUTPUT" | grep -q '"check":"state_table","ok":true'; then
+            echo "::error::state_table check failed — the plugin did not install cleanly"
+            exit 1
+          fi
+          echo "Plugin installed and doctor loaded (doctor exit status ${STATUS})."
