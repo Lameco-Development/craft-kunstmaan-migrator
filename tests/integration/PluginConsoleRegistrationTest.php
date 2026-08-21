@@ -17,33 +17,42 @@ use ReflectionMethod;
  * a Craft web application, so these tests inspect Plugin.php / composer.json
  * source instead.
  *
- * The CP Utility (KunstmaanMappingUtility) and its console-shell templates
- * are removed along with src/utilities/ and templates/ — the v2 loader core
- * has no CP surface at all. `doctor`, `load`, and `state` are the only
- * console controllers, exposing exactly five commands under the `kunstmaan-migrator`
- * handle (Task 7 rename, was `kunstmaan-migrator`): `load/entry`,
- * `load/fixup`, `load/redirects`, `state/export`, `doctor`.
+ * The v2 prune removed the CP surface entirely. A settings screen has since
+ * come back deliberately, so the plugin's own settings — legacy database,
+ * adapter switches, table names — are reachable without editing a config file.
+ * What has NOT come back is a top-level section: a tool used a handful of times
+ * per project has no business sitting in the nav beside Entries, so these tests
+ * still hold that line.
+ *
+ * `doctor`, `load`, and `state` remain the only console controllers, exposing
+ * exactly five commands under the `kunstmaan-migrator` handle.
  */
 final class PluginConsoleRegistrationTest extends TestCase
 {
-    public function testNoCpSurfaceIsRegistered(): void
+    public function testTheSettingsScreenIsRegistered(): void
     {
         $source = $this->pluginSource();
 
         self::assertStringContainsString(
-            'public bool $hasCpSettings = false',
+            'public bool $hasCpSettings = true',
             $source,
-            'v2 loader core has no CP settings page.',
+            'The settings screen is how the legacy database and adapter switches are reached.',
         );
-        self::assertStringNotContainsString(
-            'Utilities::EVENT_REGISTER_UTILITIES',
+        self::assertStringContainsString(
+            'protected function settingsHtml()',
             $source,
-            'The CP Utility (KunstmaanMappingUtility) is removed — no CP Utility event registration should remain.',
+            'hasCpSettings without settingsHtml() renders an empty pane.',
         );
+    }
+
+    public function testNoTopLevelCpSectionIsRegistered(): void
+    {
+        $source = $this->pluginSource();
+
         self::assertStringNotContainsString(
             'EVENT_REGISTER_CP_TEMPLATE_ROOTS',
             $source,
-            'templates/ is removed — no CP template roots should be registered.',
+            'The settings template resolves under the plugin handle; no extra CP template root is needed.',
         );
         self::assertStringNotContainsString(
             'EVENT_REGISTER_CP_NAV_ITEMS',
@@ -62,9 +71,15 @@ final class PluginConsoleRegistrationTest extends TestCase
         $source = $this->pluginSource();
 
         self::assertStringContainsString(
-            "\$this->controllerNamespace = 'lameco\\\\kunstmaanmigrator\\\\console'",
+            "'lameco\\\\kunstmaanmigrator\\\\console'",
             $source,
             'Console requests must resolve controllers under lameco\\kunstmaanmigrator\\console.',
+        );
+        self::assertStringContainsString(
+            "'lameco\\\\kunstmaanmigrator\\\\controllers'",
+            $source,
+            'Web requests must resolve controllers under lameco\\kunstmaanmigrator\\controllers, '
+            . 'or the settings screen\'s Test connection action 404s with no other symptom.',
         );
     }
 
