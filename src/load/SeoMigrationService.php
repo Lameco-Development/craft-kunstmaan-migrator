@@ -3,6 +3,8 @@
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
@@ -138,6 +140,17 @@ class SeoMigrationService extends Component
      * CONFIG-08: if SEOmatic is not installed the pass is skipped with a
      * warning — never a hard error.
      */
+    /**
+     * The seam at Craft's element writes. Wired in Plugin::init(); read
+     * through elements() so no call site has to cope with "not wired yet".
+     */
+    public ?ElementWriter $elementWriter = null;
+
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
+    }
+
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
         $report = new MigrationReport();
@@ -255,7 +268,7 @@ class SeoMigrationService extends Component
                 }
 
                 if ((++$rowCount % 50) === 0) {
-                    Craft::$app->elements->invalidateAllCaches();
+                    $this->elements()->invalidateCaches();
                     if (function_exists('gc_collect_cycles')) {
                         gc_collect_cycles();
                     }
@@ -407,7 +420,7 @@ class SeoMigrationService extends Component
             }
             try {
                 $entry->resaving = true;
-                $saved = Craft::$app->elements->saveElement($entry, true, false);
+                $saved = $this->elements()->save($entry);
             } finally {
                 Craft::$app->sites->setCurrentSite($previousSite);
             }
