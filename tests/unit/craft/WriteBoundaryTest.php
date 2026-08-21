@@ -22,18 +22,52 @@ use RecursiveIteratorIterator;
  */
 final class WriteBoundaryTest extends TestCase
 {
-    /** The one place allowed to talk to Craft's elements service. */
-    private const ADAPTER = 'src/craft/CraftElementWriter.php';
+    /**
+     * Each boundary the write half is not allowed to cross directly, the one
+     * adapter allowed to cross it, and what to use instead.
+     */
+    private const BOUNDARIES = [
+        [
+            'pattern' => '~Craft::\$app->elements->(\w+)~',
+            'adapter' => 'src/craft/CraftElementWriter.php',
+            'fake' => 'tests/support/InMemoryElementWriter.php',
+            'seam' => 'ElementWriter',
+            'instead' => 'save/delete/findById/invalidateCaches',
+        ],
+        [
+            'pattern' => '~Navigation::\$plugin->(?:get\w+\(\)->)?(\w+)~',
+            'adapter' => 'src/craft/VerbbNavigationGateway.php',
+            'fake' => 'tests/support/InMemoryNavigationGateway.php',
+            'seam' => 'NavigationGateway',
+            'instead' => 'isAvailable/navIdByHandle/registerTempNodes',
+        ],
+    ];
 
-    public function testOnlyTheAdapterTalksToCraftsElementsService(): void
+    /**
+     * @return iterable<string, array{0: array<string, string>}>
+     */
+    public static function boundaries(): iterable
+    {
+        foreach (self::BOUNDARIES as $boundary) {
+            yield $boundary['seam'] => [$boundary];
+        }
+    }
+
+    /**
+     * @param array<string, string> $boundary
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('boundaries')]
+    public function testOnlyTheAdapterCrossesTheBoundary(array $boundary): void
     {
         $offenders = [];
 
         foreach ($this->phpFilesUnder($this->repoRoot() . '/src') as $relative => $contents) {
-            if ($relative === self::ADAPTER) {
+            if ($relative === $boundary['adapter']) {
                 continue;
             }
-            if (!preg_match_all('~Craft::\$app->elements->(\w+)~', $contents, $matches)) {
+            // Docblocks name these seams when explaining them; only code counts.
+            $contents = preg_replace('~^\s*\*.*$~m', '', $contents) ?? $contents;
+            if (!preg_match_all($boundary['pattern'], $contents, $matches)) {
                 continue;
             }
             foreach (array_unique($matches[1]) as $method) {
@@ -44,23 +78,31 @@ final class WriteBoundaryTest extends TestCase
         self::assertSame(
             [],
             $offenders,
-            "These reach Craft's elements service directly instead of going through the ElementWriter seam.\n"
-            . "A static call admits no second adapter, so anything behind one of these is testable only\n"
-            . "against a real database. Inject ElementWriter and use save/delete/findById/invalidateCaches:\n  "
-            . implode("\n  ", $offenders),
+            sprintf(
+                "These cross the %s boundary directly instead of going through the seam.\n"
+                . "A static call admits no second adapter, so anything behind one of these is testable\n"
+                . "only against the real thing. Inject %s and use %s:\n  %s",
+                $boundary['seam'],
+                $boundary['seam'],
+                $boundary['instead'],
+                implode("\n  ", $offenders),
+            ),
         );
     }
 
     /**
-     * The interface earns its keep only while both adapters exist. One adapter
+     * An interface earns its keep only while both adapters exist. One adapter
      * is a hypothetical seam; two make it real.
+     *
+     * @param array<string, string> $boundary
      */
-    public function testTheSeamHasATestAdapterAsWellAsAProductionOne(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('boundaries')]
+    public function testEachSeamHasATestAdapterAsWellAsAProductionOne(array $boundary): void
     {
         $root = $this->repoRoot();
 
-        self::assertFileExists($root . '/' . self::ADAPTER);
-        self::assertFileExists($root . '/tests/support/InMemoryElementWriter.php');
+        self::assertFileExists($root . '/' . $boundary['adapter']);
+        self::assertFileExists($root . '/' . $boundary['fake']);
     }
 
     /** @return array<string, string> relative path => contents */

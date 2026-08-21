@@ -8,30 +8,44 @@ use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\NavigationMigrationService;
 use lameco\kunstmaanmigrator\tests\support\FakeLegacyDb;
 use lameco\kunstmaanmigrator\tests\support\InMemoryElementWriter;
+use lameco\kunstmaanmigrator\tests\support\InMemoryNavigationGateway;
 use lameco\kunstmaanmigrator\tests\support\ThrowingLegacyDb;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
+use verbb\navigation\elements\Node as NavNode;
 
 /**
- * Parent linkage — the paths reachable behind the ElementWriter seam.
+ * Parent linkage, end to end.
  *
- * Coverage here stops short of a saved node on purpose. Once linkage finds a
- * child it calls `Navigation::$plugin->getNodes()->setTempNodes()`, a static
- * reach into verbb/navigation that this seam does not cover and a unit test
- * cannot satisfy — see the note in the class docblock of the service. What is
- * assertable is everything up to that point, which is where the decisions are:
- * which rows are skipped, what is reported, and whether a lookup that finds
- * nothing still writes.
+ * This used to stop short of a saved node: linkage reached
+ * `Navigation::$plugin->getNodes()->setTempNodes()` statically, so the write
+ * path could not be driven even with Craft's element writes already faked.
+ * With NavigationGateway alongside ElementWriter the whole path is assertable
+ * — including the ordering that makes it correct, since verbb reads a node's
+ * parent from its temp-node registry rather than from the database, and a node
+ * saved before it is registered lands at the root.
  */
 final class NavigationParentLinkageTest extends TestCase
 {
-    private function service(InMemoryElementWriter $writer, FakeLegacyDb|ThrowingLegacyDb $db): NavigationMigrationService
-    {
+    private function service(
+        InMemoryElementWriter $writer,
+        FakeLegacyDb|ThrowingLegacyDb $db,
+        ?InMemoryNavigationGateway $navigation = null,
+    ): NavigationMigrationService {
         $svc = new NavigationMigrationService();
         $svc->elementWriter = $writer;
+        $svc->navigationGateway = $navigation ?? new InMemoryNavigationGateway();
         $svc->legacyDb = $db;
 
         return $svc;
+    }
+
+    private function node(int $id): NavNode
+    {
+        $node = (new \ReflectionClass(NavNode::class))->newInstanceWithoutConstructor();
+        $node->id = $id;
+
+        return $node;
     }
 
     private function link(NavigationMigrationService $svc, array $itemToNodeId, MigrationReport $report): void
@@ -107,5 +121,59 @@ final class NavigationParentLinkageTest extends TestCase
 
         self::assertStringContainsString('nav tree may be flat', implode("\n", $report->warnings));
         self::assertSame([], $writer->saved);
+    }
+
+    public function testAChildIsRegisteredWithVerbbAndThenSaved(): void
+    {
+        $writer = new InMemoryElementWriter();
+        $navigation = new InMemoryNavigationGateway();
+        $child = $this->node(200);
+        $writer->willFind(200, $child);
+        $report = new MigrationReport();
+
+        $this->link(
+            $this->service($writer, new FakeLegacyDb([[['id' => 2, 'parent_id' => 1]]]), $navigation),
+            [1 => 100, 2 => 200],
+            $report,
+        );
+
+        self::assertSame([200], $navigation->registeredNodeIds());
+        self::assertSame([$child], array_column($writer->saved, 'element'));
+        self::assertSame([], $report->warnings);
+    }
+
+    public function testTheChildIsGivenItsParentBeforeItIsSaved(): void
+    {
+        $writer = new InMemoryElementWriter();
+        $child = $this->node(200);
+        $writer->willFind(200, $child);
+
+        $this->link(
+            $this->service($writer, new FakeLegacyDb([[['id' => 2, 'parent_id' => 1]]])),
+            [1 => 100, 2 => 200],
+            new MigrationReport(),
+        );
+
+        self::assertSame(100, $child->getParentId(), 'the saved node must already know its parent');
+    }
+
+    public function testASaveVerbbRefusesIsReported(): void
+    {
+        $writer = new InMemoryElementWriter();
+        $child = $this->node(200);
+        $writer->willFind(200, $child);
+        $writer->willRefuse($child);
+        $report = new MigrationReport();
+
+        $this->link(
+            $this->service($writer, new FakeLegacyDb([[['id' => 2, 'parent_id' => 1]]])),
+            [1 => 100, 2 => 200],
+            $report,
+        );
+
+        self::assertStringContainsString(
+            'failed to set parent on nav node id=200 (kuma_menu_item id=2)',
+            implode("\n", $report->warnings),
+        );
     }
 }
