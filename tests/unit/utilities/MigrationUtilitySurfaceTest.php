@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\tests\unit\utilities;
 
 use craft\services\Utilities;
 use lameco\kunstmaanmigrator\controllers\MigrationController;
+use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\utilities\MigrationUtility;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -33,15 +34,34 @@ final class MigrationUtilitySurfaceTest extends TestCase
         return (string) file_get_contents($path);
     }
 
-    public function testTheQueueButtonPostsToAnActionThatExists(): void
+    /**
+     * Every action the template reaches for, not just the one that existed
+     * when this test was written — a button wired to a missing action looks
+     * fine until someone presses it, and the screen keeps gaining buttons.
+     */
+    public function testEveryActionTheTemplateCallsExists(): void
     {
-        preg_match("~sendActionRequest\('POST', '([^']+)'~", $this->template(), $matches);
+        $template = $this->template();
 
-        self::assertSame('kunstmaan-migrator/migration/queue', $matches[1] ?? null);
-        self::assertTrue(
-            (new ReflectionClass(MigrationController::class))->hasMethod('actionQueue'),
-            'kunstmaan-migrator/migration/queue resolves to MigrationController::actionQueue',
-        );
+        preg_match_all("~sendActionRequest\('POST', '([^']+)'~", $template, $posts);
+        preg_match_all("~actionUrl\('([^']+)'\)~", $template, $links);
+
+        $routes = array_merge($posts[1], $links[1]);
+        self::assertNotEmpty($routes, 'the utility is useless without actions');
+
+        $reflection = new ReflectionClass(MigrationController::class);
+
+        foreach ($routes as $route) {
+            $parts = explode('/', $route);
+            self::assertSame('kunstmaan-migrator', $parts[0], sprintf('%s is not this plugin\'s route', $route));
+            self::assertSame('migration', $parts[1], sprintf('%s does not resolve to MigrationController', $route));
+
+            $method = 'action' . str_replace(' ', '', ucwords(str_replace('-', ' ', $parts[2])));
+            self::assertTrue(
+                $reflection->hasMethod($method),
+                sprintf('%s resolves to MigrationController::%s(), which does not exist', $route, $method),
+            );
+        }
     }
 
     public function testTheControllerIsWhereTheWebNamespacePoints(): void
@@ -91,12 +111,23 @@ final class MigrationUtilitySurfaceTest extends TestCase
     {
         $controller = (string) file_get_contents($this->root() . '/src/controllers/MigrationController.php');
 
-        self::assertStringContainsString("requirePermission('utility:" . MigrationUtility::id() . "')", $controller);
+        // Every action, not only the one that writes: a read the operator
+        // cannot see is as broken as a write they cannot make.
+        preg_match_all('~public function (action\w+)~', $controller, $actions);
+        self::assertNotEmpty($actions[1]);
+
+        self::assertSame(
+            count($actions[1]),
+            substr_count($controller, "requirePermission('utility:' . MigrationUtility::id())"),
+            'every action must require the permission Craft grants for this utility',
+        );
     }
 
     /**
      * Two independent refusals: the button says so before anything is queued,
-     * and the job says so again in case something else enqueued it.
+     * and the job says so again in case something else enqueued it. Both ask
+     * ProductionGuard rather than re-reading the environment, so there is one
+     * definition of what production means.
      */
     public function testProductionIsRefusedAtTheButtonAsWellAsInTheJob(): void
     {
@@ -104,8 +135,18 @@ final class MigrationUtilitySurfaceTest extends TestCase
         $job = (string) file_get_contents($this->root() . '/src/queue/MigrateEnvironmentJob.php');
 
         foreach ([$controller, $job] as $source) {
-            self::assertStringContainsString("App::env('CRAFT_ENVIRONMENT') === 'production'", $source);
+            self::assertStringContainsString('ProductionGuard::isProduction()', $source);
+            self::assertStringNotContainsString(
+                "CRAFT_ENVIRONMENT') === 'production'",
+                $source,
+                'the predicate belongs to ProductionGuard, not to each caller',
+            );
         }
+
+        self::assertTrue(
+            method_exists(ProductionGuard::class, 'isProduction'),
+            'ProductionGuard::isProduction() is what both of them call',
+        );
     }
 
     public function testTheRunIsHandedToTheQueueRatherThanDoneInTheRequest(): void

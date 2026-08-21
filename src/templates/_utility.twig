@@ -63,7 +63,38 @@
 
   <hr>
 
+  <h2>{{ "Diagnostics"|t('app') }}</h2>
+
+  <div class="field">
+    <div class="input">
+      <button type="button" class="btn" id="kuma-doctor">{{ "Run doctor"|t('app') }}</button>
+      <a class="btn" href="{{ actionUrl('kunstmaan-migrator/migration/export') }}">{{ "Export state"|t('app') }}</a>
+    </div>
+    <div class="instructions">
+      <p>{{ "Doctor answers the same six checks as the console command. Export writes the state table as NDJSON — the file to diff between runs."|t('app') }}</p>
+    </div>
+  </div>
+
+  <table class="data fullwidth hidden" id="kuma-doctor-results">
+    <tbody></tbody>
+  </table>
+
+  <hr>
+
   <h2>{{ "Run"|t('app') }}</h2>
+
+  {{ forms.selectField({
+    label: "Pass"|t('app'),
+    instructions: "A full run does all of it. The others are for picking up where a run stopped."|t('app'),
+    id: 'kuma-pass',
+    name: 'pass',
+    options: [
+      { label: "Full migration"|t('app'), value: 'full' },
+      { label: "Entries only"|t('app'), value: 'entries' },
+      { label: "Resolve deferred references"|t('app'), value: 'fixup' },
+      { label: "Finalize links and media"|t('app'), value: 'finalize' },
+    ],
+  }) }}
 
   {{ forms.selectField({
     label: "Environment"|t('app'),
@@ -99,6 +130,36 @@
   </div>
 
   {% js %}
+    document.getElementById('kuma-doctor').addEventListener('click', function () {
+      var button = this;
+      var table = document.getElementById('kuma-doctor-results');
+      button.disabled = true;
+
+      Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/doctor')
+        .then(function (response) {
+          var body = table.querySelector('tbody');
+          body.innerHTML = '';
+
+          response.data.checks.forEach(function (check) {
+            var row = document.createElement('tr');
+            var name = document.createElement('th');
+            name.setAttribute('scope', 'row');
+            name.innerHTML = '<span data-icon="' + (check.ok ? 'check' : 'alert') + '"></span> ' + check.check;
+            var detail = document.createElement('td');
+            detail.textContent = check.detail;
+            if (!check.ok) { detail.className = 'error'; }
+            row.appendChild(name);
+            row.appendChild(detail);
+            body.appendChild(row);
+          });
+
+          table.classList.remove('hidden');
+        })
+        .finally(function () {
+          button.disabled = false;
+        });
+    });
+
     document.getElementById('kuma-queue').addEventListener('click', function () {
       var button = this;
       var result = document.getElementById('kuma-queue-result');
@@ -108,6 +169,7 @@
 
       Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/queue', {
         data: {
+          pass: document.getElementById('kuma-pass').value,
           environment: document.getElementById('kuma-environment').value,
           dryRun: document.getElementById('kuma-dry-run').checked ? 1 : 0,
           force: document.getElementById('kuma-force').checked ? 1 : 0

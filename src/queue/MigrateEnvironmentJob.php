@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\queue;
 use craft\helpers\App;
 use craft\queue\BaseJob;
 use Lameco\KumaCompile\Mapping\Mapping;
+use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
 use lameco\kunstmaanmigrator\run\RunSettings;
 use lameco\kunstmaanmigrator\run\RunTally;
@@ -48,7 +49,7 @@ final class MigrateEnvironmentJob extends BaseJob
         // Refusing here as well as in the console command is deliberate: a job
         // is the one path that can reach a production queue without anyone
         // typing a command on that machine.
-        if (App::env('CRAFT_ENVIRONMENT') === 'production') {
+        if (ProductionGuard::isProduction()) {
             throw new RuntimeException('Refusing to migrate against CRAFT_ENVIRONMENT=production');
         }
 
