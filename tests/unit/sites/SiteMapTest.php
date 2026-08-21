@@ -146,4 +146,68 @@ final class SiteMapTest extends TestCase
         self::assertNull($com->siteIdForLocale('de'), 'one environment must not see another\'s sites');
         self::assertNull($de->siteIdForLocale('en'));
     }
+
+    /**
+     * Enreach points both `br` and `pt` at comBrPt, which is a normal thing for
+     * a corpus to do: Brazilian Portuguese and Portuguese content share one
+     * Craft site.
+     *
+     * The join used to run the other way — walk Craft's sites, reverse-look-up
+     * each handle with array_search — which finds only the FIRST locale that
+     * claims a site. `br` bound, `pt` silently did not, and every pass keyed by
+     * locale skipped Portuguese without reporting anything.
+     */
+    public function testTwoLocalesMayShareOneCraftSite(): void
+    {
+        $map = SiteMap::bind(
+            ['en' => 'comEnUs', 'br' => 'comBrPt', 'pt' => 'comBrPt'],
+            $this->craftSites(['comEnUs' => [1, 'en-US'], 'comBrPt' => [8, 'pt-BR']]),
+        );
+
+        self::assertSame(8, $map->siteIdForLocale('br'));
+        self::assertSame(8, $map->siteIdForLocale('pt'), 'the second locale must bind too');
+        self::assertSame(['en' => 1, 'br' => 8, 'pt' => 8], $map->localeToSiteId());
+        self::assertSame(['en' => 'en-US', 'br' => 'pt-BR', 'pt' => 'pt-BR'], $map->localeToLanguage());
+    }
+
+    public function testASharedSiteIsNotReportedAsUnclaimed(): void
+    {
+        $map = SiteMap::bind(
+            ['br' => 'comBrPt', 'pt' => 'comBrPt'],
+            $this->craftSites(['comBrPt' => [8, 'pt-BR'], 'orphan' => [9, 'es-ES']]),
+        );
+
+        self::assertSame(['orphan'], $map->unboundCraftHandles());
+        self::assertCount(2, $map->bindings());
+    }
+
+    public function testBindingsForASharedSiteKeepConfiguredOrder(): void
+    {
+        $map = SiteMap::bind(
+            ['pt' => 'comBrPt', 'en' => 'comEnUs', 'br' => 'comBrPt'],
+            $this->craftSites(['comEnUs' => [1, 'en-US'], 'comBrPt' => [8, 'pt-BR']]),
+        );
+
+        self::assertSame(
+            ['pt', 'en', 'br'],
+            array_map(static fn ($binding): string => $binding->locale, $map->bindings()),
+        );
+    }
+
+    /**
+     * handleForLocale is many-to-one and localeForHandle is one-to-many, so the
+     * reverse lookup can only answer with the first locale. That is fine for
+     * what reads it — reporting a Craft site nobody mapped — but it is worth
+     * pinning so nobody builds a fan-out on it.
+     */
+    public function testTheReverseLookupAnswersWithTheFirstLocaleForASharedSite(): void
+    {
+        $map = SiteMap::bind(
+            ['br' => 'comBrPt', 'pt' => 'comBrPt'],
+            $this->craftSites(['comBrPt' => [8, 'pt-BR']]),
+        );
+
+        self::assertSame('br', $map->localeForHandle('comBrPt'));
+        self::assertSame('comBrPt', $map->handleForLocale('pt'));
+    }
 }
