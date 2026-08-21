@@ -8,7 +8,7 @@
 <h2>{{ "Legacy database"|t('app') }}</h2>
 
 <p class="light">
-  {{ "These fields take an environment variable name, so the values stay in your .env and out of project config."|t('app') }}
+  {{ "These fields take an environment variable name, so the values stay in your .env and out of project config. Which database each environment reads comes from the mapping, not from here."|t('app') }}
 </p>
 
 {{ forms.autosuggestField({
@@ -28,15 +28,6 @@
   size: 6,
   value: settings.legacyDbPort,
   errors: settings.getErrors('legacyDbPort'),
-}) }}
-
-{{ forms.autosuggestField({
-  label: "Database"|t('app'),
-  id: 'legacyDbDatabase',
-  name: 'legacyDbDatabase',
-  value: settings.legacyDbDatabase,
-  suggestEnvVars: true,
-  errors: settings.getErrors('legacyDbDatabase'),
 }) }}
 
 {{ forms.autosuggestField({

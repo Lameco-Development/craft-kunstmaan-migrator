@@ -97,14 +97,14 @@ final class EnvironmentPipeline
      */
     public static function dsnFromSettings(): Dsn
     {
-        $settings = Plugin::getInstance()->getSettings();
+        $connection = Plugin::getInstance()->getSettings()->legacyConnection();
 
         return new Dsn(
-            host: (string) (App::parseEnv($settings->legacyDbServer) ?: '127.0.0.1'),
-            port: $settings->legacyDbPort,
-            user: (string) (App::parseEnv($settings->legacyDbUser) ?: 'root'),
-            password: (string) App::parseEnv($settings->legacyDbPassword),
-            charset: (string) (App::parseEnv($settings->legacyDbCharset) ?: 'utf8mb4'),
+            host: $connection['host'],
+            port: $connection['port'],
+            user: $connection['user'],
+            password: $connection['password'],
+            charset: $connection['charset'],
         );
     }
 

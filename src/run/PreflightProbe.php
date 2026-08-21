@@ -25,5 +25,13 @@ interface PreflightProbe
 
     public function reachable(string $database): bool;
 
+    /**
+     * Why the last connection to this database failed, or null when it did not.
+     *
+     * "Cannot connect" on its own sends someone reading configuration files.
+     * "Access denied for user 'root'" names the field to fix.
+     */
+    public function connectionError(string $database): ?string;
+
     public function directoryReadable(string $path): bool;
 }

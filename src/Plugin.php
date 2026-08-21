@@ -107,20 +107,22 @@ class Plugin extends BasePlugin
         // Use the `true` second arg to has() — it checks for a *registered* (vs
         // *instantiated*) component, which is the right check pre-first-access.
         if (!Craft::$app->has('legacyDb', true)) {
-            /** @var Settings $settings */
-            $settings = $this->getSettings();
+            $connection = $this->getSettings()->legacyConnection();
             Craft::$app->set('legacyDb', [
                 'class'       => Connection::class,
                 'dsn'         => sprintf(
                     'mysql:host=%s;port=%d;dbname=%s',
-                    (string) $settings->legacyDbServer,
-                    $settings->legacyDbPort,
-                    (string) $settings->legacyDbDatabase,
+                    $connection['host'],
+                    $connection['port'],
+                    // The database name is per environment and comes from the mapping;
+                    // this registration is only the fallback for commands that run
+                    // outside a migration.
+                    (string) App::parseEnv($this->getSettings()->legacyDbDatabase),
                 ),
-                'username'    => $settings->legacyDbUser,
-                'password'    => $settings->legacyDbPassword,
-                'charset'     => $settings->legacyDbCharset,
-                'tablePrefix' => $settings->legacyDbTablePrefix,
+                'username'    => $connection['user'],
+                'password'    => $connection['password'],
+                'charset'     => $connection['charset'],
+                'tablePrefix' => $connection['tablePrefix'],
                 'attributes'  => [PDO::ATTR_EMULATE_PREPARES => false],
             ]);
         }

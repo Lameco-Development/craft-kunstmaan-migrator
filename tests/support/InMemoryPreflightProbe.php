@@ -28,6 +28,14 @@ final class InMemoryPreflightProbe implements PreflightProbe
         return !in_array($database, $this->unreachable, true);
     }
 
+    public function connectionError(string $database): ?string
+    {
+        return $this->reachable($database) ? null : sprintf(
+            "SQLSTATE[HY000] [1045] Access denied for user 'root'@'localhost' (using password: YES) [%s]",
+            $database,
+        );
+    }
+
     public function nodeCount(string $database): ?int
     {
         return $this->nodeCounts[$database] ?? null;

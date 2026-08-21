@@ -67,7 +67,13 @@ final class MappingPreflightTest extends TestCase
         self::assertSame(1244, $checks[0]->nodeCount);
     }
 
-    public function testAnUnreachableDatabaseIsTheOnlyThingReported(): void
+    /**
+     * And it says why. "Cannot connect" on its own sends someone reading
+     * configuration files; the driver's own message names the field to fix —
+     * which is how a mistyped env-var reference costs seconds instead of
+     * minutes.
+     */
+    public function testAnUnreachableDatabaseIsTheOnlyThingReportedAndItSaysWhy(): void
     {
         $probe = new InMemoryPreflightProbe(unreachable: ['enreach_website_de']);
 
@@ -75,7 +81,9 @@ final class MappingPreflightTest extends TestCase
             'DE' => ['database' => 'enreach_website_de', 'mediaRoot' => ['/gone'], 'locales' => ['de' => 'nope']],
         ], $this->enreachSites());
 
-        self::assertSame(['Cannot connect to enreach_website_de.'], $checks[0]->problems());
+        self::assertCount(1, $checks[0]->problems(), 'nothing else is worth saying until it connects');
+        self::assertStringContainsString('Cannot connect to enreach_website_de', $checks[0]->problems()[0]);
+        self::assertStringContainsString('Access denied', $checks[0]->problems()[0]);
         self::assertTrue($checks[0]->isBlocked());
     }
 

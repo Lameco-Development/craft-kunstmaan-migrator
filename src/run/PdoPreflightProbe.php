@@ -19,6 +19,9 @@ final class PdoPreflightProbe implements PreflightProbe
     /** @var array<string, PDO|false> */
     private array $connections = [];
 
+    /** @var array<string, string> */
+    private array $errors = [];
+
     public function __construct(private readonly Dsn $dsn)
     {
     }
@@ -45,6 +48,13 @@ final class PdoPreflightProbe implements PreflightProbe
         }
     }
 
+    public function connectionError(string $database): ?string
+    {
+        $this->connect($database);
+
+        return $this->errors[$database] ?? null;
+    }
+
     public function directoryReadable(string $path): bool
     {
         return $path !== '' && is_dir($path) && is_readable($path);
@@ -63,7 +73,9 @@ final class PdoPreflightProbe implements PreflightProbe
                 $this->dsn->password,
                 [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_TIMEOUT => 5],
             );
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            $this->errors[$database] = $e->getMessage();
+
             return $this->connections[$database] = false;
         }
     }

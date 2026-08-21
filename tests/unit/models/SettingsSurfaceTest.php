@@ -52,7 +52,7 @@ final class SettingsSurfaceTest extends TestCase
     {
         $template = $this->template();
 
-        foreach (['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyDbPassword'] as $field) {
+        foreach (['legacyDbServer', 'legacyDbUser', 'legacyDbPassword'] as $field) {
             $offset = strpos($template, "id: '" . $field . "'");
             self::assertNotFalse($offset, sprintf('%s is missing from the settings screen', $field));
 
@@ -102,6 +102,23 @@ final class SettingsSurfaceTest extends TestCase
                 'the environments table must not offer editable fields',
             );
         }
+    }
+
+    /**
+     * One MySQL server holds every legacy database, so the credentials are a
+     * setting. WHICH database each environment reads is not — that comes from
+     * the mapping, per environment, and nothing in a run ever reads
+     * legacyDbDatabase. A field for it invited people to configure something
+     * with no effect.
+     */
+    public function testTheDatabaseNameIsNotAField(): void
+    {
+        self::assertStringNotContainsString("id: 'legacyDbDatabase'", $this->template());
+        self::assertStringNotContainsString(
+            'legacyDbDatabase',
+            (string) file_get_contents(dirname(__DIR__, 3) . '/src/run/EnvironmentPipeline.php'),
+            'a run resolves the database name from the mapping',
+        );
     }
 
     public function testTheCpSettingsScreenIsTurnedOn(): void

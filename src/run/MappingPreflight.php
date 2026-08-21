@@ -39,6 +39,7 @@ final class MappingPreflight
                 name: (string) $name,
                 database: $database,
                 databaseReachable: $reachable,
+                connectionError: $reachable ? null : $this->probe->connectionError($database),
                 nodeCount: $reachable ? $this->probe->nodeCount($database) : null,
                 mediaRoots: $this->mediaRoots($spec),
                 localesWithoutSite: $this->localesWithoutSite($spec, $sites),

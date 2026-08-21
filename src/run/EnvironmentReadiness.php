@@ -18,6 +18,7 @@ final class EnvironmentReadiness
         public readonly string $name,
         public readonly string $database,
         public readonly bool $databaseReachable,
+        public readonly ?string $connectionError,
         public readonly ?int $nodeCount,
         public readonly array $mediaRoots,
         public readonly array $localesWithoutSite,
@@ -45,7 +46,9 @@ final class EnvironmentReadiness
         $problems = [];
 
         if (!$this->databaseReachable) {
-            $problems[] = sprintf('Cannot connect to %s.', $this->database);
+            $problems[] = $this->connectionError === null
+                ? sprintf('Cannot connect to %s.', $this->database)
+                : sprintf('Cannot connect to %s — %s', $this->database, $this->connectionError);
 
             return $problems;
         }
