@@ -83,7 +83,7 @@ final class MigrationController extends Controller
         if (ProductionGuard::isProduction()) {
             return $this->asJson([
                 'ok' => false,
-                'message' => Craft::t('app', 'Refusing to migrate against CRAFT_ENVIRONMENT=production.'),
+                'message' => Craft::t('kunstmaan-migrator', 'Refusing to migrate against CRAFT_ENVIRONMENT=production.'),
             ]);
         }
 
@@ -93,7 +93,7 @@ final class MigrationController extends Controller
         if ($path === '' || !is_file($path)) {
             return $this->asJson([
                 'ok' => false,
-                'message' => Craft::t('app', 'Set a mapping file in the plugin settings first.'),
+                'message' => Craft::t('kunstmaan-migrator', 'Set a mapping file in the plugin settings first.'),
             ]);
         }
 
@@ -145,8 +145,22 @@ final class MigrationController extends Controller
         if ($queued === []) {
             return $this->asJson([
                 'ok' => false,
-                'message' => Craft::t('app', 'The mapping declares no such environment.'),
+                'message' => Craft::t('kunstmaan-migrator', 'The mapping declares no such environment.'),
             ]);
+        }
+
+        // The two corpus-wide passes, chained onto the same queue rather than left
+        // for the operator to remember. `migrate` runs both at the end of an inline
+        // run, so a queued "full" that stopped after the environments was not the
+        // same migration under a different name — it left every deferred reference
+        // dangling and every `[NT<id>]` unrewritten, with nothing saying so. The
+        // queue is FIFO, which is the ordering both passes need: they resolve
+        // against entries that must already exist.
+        if ($pass === 'full') {
+            Craft::$app->getQueue()->push(new ResolveDeferredRefsJob());
+            Craft::$app->getQueue()->push(new FinalizeJob(['mappingPath' => $path, 'dryRun' => $dryRun]));
+            $queued[] = 'fixup';
+            $queued[] = 'finalize';
         }
 
         return $this->asJson([

@@ -167,12 +167,20 @@
       result.className = 'light';
       result.textContent = '{{ "Queueing…"|t('app')|e('js') }}';
 
+      // A Craft lightswitch is a <button role="switch">, not a checkbox, so the
+      // checkbox property is undefined on it — which posted both of these as 0 no
+      // matter what the operator set. Someone who ticked "Dry run" got a real,
+      // writing migration, into a database a re-run cannot repair.
+      var isOn = function (id) {
+        return document.getElementById(id).getAttribute('aria-checked') === 'true' ? 1 : 0;
+      };
+
       Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/queue', {
         data: {
           pass: document.getElementById('kuma-pass').value,
           environment: document.getElementById('kuma-environment').value,
-          dryRun: document.getElementById('kuma-dry-run').checked ? 1 : 0,
-          force: document.getElementById('kuma-force').checked ? 1 : 0
+          dryRun: isOn('kuma-dry-run'),
+          force: isOn('kuma-force')
         }
       })
         .then(function (response) {

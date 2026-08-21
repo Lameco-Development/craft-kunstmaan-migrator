@@ -73,8 +73,12 @@ final class MigrateEnvironmentJob extends BaseJob
         );
 
         $tally = new RunTally();
-        $tally->onProblem = function (string $problem) use ($queue): void {
-            $this->setProgress($queue, 0.0, $problem);
+
+        // The label moves, the bar does not: reporting a problem as progress 0.0
+        // sent the bar back to the start on every warning.
+        $progress = 0.0;
+        $tally->onProblem = function (string $problem) use ($queue, &$progress): void {
+            $this->setProgress($queue, $progress, $problem);
         };
 
         EnvironmentPipeline::build($mapping, $settings)

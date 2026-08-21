@@ -149,12 +149,7 @@ final class EnvironmentPipeline
         $this->plugin->navigationMigrationService->environment = $env;
         $this->plugin->entryMigrationService->sites = $siteMap->configured();
 
-        // Each legacy site has its own uploads directory, so the media root travels with
-        // the environment rather than being one global setting.
-        $roots = $spec['mediaRoot'] ?? null;
-        $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [(string) $roots]);
-        $this->plugin->assetMigrationService->legacyMediaRoot = $roots[0] ?? null;
-        $this->plugin->assetMigrationService->legacyMediaFallbackRoots = array_slice($roots, 1);
+        self::applyMediaRoots($spec);
 
         $this->compiler->compile(
             $db,
@@ -264,10 +259,51 @@ final class EnvironmentPipeline
     }
 
     /**
+     * Point the asset service at one environment's uploads directories.
+     *
+     * Each legacy site has its own uploads directory, so the media root travels
+     * with the environment rather than being one global setting. The mapping
+     * accepts either a single path or an ordered list — Enreach's DE
+     * environment looks in its own directory first and falls back to COM's.
+     *
+     * Static and shared because the finalize pass needs the same roots for the
+     * same reason: resolving `/uploads/media/...` to an asset ingests the file
+     * from these directories when no payload pulled it in. It ran without them
+     * and rewrote 24 of 177 image references.
+     *
+     * @param array<string, mixed> $spec the mapping's block for this environment
+     */
+    public static function applyMediaRoots(array $spec): void
+    {
+        $roots = $spec['mediaRoot'] ?? null;
+        $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [(string) $roots]);
+
+        $assets = Plugin::getInstance()?->assetMigrationService;
+
+        if ($assets === null) {
+            return;
+        }
+
+        $assets->legacyMediaRoot = $roots[0] ?? null;
+        $assets->legacyMediaFallbackRoots = array_slice($roots, 1);
+    }
+
+    /**
      * Point Craft's `legacyDb` component at one environment's database.
      *
      * Overwrites the registration rather than the instance, so the next
      * `Craft::$app->get('legacyDb')` builds a fresh connection.
+     *
+     * The rewriter's lookup caches are dropped here rather than by each caller,
+     * because they are keyed on bare legacy ids and a legacy id is only unique
+     * within one database. Three of this plugin's four paths through the
+     * rewriter repointed the connection and kept the caches: COM's
+     * `kuma_media` 412 stayed cached and DE's 412 — a different file — resolved
+     * to COM's asset, and a miss under one environment was cached as a miss for
+     * the other two. Two callers remembered to reset and the entry-load pass,
+     * which runs the rewriter for every rich-text field of every environment,
+     * did not. Switching the database and forgetting the caches is now
+     * unexpressible: this is the one place that switches it.
      */
     public static function pointLegacyDbAt(Dsn $dsn, string $database): void
     {
@@ -279,6 +315,8 @@ final class EnvironmentPipeline
             'charset' => $dsn->charset,
             'attributes' => [\PDO::ATTR_EMULATE_PREPARES => false],
         ]);
+
+        Plugin::getInstance()?->ckeditorRewriterService->resetLookupCaches();
     }
 
     /**
