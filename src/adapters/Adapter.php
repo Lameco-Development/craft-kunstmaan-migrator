@@ -34,6 +34,11 @@ final class Adapter
      *                                    called. Null means the pass is driven
      *                                    from somewhere other than the adapter
      *                                    loop — see `redirects` in builtIn().
+     * @param list<AdapterSetting> $settings the preferences this adapter owns.
+     *                                    Rendered on the settings screen and read
+     *                                    back through Settings::forAdapter(), so
+     *                                    an adapter is configurable without
+     *                                    editing a model it does not own.
      */
     public function __construct(
         public readonly string $handle,
@@ -41,6 +46,7 @@ final class Adapter
         public readonly string $settingsFlag,
         public readonly ?string $pluginHandle = null,
         public readonly ?\Closure $factory = null,
+        public readonly array $settings = [],
     ) {
     }
 

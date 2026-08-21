@@ -45,7 +45,36 @@ final class SettingsSurfaceTest extends TestCase
             );
         }
 
-        self::assertStringContainsString('adapter.settingsFlag', $template);
+        // Both the state and the field name are resolved by Settings, using the
+        // same rule AdapterGate applies — the screen showing "on" while the run
+        // treats it as off is the failure this replaces.
+        self::assertStringContainsString('settings.isAdapterEnabled(adapter)', $template);
+        self::assertStringContainsString('settings.adapterEnabledInputName(adapter)', $template);
+    }
+
+    /**
+     * An adapter's own preferences are rendered from what it declares. They used
+     * to be literal Settings properties and fields typed into the template, so a
+     * project's own adapter could be neither configured nor shown — and the nav
+     * the navigation pass writes into, the most project-specific value in the
+     * plugin, was reachable only from a PHP config file.
+     */
+    public function testAdapterPreferencesAreRenderedFromTheirDeclarations(): void
+    {
+        $template = $this->template();
+
+        self::assertStringContainsString('settings.forAdapter(adapter)', $template);
+        self::assertStringContainsString('for setting in adapter.settings', $template);
+
+        foreach ((new AdapterRegistry())->all() as $adapter) {
+            foreach ($adapter->settings as $setting) {
+                self::assertStringNotContainsString(
+                    "name: '" . $setting->handle . "'",
+                    $template,
+                    sprintf('%s.%s is hard-coded in the template', $adapter->handle, $setting->handle),
+                );
+            }
+        }
     }
 
     public function testTheCredentialFieldsOfferEnvironmentVariables(): void

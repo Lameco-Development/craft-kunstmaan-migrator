@@ -583,7 +583,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             return;
         }
 
-        $navId = $this->navigation()->navIdByHandle($this->nodeMenuNavHandle);
+        $navId = $this->navigation()->navIdByHandle($this->navHandle());
         if ($navId === null) {
             $report->warn(sprintf(
                 'NodeMenu target nav handle "%s" not found in verbb; NodeMenu pass skipped (re-run scaffolder + project-config/apply, or override Settings::nodeMenuNavHandle).',
@@ -661,7 +661,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             $parentMap[$kumaNodeId] = (int) ($row['parent_id'] ?? 0);
             $internalName = (string) ($row['internal_name'] ?? '');
             $fqcn = (string) ($row['ref_entity_name'] ?? '');
-            if ($internalName !== '' && in_array($internalName, $this->nodeMenuExcludedInternalNames, true)) {
+            if ($internalName !== '' && in_array($internalName, $this->excludedInternalNames(), true)) {
                 $directlyExcluded[$kumaNodeId] = true;
             } elseif ($this->isSingletonFqcn($fqcn)) {
                 $directlyExcluded[$kumaNodeId] = true;
@@ -968,4 +968,37 @@ class NavigationMigrationService extends Component implements MigrationAdapter
     }
 
 
+
+    /**
+     * The nav this pass writes into, and the internal names it leaves out.
+     *
+     * Both were public properties patched on from Plugin::init(), which is the
+     * shape that made an adapter's configuration Plugin's business. They come
+     * from the adapter's own declared settings now; the properties remain as the
+     * override a test or a caller can still set.
+     */
+    private function navHandle(): string
+    {
+        if ($this->nodeMenuNavHandle !== '' && $this->nodeMenuNavHandle !== 'headerMain') {
+            return $this->nodeMenuNavHandle;
+        }
+
+        $configured = (string) ($this->config()['navHandle'] ?? '');
+
+        return $configured !== '' ? $configured : $this->nodeMenuNavHandle;
+    }
+
+    /** @return list<string> */
+    private function excludedInternalNames(): array
+    {
+        if ($this->nodeMenuExcludedInternalNames !== ['settings']) {
+            return $this->nodeMenuExcludedInternalNames;
+        }
+
+        $configured = $this->config()['excludedInternalNames'] ?? null;
+
+        return is_array($configured) && $configured !== []
+            ? array_values(array_map(strval(...), $configured))
+            : $this->nodeMenuExcludedInternalNames;
+    }
 }

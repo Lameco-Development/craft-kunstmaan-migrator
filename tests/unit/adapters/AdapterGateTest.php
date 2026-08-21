@@ -104,14 +104,33 @@ final class AdapterGateTest extends TestCase
     }
 
     /**
-     * An adapter naming a property Settings does not have is a wiring mistake.
-     * Running it anyway would mean a switch the operator cannot reach.
+     * This test used to assert the opposite, and the opposite was a bug.
+     *
+     * Reading the switch with `property_exists()` alone meant any adapter whose
+     * flag Settings does not literally declare was gated off forever — which is
+     * every adapter except the four built-ins. It rendered a settings row,
+     * resolved to a runnable service, and could never run, while telling the
+     * operator they had disabled it via a property that does not exist.
+     *
+     * Registering an adapter is the act of asking for it. An unset switch is
+     * therefore on, and turning it off is a value the operator stores.
      */
-    public function testAnAdapterNamingAnUnknownSettingIsTreatedAsOff(): void
+    public function testARegisteredAdapterRunsWithoutALiteralSettingsProperty(): void
     {
         $gate = new AdapterGate(new InMemoryPluginRegistry(), $this->settings());
 
-        $result = $gate->check(new Adapter('ghost', 'Ghost', 'thereIsNoSuchSetting'));
+        $result = $gate->check(new Adapter('acme', 'Acme', 'acmeEnabled'));
+
+        self::assertTrue($result->isReady());
+    }
+
+    public function testAnOperatorCanStillTurnARegisteredAdapterOff(): void
+    {
+        $settings = $this->settings();
+        $settings->adapters = ['acme' => ['acmeEnabled' => false]];
+
+        $result = (new AdapterGate(new InMemoryPluginRegistry(), $settings))
+            ->check(new Adapter('acme', 'Acme', 'acmeEnabled'));
 
         self::assertFalse($result->isReady());
         self::assertSame(GateStatus::DisabledByOperator, $result->status);

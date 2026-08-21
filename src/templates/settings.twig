@@ -88,15 +88,49 @@
         </td>
         <td>
           {{ forms.lightswitch({
-            id: adapter.settingsFlag,
-            name: adapter.settingsFlag,
-            on: attribute(settings, adapter.settingsFlag),
+            id: adapter.handle ~ '-enabled',
+            name: settings.adapterEnabledInputName(adapter),
+            on: settings.isAdapterEnabled(adapter),
           }) }}
         </td>
       </tr>
     {% endfor %}
   </tbody>
 </table>
+
+{# Rendered from what each adapter declares, not from a list kept here. An
+   adapter's preferences used to be literal properties on the Settings model
+   and fields typed into this template, which meant a project's own adapter
+   could be neither configured nor shown — and meant the single most
+   project-specific value in the plugin, the nav the navigation pass writes
+   into, was editable only in a PHP config file. #}
+{% for adapter in adapters if adapter.settings %}
+  <h3>{{ adapter.label }}</h3>
+
+  {% set values = settings.forAdapter(adapter) %}
+
+  {% for setting in adapter.settings %}
+    {% set name = 'adapters[' ~ adapter.handle ~ '][' ~ setting.handle ~ ']' %}
+
+    {% if setting.type == 'boolean' %}
+      {{ forms.lightswitchField({
+        label: setting.label,
+        instructions: setting.instructions,
+        name: name,
+        on: values[setting.handle],
+      }) }}
+    {% else %}
+      {{ forms.textField({
+        label: setting.label,
+        instructions: setting.instructions,
+        name: name,
+        value: setting.type == 'list'
+          ? (values[setting.handle] ?? [])|join(', ')
+          : values[setting.handle],
+      }) }}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
 
 <hr>
 
