@@ -60,36 +60,47 @@ final class SiteMap
             }
         }
 
-        $bindings = [];
-        $unbound = [];
-
+        // Index Craft's sites by handle and drive the join from the configured
+        // locales, not the other way round. Reverse-looking-up each Craft site
+        // with array_search finds only the FIRST locale that claims it, so a
+        // site two locales share — Enreach points both `br` and `pt` at
+        // comBrPt — bound one of them and silently dropped the other from
+        // every pass keyed by locale.
+        $byHandle = [];
         foreach ($craftSites as $site) {
-            $handle = (string) $site->handle;
-            $locale = array_search($handle, $configured, true);
+            $byHandle[(string) $site->handle] = $site;
+        }
 
-            if ($locale === false) {
-                $unbound[] = $handle;
+        $bindings = [];
+        $claimed = [];
+
+        foreach ($configured as $locale => $handle) {
+            $site = $byHandle[$handle] ?? null;
+
+            if ($site === null) {
                 continue;
             }
 
-            $bindings[(string) $locale] = new SiteBinding(
-                locale: (string) $locale,
+            $claimed[$handle] = true;
+
+            // Configured order, which is also primary-first order — Craft's own
+            // site order is set in the CP and can change under a run.
+            $bindings[] = new SiteBinding(
+                locale: $locale,
                 handle: $handle,
                 siteId: (int) $site->id,
                 language: (string) $site->language,
             );
         }
 
-        // Emit bindings in configured order, not in Craft's site order, so
-        // primary-first ordering follows the mapping rather than the CP.
-        $ordered = [];
-        foreach (array_keys($configured) as $locale) {
-            if (isset($bindings[$locale])) {
-                $ordered[] = $bindings[$locale];
+        $unbound = [];
+        foreach (array_keys($byHandle) as $handle) {
+            if (!isset($claimed[$handle])) {
+                $unbound[] = $handle;
             }
         }
 
-        return new self($configured, $ordered, $unbound);
+        return new self($configured, $bindings, $unbound);
     }
 
     /** @return array<string, string> locale => handle, verbatim and in order */
