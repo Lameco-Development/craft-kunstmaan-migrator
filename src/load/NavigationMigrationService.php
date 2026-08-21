@@ -8,6 +8,8 @@ use Craft;
 use Throwable;
 use yii\base\Component;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use craft\elements\Entry;
 use verbb\navigation\Navigation;
@@ -16,6 +18,16 @@ use verbb\navigation\elements\Node as NavNode;
 /**
  * NavigationMigrationService — imports Kunstmaan MenuBundle data
  * (`kuma_menu` + `kuma_menu_item`) into verbb/navigation nodes.
+ *
+ * Craft element writes go through the ElementWriter seam, but this module is
+ * not testable on that alone: seven call sites reach `Navigation::$plugin`
+ * statically — `getNavs()->getNavByHandle()` and `getNodes()->setTempNodes()`
+ * — and a static admits no fake. Every write path here therefore runs into
+ * verbb before it reaches a save, which is why NavigationParentLinkageTest can
+ * assert on which rows are skipped and what is reported, but not on a saved
+ * node. Closing that needs a second port over verbb/navigation, roughly
+ * `navByHandle()` and `registerTempNodes()`; the seam below is the half of the
+ * job that was in scope.
  *
  * Source shape (per discovery against deklerk + simac source DBs):
  *   - `kuma_menu` `(id, name, locale)` — one row per (handle, locale).
@@ -89,6 +101,12 @@ class NavigationMigrationService extends Component
     public string $environment = '';
 
     /**
+     * The seam at Craft's element writes. Wired in Plugin::init(); read
+     * through elements() so no call site has to cope with "not wired yet".
+     */
+    public ?ElementWriter $elementWriter = null;
+
+    /**
      * Source table-name overrides (passed verbatim into raw SQL).
      * Defaults match the canonical Kunstmaan MenuBundle schema.
      */
@@ -139,6 +157,11 @@ class NavigationMigrationService extends Component
      * per source row. Idempotent: re-running updates existing nodes via
      * the state map.
      */
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
+    }
+
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
         $report = new MigrationReport();
@@ -338,7 +361,7 @@ class NavigationMigrationService extends Component
 
         $node = null;
         if ($existingNodeId !== null) {
-            $node = Craft::$app->elements->getElementById($existingNodeId, NavNode::class, $siteId);
+            $node = $this->elements()->findById($existingNodeId, NavNode::class, $siteId);
         }
         if ($node === null) {
             $node = new NavNode();
@@ -390,7 +413,7 @@ class NavigationMigrationService extends Component
         // before saveElement to get unsaved siblings into validation.
         Navigation::$plugin->getNodes()->setTempNodes([$node]);
 
-        if (!Craft::$app->elements->saveElement($node, true, false)) {
+        if (!$this->elements()->save($node)) {
             $report->incr('failed');
             $report->warn(sprintf(
                 'saveElement refused nav node for kuma_menu_item id=%d: %s',
@@ -505,13 +528,13 @@ class NavigationMigrationService extends Component
 
             try {
                 /** @var NavNode|null $child */
-                $child = Craft::$app->elements->getElementById($childNodeId, NavNode::class);
+                $child = $this->elements()->findById($childNodeId, NavNode::class);
                 if ($child === null) {
                     continue;
                 }
                 $child->setParentId($parentNodeId);
                 Navigation::$plugin->getNodes()->setTempNodes([$child]);
-                if (!Craft::$app->elements->saveElement($child, true, false)) {
+                if (!$this->elements()->save($child)) {
                     $report->warn(sprintf(
                         'failed to set parent on nav node id=%d (kuma_menu_item id=%d)',
                         $childNodeId,
@@ -734,13 +757,13 @@ class NavigationMigrationService extends Component
 
                 try {
                     /** @var NavNode|null $child */
-                    $child = Craft::$app->elements->getElementById($childVerbbId, NavNode::class);
+                    $child = $this->elements()->findById($childVerbbId, NavNode::class);
                     if ($child === null) {
                         continue;
                     }
                     $child->setParentId($parentVerbbId);
                     Navigation::$plugin->getNodes()->setTempNodes([$child]);
-                    if (!Craft::$app->elements->saveElement($child, true, false)) {
+                    if (!$this->elements()->save($child)) {
                         $report->warn(sprintf(
                             'failed to set parent on nav node id=%d (kuma_node id=%d)',
                             $childVerbbId,
@@ -791,7 +814,7 @@ class NavigationMigrationService extends Component
 
         $node = null;
         if ($existingNodeId !== null) {
-            $node = Craft::$app->elements->getElementById($existingNodeId, NavNode::class, $primarySiteId);
+            $node = $this->elements()->findById($existingNodeId, NavNode::class, $primarySiteId);
         }
         if ($node === null) {
             $node = new NavNode();
@@ -820,7 +843,7 @@ class NavigationMigrationService extends Component
 
         Navigation::$plugin->getNodes()->setTempNodes([$node]);
 
-        if (!Craft::$app->elements->saveElement($node, true, false)) {
+        if (!$this->elements()->save($node)) {
             $report->incr('failed');
             $report->warn(sprintf(
                 'saveElement refused NodeMenu node for kuma_node id=%d: %s',

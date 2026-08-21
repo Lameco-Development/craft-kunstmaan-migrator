@@ -168,9 +168,10 @@ class Plugin extends BasePlugin
         // verbb/navigation node migration. Reads kuma_menu + kuma_menu_item,
         // resolves entry-typed nodes via state map. Source-table overrides
         // flow from Settings below.
-        $this->navigationMigrationService->legacyDb     = $this->legacyDbService;
-        $this->navigationMigrationService->stateService = $this->migrationStateService;
-        $this->navigationMigrationService->sites        = [];
+        $this->navigationMigrationService->legacyDb      = $this->legacyDbService;
+        $this->navigationMigrationService->stateService  = $this->migrationStateService;
+        $this->navigationMigrationService->elementWriter = new CraftElementWriter();
+        $this->navigationMigrationService->sites         = [];
 
         // TranslationMigrationService — kuma_translation → Craft site
         // translations PHP catalogs (+ enupal-translate DB rows). Same

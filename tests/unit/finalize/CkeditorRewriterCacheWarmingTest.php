@@ -5,8 +5,9 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\finalize;
 
 use Generator;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
+use lameco\kunstmaanmigrator\tests\support\FakeLegacyDb;
+use lameco\kunstmaanmigrator\tests\support\ThrowingLegacyDb;
 use lameco\kunstmaanmigrator\load\MigrationStateStream;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -184,35 +185,5 @@ final class FakeStateStream implements MigrationStateStream
     public function entryRows(): Generator
     {
         yield from $this->entries;
-    }
-}
-
-/**
- * Returns each queued result set in call order.
- *
- * @internal
- */
-final class FakeLegacyDb extends LegacyDbService
-{
-    /** @param list<list<array<string, mixed>>> $resultSets */
-    public function __construct(private array $resultSets = [])
-    {
-        parent::__construct();
-    }
-
-    public function queryAll(string $sql, array $params = []): array
-    {
-        return array_shift($this->resultSets) ?? [];
-    }
-}
-
-/**
- * @internal
- */
-final class ThrowingLegacyDb extends LegacyDbService
-{
-    public function queryAll(string $sql, array $params = []): array
-    {
-        throw new \RuntimeException('legacy database is unreachable');
     }
 }
