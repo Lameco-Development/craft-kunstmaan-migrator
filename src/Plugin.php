@@ -7,7 +7,9 @@ namespace lameco\kunstmaanmigrator;
 use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
+use lameco\kunstmaanmigrator\adapters\AdapterGate;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
 use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
 use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
@@ -157,6 +159,12 @@ class Plugin extends BasePlugin
         $this->seomaticPayloadBuilder->migrationState = $this->migrationStateService;
 
         // SeoMigrationService — 5 sibling deps + sites map set per environment.
+        $adapterGate = new AdapterGate(new CraftPluginRegistry(), $this->getSettings());
+        $this->seoMigrationService->adapterGate         = $adapterGate;
+        $this->redirectMigrationService->adapterGate    = $adapterGate;
+        $this->navigationMigrationService->adapterGate  = $adapterGate;
+        $this->translationMigrationService->adapterGate = $adapterGate;
+
         $this->seoMigrationService->legacyDb      = $this->legacyDbService;
         $this->seoMigrationService->stateService  = $this->migrationStateService;
         $this->seoMigrationService->seoPayload    = $this->seomaticPayloadBuilder;

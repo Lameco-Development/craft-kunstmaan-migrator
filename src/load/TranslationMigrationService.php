@@ -9,6 +9,9 @@ use Throwable;
 use yii\base\Component;
 use craft\helpers\FileHelper;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\adapters\AdapterGate;
+use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
+use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 
 /**
@@ -93,16 +96,27 @@ class TranslationMigrationService extends Component
      * PHP catalog files at `<base>/translations/<lang>/site.php`, and (if
      * enupal-translate is installed) UPSERT parallel DB rows.
      */
+    /**
+     * The adapter gate. Wired in Plugin::init(); read through gate() so no
+     * call site has to cope with "not wired yet".
+     */
+    public ?AdapterGate $adapterGate = null;
+
+    private function gate(): AdapterGate
+    {
+        return $this->adapterGate ??= new AdapterGate(
+            new CraftPluginRegistry(),
+            Plugin::getInstance()->getSettings(),
+        );
+    }
+
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
         $report = new MigrationReport();
 
-        if (!Plugin::getInstance()->getSettings()->translationsEnabled) {
-            Craft::info(
-                'Translation adapter explicitly disabled via Settings::translationsEnabled; skipping translation migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(self::disabledWarnLine());
+        $gate = $this->gate()->check((new AdapterRegistry())->byHandle('translations'));
+        if (!$gate->isReady()) {
+            $report->warn((string) $gate->reason());
             return $report;
         }
 
@@ -460,8 +474,4 @@ class TranslationMigrationService extends Component
         }
     }
 
-    private static function disabledWarnLine(): string
-    {
-        return 'Translation adapter disabled (explicitly via Settings::translationsEnabled); translation migration skipped.';
-    }
 }
