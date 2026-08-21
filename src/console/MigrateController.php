@@ -19,6 +19,7 @@ use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Target\TargetCheck;
 use lameco\kunstmaanmigrator\compile\TargetModel;
+use lameco\kunstmaanmigrator\payload\FixupService;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\payload\Payload;
 use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
@@ -238,8 +239,28 @@ final class MigrateController extends Controller
             }
         }
 
+        // A payload can name a parent or a relation that no entry had been written for yet, and
+        // pass one parks those as `pendingRefs` rather than failing. Nothing resolved them: the
+        // fixup pass was only ever reachable through `load/fixup`, so a `migrate` run left every
+        // deferred reference dangling and said nothing about it.
+        $fixup = null;
+
+        if (!$this->dryRun) {
+            $fixup = (new FixupService($plugin->migrationStateService, $plugin->entryMigrationService))->run();
+
+            foreach (($fixup['orphans'] ?? []) as $orphan) {
+                $problems[] = sprintf(
+                    '%s: unresolved %s -> %s',
+                    (string) ($orphan['sourceUid'] ?? '?'),
+                    (string) ($orphan['field'] ?? '?'),
+                    (string) ($orphan['ref'] ?? '?'),
+                );
+            }
+        }
+
         $this->stdout(json_encode([
             'counts' => $counts,
+            'fixup' => $fixup,
             'lossyConversions' => $transforms->lossCount(),
             'losses' => $transforms->losses(),
             'skippedSources' => $compiler->skipped(),
