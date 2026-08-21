@@ -123,7 +123,8 @@ class Plugin extends BasePlugin
         // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
         // ?object — AssetMigrationService satisfies the duck-typed surface.
         // The finalize pass shares the one rewriter, so its lazily-warmed caches are warmed once.
-        $this->ckeditorFinalizeService->rewriter = $this->ckeditorRewriterService;
+        $this->ckeditorFinalizeService->rewriter      = $this->ckeditorRewriterService;
+        $this->ckeditorFinalizeService->elementWriter = new CraftElementWriter();
 
         $this->ckeditorRewriterService->migrationState = $this->migrationStateService;
         $this->ckeditorRewriterService->legacyDb       = $this->legacyDbService;
@@ -132,6 +133,7 @@ class Plugin extends BasePlugin
         // AssetMigrationService deps.
         $this->assetMigrationService->legacyDb       = $this->legacyDbService;
         $this->assetMigrationService->migrationState = $this->migrationStateService;
+        $this->assetMigrationService->elementWriter  = new CraftElementWriter();
         $settingsTargetVolume = (string) ($this->getSettings()->targetVolume ?? '');
         if ($settingsTargetVolume !== '') {
             $this->assetMigrationService->targetVolume = $settingsTargetVolume;
@@ -154,10 +156,11 @@ class Plugin extends BasePlugin
         $this->seomaticPayloadBuilder->migrationState = $this->migrationStateService;
 
         // SeoMigrationService — 5 sibling deps + sites map set per environment.
-        $this->seoMigrationService->legacyDb     = $this->legacyDbService;
-        $this->seoMigrationService->stateService = $this->migrationStateService;
-        $this->seoMigrationService->seoPayload   = $this->seomaticPayloadBuilder;
-        $this->seoMigrationService->sites        = [];
+        $this->seoMigrationService->legacyDb      = $this->legacyDbService;
+        $this->seoMigrationService->stateService  = $this->migrationStateService;
+        $this->seoMigrationService->seoPayload    = $this->seomaticPayloadBuilder;
+        $this->seoMigrationService->elementWriter = new CraftElementWriter();
+        $this->seoMigrationService->sites         = [];
 
         // RedirectMigrationService — 3 sibling deps + sites map (per environment).
         $this->redirectMigrationService->legacyDb     = $this->legacyDbService;
