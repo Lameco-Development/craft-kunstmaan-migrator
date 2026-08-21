@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator;
 use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\finalize\CkeditorFinalizeService;
@@ -143,8 +144,9 @@ class Plugin extends BasePlugin
         // the mapping states it per environment, so MigrateController::applySites() fills it
         // from there for the environment being run. Empty is tolerated at init() —
         // saveEntryForSites() throws on first access if nothing has set it.
-        $this->entryMigrationService->stateService = $this->migrationStateService;
-        $this->entryMigrationService->sites        = [];
+        $this->entryMigrationService->stateService   = $this->migrationStateService;
+        $this->entryMigrationService->elementWriter = new CraftElementWriter();
+        $this->entryMigrationService->sites         = [];
 
         // Phase 4 Adapter wiring — D-54 / D-56 / D-57 / PATTERNS flag #7.
 
