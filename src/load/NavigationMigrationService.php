@@ -220,7 +220,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             ));
             // NodeMenu pass below still runs — that's the right path for
             // dewert and any site that drives its menu off the page tree.
-            $this->migrateNodeMenu($localeToSiteId, $opts, $report);
+            $this->migrateNodeMenu($localeToSiteId, $sites, $opts, $report);
             return $report;
         }
 
@@ -318,7 +318,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         // verbb nav can host both kinds (rare in practice — Lameco sites
         // typically use one or the other — but allowed). Internally
         // skipped when kuma_nodes is empty.
-        $this->migrateNodeMenu($localeToSiteId, $opts, $report);
+        $this->migrateNodeMenu($localeToSiteId, $sites, $opts, $report);
 
         return $report;
     }
@@ -585,8 +585,23 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      *
      * @param array<string, int> $localeToSiteId  kuma_locale → siteId
      */
-    private function migrateNodeMenu(array $localeToSiteId, MigrationOptions $opts, MigrationReport $report): void
-    {
+    /**
+     * $sites was read here as a variable this method never received.
+     *
+     * It was a property until PR #26 made the site map a per-call value; the
+     * refactor updated migrateAll()'s signature and left this method reading a
+     * name that no longer existed in its scope. PHP raises a warning, Craft
+     * turns that into an exception, and the adapter summariser catches it — so
+     * the NodeMenu pass has reported `error: Undefined variable $sites` and
+     * migrated nothing since, while the run reported no failure. Found by
+     * running it, not by reading it.
+     */
+    private function migrateNodeMenu(
+        array $localeToSiteId,
+        SiteMap $sites,
+        MigrationOptions $opts,
+        MigrationReport $report,
+    ): void {
         if ($localeToSiteId === []) {
             return;
         }

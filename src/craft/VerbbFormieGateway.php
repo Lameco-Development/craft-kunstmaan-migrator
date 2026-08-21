@@ -106,8 +106,12 @@ final class VerbbFormieGateway implements FormGateway
 
             try {
                 $field = new $class();
-                $field->label = (string) ($spec['label'] ?? '') ?: 'Field ' . ($index + 1);
                 $field->handle = $this->fieldHandle($spec, $index, $built);
+                // A legacy hidden field carries a name and no label. "Field 7"
+                // tells an editor nothing; `enreachGtm` at least says what it is.
+                $field->label = (string) ($spec['label'] ?? '')
+                    ?: ($spec['handle'] ?? '')
+                    ?: 'Field ' . ($index + 1);
                 $field->required = (bool) ($spec['required'] ?? false);
 
                 foreach ((array) ($spec['settings'] ?? []) as $key => $value) {
@@ -151,7 +155,23 @@ final class VerbbFormieGateway implements FormGateway
         }
 
         if (!Craft::$app->getElements()->saveElement($form)) {
-            $warnings[] = sprintf('%s: %s', $handle, implode('; ', $form->getErrorSummary(true)));
+            // Formie validates the layout rather than the form for a bad field
+            // handle, so getErrorSummary() comes back empty and the run reported
+            // a failure with no message at all — which is the least useful thing
+            // a report can say.
+            $summary = $form->getErrorSummary(true);
+
+            foreach ($form->getFormLayout()->getFields() as $field) {
+                foreach ($field->getErrorSummary(true) as $error) {
+                    $summary[] = sprintf('%s: %s', $field->handle, $error);
+                }
+            }
+
+            $warnings[] = sprintf(
+                '%s: %s',
+                $handle,
+                $summary === [] ? 'Formie refused the form without saying why.' : implode('; ', $summary),
+            );
 
             return null;
         }
@@ -162,19 +182,24 @@ final class VerbbFormieGateway implements FormGateway
     /**
      * A handle Formie will accept, unique within the form.
      *
-     * Legacy `internal_name` is what an editor typed and is frequently blank,
-     * duplicated, or not a valid handle. A collision silently overwriting an
-     * earlier field is the failure worth preventing here.
+     * Legacy `internal_name` is what an editor typed. On the real corpus that
+     * includes `Prénom` and `Téléphone`, which camel-casing leaves accented and
+     * Formie rejects — one form in twenty-six failed on exactly this. toHandle()
+     * folds to ASCII, which is what a field handle has to be.
+     *
+     * It is also frequently blank or duplicated within one form, and a collision
+     * silently overwriting an earlier field is the other failure worth
+     * preventing here.
      *
      * @param array<string, mixed> $spec
      * @param array<string, mixed> $taken
      */
     private function fieldHandle(array $spec, int $index, array $taken): string
     {
-        $base = StringHelper::toCamelCase((string) ($spec['handle'] ?? ''));
+        $base = StringHelper::toHandle((string) ($spec['handle'] ?? ''));
 
         if ($base === '') {
-            $base = StringHelper::toCamelCase((string) ($spec['label'] ?? '')) ?: 'field';
+            $base = StringHelper::toHandle((string) ($spec['label'] ?? '')) ?: 'field';
         }
 
         $handle = $base;
