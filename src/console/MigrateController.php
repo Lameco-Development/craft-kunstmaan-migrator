@@ -229,7 +229,7 @@ final class MigrateController extends Controller
                     continue;
                 }
 
-                $this->applyLegacyDb(Dsn::fromEnvironment(), (string) $spec['database']);
+                $this->applyLegacyDb(EnvironmentPipeline::dsnFromSettings(), (string) $spec['database']);
                 $plugin->ckeditorRewriterService->resetLookupCaches();
                 $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $this->dryRun), $report);
             }

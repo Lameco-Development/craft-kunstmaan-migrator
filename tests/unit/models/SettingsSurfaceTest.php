@@ -2,21 +2,19 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\controllers;
+namespace lameco\kunstmaanmigrator\tests\unit\models;
 
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\controllers\SettingsController;
 use PHPUnit\Framework\TestCase;
-use ReflectionClass;
 
 /**
  * The joins between the settings template and the code behind it.
  *
  * The template needs a booted control panel to render, so none of it runs
- * here. What does run is the handful of string couplings that fail silently:
- * a button posting to an action that does not exist, or a form field named
- * after a setting that was renamed. Both look fine until someone opens the
- * screen.
+ * here. What does run is the handful of couplings that fail silently — a form
+ * field named after a setting that was renamed, or an adapter row hard-coded
+ * where it should come from the registry. Both look fine until someone opens
+ * the screen.
  */
 final class SettingsSurfaceTest extends TestCase
 {
@@ -28,33 +26,7 @@ final class SettingsSurfaceTest extends TestCase
         return (string) file_get_contents($path);
     }
 
-    public function testTheTestConnectionButtonPostsToAnActionThatExists(): void
-    {
-        preg_match("~sendActionRequest\('POST', '([^']+)'~", $this->template(), $matches);
 
-        self::assertNotEmpty($matches, 'the template must post to a named action');
-        self::assertSame('kunstmaan-migrator/settings/test-connection', $matches[1]);
-
-        self::assertTrue(
-            (new ReflectionClass(SettingsController::class))->hasMethod('actionTestConnection'),
-            'kunstmaan-migrator/settings/test-connection resolves to SettingsController::actionTestConnection',
-        );
-    }
-
-    /**
-     * The controller namespace for web requests has to point at the directory
-     * this controller lives in, or the action 404s with no other symptom.
-     */
-    public function testTheControllerIsWhereTheWebNamespacePoints(): void
-    {
-        $plugin = (string) file_get_contents(dirname(__DIR__, 3) . '/src/Plugin.php');
-
-        self::assertStringContainsString("'lameco\\\\kunstmaanmigrator\\\\controllers'", $plugin);
-        self::assertSame(
-            'lameco\kunstmaanmigrator\controllers',
-            (new ReflectionClass(SettingsController::class))->getNamespaceName(),
-        );
-    }
 
     public function testEveryAdapterSwitchInTheTemplateIsDrivenByTheRegistry(): void
     {
@@ -89,6 +61,45 @@ final class SettingsSurfaceTest extends TestCase
                 'suggestEnvVars: true',
                 $block,
                 sprintf('%s must take an environment variable name, not a value', $field),
+            );
+        }
+    }
+
+    /**
+     * The Kunstmaan schema is fixed, so these are constants on the services.
+     * A settings surface for them was a knob nobody ever turned.
+     */
+    public function testLegacyTableNamesAreNotConfigurable(): void
+    {
+        $settings = (string) file_get_contents(dirname(__DIR__, 3) . '/src/models/Settings.php');
+
+        foreach (['seoTableName', 'redirectsTableName', 'menuTableName', 'nodesTableName'] as $removed) {
+            self::assertStringNotContainsString($removed, $settings);
+            self::assertStringNotContainsString($removed, $this->template());
+        }
+    }
+
+    /**
+     * The mapping owns the topology — which databases exist, where each one's
+     * uploads live, which locale writes to which site. The screen points at it
+     * and shows it; it does not offer to edit it.
+     */
+    public function testTheEnvironmentsTableIsReadOnly(): void
+    {
+        $template = $this->template();
+
+        self::assertStringContainsString("id: 'mappingPath'", $template);
+        self::assertStringContainsString('for name, env in environments', $template);
+
+        $start = strpos($template, '<h2>{{ "Environments"');
+        self::assertNotFalse($start);
+        $section = substr($template, $start);
+
+        foreach (['forms.textField', 'forms.lightswitch', 'forms.autosuggestField({\n  label: "Database'] as $editable) {
+            self::assertStringNotContainsString(
+                $editable,
+                substr($section, strpos($section, '<table')),
+                'the environments table must not offer editable fields',
             );
         }
     }

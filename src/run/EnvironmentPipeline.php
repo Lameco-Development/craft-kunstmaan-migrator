@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\run;
 
 use Craft;
 use craft\elements\Entry;
+use craft\helpers\App;
 use Lameco\KumaCompile\Compile\Compiler;
 use Lameco\KumaCompile\Compile\PayloadWriter;
 use Lameco\KumaCompile\Compile\RedirectCompiler;
@@ -82,6 +83,31 @@ final class EnvironmentPipeline
         );
     }
 
+    /**
+     * The legacy connection, from the plugin's settings.
+     *
+     * `Dsn::fromEnvironment()` read KUMA_DB_* directly, which meant a `migrate`
+     * run ignored the settings screen entirely: host, user and password came
+     * from one place and everything else from another, and nothing said so.
+     * Settings still falls back to KUMA_DB_* itself, so a project configured
+     * the old way is unaffected — there is just one source now.
+     *
+     * Only the database name varies per environment, and that comes from the
+     * mapping, which is where the topology lives.
+     */
+    public static function dsnFromSettings(): Dsn
+    {
+        $settings = Plugin::getInstance()->getSettings();
+
+        return new Dsn(
+            host: (string) (App::parseEnv($settings->legacyDbServer) ?: '127.0.0.1'),
+            port: $settings->legacyDbPort,
+            user: (string) (App::parseEnv($settings->legacyDbUser) ?: 'root'),
+            password: (string) App::parseEnv($settings->legacyDbPassword),
+            charset: (string) (App::parseEnv($settings->legacyDbCharset) ?: 'utf8mb4'),
+        );
+    }
+
     public function transforms(): Transforms
     {
         return $this->transforms;
@@ -103,7 +129,7 @@ final class EnvironmentPipeline
         RunTally $tally,
         ?PayloadWriter $writer = null,
     ): void {
-        $dsn = Dsn::fromEnvironment();
+        $dsn = self::dsnFromSettings();
         $db = LegacyDatabase::connect($env, (string) $spec['database'], $dsn);
 
         // The adapters and the media-token rewriter read the legacy database through

@@ -29,6 +29,17 @@ class Settings extends Model
     public string  $legacyDbTablePrefix  = '';
 
     /**
+     * Where the mapping YAML lives.
+     *
+     * The mapping owns the migration's topology — which databases exist, where
+     * each one's uploads are, and which legacy locale writes to which Craft
+     * site. Those belong in a version-controlled file next to the field
+     * mappings they travel with, not in a settings form. This is the one
+     * pointer the control panel needs in order to read and show them.
+     */
+    public string $mappingPath = '';
+
+    /**
      * Craft volume handle assets land in when migrated. Defaults to
      * `uploads` — the starter-kit convention. Scaffolder-generated targets
      * use `media` (matches Kunstmaan's `kuma_media` semantics); override
@@ -57,12 +68,6 @@ class Settings extends Model
     // Phase 4 / D-57 — adapter source-table overrides for variant Kunstmaan
     // flavours. Defaults match the canonical kuma_* schema; operators flip via
     // env vars or config/kunstmaan-migrator.php when the legacy DB diverges.
-    public string $seoTableName = 'kuma_seo';
-    public string $redirectsTableName = 'kuma_redirects';
-    public string $menuTableName = 'kuma_menu';
-    public string $menuItemTableName = 'kuma_menu_item';
-    public string $nodesTableName = 'kuma_nodes';
-    public string $translationTableName = 'kuma_translation';
 
     /**
      * Symfony translation domains to migrate from kuma_translation.
@@ -106,12 +111,7 @@ class Settings extends Model
                 'class' => EnvAttributeParserBehavior::class,
                 'attributes' => [
                     'legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyDbPassword',
-                    'legacyDbCharset', 'legacyDbTablePrefix',
-                    // Phase 4 / D-57 — adapter table-name env overrides. The
-                    // Phase 4 / D-60 verify-tolerance floats deliberately stay
-                    // out of this list; env-parse of float values is fragile
-                    // (PATTERNS.md flag #2) — CLI override is their runtime knob.
-                    'seoTableName', 'redirectsTableName',
+                    'legacyDbCharset', 'legacyDbTablePrefix', 'mappingPath',
                 ],
             ],
         ];
@@ -124,11 +124,14 @@ class Settings extends Model
         // D-12: env-var fallback. config/kunstmaan-migrator.php overrides win when present
         // (Craft loads the config file BEFORE init() and assigns to the public properties,
         // so `??=` only fills the unset cases).
-        $this->legacyDbServer      ??= App::env('CRAFT_LEGACY_DB_SERVER') ?: null;
+        // KUMA_DB_* is read as a second fallback because `migrate` used to build its
+        // connection from those directly, bypassing this model entirely — so a project
+        // configured the old way keeps working while there is now one source of truth.
+        $this->legacyDbServer      ??= App::env('CRAFT_LEGACY_DB_SERVER') ?: (App::env('KUMA_DB_HOST') ?: null);
         $this->legacyDbDatabase    ??= App::env('CRAFT_LEGACY_DB_DATABASE') ?: null;
-        $this->legacyDbUser        ??= App::env('CRAFT_LEGACY_DB_USER') ?: null;
-        $this->legacyDbPassword    ??= App::env('CRAFT_LEGACY_DB_PASSWORD') ?: null;
-        $envPort = App::env('CRAFT_LEGACY_DB_PORT');
+        $this->legacyDbUser        ??= App::env('CRAFT_LEGACY_DB_USER') ?: (App::env('KUMA_DB_USER') ?: null);
+        $this->legacyDbPassword    ??= App::env('CRAFT_LEGACY_DB_PASSWORD') ?: (App::env('KUMA_DB_PASSWORD') ?: null);
+        $envPort = App::env('CRAFT_LEGACY_DB_PORT') ?: App::env('KUMA_DB_PORT');
         if ($envPort !== null && $envPort !== '' && $envPort !== false) {
             $this->legacyDbPort = (int) $envPort;
         }
@@ -251,8 +254,7 @@ class Settings extends Model
             [['legacyDbPassword'], 'validateIsEnvReference'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled'], 'boolean'],
-            // Phase 4 / D-57 — adapter source-table overrides.
-            [['seoTableName', 'redirectsTableName', 'menuTableName', 'menuItemTableName', 'nodesTableName', 'nodeMenuNavHandle', 'translationTableName'], 'string'],
+            [['nodeMenuNavHandle', 'mappingPath'], 'string'],
             [['nodeMenuExcludedInternalNames', 'translationDomains'], 'safe'],
         ];
     }

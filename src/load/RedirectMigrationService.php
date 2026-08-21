@@ -26,7 +26,7 @@ use yii\base\Component;
  *
  *   1. **Direct legacy-redirects import** — every row in the legacy
  *      redirects table (default `kuma_redirects`, overridable via
- *      `$redirectsTableName`) is imported verbatim into Retour via
+ *      `kuma_redirects`) is imported verbatim into Retour via
  *      `Retour::$plugin->redirects->saveRedirect()`. The row's `permanent`
  *      flag (tinyint(1)) maps to HTTP 301 / 302. Destinations that point
  *      at a legacy URL (a path that matches a migrated entry's old
@@ -63,17 +63,17 @@ use yii\base\Component;
  */
 class RedirectMigrationService extends Component
 {
+    /**
+     * The Kunstmaan schema is fixed: these table names are the same in every
+     * corpus this migrator targets, so they are constants rather than a
+     * settings surface nobody ever used.
+     */
+    public const REDIRECTS_TABLE = 'kuma_redirects';
+
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
 
-    /**
-     * Legacy redirects table name (unwrapped — passed verbatim into raw SQL).
-     * Defaults to the canonical Kunstmaan `kuma_redirects`; host projects
-     * with a non-standard schema override via setComponents. Plan 04-09 config
-     * loader will populate from `Settings::$redirectsTableName`.
-     */
-    public string $redirectsTableName = 'kuma_redirects';
 
     private const STATE_SOURCE = 'redirect';
 
@@ -184,7 +184,7 @@ class RedirectMigrationService extends Component
     private function importDirectRedirects(SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
     {
         $rows = $this->legacyDb->queryAll(
-            'SELECT id, origin, target, permanent FROM ' . $this->redirectsTableName . ' ORDER BY id',
+            'SELECT id, origin, target, permanent FROM ' . self::REDIRECTS_TABLE . ' ORDER BY id',
         );
 
         foreach ($rows as $row) {

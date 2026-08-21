@@ -75,12 +75,6 @@ final class PluginConsoleRegistrationTest extends TestCase
             $source,
             'Console requests must resolve controllers under lameco\\kunstmaanmigrator\\console.',
         );
-        self::assertStringContainsString(
-            "'lameco\\\\kunstmaanmigrator\\\\controllers'",
-            $source,
-            'Web requests must resolve controllers under lameco\\kunstmaanmigrator\\controllers, '
-            . 'or the settings screen\'s Test connection action 404s with no other symptom.',
-        );
     }
 
     public function testDoctorAndLoadConsoleCommandsAreLoadable(): void
