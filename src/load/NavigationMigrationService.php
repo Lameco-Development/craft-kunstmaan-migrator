@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\load;
 use Craft;
 use Throwable;
 use yii\base\Component;
+use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
@@ -83,14 +84,6 @@ class NavigationMigrationService extends Component
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
-    /**
-     * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
-     * Plugin::resolveSitesMap(). Empty map means no sites configured —
-     * the service degrades gracefully (warn + return).
-     *
-     * @var array<string, string>
-     */
-    public array $sites = [];
 
     /**
      * The legacy environment being migrated, e.g. `COM`.
@@ -187,7 +180,7 @@ class NavigationMigrationService extends Component
         return $this->navigationGateway ??= new VerbbNavigationGateway();
     }
 
-    public function migrateAll(MigrationOptions $opts): MigrationReport
+    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
     {
         $report = new MigrationReport();
 
@@ -202,7 +195,7 @@ class NavigationMigrationService extends Component
             return $report;
         }
 
-        $localeToSiteId = $this->buildLocaleToSiteIdMap();
+        $localeToSiteId = $sites->localeToSiteId();
         if ($localeToSiteId === []) {
             $report->warn('No Craft sites mapped; nav migration aborted.');
             return $report;
@@ -614,9 +607,9 @@ class NavigationMigrationService extends Component
         // Resolve the primary-locale Kuma code (e.g. 'nl') for sort
         // ordering. Falls back to whatever the first sites map entry
         // points at, then to empty (which makes COALESCE fire below).
-        $primaryLang = array_search((string) $primarySite->handle, $this->sites, true);
+        $primaryLang = $sites->localeForHandle((string) $primarySite->handle) ?? false;
         if (!is_string($primaryLang)) {
-            $primaryLang = (string) (array_key_first($this->sites) ?? '');
+            $primaryLang = (string) ($sites->locales()[0] ?? '');
         }
 
         // Single JOINed query — one row per kuma_node with the page entity's
@@ -983,27 +976,5 @@ class NavigationMigrationService extends Component
         return $this->stateService->getTargetId(str_replace('\\', '_', trim($fqcn, '\\')), (string) $refId);
     }
 
-    /**
-     * Build a `kuma_locale → siteId` lookup from `$this->sites`
-     * (kuma_locale → Craft site handle, populated by Plugin::resolveSitesMap()).
-     * Sites without a mapping entry are silently dropped — they're handled
-     * upstream by SeoMigrationService's per-site warning loop, no need to
-     * duplicate the noise here.
-     *
-     * @return array<string, int>
-     */
-    private function buildLocaleToSiteIdMap(): array
-    {
-        $out = [];
-        foreach (Craft::$app->sites->getAllSites() as $site) {
-            $handle = (string) $site->handle;
-            $locale = array_search($handle, $this->sites, true);
-            if ($locale === false) {
-                continue;
-            }
-            $out[(string) $locale] = (int) $site->id;
-        }
-        return $out;
-    }
 
 }

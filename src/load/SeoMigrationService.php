@@ -2,6 +2,7 @@
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\craft\ElementWriter;
@@ -56,23 +57,6 @@ class SeoMigrationService extends Component
      */
     public string $seoTableName = 'kuma_seo';
 
-    /**
-     * D-08-19 — Kunstmaan locale → Craft site handle map. v2 wires this
-     * from `Plugin::resolveSitesMap()` in `Plugin::init()` (the same map
-     * already feeds `EntryMigrationService::$sites`); v1 sourced it from a
-     * mapping.yaml top-level `sites:` block — that block is gone in v2.
-     *
-     * Drives the per-site fan-out below: every Craft site whose handle
-     * appears in this map gets a SEOmatic write per migrated entry, with
-     * default-locale fallback when the site's own locale row is missing
-     * from kuma_seo.
-     *
-     * Empty by default so the service degrades gracefully (the fan-out
-     * short-circuits with a WARN if the operator hasn't wired locales yet).
-     *
-     * @var array<string, string>
-     */
-    public array $sites = [];
 
     private const STATE_SOURCE = 'seo_meta';
     private const SEO_FIELD_HANDLE = 'seo';
@@ -103,36 +87,31 @@ class SeoMigrationService extends Component
     }
 
     /**
-     * D-08-19 — build the per-site list to fan out to. Each entry is
-     * `{siteId, siteHandle, locale}`. Sites not present in $this->sites
-     * are skipped (with a WARN logged into MigrationReport by the caller).
+     * The per-site list to fan out to, projected from the run's SiteMap.
+     *
+     * A Craft site no locale claims is reported rather than skipped silently:
+     * it is nearly always an operator who forgot to add it to the mapping's
+     * `sites:` block, and finding that out after a full run is expensive.
      *
      * @return list<array{siteId: int, siteHandle: string, locale: string}>
      */
-    private function buildSiteList(MigrationReport $report): array
+    private function buildSiteList(SiteMap $sites, MigrationReport $report): array
     {
-        $out = [];
-
-        // D-08-19: drive the loop from Craft::$app->sites->getAllSites()
-        // and resolve each site's locale via the sites: block. Sites not
-        // mapped are explicit warnings (operator misconfig).
-        foreach (Craft::$app->sites->getAllSites() as $site) {
-            $handle = (string) $site->handle;
-            $locale = array_search($handle, $this->sites, true);
-            if ($locale === false) {
-                $report->warn(sprintf(
-                    'SEO: Craft site handle="%s" not present in mapping.yaml sites: block; skipping site.',
-                    $handle,
-                ));
-                continue;
-            }
-            $out[] = [
-                'siteId'     => (int) $site->id,
-                'siteHandle' => $handle,
-                'locale'     => (string) $locale,
-            ];
+        foreach ($sites->unboundCraftHandles() as $handle) {
+            $report->warn(sprintf(
+                'SEO: Craft site handle="%s" not present in mapping.yaml sites: block; skipping site.',
+                $handle,
+            ));
         }
-        return $out;
+
+        return array_map(
+            static fn ($binding): array => [
+                'siteId' => $binding->siteId,
+                'siteHandle' => $binding->handle,
+                'locale' => $binding->locale,
+            ],
+            $sites->bindings(),
+        );
     }
 
     /**
@@ -168,7 +147,7 @@ class SeoMigrationService extends Component
         );
     }
 
-    public function migrateAll(MigrationOptions $opts): MigrationReport
+    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
     {
         $report = new MigrationReport();
 
@@ -179,7 +158,7 @@ class SeoMigrationService extends Component
         }
 
         // D-08-19 — per-site fan-out driven by Plugin::resolveSitesMap().
-        $siteList = $this->buildSiteList($report);
+        $siteList = $this->buildSiteList($sites, $report);
         if ($siteList === []) {
             $report->warn('No Craft sites mapped; SEO migration aborted.');
             return $report;
