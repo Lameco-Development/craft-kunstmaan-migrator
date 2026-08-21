@@ -17,8 +17,16 @@ use lameco\kunstmaanmigrator\sites\SiteMap;
  */
 final class MappingPreflight
 {
-    public function __construct(private readonly PreflightProbe $probe)
-    {
+    /**
+     * @param (callable(string): string)|null $resolvePath expands `$VAR` and Craft
+     *        aliases in a mediaRoot. Craft's App::parseEnv is what the plugin
+     *        passes; the default is identity so this module stays runnable
+     *        without a Craft application, which is what makes it testable.
+     */
+    public function __construct(
+        private readonly PreflightProbe $probe,
+        private $resolvePath = null,
+    ) {
     }
 
     /**
@@ -66,6 +74,11 @@ final class MappingPreflight
 
         foreach ($roots as $index => $path) {
             $path = (string) $path;
+
+            if ($this->resolvePath !== null) {
+                $path = ($this->resolvePath)($path);
+            }
+
             $out[] = [
                 'path' => $path,
                 'readable' => $this->probe->directoryReadable($path),

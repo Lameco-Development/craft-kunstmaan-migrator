@@ -51,7 +51,10 @@ final class MigrationUtility extends Utility
         } else {
             try {
                 $environments = Mapping::fromFile($path)->environments();
-                $checks = (new MappingPreflight(new PdoPreflightProbe(EnvironmentPipeline::dsnFromSettings())))
+                $checks = (new MappingPreflight(
+                    new PdoPreflightProbe(EnvironmentPipeline::dsnFromSettings()),
+                    static fn (string $path): string => (string) App::parseEnv($path),
+                ))
                     ->inspect($environments, Craft::$app->getSites()->getAllSites());
             } catch (Throwable $e) {
                 $error = $e->getMessage();

@@ -295,8 +295,7 @@ final class EnvironmentPipeline
      */
     public static function applyMediaRoots(array $spec): void
     {
-        $roots = $spec['mediaRoot'] ?? null;
-        $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [(string) $roots]);
+        $roots = self::mediaRootsFrom($spec);
 
         $assets = Plugin::getInstance()?->assetMigrationService;
 
@@ -306,6 +305,27 @@ final class EnvironmentPipeline
 
         $assets->legacyMediaRoot = $roots[0] ?? null;
         $assets->legacyMediaFallbackRoots = array_slice($roots, 1);
+    }
+
+    /**
+     * One environment's uploads directories, with `$VAR` and Craft aliases expanded.
+     *
+     * A mapping is committed and shared, so a media root written as an absolute
+     * path is a path that exists on one machine — the same problem as a password
+     * in project config, one field over.
+     *
+     * @param array<string, mixed> $spec
+     * @return list<string>
+     */
+    public static function mediaRootsFrom(array $spec): array
+    {
+        $roots = $spec['mediaRoot'] ?? null;
+        $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [$roots]);
+
+        return array_values(array_filter(array_map(
+            static fn ($path): string => (string) App::parseEnv((string) $path),
+            $roots,
+        ), static fn (string $path): bool => $path !== ''));
     }
 
     /**

@@ -242,7 +242,10 @@ final class Diagnostics
         $checks = [$this->result('mapping', true, sprintf('%s declares %d environment(s).', $path, count($environments)))];
 
         try {
-            $readiness = (new MappingPreflight(new PdoPreflightProbe(EnvironmentPipeline::dsnFromSettings())))
+            $readiness = (new MappingPreflight(
+                    new PdoPreflightProbe(EnvironmentPipeline::dsnFromSettings()),
+                    static fn (string $path): string => (string) App::parseEnv($path),
+                ))
                 ->inspect($environments, Craft::$app->getSites()->getAllSites());
         } catch (Throwable $e) {
             $checks[] = $this->result('environments', false, sprintf('Preflight failed: %s', $e->getMessage()));
