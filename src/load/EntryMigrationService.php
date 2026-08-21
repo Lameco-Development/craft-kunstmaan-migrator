@@ -10,6 +10,8 @@ use craft\fields\Matrix;
 use craft\elements\Entry;
 use craft\models\Section;
 use craft\models\Site;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
 use RuntimeException;
 use yii\base\Component;
 
@@ -84,6 +86,17 @@ class EntryMigrationService extends Component
      */
     public ?MigrationStateService $stateService = null;
 
+    /**
+     * The seam at Craft's element writes.
+     *
+     * Wired in Plugin::init() for production; left settable so a test can pass
+     * an in-memory adapter and assert on what this module asked Craft to do.
+     * Read through elements() rather than directly, so no call site has to
+     * cope with "not wired yet" — the nullable property is a seam, not a
+     * precondition.
+     */
+    public ?ElementWriter $elementWriter = null;
+
     /** @var array<string, Site> cached Site instances by handle */
     private array $siteCache = [];
 
@@ -97,6 +110,11 @@ class EntryMigrationService extends Component
      * @param array<string, array{enabled: bool, title: string, slug: string, fieldValues: array, parentId: ?int}> $perSite
      * @throws RuntimeException on unknown site handle or primary-site save failure
      */
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
+    }
+
     public function saveEntryForSites(
         int $sectionId,
         int $typeId,
@@ -346,7 +364,7 @@ class EntryMigrationService extends Component
         // revision per call (and one snapshot of every propagationMethod=none
         // matrix-block set per revision). Migration is a re-save, not an edit.
         $entry->resaving = true;
-        if (!Craft::$app->elements->saveElement($entry, true, false)) {
+        if (!$this->elements()->save($entry)) {
             throw new RuntimeException(
                 sprintf(
                     'Primary-site save failed for %s:%s — %s',
@@ -433,7 +451,7 @@ class EntryMigrationService extends Component
 
             // Critical: propagateChanges=false (Pitfall 2)
             $localised->resaving = true;
-            if (!Craft::$app->elements->saveElement($localised, true, false)) {
+            if (!$this->elements()->save($localised)) {
                 Craft::warning(
                     sprintf(
                         'EntryMigrationService: site "%s" save failed for %s:%s — %s',
@@ -532,7 +550,7 @@ class EntryMigrationService extends Component
         $entry->setFieldValues([$fieldHandle => $value]);
         $entry->resaving = true;
 
-        return (bool) Craft::$app->elements->saveElement($entry, true, false);
+        return (bool) $this->elements()->save($entry);
     }
 
     /**
@@ -549,7 +567,7 @@ class EntryMigrationService extends Component
         $entry->setParentId($parentId);
         $entry->resaving = true;
 
-        return (bool) Craft::$app->elements->saveElement($entry, true, false);
+        return (bool) $this->elements()->save($entry);
     }
 
     private function loadEntryForSite(int $entryId, string $siteHandle): ?Entry
@@ -1007,7 +1025,22 @@ class EntryMigrationService extends Component
             $report->warn($message);
             $report->incr('fallback.' . $category);
         }
-        Craft::warning('EntryMigrationService: ' . $message, __METHOD__);
+        $this->warn($message);
+    }
+
+    /**
+     * Log a warning when Craft is there to log it.
+     *
+     * The write paths run under PHPUnit as well as under a console command,
+     * and the logger is the only part of a failure branch that needs Craft —
+     * without this check a `catch` block fatals in a test instead of reporting
+     * the failure it was written to report.
+     */
+    private function warn(string $message): void
+    {
+        if (class_exists(Craft::class, false)) {
+            Craft::warning('EntryMigrationService: ' . $message, __METHOD__);
+        }
     }
 
     /**
@@ -1192,16 +1225,13 @@ class EntryMigrationService extends Component
                     continue;
                 }
                 try {
-                    Craft::$app->elements->deleteElement($block, true);
+                    $this->elements()->delete($block, true);
                 } catch (\Throwable $e) {
-                    Craft::warning(
-                        sprintf(
-                            'wipeStaleSecondarySiteBlocks: deleteElement(%d) failed: %s',
-                            (int) $block->id,
-                            $e->getMessage(),
-                        ),
-                        __METHOD__,
-                    );
+                    $this->warn(sprintf(
+                        'wipeStaleSecondarySiteBlocks: deleteElement(%d) failed: %s',
+                        (int) $block->id,
+                        $e->getMessage(),
+                    ));
                 }
             }
         }
@@ -1250,16 +1280,13 @@ class EntryMigrationService extends Component
 
             foreach ($this->nestedEntriesOn($localised) as $block) {
                 try {
-                    Craft::$app->elements->deleteElement($block, true);
+                    $this->elements()->delete($block, true);
                 } catch (\Throwable $e) {
-                    Craft::warning(
-                        sprintf(
-                            'wipeBlocksOnUnpayloadedSites: deleteElement(%d) failed: %s',
-                            (int) $block->id,
-                            $e->getMessage(),
-                        ),
-                        __METHOD__,
-                    );
+                    $this->warn(sprintf(
+                        'wipeBlocksOnUnpayloadedSites: deleteElement(%d) failed: %s',
+                        (int) $block->id,
+                        $e->getMessage(),
+                    ));
                 }
             }
         }
