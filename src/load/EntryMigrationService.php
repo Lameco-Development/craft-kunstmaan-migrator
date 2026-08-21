@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
 use craft\base\Element;
+use craft\fields\Matrix;
 use craft\elements\Entry;
 use craft\models\Section;
 use craft\models\Site;
@@ -226,12 +227,43 @@ class EntryMigrationService extends Component
         // ------------------------------------------------------------------ 3
         $enabledMap = [];
         foreach ($sites as $site) {
+            // A site the payload says nothing about is LEFT OUT of the map, not set to false.
+            //
+            // The section is `propagationMethod: custom`, and Craft decides propagation with
+            // `getEnabledForSite($siteId) !== null` (craft\elements\Entry::getSupportedSites).
+            // `false` is not null — so assigning false to every configured site, as this loop
+            // used to, propagated every entry into every locale of the environment. That one
+            // line produced three separate defects: a control panel full of disabled entries in
+            // locales the page never existed in, nested entries duplicated onto sites no payload
+            // ever wrote (28,108 blocks from 6,285 compiled), and slug collisions where a
+            // propagated primary slug met the real entry for that locale (`labels/botsquad-2`).
+            //
+            // Omitting the site leaves `getEnabledForSite()` null and Craft does not propagate.
+            // Deliberate disabled rows are unaffected: a structural placeholder and an offline
+            // translation both *name* their sites in the payload, which is what lets them own a
+            // path segment without publishing anything.
+            if (!isset($perSite[$site->handle])) {
+                continue;
+            }
+
             // Transform emits `online` (from kuma_node_translations.online),
             // but earlier mapping docs referred to `enabled`. Read both so
             // the loader tolerates either key without a breaking change.
-            $siteData = $perSite[$site->handle] ?? [];
+            $siteData = $perSite[$site->handle];
             $enabledMap[$site->id] = (bool) ($siteData['enabled'] ?? $siteData['online'] ?? false);
         }
+
+        // The entry is always created *in* the primary site (`$entry->siteId` above), so a row
+        // there is unavoidable even when the payload never mentions it. It must be explicitly
+        // disabled: `primarySiteDataForSave()` borrows another locale's title, slug and
+        // `enabled` to fill the gap, so leaving this unset publishes a French page at an English
+        // URL. Measured: 8 of 29 entries in a slice went live in EN carrying FR/DK/NL content.
+        //
+        // One disabled row per entry, on the primary site only — not one per configured locale.
+        if (!isset($perSite[$primarySite->handle])) {
+            $enabledMap[$primarySite->id] = false;
+        }
+
         $entry->setEnabledForSite($enabledMap);
 
         // ------------------------------------------------------------------ 4
@@ -423,6 +455,22 @@ class EntryMigrationService extends Component
                 $this->collectBlockUidsByPosition($localised, $siteSourceRefPositions),
             );
         }
+
+        // ------------------------------------------------------------------ 7b
+        // Blocks on sites this payload never addressed.
+        //
+        // `commonPageBuilder` is propagationMethod: none, so every site owns its own nested
+        // entries. On the primary save Craft duplicates the primary site's blocks to every
+        // site the entry propagates to, and the loop above only visits sites the payload
+        // names — so only those get pruned by their own save. A locale the page does not
+        // exist in is never visited, and keeps a full copy of the primary's blocks forever.
+        // Measured on a clean run: 28,108 blocks written from 6,285 compiled, the surplus
+        // sitting on 7,729 (entry, site) pairs the payload never wrote.
+        //
+        // A site with no payload has no content by definition, so anything found there is a
+        // propagation artefact and is removed.
+        // ------------------------------------------------------------------ 7b
+        $this->wipeBlocksOnUnpayloadedSites($entry, $perSite);
 
         // ------------------------------------------------------------------ 8
         // Persist the accumulated block UID map to state so the NEXT re-run
@@ -1157,6 +1205,116 @@ class EntryMigrationService extends Component
                 }
             }
         }
+    }
+
+    /**
+     * Delete nested entries sitting on sites this payload said nothing about.
+     *
+     * Craft's own pruning (`NestedElementManager::deleteOtherNestedElements()`) is scoped to
+     * the owner's site, so it only ever runs for a site the loader actually saves. This closes
+     * the gap for the rest.
+     *
+     * @param array<string, mixed> $perSite the payload's per-site data, keyed by site handle
+     */
+    private function wipeBlocksOnUnpayloadedSites(Entry $entry, array $perSite): void
+    {
+        $keep = [];
+
+        foreach (array_keys($perSite) as $handle) {
+            $site = $this->getSiteByHandle((string) $handle);
+
+            if ($site !== null) {
+                $keep[$site->id] = true;
+            }
+        }
+
+        if ($keep === []) {
+            return;
+        }
+
+        foreach (Craft::$app->sites->getAllSites() as $site) {
+            if (isset($keep[$site->id])) {
+                continue;
+            }
+
+            /** @var Entry|null $localised */
+            $localised = Entry::find()
+                ->id($entry->id)
+                ->siteId($site->id)
+                ->status(null)
+                ->one();
+
+            if ($localised === null) {
+                continue;
+            }
+
+            foreach ($this->nestedEntriesOn($localised) as $block) {
+                try {
+                    Craft::$app->elements->deleteElement($block, true);
+                } catch (\Throwable $e) {
+                    Craft::warning(
+                        sprintf(
+                            'wipeBlocksOnUnpayloadedSites: deleteElement(%d) failed: %s',
+                            (int) $block->id,
+                            $e->getMessage(),
+                        ),
+                        __METHOD__,
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * Every nested entry owned by this entry on its own site, across all Matrix fields.
+     *
+     * @return list<Entry>
+     */
+    private function nestedEntriesOn(Entry $localised): array
+    {
+        $out = [];
+
+        foreach ($localised->getFieldLayout()?->getCustomFields() ?? [] as $field) {
+            // Matrix only. An Entries *relation* field also answers `all()`, and its entries
+            // are other people's content — deleting those would be catastrophic rather than
+            // tidy. Ownership is re-checked per block below as a second line of defence.
+            if (!$field instanceof Matrix) {
+                continue;
+            }
+
+            try {
+                $value = $localised->getFieldValue($field->handle);
+            } catch (\Throwable) {
+                continue;
+            }
+
+            if (!is_object($value) || !method_exists($value, 'all')) {
+                continue;
+            }
+
+            try {
+                if (method_exists($value, 'siteId')) {
+                    $value->siteId($localised->siteId);
+                }
+                if (method_exists($value, 'status')) {
+                    $value->status(null);
+                }
+
+                foreach ($value->all() as $block) {
+                    // Only ever delete a block this entry actually owns.
+                    if ($block instanceof Entry
+                        && $block->id
+                        && $block->getPrimaryOwnerId() === $localised->id
+                    ) {
+                        $out[] = $block;
+                    }
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return $out;
     }
 
     /**
