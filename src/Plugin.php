@@ -10,6 +10,8 @@ use Lameco\KumaCompile\Mapping\Mapping;
 use Throwable;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
+use craft\events\RegisterComponentTypesEvent;
+use craft\services\Utilities;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
@@ -28,7 +30,9 @@ use lameco\kunstmaanmigrator\load\TranslationMigrationService;
 use lameco\kunstmaanmigrator\load\SeoMigrationService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
 use lameco\kunstmaanmigrator\models\Settings;
+use lameco\kunstmaanmigrator\utilities\MigrationUtility;
 use PDO;
+use yii\base\Event;
 use yii\db\Connection;
 
 /**
@@ -124,10 +128,19 @@ class Plugin extends BasePlugin
         // D-03: console controllerNamespace points at the flat src/console/ directory.
         // No CP controllers/utility/settings surface remains in the v2 loader core.
         // D-03: console controllerNamespace points at the flat src/console/ directory.
-        // There is no web controller yet — the preflight action lands with the utility.
-        if (Craft::$app->request->getIsConsoleRequest()) {
-            $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\console';
-        }
+        $this->controllerNamespace = Craft::$app->request->getIsConsoleRequest()
+            ? 'lameco\\kunstmaanmigrator\\console'
+            : 'lameco\\kunstmaanmigrator\\controllers';
+
+        // A Utility, not a CP section: a tool used a handful of times per project
+        // has no business in the nav beside Entries.
+        Event::on(
+            Utilities::class,
+            Utilities::EVENT_REGISTER_UTILITIES,
+            static function (RegisterComponentTypesEvent $event): void {
+                $event->types[] = MigrationUtility::class;
+            },
+        );
 
         // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
         // ?object — AssetMigrationService satisfies the duck-typed surface.
