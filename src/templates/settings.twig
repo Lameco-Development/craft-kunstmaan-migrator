@@ -1,0 +1,168 @@
+{% import "_includes/forms.twig" as forms %}
+
+{# The migrator only ever runs locally, against a legacy database on the same
+   machine. Craft writes plugin settings into project config, which is committed
+   and deployed — so the connection fields take the NAME of an environment
+   variable, not its value, and the password field refuses anything else. #}
+
+<h2>{{ "Legacy database"|t('app') }}</h2>
+
+<p class="light">
+  {{ "These fields take an environment variable name, so the values stay in your .env and out of project config."|t('app') }}
+</p>
+
+{{ forms.autosuggestField({
+  label: "Server"|t('app'),
+  id: 'legacyDbServer',
+  name: 'legacyDbServer',
+  value: settings.legacyDbServer,
+  suggestEnvVars: true,
+  errors: settings.getErrors('legacyDbServer'),
+}) }}
+
+{{ forms.textField({
+  label: "Port"|t('app'),
+  id: 'legacyDbPort',
+  name: 'legacyDbPort',
+  type: 'number',
+  size: 6,
+  value: settings.legacyDbPort,
+  errors: settings.getErrors('legacyDbPort'),
+}) }}
+
+{{ forms.autosuggestField({
+  label: "Database"|t('app'),
+  id: 'legacyDbDatabase',
+  name: 'legacyDbDatabase',
+  value: settings.legacyDbDatabase,
+  suggestEnvVars: true,
+  errors: settings.getErrors('legacyDbDatabase'),
+}) }}
+
+{{ forms.autosuggestField({
+  label: "User"|t('app'),
+  id: 'legacyDbUser',
+  name: 'legacyDbUser',
+  value: settings.legacyDbUser,
+  suggestEnvVars: true,
+  errors: settings.getErrors('legacyDbUser'),
+}) }}
+
+{{ forms.autosuggestField({
+  label: "Password"|t('app'),
+  instructions: "Must be an environment variable — a value typed here would be committed to project config."|t('app'),
+  id: 'legacyDbPassword',
+  name: 'legacyDbPassword',
+  value: settings.legacyDbPassword,
+  suggestEnvVars: true,
+  errors: settings.getErrors('legacyDbPassword'),
+}) }}
+
+<hr>
+
+<h2>{{ "Adapters"|t('app') }}</h2>
+
+<p class="light">
+  {{ "Each adapter writes into a different plugin. Turning one off skips that pass; a plugin that is not installed skips it too, and the run says which."|t('app') }}
+</p>
+
+<table class="data fullwidth">
+  <thead>
+    <tr>
+      <th>{{ "Adapter"|t('app') }}</th>
+      <th>{{ "Requires"|t('app') }}</th>
+      <th>{{ "Detected"|t('app') }}</th>
+      <th>{{ "Enabled"|t('app') }}</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for adapter in adapters %}
+      <tr>
+        <th scope="row">{{ adapter.label }}</th>
+        <td>
+          {% if adapter.pluginHandle %}
+            <code>{{ adapter.pluginHandle }}</code>
+          {% else %}
+            <span class="light">{{ "built in"|t('app') }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if adapter.pluginHandle is null %}
+            <span class="light">—</span>
+          {% elseif detected[adapter.handle] %}
+            <span data-icon="check"></span> {{ detected[adapter.handle] }}
+          {% else %}
+            <span class="error">{{ "not installed"|t('app') }}</span>
+          {% endif %}
+        </td>
+        <td>
+          {{ forms.lightswitch({
+            id: adapter.settingsFlag,
+            name: adapter.settingsFlag,
+            on: attribute(settings, adapter.settingsFlag),
+          }) }}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<hr>
+
+<h2>{{ "Environments"|t('app') }}</h2>
+
+{{ forms.autosuggestField({
+  label: "Mapping file"|t('app'),
+  instructions: "The mapping owns which databases exist, where each one's uploads live, and which legacy locale writes to which Craft site. It is version-controlled next to the field mappings it travels with."|t('app'),
+  id: 'mappingPath',
+  name: 'mappingPath',
+  value: settings.mappingPath,
+  suggestEnvVars: true,
+  errors: settings.getErrors('mappingPath'),
+}) }}
+
+{% if environments is empty %}
+  <p class="light">
+    {{ "Point at a mapping file and save to see the environments it declares."|t('app') }}
+  </p>
+{% else %}
+  <p class="light">
+    {{ "Read-only — edit the mapping file to change any of this."|t('app') }}
+  </p>
+
+  <table class="data fullwidth">
+    <thead>
+      <tr>
+        <th>{{ "Environment"|t('app') }}</th>
+        <th>{{ "Database"|t('app') }}</th>
+        <th>{{ "Upload directories"|t('app') }}</th>
+        <th>{{ "Locale → site"|t('app') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for name, env in environments %}
+        <tr>
+          <th scope="row">{{ name }}</th>
+          <td><code>{{ env.database ?? '—' }}</code></td>
+          <td>
+            {% for root in env.mediaRoot %}
+              <div><code>{{ root }}</code>{% if not loop.first %} <span class="light">{{ "(fallback)"|t('app') }}</span>{% endif %}</div>
+            {% else %}
+              <span class="light">—</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% for locale, handle in env.locales %}
+              <div>
+                <code>{{ locale }}</code> →
+                {% if handle %}<code>{{ handle }}</code>{% else %}<span class="light">{{ "not migrated"|t('app') }}</span>{% endif %}
+              </div>
+            {% else %}
+              <span class="light">—</span>
+            {% endfor %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}

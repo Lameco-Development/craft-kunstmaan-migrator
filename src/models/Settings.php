@@ -29,6 +29,17 @@ class Settings extends Model
     public string  $legacyDbTablePrefix  = '';
 
     /**
+     * Where the mapping YAML lives.
+     *
+     * The mapping owns the migration's topology — which databases exist, where
+     * each one's uploads are, and which legacy locale writes to which Craft
+     * site. Those belong in a version-controlled file next to the field
+     * mappings they travel with, not in a settings form. This is the one
+     * pointer the control panel needs in order to read and show them.
+     */
+    public string $mappingPath = '';
+
+    /**
      * Craft volume handle assets land in when migrated. Defaults to
      * `uploads` — the starter-kit convention. Scaffolder-generated targets
      * use `media` (matches Kunstmaan's `kuma_media` semantics); override
@@ -57,12 +68,6 @@ class Settings extends Model
     // Phase 4 / D-57 — adapter source-table overrides for variant Kunstmaan
     // flavours. Defaults match the canonical kuma_* schema; operators flip via
     // env vars or config/kunstmaan-migrator.php when the legacy DB diverges.
-    public string $seoTableName = 'kuma_seo';
-    public string $redirectsTableName = 'kuma_redirects';
-    public string $menuTableName = 'kuma_menu';
-    public string $menuItemTableName = 'kuma_menu_item';
-    public string $nodesTableName = 'kuma_nodes';
-    public string $translationTableName = 'kuma_translation';
 
     /**
      * Symfony translation domains to migrate from kuma_translation.
@@ -106,12 +111,7 @@ class Settings extends Model
                 'class' => EnvAttributeParserBehavior::class,
                 'attributes' => [
                     'legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyDbPassword',
-                    'legacyDbCharset', 'legacyDbTablePrefix',
-                    // Phase 4 / D-57 — adapter table-name env overrides. The
-                    // Phase 4 / D-60 verify-tolerance floats deliberately stay
-                    // out of this list; env-parse of float values is fragile
-                    // (PATTERNS.md flag #2) — CLI override is their runtime knob.
-                    'seoTableName', 'redirectsTableName',
+                    'legacyDbCharset', 'legacyDbTablePrefix', 'mappingPath',
                 ],
             ],
         ];
@@ -124,11 +124,14 @@ class Settings extends Model
         // D-12: env-var fallback. config/kunstmaan-migrator.php overrides win when present
         // (Craft loads the config file BEFORE init() and assigns to the public properties,
         // so `??=` only fills the unset cases).
-        $this->legacyDbServer      ??= App::env('CRAFT_LEGACY_DB_SERVER') ?: null;
+        // KUMA_DB_* is read as a second fallback because `migrate` used to build its
+        // connection from those directly, bypassing this model entirely — so a project
+        // configured the old way keeps working while there is now one source of truth.
+        $this->legacyDbServer      ??= App::env('CRAFT_LEGACY_DB_SERVER') ?: (App::env('KUMA_DB_HOST') ?: null);
         $this->legacyDbDatabase    ??= App::env('CRAFT_LEGACY_DB_DATABASE') ?: null;
-        $this->legacyDbUser        ??= App::env('CRAFT_LEGACY_DB_USER') ?: null;
-        $this->legacyDbPassword    ??= App::env('CRAFT_LEGACY_DB_PASSWORD') ?: null;
-        $envPort = App::env('CRAFT_LEGACY_DB_PORT');
+        $this->legacyDbUser        ??= App::env('CRAFT_LEGACY_DB_USER') ?: (App::env('KUMA_DB_USER') ?: null);
+        $this->legacyDbPassword    ??= App::env('CRAFT_LEGACY_DB_PASSWORD') ?: (App::env('KUMA_DB_PASSWORD') ?: null);
+        $envPort = App::env('CRAFT_LEGACY_DB_PORT') ?: App::env('KUMA_DB_PORT');
         if ($envPort !== null && $envPort !== '' && $envPort !== false) {
             $this->legacyDbPort = (int) $envPort;
         }
@@ -216,16 +219,42 @@ class Settings extends Model
         return Plugin::getInstance()->kunstmaanEnvReader;
     }
 
+    /**
+     * A legacy-database password must name an environment variable, never carry one.
+     *
+     * Craft writes plugin settings into project config, which is committed and
+     * deployed. A password typed into the settings screen would therefore end
+     * up in git and on production — for a tool that only ever runs locally,
+     * against a database only this machine can reach.
+     *
+     * `EnvAttributeParserBehavior` already resolves `$VAR` for every read, so
+     * storing the name costs nothing.
+     */
+    public function validateIsEnvReference(string $attribute): void
+    {
+        $value = $this->$attribute;
+
+        if (!is_string($value) || $value === '' || str_starts_with($value, '$')) {
+            return;
+        }
+
+        $this->addError(
+            $attribute,
+            'Use an environment variable name such as $CRAFT_LEGACY_DB_PASSWORD. '
+            . 'A value here would be written into project config, committed, and deployed.',
+        );
+    }
+
     public function rules(): array
     {
         return [
             [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
+            [['legacyDbPassword'], 'validateIsEnvReference'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled'], 'boolean'],
-            // Phase 4 / D-57 — adapter source-table overrides.
-            [['seoTableName', 'redirectsTableName', 'menuTableName', 'menuItemTableName', 'nodesTableName', 'nodeMenuNavHandle', 'translationTableName'], 'string'],
+            [['nodeMenuNavHandle', 'mappingPath'], 'string'],
             [['nodeMenuExcludedInternalNames', 'translationDomains'], 'safe'],
         ];
     }

@@ -61,16 +61,17 @@ use lameco\kunstmaanmigrator\db\LegacyDbService;
  */
 class TranslationMigrationService extends Component
 {
+    /**
+     * The Kunstmaan schema is fixed: these table names are the same in every
+     * corpus this migrator targets, so they are constants rather than a
+     * settings surface nobody ever used.
+     */
+    public const TRANSLATION_TABLE = 'kuma_translation';
+
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
 
-    /**
-     * Source table name override. Default matches the canonical
-     * Kunstmaan TranslatorBundle schema (`kuma_translation`, singular —
-     * unlike most kuma_* tables, this one is NOT pluralised).
-     */
-    public string $translationTableName = 'kuma_translation';
 
     /**
      * Source domains to migrate. Defaults to `['messages']` — Symfony's
@@ -122,14 +123,14 @@ class TranslationMigrationService extends Component
         try {
             $rows = $this->legacyDb->queryAll(
                 'SELECT id, keyword, locale, text, domain, status
-                 FROM ' . $this->translationTableName . '
+                 FROM ' . self::TRANSLATION_TABLE . '
                  WHERE status = \'enabled\'
                  ORDER BY keyword, locale',
             );
         } catch (Throwable $e) {
             $report->warn(sprintf(
                 'Could not read %s (%s); translation migration skipped (table may not exist on this Kunstmaan vintage).',
-                $this->translationTableName,
+                self::TRANSLATION_TABLE,
                 $e->getMessage(),
             ));
             return $report;
@@ -138,7 +139,7 @@ class TranslationMigrationService extends Component
         if ($rows === []) {
             $report->warn(sprintf(
                 'No rows in %s; translation migration skipped (NB: TranslatorBundle is optional in Kunstmaan, sites without it use yaml-only translations).',
-                $this->translationTableName,
+                self::TRANSLATION_TABLE,
             ));
             return $report;
         }

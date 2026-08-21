@@ -40,22 +40,21 @@ use yii\base\Component;
  * projects that don't use SEOmatic simply see the skip log line.
  *
  * Table-name override: the legacy SEO table defaults to the canonical
- * `kuma_seo` name but is exposed as `$seoTableName` so host projects with a
- * different Kunstmaan schema flavour can override via Settings::$seoTableName.
+ * `kuma_seo` name, which is fixed across every Kunstmaan corpus.
  */
 class SeoMigrationService extends Component
 {
+    /**
+     * The Kunstmaan schema is fixed: these table names are the same in every
+     * corpus this migrator targets, so they are constants rather than a
+     * settings surface nobody ever used.
+     */
+    public const SEO_TABLE = 'kuma_seo';
+
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
     public SeomaticPayloadBuilder $seoPayload;
 
-    /**
-     * Legacy SEO table name (unwrapped — passed verbatim into raw SQL).
-     * Defaults to the canonical Kunstmaan `kuma_seo`; host projects with
-     * a non-standard schema override via Settings::$seoTableName. Plan 04-09
-     * config wiring populates this from the plugin Settings.
-     */
-    public string $seoTableName = 'kuma_seo';
 
 
     private const STATE_SOURCE = 'seo_meta';
@@ -446,7 +445,7 @@ class SeoMigrationService extends Component
      * v2 reshape: v1 delegated to `LegacyDbService::seoFor()` which used a
      * hardcoded `KunstmaanCoreTables::SEO` constant — meaning the v1
      * `$seoTableName` override surface was declared but never actually flowed
-     * into SQL. v2 inlines the query here so D-57's `$this->seoTableName`
+     * into SQL. v2 inlines the query here so D-57's `self::SEO_TABLE`
      * override genuinely takes effect (the docblock on $seoTableName,
      * "passed verbatim into raw SQL", is now truthful).
      *
@@ -455,7 +454,7 @@ class SeoMigrationService extends Component
     private function fetchKumaSeoRow(int $legacyEntityId, string $legacyClass): ?array
     {
         return $this->legacyDb->queryOne(
-            'SELECT * FROM ' . $this->seoTableName
+            'SELECT * FROM ' . self::SEO_TABLE
             . ' WHERE ref_id = :rid AND ref_entity_name = :class'
             . ' ORDER BY id DESC LIMIT 1',
             [':rid' => $legacyEntityId, ':class' => $legacyClass],

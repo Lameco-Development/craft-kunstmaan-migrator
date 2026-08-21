@@ -81,6 +81,15 @@ use verbb\navigation\elements\Node as NavNode;
  */
 class NavigationMigrationService extends Component
 {
+    /**
+     * The Kunstmaan schema is fixed: these table names are the same in every
+     * corpus this migrator targets, so they are constants rather than a
+     * settings surface nobody ever used.
+     */
+    public const MENU_TABLE = 'kuma_menu';
+    public const MENU_ITEM_TABLE = 'kuma_menu_item';
+    public const NODES_TABLE = 'kuma_nodes';
+
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
@@ -105,15 +114,8 @@ class NavigationMigrationService extends Component
      */
     public ?NavigationGateway $navigationGateway = null;
 
-    /**
-     * Source table-name overrides (passed verbatim into raw SQL).
-     * Defaults match the canonical Kunstmaan MenuBundle schema.
-     */
-    public string $menuTableName = 'kuma_menu';
-    public string $menuItemTableName = 'kuma_menu_item';
     public string $nodeTranslationTableName = 'kuma_node_translations';
     public string $nodeVersionTableName = 'kuma_node_versions';
-    public string $nodesTableName = 'kuma_nodes';
 
     /**
      * Slice 2 (NodeMenu) target nav handle. The scaffolder's slice 7 v0.7
@@ -203,12 +205,12 @@ class NavigationMigrationService extends Component
 
         try {
             $menus = $this->legacyDb->queryAll(
-                'SELECT id, name, locale FROM ' . $this->menuTableName . ' ORDER BY id',
+                'SELECT id, name, locale FROM ' . self::MENU_TABLE . ' ORDER BY id',
             );
         } catch (Throwable $e) {
             $report->warn(sprintf(
                 'Could not read %s (%s); MenuBundle pass skipped.',
-                $this->menuTableName,
+                self::MENU_TABLE,
                 $e->getMessage(),
             ));
             $menus = [];
@@ -217,7 +219,7 @@ class NavigationMigrationService extends Component
         if ($menus === []) {
             $report->warn(sprintf(
                 'No rows in %s; MenuBundle pass skipped (NodeMenu pass below covers page-tree sites).',
-                $this->menuTableName,
+                self::MENU_TABLE,
             ));
             // NodeMenu pass below still runs — that's the right path for
             // dewert and any site that drives its menu off the page tree.
@@ -268,7 +270,7 @@ class NavigationMigrationService extends Component
             try {
                 $items = $this->legacyDb->queryAll(
                     'SELECT id, parent_id, node_translation_id, type, title, url, new_window, lft, lvl
-                     FROM ' . $this->menuItemTableName . '
+                     FROM ' . self::MENU_ITEM_TABLE . '
                      WHERE menu_id = :menuId
                      ORDER BY lft',
                     [':menuId' => $menuId],
@@ -276,7 +278,7 @@ class NavigationMigrationService extends Component
             } catch (Throwable $e) {
                 $report->warn(sprintf(
                     'Could not read %s for menu id=%d (%s); skipping menu.',
-                    $this->menuItemTableName,
+                    self::MENU_ITEM_TABLE,
                     $menuId,
                     $e->getMessage(),
                 ));
@@ -501,14 +503,14 @@ class NavigationMigrationService extends Component
 
         try {
             $rows = $this->legacyDb->queryAll(
-                'SELECT id, parent_id FROM ' . $this->menuItemTableName . '
+                'SELECT id, parent_id FROM ' . self::MENU_ITEM_TABLE . '
                  WHERE id IN (' . implode(',', $placeholders) . ') AND parent_id IS NOT NULL',
                 $params,
             );
         } catch (Throwable $e) {
             $report->warn(sprintf(
                 'Could not read parent linkage from %s (%s); nav tree may be flat.',
-                $this->menuItemTableName,
+                self::MENU_ITEM_TABLE,
                 $e->getMessage(),
             ));
             return;
@@ -632,7 +634,7 @@ class NavigationMigrationService extends Component
                 'SELECT n.id, n.parent_id, n.lvl, n.lft,
                         n.internal_name, n.ref_entity_name,
                         v.ref_id, t.weight AS sort_weight
-                 FROM ' . $this->nodesTableName . ' n
+                 FROM ' . self::NODES_TABLE . ' n
                  LEFT JOIN ' . $this->nodeTranslationTableName . ' t
                    ON t.node_id = n.id AND t.lang = :primaryLang
                  LEFT JOIN ' . $this->nodeVersionTableName . ' v
@@ -644,7 +646,7 @@ class NavigationMigrationService extends Component
         } catch (Throwable $e) {
             $report->warn(sprintf(
                 'Could not read %s for NodeMenu pass (%s); skipped.',
-                $this->nodesTableName,
+                self::NODES_TABLE,
                 $e->getMessage(),
             ));
             return;

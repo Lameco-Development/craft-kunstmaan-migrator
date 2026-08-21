@@ -5,9 +5,13 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator;
 
 use Craft;
+use craft\helpers\App;
+use Lameco\KumaCompile\Mapping\Mapping;
+use Throwable;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
+use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
 use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
@@ -64,7 +68,7 @@ class Plugin extends BasePlugin
 
     // No CP settings page in the v2 loader core — settings come from env vars
     // and config/kunstmaan-migrator.php only (see CLAUDE.md ground rules).
-    public bool $hasCpSettings = false;
+    public bool $hasCpSettings = true;
 
     public static function config(): array
     {
@@ -119,6 +123,8 @@ class Plugin extends BasePlugin
 
         // D-03: console controllerNamespace points at the flat src/console/ directory.
         // No CP controllers/utility/settings surface remains in the v2 loader core.
+        // D-03: console controllerNamespace points at the flat src/console/ directory.
+        // There is no web controller yet — the preflight action lands with the utility.
         if (Craft::$app->request->getIsConsoleRequest()) {
             $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\console';
         }
@@ -192,29 +198,11 @@ class Plugin extends BasePlugin
         // D-57: Settings table-name overrides wired here so adapter services pick them up.
         $settings = $this->getSettings();
 
-        if (is_string($settings->seoTableName) && $settings->seoTableName !== '') {
-            $this->seoMigrationService->seoTableName = $settings->seoTableName;
-        }
-        if (is_string($settings->redirectsTableName) && $settings->redirectsTableName !== '') {
-            $this->redirectMigrationService->redirectsTableName = $settings->redirectsTableName;
-        }
-        if (is_string($settings->menuTableName) && $settings->menuTableName !== '') {
-            $this->navigationMigrationService->menuTableName = $settings->menuTableName;
-        }
-        if (is_string($settings->menuItemTableName) && $settings->menuItemTableName !== '') {
-            $this->navigationMigrationService->menuItemTableName = $settings->menuItemTableName;
-        }
-        if (is_string($settings->nodesTableName) && $settings->nodesTableName !== '') {
-            $this->navigationMigrationService->nodesTableName = $settings->nodesTableName;
-        }
         if (is_string($settings->nodeMenuNavHandle) && $settings->nodeMenuNavHandle !== '') {
             $this->navigationMigrationService->nodeMenuNavHandle = $settings->nodeMenuNavHandle;
         }
         if (is_array($settings->nodeMenuExcludedInternalNames)) {
             $this->navigationMigrationService->nodeMenuExcludedInternalNames = $settings->nodeMenuExcludedInternalNames;
-        }
-        if (is_string($settings->translationTableName) && $settings->translationTableName !== '') {
-            $this->translationMigrationService->translationTableName = $settings->translationTableName;
         }
         if (is_array($settings->translationDomains) && $settings->translationDomains !== []) {
             $this->translationMigrationService->allowedDomains = $settings->translationDomains;
@@ -225,5 +213,62 @@ class Plugin extends BasePlugin
     protected function createSettingsModel(): ?Model
     {
         return new Settings();
+    }
+
+    /**
+     * The settings screen.
+     *
+     * The adapter table is rendered from AdapterRegistry rather than from four
+     * hard-coded rows, so a project that registers its own adapter through
+     * EVENT_REGISTER_ADAPTERS gets a row without this template changing.
+     */
+    protected function settingsHtml(): ?string
+    {
+        $registry = new AdapterRegistry();
+        $plugins = new CraftPluginRegistry();
+        $detected = [];
+
+        foreach ($registry->all() as $adapter) {
+            $detected[$adapter->handle] = $adapter->pluginHandle === null
+                ? null
+                : $plugins->versionOf($adapter->pluginHandle);
+        }
+
+        return Craft::$app->getView()->renderTemplate('kunstmaan-migrator/settings', [
+            'settings' => $this->getSettings(),
+            'adapters' => $registry->all(),
+            'detected' => $detected,
+            'environments' => $this->declaredEnvironments(),
+        ]);
+    }
+
+    /**
+     * The environments the mapping declares, for the settings screen to show.
+     *
+     * Read-only on purpose. A control panel form is worse than a YAML file at
+     * exactly the parts a real corpus needs: Enreach's DE environment looks for
+     * uploads in its own directory and then falls back to COM's, and its COM
+     * environment marks two locales as deliberately not migrated with a reason
+     * attached — an ordered fallback list and a "no, and here is why" that a
+     * checkbox cannot express. It also belongs in the same reviewable diff as
+     * the field mappings it travels with.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    private function declaredEnvironments(): array
+    {
+        $path = App::parseEnv($this->getSettings()->mappingPath);
+
+        if (!is_string($path) || $path === '' || !is_file($path)) {
+            return [];
+        }
+
+        try {
+            return Mapping::fromFile($path)->environments();
+        } catch (Throwable) {
+            // A broken mapping is the migrate command's problem to report properly;
+            // the settings screen just shows nothing rather than fataling.
+            return [];
+        }
     }
 }
