@@ -1,7 +1,6 @@
 {
     "name": "lameco/craft-kunstmaan-migrator",
     "description": "Thin payload loader for Kunstmaan\u2192Craft migrations",
-    "version": "2.0.0-alpha.1",
     "type": "craft-plugin",
     "license": "MIT",
     "authors": [
