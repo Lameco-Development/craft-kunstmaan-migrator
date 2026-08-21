@@ -2,7 +2,6 @@
 
 namespace lameco\kunstmaanmigrator;
 
-use craft\helpers\App;
 use craft\helpers\Console;
 use yii\console\ExitCode;
 
@@ -10,7 +9,7 @@ trait NeverProductionTrait
 {
     protected function enforceNeverProduction(): ?int
     {
-        if (App::env('CRAFT_ENVIRONMENT') === 'production') {
+        if (ProductionGuard::isProduction()) {
             $this->stderr("Refusing to run against CRAFT_ENVIRONMENT=production\n", Console::FG_RED);
             return ExitCode::UNSPECIFIED_ERROR;
         }

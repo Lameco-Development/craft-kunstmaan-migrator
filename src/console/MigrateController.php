@@ -229,7 +229,7 @@ final class MigrateController extends Controller
                     continue;
                 }
 
-                $this->applyLegacyDb(EnvironmentPipeline::dsnFromSettings(), (string) $spec['database']);
+                EnvironmentPipeline::pointLegacyDbAt(EnvironmentPipeline::dsnFromSettings(), (string) $spec['database']);
                 $plugin->ckeditorRewriterService->resetLookupCaches();
                 $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $this->dryRun), $report);
             }
@@ -345,25 +345,6 @@ final class MigrateController extends Controller
 
 
 
-    /**
-     * Point Craft's `legacyDb` component at one environment's database.
-     *
-     * `Plugin::init()` registers it once from a single setting, which is right for a
-     * one-database migration and wrong for this one. Overwriting the registration — rather
-     * than the instance — makes the next `Craft::$app->get('legacyDb')` build a fresh
-     * connection, which is what `LegacyDbService` does on every call.
-     */
-    private function applyLegacyDb(Dsn $dsn, string $database): void
-    {
-        Craft::$app->set('legacyDb', [
-            'class' => Connection::class,
-            'dsn' => $dsn->forDatabase($database),
-            'username' => $dsn->user,
-            'password' => $dsn->password,
-            'charset' => $dsn->charset,
-            'attributes' => [\PDO::ATTR_EMULATE_PREPARES => false],
-        ]);
-    }
 
     /**
      * A failure, said out loud the moment it happens.

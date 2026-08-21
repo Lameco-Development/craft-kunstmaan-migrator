@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\console;
 
 use lameco\kunstmaanmigrator\console\DoctorController;
+use lameco\kunstmaanmigrator\run\Diagnostics;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -114,13 +115,11 @@ final class DoctorControllerTest extends TestCase
         unset($_SERVER['CRAFT_ENVIRONMENT']);
 
         try {
-            $controller = $this->outputCapturingController();
-            $result = (new ReflectionMethod(DoctorController::class, 'checkNotProduction'))->invoke($controller);
+            $result = (new ReflectionMethod(Diagnostics::class, 'checkNotProduction'))->invoke(new Diagnostics());
 
             self::assertSame(['check', 'ok', 'detail'], array_keys($result));
             self::assertSame('not_production', $result['check']);
             self::assertTrue($result['ok']);
-            self::assertSame('', $controller->capturedStderr);
         } finally {
             if ($hadPrevious) {
                 $_SERVER['CRAFT_ENVIRONMENT'] = $previous;
@@ -137,16 +136,16 @@ final class DoctorControllerTest extends TestCase
         $_SERVER['CRAFT_ENVIRONMENT'] = 'production';
 
         try {
-            $controller = $this->outputCapturingController();
-            $result = (new ReflectionMethod(DoctorController::class, 'checkNotProduction'))->invoke($controller);
+            $result = (new ReflectionMethod(Diagnostics::class, 'checkNotProduction'))->invoke(new Diagnostics());
 
             self::assertSame('not_production', $result['check']);
             self::assertFalse($result['ok']);
             self::assertStringContainsString('production', $result['detail']);
-            self::assertStringContainsString(
-                'Refusing to run against CRAFT_ENVIRONMENT=production',
-                $controller->capturedStderr,
-            );
+
+            // Asking no longer refuses. ProductionGuard answers the question and
+            // NeverProductionTrait writes the refusal, which is what lets the
+            // control panel run doctor without pretending to be a terminal — the
+            // refusal line itself is covered by NeverProductionTraitTest.
 
             // This is the JSON-shape + non-zero-exit contract the brief asks
             // this test to cover: one failing check row flips the whole run
@@ -165,7 +164,7 @@ final class DoctorControllerTest extends TestCase
 
     public function testRemovedChecksAndStaleRemediationCopyAreGoneFromSource(): void
     {
-        $source = (string) file_get_contents(dirname(__DIR__, 3) . '/src/console/DoctorController.php');
+        $source = (string) file_get_contents(dirname(__DIR__, 3) . '/src/run/Diagnostics.php');
 
         self::assertStringNotContainsString(
             'checkExtTranslations',
@@ -199,7 +198,7 @@ final class DoctorControllerTest extends TestCase
 
         try {
             $controller = $this->outputCapturingController();
-            $result = (new ReflectionMethod(DoctorController::class, 'checkLegacyMediaRoot'))->invoke($controller);
+            $result = (new ReflectionMethod(Diagnostics::class, 'checkLegacyMediaRoot'))->invoke(new Diagnostics());
 
             self::assertSame(['check', 'ok', 'detail'], array_keys($result));
             self::assertSame('legacy_media_root', $result['check']);
@@ -222,7 +221,7 @@ final class DoctorControllerTest extends TestCase
 
         try {
             $controller = $this->outputCapturingController();
-            $result = (new ReflectionMethod(DoctorController::class, 'checkLegacyMediaRoot'))->invoke($controller);
+            $result = (new ReflectionMethod(Diagnostics::class, 'checkLegacyMediaRoot'))->invoke(new Diagnostics());
 
             self::assertSame('legacy_media_root', $result['check']);
             self::assertFalse($result['ok'], 'A configured-but-missing media root is a misconfiguration, not an absence.');
@@ -246,7 +245,7 @@ final class DoctorControllerTest extends TestCase
 
         try {
             $controller = $this->outputCapturingController();
-            $result = (new ReflectionMethod(DoctorController::class, 'checkLegacyMediaRoot'))->invoke($controller);
+            $result = (new ReflectionMethod(Diagnostics::class, 'checkLegacyMediaRoot'))->invoke(new Diagnostics());
 
             self::assertSame('legacy_media_root', $result['check']);
             self::assertTrue($result['ok']);

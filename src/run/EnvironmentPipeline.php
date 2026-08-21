@@ -136,7 +136,7 @@ final class EnvironmentPipeline
         // Craft's `legacyDb` component, which is one connection from one setting. Three
         // environments are three databases, so it is repointed per environment — without
         // this a DE run reads COM's tables and reports them as migrated.
-        $this->applyLegacyDb($dsn, (string) $spec['database']);
+        self::pointLegacyDbAt($dsn, (string) $spec['database']);
 
         // Locale → site is per environment, not global. COM's `en` is comEnUs while LV's is
         // comLvEn, and one global map cannot hold both. The mapping states it per
@@ -269,7 +269,7 @@ final class EnvironmentPipeline
      * Overwrites the registration rather than the instance, so the next
      * `Craft::$app->get('legacyDb')` builds a fresh connection.
      */
-    private function applyLegacyDb(Dsn $dsn, string $database): void
+    public static function pointLegacyDbAt(Dsn $dsn, string $database): void
     {
         Craft::$app->set('legacyDb', [
             'class' => Connection::class,
