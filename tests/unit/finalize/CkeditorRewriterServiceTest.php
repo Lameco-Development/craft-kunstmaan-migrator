@@ -15,19 +15,13 @@ use ReflectionMethod;
  *
  * Strategy: the class exposes public seed-cache test seams
  * (seedUrlIdCache / seedKumaMediaIdCache / seedNtToEntryCache) which let us
- * drive the public `rewrite()` end-to-end without a Craft container. The
- * cache-warmers short-circuit when `Craft` is absent (`class_exists(Craft, false)`
- * returns false in pure-PHPUnit context), so no deps are touched. Where a
- * private helper isolates a single transformation, Reflection is used directly
- * (PATTERNS Shared Patterns analog — tests/unit/load/AssetMigrationServiceRcaTest).
+ * drive the public `rewrite()` end-to-end without a Craft container, with the
+ * caches pre-populated so no warming runs. Where a private helper isolates a
+ * single transformation, Reflection is used directly (PATTERNS Shared Patterns
+ * analog — tests/unit/load/AssetMigrationServiceRcaTest).
  *
- * Coverage target: ≥ 70.0% line coverage on src/finalize/CkeditorRewriterService.php
- * (TST-01 / D-08 gate enforced by tools/check-coverage.php in CI).
- *
- * Refactor abstinence: this test exercises the production surface verbatim;
- * no source-code changes required. Helpers gated on the legacy DB
- * (warmNtCache, warmKumaMediaCacheFromState) are skipped in the unit tier
- * — characterization fixtures in 05-03 cover those paths.
+ * The warming paths themselves are covered by CkeditorRewriterCacheWarmingTest,
+ * which drives them through MigrationStateStream.
  */
 final class CkeditorRewriterServiceTest extends TestCase
 {

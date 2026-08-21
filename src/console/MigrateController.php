@@ -28,6 +28,7 @@ use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\RedirectMigrationService;
 use lameco\kunstmaanmigrator\payload\PayloadValidator;
 use lameco\kunstmaanmigrator\payload\RefResolver;
+use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
 use yii\console\ExitCode;
 
@@ -46,6 +47,18 @@ use yii\console\ExitCode;
  */
 final class MigrateController extends Controller
 {
+    use NeverProductionTrait;
+
+    /**
+     * Craft's own `ControllerTrait::runAction()` treats a `null` action result as
+     * `ExitCode::OK`, so a `beforeAction()` that merely returns `false` would make a
+     * production refusal look like success. The gate's exit code is stashed here and
+     * re-asserted in `runAction()` below, which is what makes the refusal observable.
+     *
+     * @see beforeAction()
+     */
+    private ?int $neverProductionExitCode = null;
+
     /** Path to the mapping YAML. */
     public string $mapping = '';
 
@@ -97,6 +110,23 @@ final class MigrateController extends Controller
      * code path over 423 rows instead of 2,000, and answers in a minute.
      */
     public ?string $only = null;
+
+    public function beforeAction($action): bool
+    {
+        $this->neverProductionExitCode = $this->enforceNeverProduction();
+        if ($this->neverProductionExitCode !== null) {
+            return false;
+        }
+
+        return parent::beforeAction($action);
+    }
+
+    public function runAction($id, $params = []): int
+    {
+        $result = parent::runAction($id, $params);
+
+        return $this->neverProductionExitCode ?? $result;
+    }
 
     public function options($actionID): array
     {

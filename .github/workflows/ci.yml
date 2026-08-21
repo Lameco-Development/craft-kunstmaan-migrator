@@ -6,7 +6,7 @@ jobs:
     name: Unit + Integration tests + coverage gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
@@ -15,7 +15,7 @@ jobs:
       - run: composer install --no-interaction --no-progress
       - run: composer test
       - run: composer test-coverage    # D-07: per-module 70% gate via tools/check-coverage.php
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         if: always()
         with:
           name: coverage-clover
@@ -58,7 +58,7 @@ jobs:
       CRAFT_SECURITY_KEY: smoke-key-not-a-secret
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: plugin
 
