@@ -18,14 +18,14 @@ use PHPUnit\Framework\TestCase;
  */
 final class AdapterRegistryTest extends TestCase
 {
-    public function testTheFourBuiltInAdaptersAreRegistered(): void
+    public function testTheBuiltInAdaptersAreRegistered(): void
     {
         $handles = array_map(
             static fn (Adapter $a): string => $a->handle,
             (new AdapterRegistry())->all(),
         );
 
-        self::assertSame(['seo', 'redirects', 'navigation', 'translations'], $handles);
+        self::assertSame(['seo', 'redirects', 'navigation', 'forms', 'translations'], $handles);
     }
 
     public function testEverySettingsFlagAnAdapterNamesActuallyExists(): void
@@ -84,7 +84,7 @@ final class AdapterRegistryTest extends TestCase
         );
 
         self::assertSame('formie', $registry->byHandle('forms')?->pluginHandle);
-        self::assertCount(5, $registry->all());
+        self::assertCount(6, $registry->all());
     }
 
     public function testTheListIsBuiltOncePerRegistry(): void

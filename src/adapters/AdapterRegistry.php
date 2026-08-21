@@ -91,6 +91,35 @@ final class AdapterRegistry extends Component
             // The translation pass writes Craft's own site catalogs, so it
             // needs nothing installed. enupal-translate is an enhancement it
             // checks for separately, not a requirement to run at all.
+            // The `forms:` lane. Optional the same way the others are: Formie is
+            // suggested, never required, and the gate reports its absence as a
+            // reason rather than an error.
+            new Adapter(
+                'forms',
+                'Forms',
+                'formsEnabled',
+                'formie',
+                static fn () => Plugin::getInstance()->formMigrationService,
+                [
+                    new AdapterSetting(
+                        'handlePrefix',
+                        'Form handle prefix',
+                        AdapterSetting::TYPE_STRING,
+                        'kuma',
+                        'Prefixes every migrated form handle, so migrated forms are '
+                        . 'distinguishable from ones built by hand and cannot collide with them.',
+                    ),
+                    new AdapterSetting(
+                        'submitActionMessage',
+                        'Confirmation message',
+                        AdapterSetting::TYPE_STRING,
+                        '',
+                        'Shown after a submission. Legacy forms carry their own `thanks` text '
+                        . 'per page; this is the fallback for the ones that do not.',
+                    ),
+                ],
+            ),
+
             new Adapter(
                 'translations',
                 'Translations',

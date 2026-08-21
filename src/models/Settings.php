@@ -106,6 +106,14 @@ class Settings extends Model
     public bool $translationsEnabled = true;
 
     /**
+     * The `forms:` lane. A built-in keeps a literal property like the other
+     * four — it is part of the plugin's own surface, so it belongs in project
+     * config as a first-class switch. The generic `adapters` bag is the path for
+     * adapters the plugin does not ship, not the default for the ones it does.
+     */
+    public bool $formsEnabled = true;
+
+    /**
      * Adapter-owned preferences: adapter handle => setting handle => value.
      *
      * A generic bag rather than more literal properties, because a literal
@@ -386,7 +394,7 @@ class Settings extends Model
                 'validateEnvReferenceResolves',
             ],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
-            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled'], 'boolean'],
+            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'formsEnabled'], 'boolean'],
             [['nodeMenuNavHandle', 'mappingPath'], 'string'],
             [['nodeMenuExcludedInternalNames', 'translationDomains', 'adapters'], 'safe'],
         ];

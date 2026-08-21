@@ -41,6 +41,13 @@ final class WriteBoundaryTest extends TestCase
             'seam' => 'NavigationGateway',
             'instead' => 'isAvailable/navIdByHandle/registerTempNodes',
         ],
+        [
+            'pattern' => '~Formie::\$plugin->(?:get\w+\(\)->)?(\w+)~',
+            'adapter' => 'src/craft/VerbbFormieGateway.php',
+            'fake' => 'tests/support/InMemoryFormGateway.php',
+            'seam' => 'FormGateway',
+            'instead' => 'isAvailable/formIdByHandle/saveForm',
+        ],
     ];
 
     /**
