@@ -8,6 +8,9 @@ use Craft;
 use Throwable;
 use yii\base\Component;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\adapters\AdapterGate;
+use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
+use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\craft\NavigationGateway;
 use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
@@ -160,6 +163,20 @@ class NavigationMigrationService extends Component
      * per source row. Idempotent: re-running updates existing nodes via
      * the state map.
      */
+    /**
+     * The adapter gate. Wired in Plugin::init(); read through gate() so no
+     * call site has to cope with "not wired yet".
+     */
+    public ?AdapterGate $adapterGate = null;
+
+    private function gate(): AdapterGate
+    {
+        return $this->adapterGate ??= new AdapterGate(
+            new CraftPluginRegistry(),
+            Plugin::getInstance()->getSettings(),
+        );
+    }
+
     private function elements(): ElementWriter
     {
         return $this->elementWriter ??= new CraftElementWriter();
@@ -174,12 +191,9 @@ class NavigationMigrationService extends Component
     {
         $report = new MigrationReport();
 
-        if (!Plugin::getInstance()->getSettings()->navigationEnabled) {
-            Craft::info(
-                'verbb/navigation adapter explicitly disabled via Settings::navigationEnabled; skipping nav migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(self::disabledWarnLine());
+        $gate = $this->gate()->check((new AdapterRegistry())->byHandle('navigation'));
+        if (!$gate->isReady()) {
+            $report->warn((string) $gate->reason());
             return $report;
         }
 
@@ -992,16 +1006,4 @@ class NavigationMigrationService extends Component
         return $out;
     }
 
-    /**
-     * Phase 4.1 / D-25 + D-27 — testable warn-line for the Settings-disabled
-     * gate. Distinct copy from the plugin-not-installed line so REPORT.md
-     * skipped-stages aggregation can pattern-match operator-opted-out vs
-     * adapter-unavailable.
-     *
-     * @internal
-     */
-    private static function disabledWarnLine(): string
-    {
-        return 'verbb/navigation adapter disabled (explicitly via Settings::navigationEnabled); nav migration skipped.';
-    }
 }

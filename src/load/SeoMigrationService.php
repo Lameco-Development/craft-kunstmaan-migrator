@@ -5,6 +5,9 @@ namespace lameco\kunstmaanmigrator\load;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\craft\ElementWriter;
+use lameco\kunstmaanmigrator\adapters\AdapterGate;
+use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
+use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
@@ -151,31 +154,27 @@ class SeoMigrationService extends Component
         return $this->elementWriter ??= new CraftElementWriter();
     }
 
+    /**
+     * The adapter gate. Wired in Plugin::init(); read through gate() so no
+     * call site has to cope with "not wired yet".
+     */
+    public ?AdapterGate $adapterGate = null;
+
+    private function gate(): AdapterGate
+    {
+        return $this->adapterGate ??= new AdapterGate(
+            new CraftPluginRegistry(),
+            Plugin::getInstance()->getSettings(),
+        );
+    }
+
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
         $report = new MigrationReport();
 
-        // Phase 4.1 / D-25 — settings-disabled gate runs FIRST, BEFORE the
-        // plugin-presence check. D-27: warn-line copy is distinct from
-        // plugin-not-installed so REPORT.md skipped-stages aggregation can
-        // distinguish "operator opted out" from "plugin unavailable".
-        if (!Plugin::getInstance()->getSettings()->seoEnabled) {
-            Craft::info(
-                'SEOmatic adapter explicitly disabled via Settings::seoEnabled; skipping SEO migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(self::disabledWarnLine());
-            return $report;
-        }
-
-        // CONFIG-08: SEOmatic is optional. If the plugin is not installed,
-        // skip the entire SEO migration pass with a warning.
-        if (Craft::$app->plugins->getPlugin('seomatic') === null) {
-            Craft::warning(
-                'SEOmatic plugin not installed; skipping SEO migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn('SEOmatic plugin not installed; SEO migration skipped.');
+        $gate = $this->gate()->check((new AdapterRegistry())->byHandle('seo'));
+        if (!$gate->isReady()) {
+            $report->warn((string) $gate->reason());
             return $report;
         }
 
@@ -547,16 +546,4 @@ class SeoMigrationService extends Component
         return [$derivedClass, (int) $sourceKey];
     }
 
-    /**
-     * Phase 4.1 / D-25 + D-27 — testable warn-line for the Settings-disabled
-     * gate. Distinct copy from the existing plugin-not-installed line ('SEOmatic
-     * plugin not installed; SEO migration skipped.') so REPORT.md skipped-stages
-     * aggregation can pattern-match operator-opted-out vs adapter-unavailable.
-     *
-     * @internal
-     */
-    private static function disabledWarnLine(): string
-    {
-        return 'SEO adapter disabled (explicitly via Settings::seoEnabled); SEO migration skipped.';
-    }
 }

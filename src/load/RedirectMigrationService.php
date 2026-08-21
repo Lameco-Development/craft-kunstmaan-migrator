@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\adapters\AdapterGate;
+use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
+use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
@@ -89,33 +92,27 @@ class RedirectMigrationService extends Component
      * D-56: if Retour is not installed the pass is skipped with a
      * warning — never a hard error.
      */
+    /**
+     * The adapter gate. Wired in Plugin::init(); read through gate() so no
+     * call site has to cope with "not wired yet".
+     */
+    public ?AdapterGate $adapterGate = null;
+
+    private function gate(): AdapterGate
+    {
+        return $this->adapterGate ??= new AdapterGate(
+            new CraftPluginRegistry(),
+            Plugin::getInstance()->getSettings(),
+        );
+    }
+
     public function migrateAll(MigrationOptions $opts): MigrationReport
     {
         $report = new MigrationReport();
 
-        // Phase 4.1 / D-25 — settings-disabled gate runs FIRST, BEFORE the
-        // plugin-presence check. D-27: warn-line copy is distinct from
-        // plugin-not-installed so REPORT.md skipped-stages aggregation can
-        // distinguish "operator opted out" from "plugin unavailable".
-        if (!Plugin::getInstance()->getSettings()->retourEnabled) {
-            Craft::info(
-                'Retour adapter explicitly disabled via Settings::retourEnabled; skipping redirect migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(self::disabledWarnLine());
-            return $report;
-        }
-
-        // D-56: Retour is optional. If the plugin is not installed,
-        // skip the entire redirect migration pass with a warning.
-        if (Craft::$app->plugins->getPlugin('retour') === null) {
-            Craft::warning(
-                'Retour plugin not installed; skipping redirect migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(
-                'Retour plugin not installed; redirect migration skipped.',
-            );
+        $gate = $this->gate()->check((new AdapterRegistry())->byHandle('redirects'));
+        if (!$gate->isReady()) {
+            $report->warn((string) $gate->reason());
             return $report;
         }
 
@@ -739,17 +736,4 @@ class RedirectMigrationService extends Component
         return '/' . ltrim($trimmed, '/');
     }
 
-    /**
-     * Phase 4.1 / D-25 + D-27 — testable warn-line for the Settings-disabled
-     * gate. Distinct copy from the existing plugin-not-installed line ('Retour
-     * plugin not installed; redirect migration skipped.') so REPORT.md
-     * skipped-stages aggregation can pattern-match operator-opted-out vs
-     * adapter-unavailable.
-     *
-     * @internal
-     */
-    private static function disabledWarnLine(): string
-    {
-        return 'Retour adapter disabled (explicitly via Settings::retourEnabled); redirect migration skipped.';
-    }
 }
