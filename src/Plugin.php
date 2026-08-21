@@ -136,7 +136,7 @@ class Plugin extends BasePlugin
         // has no business in the nav beside Entries.
         Event::on(
             Utilities::class,
-            Utilities::EVENT_REGISTER_UTILITY_TYPES,
+            Utilities::EVENT_REGISTER_UTILITIES,
             static function (RegisterComponentTypesEvent $event): void {
                 $event->types[] = MigrationUtility::class;
             },

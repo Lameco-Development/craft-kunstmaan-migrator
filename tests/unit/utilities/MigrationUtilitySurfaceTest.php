@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\unit\utilities;
 
+use craft\services\Utilities;
 use lameco\kunstmaanmigrator\controllers\MigrationController;
 use lameco\kunstmaanmigrator\utilities\MigrationUtility;
 use PHPUnit\Framework\TestCase;
@@ -54,11 +55,26 @@ final class MigrationUtilitySurfaceTest extends TestCase
         );
     }
 
+    /**
+     * The first version of this test asserted the event constant's NAME appeared
+     * in Plugin.php, which is the "test the string, not the thing" mistake this
+     * codebase has been removing all week: it passed happily against
+     * EVENT_REGISTER_UTILITY_TYPES, which is Craft 4's name and does not exist
+     * in Craft 5. The plugin-load smoke job caught it by booting a real Craft.
+     *
+     * Asserting the constant resolves is the check that would have failed.
+     */
     public function testTheUtilityIsRegisteredAsAUtilityAndNotAsACpSection(): void
     {
         $plugin = (string) file_get_contents($this->root() . '/src/Plugin.php');
 
-        self::assertStringContainsString('Utilities::EVENT_REGISTER_UTILITY_TYPES', $plugin);
+        preg_match('~Utilities::(EVENT_\\w+)~', $plugin, $matches);
+        self::assertNotEmpty($matches, 'the utility must be registered through a Utilities event');
+        self::assertTrue(
+            defined(Utilities::class . '::' . $matches[1]),
+            sprintf('craft\\services\\Utilities::%s does not exist in this Craft version', $matches[1]),
+        );
+
         self::assertStringContainsString('MigrationUtility::class', $plugin);
         self::assertStringNotContainsString(
             'EVENT_REGISTER_CP_NAV_ITEMS',
