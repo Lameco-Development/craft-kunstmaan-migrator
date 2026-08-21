@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
@@ -65,15 +66,6 @@ class RedirectMigrationService extends Component
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
-    /**
-     * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
-     * Plugin::resolveSitesMap() (Plan 04-09). Empty map means no sites
-     * configured — the service degrades gracefully (section-move emission
-     * short-circuits, lookupNewUrlByLegacyUrl returns null).
-     *
-     * @var array<string, string>
-     */
-    public array $sites = [];
 
     /**
      * Legacy redirects table name (unwrapped — passed verbatim into raw SQL).
@@ -106,7 +98,7 @@ class RedirectMigrationService extends Component
         );
     }
 
-    public function migrateAll(MigrationOptions $opts): MigrationReport
+    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
     {
         $report = new MigrationReport();
 
@@ -128,10 +120,10 @@ class RedirectMigrationService extends Component
         }
 
         // ----- 1. Direct legacy redirects import (~205 rows expected on dev) ---
-        $this->importDirectRedirects($opts, $report);
+        $this->importDirectRedirects($sites, $opts, $report);
 
         // ----- 2. Section-move 301s for team/news/cases entries ----------------
-        $this->emitSectionMoveRedirects($opts, $report);
+        $this->emitSectionMoveRedirects($sites, $opts, $report);
 
         return $report;
     }
@@ -189,7 +181,7 @@ class RedirectMigrationService extends Component
     // Private — legacy redirects table direct import
     // --------------------------------------------------------------------------
 
-    private function importDirectRedirects(MigrationOptions $opts, MigrationReport $report): void
+    private function importDirectRedirects(SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
     {
         $rows = $this->legacyDb->queryAll(
             'SELECT id, origin, target, permanent FROM ' . $this->redirectsTableName . ' ORDER BY id',
@@ -197,7 +189,7 @@ class RedirectMigrationService extends Component
 
         foreach ($rows as $row) {
             try {
-                $this->importOneKumaRedirect($row, $opts, $report);
+                $this->importOneKumaRedirect($row, $sites, $opts, $report);
             } catch (\Throwable $e) {
                 $report->incr('failed');
                 $report->warn(
@@ -216,7 +208,7 @@ class RedirectMigrationService extends Component
     /**
      * @param array<string, mixed> $row
      */
-    private function importOneKumaRedirect(array $row, MigrationOptions $opts, MigrationReport $report): void
+    private function importOneKumaRedirect(array $row, SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
     {
         $origin = (string) ($row['origin'] ?? '');
         $target = (string) ($row['target'] ?? '');
@@ -226,7 +218,7 @@ class RedirectMigrationService extends Component
         }
 
         $srcUrl = $this->normalisePath($origin);
-        $destUrl = $this->resolveDestUrl($target);
+        $destUrl = $this->resolveDestUrl($target, $sites);
         $httpCode = ((int) ($row['permanent'] ?? 0) === 1) ? 301 : 302;
         $kumaId = (int) ($row['id'] ?? 0);
         $stateKey = 'kuma:' . $kumaId;
@@ -251,7 +243,7 @@ class RedirectMigrationService extends Component
      * legacy path matches a migrated entry's old URL. External URLs (with
      * scheme) and non-matching internal paths pass through verbatim.
      */
-    private function resolveDestUrl(string $rawTarget): string
+    private function resolveDestUrl(string $rawTarget, SiteMap $sites): string
     {
         $target = trim($rawTarget);
         if ($target === '') {
@@ -264,7 +256,7 @@ class RedirectMigrationService extends Component
         }
 
         $normalised = $this->normalisePath($target);
-        $resolved = $this->lookupNewUrlByLegacyUrl($normalised);
+        $resolved = $this->lookupNewUrlByLegacyUrl($normalised, $sites);
         return $resolved ?? $normalised;
     }
 
@@ -276,19 +268,19 @@ class RedirectMigrationService extends Component
      * kuma_node_translations.url matches the supplied path, then query
      * state for the migrated entry, then resolve the entry's site URL.
      */
-    private function lookupNewUrlByLegacyUrl(string $path): ?string
+    private function lookupNewUrlByLegacyUrl(string $path, SiteMap $sites): ?string
     {
         // Strip a configured leading "/{legacy-locale}/" prefix from the URL
         // so it matches kuma_node_translations.url. Locale codes come from the
         // operator's locale map rather than hardcoded nl/en assumptions.
-        [$stripped, $lang] = $this->stripLegacyLocalePrefix($path);
+        [$stripped, $lang] = $this->stripLegacyLocalePrefix($path, $sites);
 
         if ($stripped === '') {
             return null;
         }
 
         try {
-            $row = $this->legacyNodeRowForUrl($stripped, $lang);
+            $row = $this->legacyNodeRowForUrl($stripped, $lang, $sites);
         } catch (\Throwable) {
             return null;
         }
@@ -309,11 +301,11 @@ class RedirectMigrationService extends Component
         $sites = Craft::$app->sites;
 
         $candidateHandles = [];
-        if ($lang !== null && isset($this->sites[$lang])) {
-            $candidateHandles[] = $this->sites[$lang];
+        if ($lang !== null && $sites->handleForLocale($lang) !== null) {
+            $candidateHandles[] = (string) $sites->handleForLocale($lang);
         }
         // Fallback: walk every configured Craft handle in the sites map.
-        foreach ($this->sites as $handle) {
+        foreach ($sites->handles() as $handle) {
             if (!in_array($handle, $candidateHandles, true)) {
                 $candidateHandles[] = $handle;
             }
@@ -338,10 +330,10 @@ class RedirectMigrationService extends Component
      *
      * @return array{0: string, 1: string|null} [language-relative path, locale]
      */
-    private function stripLegacyLocalePrefix(string $path): array
+    private function stripLegacyLocalePrefix(string $path, SiteMap $sites): array
     {
         $stripped = ltrim($path, '/');
-        foreach ($this->legacyLocales() as $locale) {
+        foreach ($this->legacyLocales($sites) as $locale) {
             $prefix = $locale . '/';
             if ($stripped === $locale) {
                 return ['', $locale];
@@ -357,10 +349,10 @@ class RedirectMigrationService extends Component
     /**
      * @return list<string>
      */
-    private function legacyLocales(): array
+    private function legacyLocales(SiteMap $sites): array
     {
         $locales = [];
-        foreach (array_keys($this->sites) as $locale) {
+        foreach ($sites->locales() as $locale) {
             if (is_string($locale) && $locale !== '' && !in_array($locale, $locales, true)) {
                 $locales[] = $locale;
             }
@@ -372,7 +364,7 @@ class RedirectMigrationService extends Component
     /**
      * @return array{kuma_node_id: mixed, class: mixed}|null
      */
-    private function legacyNodeRowForUrl(string $strippedUrl, ?string $lang): ?array
+    private function legacyNodeRowForUrl(string $strippedUrl, ?string $lang, SiteMap $sites): ?array
     {
         $versionCol = 'public_node_version_id';
 
@@ -389,7 +381,7 @@ class RedirectMigrationService extends Component
             $params[':lang'] = $lang;
         } else {
             $localePlaceholders = [];
-            foreach ($this->legacyLocales() as $i => $locale) {
+            foreach ($this->legacyLocales($sites) as $i => $locale) {
                 $placeholder = ':locale' . $i;
                 $localePlaceholders[] = $placeholder;
                 $params[$placeholder] = $locale;
@@ -405,16 +397,16 @@ class RedirectMigrationService extends Component
             . ' INNER JOIN kuma_node_translations nt ON nt.node_id = n.id'
             . ' INNER JOIN kuma_node_versions nv ON nv.id = nt.' . $versionCol
             . ' WHERE ' . implode(' AND ', $whereParts)
-            . ' ORDER BY ' . $this->legacyLocaleOrderSql()
+            . ' ORDER BY ' . $this->legacyLocaleOrderSql($sites)
             . ' LIMIT 1',
             $params,
         );
     }
 
-    private function legacyLocaleOrderSql(): string
+    private function legacyLocaleOrderSql(SiteMap $sites): string
     {
         $cases = [];
-        foreach ($this->legacyLocales() as $i => $locale) {
+        foreach ($this->legacyLocales($sites) as $i => $locale) {
             $cases[] = "WHEN '" . str_replace("'", "''", $locale) . "' THEN " . $i;
         }
         if ($cases === []) {
@@ -449,7 +441,7 @@ class RedirectMigrationService extends Component
     // Private — section-move 301s
     // --------------------------------------------------------------------------
 
-    private function emitSectionMoveRedirects(MigrationOptions $opts, MigrationReport $report): void
+    private function emitSectionMoveRedirects(SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
     {
         foreach ($this->stateService->entryRows() as $stateRow) {
             $entryId = (int) ($stateRow['targetId'] ?? 0);
@@ -492,7 +484,7 @@ class RedirectMigrationService extends Component
             }
 
             try {
-                $this->emitSectionMoveForOne($source, $kumaNodeId, $entryId, $opts, $report);
+                $this->emitSectionMoveForOne($source, $kumaNodeId, $entryId, $sites, $opts, $report);
             } catch (\Throwable $e) {
                 $report->incr('failed');
                 $report->warn(
@@ -533,6 +525,7 @@ class RedirectMigrationService extends Component
         string $source,
         int $kumaNodeId,
         int $entryId,
+        SiteMap $sites,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
@@ -552,7 +545,7 @@ class RedirectMigrationService extends Component
         // so this works on any client whose Craft handles aren't literally 'default'+'en'.
         $sites = Craft::$app->sites;
 
-        foreach ($this->sites as $kumaLang => $craftHandle) {
+        foreach ($sites->configured() as $kumaLang => $craftHandle) {
             $legacyUrl = $legacyUrls[$kumaLang] ?? null;
             if ($legacyUrl === null) {
                 continue;

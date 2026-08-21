@@ -8,6 +8,7 @@ use Craft;
 use Throwable;
 use yii\base\Component;
 use craft\helpers\FileHelper;
+use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
@@ -63,14 +64,6 @@ class TranslationMigrationService extends Component
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
-    /**
-     * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
-     * Plugin::resolveSitesMap(). Empty map means no sites configured —
-     * the service degrades gracefully (warn + return).
-     *
-     * @var array<string, string>
-     */
-    public array $sites = [];
 
     /**
      * Source table name override. Default matches the canonical
@@ -110,7 +103,7 @@ class TranslationMigrationService extends Component
         );
     }
 
-    public function migrateAll(MigrationOptions $opts): MigrationReport
+    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
     {
         $report = new MigrationReport();
 
@@ -120,7 +113,7 @@ class TranslationMigrationService extends Component
             return $report;
         }
 
-        $localeToLanguage = $this->buildLocaleToLanguageMap();
+        $localeToLanguage = $sites->localeToLanguage();
         if ($localeToLanguage === []) {
             $report->warn('No Craft sites mapped; translation migration aborted.');
             return $report;
@@ -281,26 +274,6 @@ class TranslationMigrationService extends Component
     // Private helpers
     // --------------------------------------------------------------------------
 
-    /**
-     * Build a `kuma_locale → craft_language` map. Walks Craft sites and
-     * matches each site's handle against `$this->sites` (kuma_locale →
-     * craft_handle). Sites without a mapping are silently dropped.
-     *
-     * @return array<string, string>
-     */
-    private function buildLocaleToLanguageMap(): array
-    {
-        $out = [];
-        foreach (Craft::$app->sites->getAllSites() as $site) {
-            $handle = (string) $site->handle;
-            $locale = array_search($handle, $this->sites, true);
-            if ($locale === false) {
-                continue;
-            }
-            $out[(string) $locale] = (string) $site->language;
-        }
-        return $out;
-    }
 
     /**
      * Write a flat-key PHP catalog at

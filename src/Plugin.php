@@ -169,12 +169,10 @@ class Plugin extends BasePlugin
         $this->seoMigrationService->stateService  = $this->migrationStateService;
         $this->seoMigrationService->seoPayload    = $this->seomaticPayloadBuilder;
         $this->seoMigrationService->elementWriter = new CraftElementWriter();
-        $this->seoMigrationService->sites         = [];
 
         // RedirectMigrationService — 3 sibling deps + sites map (per environment).
         $this->redirectMigrationService->legacyDb     = $this->legacyDbService;
         $this->redirectMigrationService->stateService = $this->migrationStateService;
-        $this->redirectMigrationService->sites        = [];
 
         // NavigationMigrationService — same shape as Redirect adapter.
         // verbb/navigation node migration. Reads kuma_menu + kuma_menu_item,
@@ -184,14 +182,12 @@ class Plugin extends BasePlugin
         $this->navigationMigrationService->stateService  = $this->migrationStateService;
         $this->navigationMigrationService->elementWriter = new CraftElementWriter();
         $this->navigationMigrationService->navigationGateway = new VerbbNavigationGateway();
-        $this->navigationMigrationService->sites         = [];
 
         // TranslationMigrationService — kuma_translation → Craft site
         // translations PHP catalogs (+ enupal-translate DB rows). Same
         // wiring shape as the other adapters.
         $this->translationMigrationService->legacyDb     = $this->legacyDbService;
         $this->translationMigrationService->stateService = $this->migrationStateService;
-        $this->translationMigrationService->sites        = [];
 
         // D-57: Settings table-name overrides wired here so adapter services pick them up.
         $settings = $this->getSettings();

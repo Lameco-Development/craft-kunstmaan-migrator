@@ -30,6 +30,7 @@ use lameco\kunstmaanmigrator\payload\PayloadValidator;
 use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\sites\SiteMap;
 use yii\console\ExitCode;
 
 /**
@@ -249,7 +250,7 @@ final class MigrateController extends Controller
             // LV's is comLvEn, and one global map cannot hold both: with COM's configured,
             // every LV entry failed with "unknown site handle comLvEn". The mapping already
             // states this per environment, so it is the only source.
-            $this->applySites($plugin, (array) ($spec['locales'] ?? []), (string) $env);
+            $siteMap = $this->applySites($plugin, (array) ($spec['locales'] ?? []), (string) $env);
 
             $roots = $spec['mediaRoot'] ?? null;
             $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [(string) $roots]);
@@ -301,7 +302,7 @@ final class MigrateController extends Controller
             }, $this->limit);
 
             if (!$this->entriesOnly) {
-                $adapters[(string) $env] = $this->runAdapters($plugin, $db, (string) $env, new RedirectCompiler($mapping, $only));
+                $adapters[(string) $env] = $this->runAdapters($plugin, $db, (string) $env, $siteMap, new RedirectCompiler($mapping, $only));
             }
         }
 
@@ -374,15 +375,16 @@ final class MigrateController extends Controller
         Plugin $plugin,
         LegacyDatabase $db,
         string $env,
+        SiteMap $sites,
         RedirectCompiler $redirects,
     ): array {
         $opts = new MigrationOptions(dryRun: $this->dryRun, force: $this->force);
 
         $out = [
-            'seo' => $this->summarise(fn (): MigrationReport => $plugin->seoMigrationService->migrateAll($opts)),
+            'seo' => $this->summarise(fn (): MigrationReport => $plugin->seoMigrationService->migrateAll($opts, $sites)),
             'redirects' => $this->loadRedirects($plugin, $db, $env, $redirects),
-            'navigation' => $this->summarise(fn (): MigrationReport => $plugin->navigationMigrationService->migrateAll($opts)),
-            'translations' => $this->summarise(fn (): MigrationReport => $plugin->translationMigrationService->migrateAll($opts)),
+            'navigation' => $this->summarise(fn (): MigrationReport => $plugin->navigationMigrationService->migrateAll($opts, $sites)),
+            'translations' => $this->summarise(fn (): MigrationReport => $plugin->translationMigrationService->migrateAll($opts, $sites)),
         ];
 
         return $out;
@@ -555,19 +557,18 @@ final class MigrateController extends Controller
      *
      * @param array<string, mixed> $locales
      */
-    private function applySites(Plugin $plugin, array $locales, string $environment = ''): void
+    private function applySites(Plugin $plugin, array $locales, string $environment = ''): SiteMap
     {
         $plugin->navigationMigrationService->environment = $environment;
 
-        $sites = array_filter(
-            array_map(static fn ($handle): string => is_string($handle) ? $handle : '', $locales),
-            static fn (string $handle): bool => $handle !== '',
-        );
+        $sites = SiteMap::bind($locales, Craft::$app->sites->getAllSites());
 
-        $plugin->entryMigrationService->sites = $sites;
-        $plugin->seoMigrationService->sites = $sites;
-        $plugin->redirectMigrationService->sites = $sites;
-        $plugin->navigationMigrationService->sites = $sites;
-        $plugin->translationMigrationService->sites = $sites;
+        // Entries still take their site list from a property: they were already
+        // switched per environment, so they were never part of the DE-writes-
+        // against-COM failure the other four had. Moving that path onto the
+        // parameter belongs with PayloadEntrySaver, which is where it is read.
+        $plugin->entryMigrationService->sites = $sites->configured();
+
+        return $sites;
     }
 }
