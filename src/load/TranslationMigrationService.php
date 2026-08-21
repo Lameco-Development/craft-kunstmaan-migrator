@@ -8,6 +8,7 @@ use Craft;
 use Throwable;
 use yii\base\Component;
 use craft\helpers\FileHelper;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
 use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\adapters\GatedAdapter;
 use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
@@ -95,13 +96,15 @@ class TranslationMigrationService extends Component implements MigrationAdapter
         return 'translations';
     }
 
-    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
         if (!$this->isGateOpen($report)) {
             return $report;
         }
+
+        $sites = $context->sites;
 
         $localeToLanguage = $sites->localeToLanguage();
         if ($localeToLanguage === []) {

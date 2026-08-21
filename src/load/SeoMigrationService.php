@@ -2,6 +2,7 @@
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
 use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\craft\ElementWriter;
@@ -137,13 +138,15 @@ class SeoMigrationService extends Component implements MigrationAdapter
         return 'seo';
     }
 
-    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
         if (!$this->isGateOpen($report)) {
             return $report;
         }
+
+        $sites = $context->sites;
 
         // D-08-19 — per-site fan-out driven by Plugin::resolveSitesMap().
         $siteList = $this->buildSiteList($sites, $report);

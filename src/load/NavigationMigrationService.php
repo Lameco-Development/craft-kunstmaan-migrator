@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\load;
 use Craft;
 use Throwable;
 use yii\base\Component;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
 use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\adapters\GatedAdapter;
 use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
@@ -173,13 +174,20 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         return $this->navigationGateway ??= new VerbbNavigationGateway();
     }
 
-    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
         if (!$this->isGateOpen($report)) {
             return $report;
         }
+
+        $sites = $context->sites;
+
+        // Which environment is running arrives as a value now. It used to be a
+        // public property the pipeline wrote per environment, which is how a
+        // DE run once resolved its nodes against COM's state rows.
+        $this->environment = $context->name;
 
         if (!$this->navigation()->isAvailable()) {
             $report->warn('verbb/navigation not available; nav migration skipped.');

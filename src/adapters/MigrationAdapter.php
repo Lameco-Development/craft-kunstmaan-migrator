@@ -6,7 +6,7 @@ namespace lameco\kunstmaanmigrator\adapters;
 
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\sites\SiteMap;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
 
 /**
  * A pass that runs after an environment's entries exist.
@@ -24,5 +24,13 @@ interface MigrationAdapter
     /** Matches the Adapter's handle in the registry, which is what gates it. */
     public function handle(): string;
 
-    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport;
+    /**
+     * The signature was `(MigrationOptions, SiteMap)`, which had nowhere to put
+     * "which legacy database am I reading" or "which mapping am I compiling".
+     * That is why `redirects` could not be an adapter and had to be a special
+     * case inside the pipeline — and why the `forms:` and `globals:` lanes,
+     * which have the same shape, had nothing to be written as. The site map
+     * lives on the context now, with everything else about the environment.
+     */
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport;
 }

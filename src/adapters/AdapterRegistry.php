@@ -54,16 +54,12 @@ final class AdapterRegistry extends Component
         return [
             new Adapter('seo', 'SEO', 'seoEnabled', 'seomatic', static fn () => Plugin::getInstance()->seoMigrationService),
 
-            // No factory: the redirect records come from the mapping's `redirects:`
-            // lane rather than from the legacy database, so the pass needs the
-            // compiler and the environment it is compiling — neither of which fits
-            // migrateAll(options, sites). EnvironmentPipeline runs it directly and
-            // this row exists for the gate and the settings screen. The seam that
-            // would let it join the loop is an EnvironmentContext carrying the
-            // environment, its database and its media roots; that is the next step,
-            // and it retires the last three properties the pipeline writes onto
-            // long-lived singletons.
-            new Adapter('redirects', 'Redirects', 'retourEnabled', 'retour'),
+            // This carried no factory and a paragraph explaining why: the redirect
+            // records come from the mapping rather than a table, so the pass needed
+            // the mapping and an open connection, and `migrateAll(options, sites)`
+            // could hold neither. EnvironmentContext holds both, so the documented
+            // permanent exception is now an ordinary adapter.
+            new Adapter('redirects', 'Redirects', 'retourEnabled', 'retour', static fn () => Plugin::getInstance()->redirectMigrationService),
 
             new Adapter(
                 'navigation',

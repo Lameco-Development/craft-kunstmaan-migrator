@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
 use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\adapters\GatedAdapter;
 use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
@@ -12,6 +13,10 @@ use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use Craft;
+use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\payload\RefResolver;
+use lameco\kunstmaanmigrator\console\LoadController;
+use Lameco\KumaCompile\Compile\RedirectCompiler;
 use craft\elements\Entry;
 use nystudio107\retour\Retour;
 use yii\base\Component;
@@ -89,13 +94,122 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         return 'redirects';
     }
 
-    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
+    /**
+     * The `redirects:` lane: compile this environment's redirect pages from the
+     * mapping and load them.
+     *
+     * This was 85 lines inside EnvironmentPipeline and the one adapter the loop
+     * could not run, because `migrateAll(MigrationOptions, SiteMap)` had nowhere
+     * to put the mapping it compiles from or the connection it reads. That is
+     * what the registry documented as a permanent exception. With the
+     * environment arriving as a value it is an ordinary adapter, and the
+     * exception is gone rather than explained.
+     *
+     * A redirect page is a node like any other: one legacy row produces one
+     * redirect per published translation, not one in total.
+     */
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
         if (!$this->isGateOpen($report)) {
             return $report;
         }
+
+        if ($context->mapping === null || $context->legacy === null) {
+            $report->warn('The redirects lane compiles from the mapping and reads the legacy database; one of them was not supplied.');
+
+            return $report;
+        }
+
+        $compiler = new RedirectCompiler($context->mapping, $context->only);
+        $records = [];
+
+        $compiler->compile($context->legacy, $context->name, static function (array $record) use (&$records): void {
+            $records[] = $record;
+        });
+
+        foreach ($compiler->skipped() as $reason => $count) {
+            $report->warn(sprintf('%d skipped: %s', $count, $reason));
+        }
+
+        if ($records === []) {
+            return $report;
+        }
+
+        $report->incr('compiled', count($records));
+
+        if ($opts->dryRun) {
+            return $report;
+        }
+
+        $outcome = LoadController::reportForRedirects(
+            $records,
+            new RefResolver(Plugin::getInstance()->migrationStateService),
+            self::isRetourAvailable(),
+            static function (int $entryId, string $siteHandle): ?string {
+                $site = Craft::$app->getSites()->getSiteByHandle($siteHandle);
+
+                if ($site === null) {
+                    return null;
+                }
+
+                $entry = Entry::find()->id($entryId)->siteId((int) $site->id)->status(null)->one();
+
+                return $entry === null || $entry->uri === null ? null : '/' . ltrim($entry->uri, '/');
+            },
+            function (string $from, string $to, int $code, string $key, array $meta): array {
+                $result = $this->importOne($from, $to, $code, $key, $meta);
+
+                if (($result->counts['created'] ?? 0) > 0) {
+                    return ['outcome' => 'created'];
+                }
+
+                if (($result->counts['updated'] ?? 0) > 0) {
+                    return ['outcome' => 'updated'];
+                }
+
+                return ['outcome' => 'failed', 'message' => $result->warnings[0] ?? 'Retour refused to save the redirect.'];
+            },
+        );
+
+        foreach (['created', 'updated', 'resolved', 'skipped'] as $bucket) {
+            if (($outcome[$bucket] ?? 0) > 0) {
+                $report->incr($bucket, (int) $outcome[$bucket]);
+            }
+        }
+
+        // Only the rows that went wrong. A clean run of 156 redirects should not
+        // push 156 lines through a summary.
+        foreach ($outcome['report'] ?? [] as $row) {
+            $status = (string) ($row['status'] ?? '');
+
+            if ($status === '' || str_starts_with($status, 'OK')) {
+                continue;
+            }
+
+            $report->incr('failed');
+            $report->warn(sprintf(
+                '%s -> %s (%s): %s',
+                (string) ($row['from'] ?? '?'),
+                (string) ($row['to'] ?? '?'),
+                (string) ($row['siteHandle'] ?? '?'),
+                (string) ($row['message'] ?? $status),
+            ));
+        }
+
+        return $report;
+    }
+
+    public function migrateLegacyTables(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
+    {
+        $report = new MigrationReport();
+
+        if (!$this->isGateOpen($report)) {
+            return $report;
+        }
+
+        $sites = $context->sites;
 
         // Secondary defensive check — the class-exists / $plugin-null guard
         // catches the rare case where the plugin is registered but Retour::$plugin

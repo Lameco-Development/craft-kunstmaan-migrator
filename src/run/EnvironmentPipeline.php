@@ -147,7 +147,6 @@ final class EnvironmentPipeline
             Craft::$app->sites->getAllSites(),
         );
 
-        $this->plugin->navigationMigrationService->environment = $env;
         $this->plugin->entryMigrationService->sites = $siteMap->configured();
 
         self::applyMediaRoots($spec);
@@ -163,11 +162,16 @@ final class EnvironmentPipeline
 
         if (!$settings->entriesOnly) {
             $tally->adapters[$env] = $this->runAdapters(
-                $db,
-                $env,
-                $siteMap,
+                new EnvironmentContext(
+                    name: $env,
+                    database: (string) $spec['database'],
+                    sites: $siteMap,
+                    mediaRoots: self::mediaRootsFrom($spec),
+                    mapping: $mapping,
+                    legacy: $db,
+                    only: $settings->only,
+                ),
                 $settings,
-                new RedirectCompiler($mapping, $settings->only),
             );
         }
     }
@@ -218,7 +222,7 @@ final class EnvironmentPipeline
      *
      * @return array<string, mixed>
      */
-    private function runAdapters(LegacyDatabase $db, string $env, SiteMap $siteMap, RunSettings $settings, RedirectCompiler $redirects): array
+    private function runAdapters(EnvironmentContext $context, RunSettings $settings): array
     {
         $opts = new MigrationOptions(dryRun: $settings->dryRun, force: $settings->force);
         $out = [];
@@ -232,14 +236,8 @@ final class EnvironmentPipeline
 
             if ($service !== null) {
                 $out[$adapter->handle] = self::summarise(
-                    static fn (): MigrationReport => $service->migrateAll($opts, $siteMap),
+                    static fn (): MigrationReport => $service->migrateAll($opts, $context),
                 );
-
-                continue;
-            }
-
-            if ($adapter->handle === 'redirects') {
-                $out['redirects'] = $this->loadRedirects($db, $env, $settings, $redirects);
 
                 continue;
             }
@@ -359,69 +357,4 @@ final class EnvironmentPipeline
         Plugin::getInstance()?->ckeditorRewriterService->resetLookupCaches();
     }
 
-    /**
-     * `load/redirects` has read a payload file since before there was a compiler, and nothing
-     * ever wrote one — so this compiles the environment's `redirects:` lane and hands it
-     * straight to the loader.
-     *
-     * @return array<string, mixed>
-     */
-    private function loadRedirects(
-        LegacyDatabase $db,
-        string $env,
-        RunSettings $settings,
-        RedirectCompiler $compiler,
-    ): array {
-        $records = [];
-        $compiler->compile($db, $env, static function (array $record) use (&$records): void {
-            $records[] = $record;
-        });
-
-        if ($records === []) {
-            return ['compiled' => 0, 'skipped' => $compiler->skipped()];
-        }
-
-        if ($settings->dryRun) {
-            return ['compiled' => count($records), 'loaded' => false, 'skipped' => $compiler->skipped()];
-        }
-
-        $plugin = $this->plugin;
-
-        $report = LoadController::reportForRedirects(
-            $records,
-            new RefResolver($plugin->migrationStateService),
-            RedirectMigrationService::isRetourAvailable(),
-            static function (int $entryId, string $siteHandle): ?string {
-                $site = Craft::$app->getSites()->getSiteByHandle($siteHandle);
-
-                if ($site === null) {
-                    return null;
-                }
-
-                $entry = Entry::find()->id($entryId)->siteId((int) $site->id)->status(null)->one();
-
-                return $entry === null || $entry->uri === null ? null : '/' . ltrim($entry->uri, '/');
-            },
-            static function (string $from, string $to, int $code, string $key, array $meta) use ($plugin): array {
-                $result = $plugin->redirectMigrationService->importOne($from, $to, $code, $key, $meta);
-
-                if (($result->counts['created'] ?? 0) > 0) {
-                    return ['outcome' => 'created'];
-                }
-
-                if (($result->counts['updated'] ?? 0) > 0) {
-                    return ['outcome' => 'updated'];
-                }
-
-                return ['outcome' => 'failed', 'message' => $result->warnings[0] ?? 'Retour refused to save the redirect.'];
-            },
-        );
-
-        // The per-record report is only interesting when something went wrong; a clean run of
-        // 156 redirects should not push 156 lines through a summary.
-        $report['report'] = array_slice($report['report'], 0, 10);
-        $report['skipped'] = $compiler->skipped();
-
-        return $report;
-    }
 }
