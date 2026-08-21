@@ -18,6 +18,7 @@ use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\payload\Payload;
 use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
+use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\payload\PayloadValidator;
@@ -212,27 +213,46 @@ final class EnvironmentPipeline
     }
 
     /**
-     * The four adapters, after the entries of this environment exist — every one of them
-     * resolves a legacy id to an entry that has to be there already.
+     * Every registered adapter, after the entries of this environment exist — each of
+     * them resolves a legacy id to an entry that has to be there already.
      *
      * @return array<string, mixed>
      */
     private function runAdapters(LegacyDatabase $db, string $env, SiteMap $siteMap, RunSettings $settings, RedirectCompiler $redirects): array
     {
         $opts = new MigrationOptions(dryRun: $settings->dryRun, force: $settings->force);
+        $out = [];
 
-        return [
-            'seo' => self::summarise(
-                fn (): MigrationReport => $this->plugin->seoMigrationService->migrateAll($opts, $siteMap),
-            ),
-            'redirects' => $this->loadRedirects($db, $env, $settings, $redirects),
-            'navigation' => self::summarise(
-                fn (): MigrationReport => $this->plugin->navigationMigrationService->migrateAll($opts, $siteMap),
-            ),
-            'translations' => self::summarise(
-                fn (): MigrationReport => $this->plugin->translationMigrationService->migrateAll($opts, $siteMap),
-            ),
-        ];
+        // The registry, not a hard-coded four. A project that registers its own
+        // adapter through EVENT_REGISTER_ADAPTERS now has it run, which is what
+        // the registry always claimed and could not deliver while this was a
+        // literal array.
+        foreach ((new AdapterRegistry())->all() as $adapter) {
+            $service = $adapter->service();
+
+            if ($service !== null) {
+                $out[$adapter->handle] = self::summarise(
+                    static fn (): MigrationReport => $service->migrateAll($opts, $siteMap),
+                );
+
+                continue;
+            }
+
+            if ($adapter->handle === 'redirects') {
+                $out['redirects'] = $this->loadRedirects($db, $env, $settings, $redirects);
+
+                continue;
+            }
+
+            // An adapter with no factory and no special case would run silently
+            // never. Saying so beats a missing key in the report.
+            $out[$adapter->handle] = ['error' => sprintf(
+                'Adapter "%s" declares no factory, so nothing ran it.',
+                $adapter->handle,
+            )];
+        }
+
+        return $out;
     }
 
     /**

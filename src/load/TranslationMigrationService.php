@@ -9,10 +9,8 @@ use Throwable;
 use yii\base\Component;
 use craft\helpers\FileHelper;
 use lameco\kunstmaanmigrator\sites\SiteMap;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\adapters\AdapterGate;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 
 /**
@@ -59,7 +57,7 @@ use lameco\kunstmaanmigrator\db\LegacyDbService;
  * report warning. They're rarely used in Lameco sites; if needed,
  * Settings::translationDomains can extend the allowed list later.
  */
-class TranslationMigrationService extends Component
+class TranslationMigrationService extends Component implements MigrationAdapter
 {
     /**
      * The Kunstmaan schema is fixed: these table names are the same in every
@@ -90,27 +88,18 @@ class TranslationMigrationService extends Component
      * PHP catalog files at `<base>/translations/<lang>/site.php`, and (if
      * enupal-translate is installed) UPSERT parallel DB rows.
      */
-    /**
-     * The adapter gate. Wired in Plugin::init(); read through gate() so no
-     * call site has to cope with "not wired yet".
-     */
-    public ?AdapterGate $adapterGate = null;
+    use GatedAdapter;
 
-    private function gate(): AdapterGate
+    public function handle(): string
     {
-        return $this->adapterGate ??= new AdapterGate(
-            new CraftPluginRegistry(),
-            Plugin::getInstance()->getSettings(),
-        );
+        return 'translations';
     }
 
     public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
     {
         $report = new MigrationReport();
 
-        $gate = $this->gate()->check((new AdapterRegistry())->byHandle('translations'));
-        if (!$gate->isReady()) {
-            $report->warn((string) $gate->reason());
+        if (!$this->isGateOpen($report)) {
             return $report;
         }
 

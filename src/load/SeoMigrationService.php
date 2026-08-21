@@ -3,12 +3,10 @@
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\sites\SiteMap;
-use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\craft\ElementWriter;
-use lameco\kunstmaanmigrator\adapters\AdapterGate;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
@@ -42,7 +40,7 @@ use yii\base\Component;
  * Table-name override: the legacy SEO table defaults to the canonical
  * `kuma_seo` name, which is fixed across every Kunstmaan corpus.
  */
-class SeoMigrationService extends Component
+class SeoMigrationService extends Component implements MigrationAdapter
 {
     /**
      * The Kunstmaan schema is fixed: these table names are the same in every
@@ -132,27 +130,18 @@ class SeoMigrationService extends Component
         return $this->elementWriter ??= new CraftElementWriter();
     }
 
-    /**
-     * The adapter gate. Wired in Plugin::init(); read through gate() so no
-     * call site has to cope with "not wired yet".
-     */
-    public ?AdapterGate $adapterGate = null;
+    use GatedAdapter;
 
-    private function gate(): AdapterGate
+    public function handle(): string
     {
-        return $this->adapterGate ??= new AdapterGate(
-            new CraftPluginRegistry(),
-            Plugin::getInstance()->getSettings(),
-        );
+        return 'seo';
     }
 
     public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
     {
         $report = new MigrationReport();
 
-        $gate = $this->gate()->check((new AdapterRegistry())->byHandle('seo'));
-        if (!$gate->isReady()) {
-            $report->warn((string) $gate->reason());
+        if (!$this->isGateOpen($report)) {
             return $report;
         }
 
