@@ -26,6 +26,11 @@ const MODULES = [
     'src/payload/RefResolver.php',
     'src/payload/Payload.php',
     'src/finalize/CkeditorRewriterService.php',
+
+    // Graduated from WATCHED on a measured 94.1%. It sits above the threshold
+    // because the ElementWriter seam made it reachable — which is the argument
+    // for doing the same to the three below.
+    'src/payload/PayloadEntrySaver.php',
 ];
 
 /**
@@ -36,15 +41,22 @@ const MODULES = [
  * MySQL until the ElementWriter seam landed; the seam was built to buy exactly
  * this and the gate was never extended to spend it.
  *
- * They are not in MODULES because nobody has measured them, and a threshold
- * picked by guessing is how a gate ends up either red on arrival or set so low
- * it certifies nothing. CI prints these numbers on every run: read them once,
- * then move each module into MODULES at a threshold its real coverage supports
- * and raise it from there. A file listed here that CI cannot find is a hard
- * failure, same as one in MODULES — a stale list is worse than no list.
+ * Measured on CI at the commit that added this list:
+ *
+ *   EntryMigrationService       26.1%
+ *   AssetMigrationService       17.7%
+ *   NavigationMigrationService  10.9%
+ *
+ * Which is why they are reported rather than gated: adding them to MODULES at
+ * the 70% threshold would have been red on arrival, and lowering the threshold
+ * to fit them would certify nothing. They are the three modules every defect in
+ * AUDIT.md lives in, and they are now cheap to test — write the tests, watch
+ * the number here, and move each one into MODULES when it clears the bar.
+ *
+ * A file listed here that CI cannot find is a hard failure, same as one in
+ * MODULES — a stale list is worse than no list.
  */
 const WATCHED = [
-    'src/payload/PayloadEntrySaver.php',
     'src/load/EntryMigrationService.php',
     'src/load/AssetMigrationService.php',
     'src/load/NavigationMigrationService.php',
