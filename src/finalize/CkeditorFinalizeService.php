@@ -26,14 +26,17 @@ use Throwable;
  * and `/uploads/media/...` resolves to a migrated asset. Neither can be answered until the entries
  * and assets are in the state table.
  *
- * KNOWN GAP — media URLs do not resolve yet. Internal `[NT<id>]` links do: a real run over the
- * Enreach COM corpus rewrote 863 of them into `{entry:...}` tokens. `/uploads/media/...` image
- * references do not, and report `unresolved media_url`. The cache the rewriter warms from state
- * (`warmKumaMediaCacheFromState`) only accepts source keys beginning `kuma_media:`, and
- * `AssetMigrationService` writes every one of them as `legacy_url:sha1(path)` — 978 rows of the
- * latter, none of the former, so that cache is empty by construction. The `resolveFromLegacyUrl`
- * fallback hashes the same way and should still find them, so there is a second failure beneath
- * the first. Not diagnosed. See the consuming project's HANDOVER.md.
+ * KNOWN GAP — media URLs resolve only when the asset was already migrated. Internal `[NT<id>]` links do: a real run over the
+ * Enreach COM corpus rewrote 863 of them into `{entry:...}` tokens. Image references resolve to
+ * `{asset:...}` only when the asset already exists in state — 24 of 177 on that corpus.
+ *
+ * What is left needs the asset service's media roots, which this pass does not configure.
+ * `AssetMigrationService::resolveFromLegacyUrl()` looks the URL up by `legacy_url:sha1(path)`,
+ * and when there is no such row it falls back to *ingesting* the file from `mediaRoot()` and the
+ * configured fallback roots. The main migrate flow sets those per environment; a `--finalize-only`
+ * run does not, so a reference to media that no payload happened to pull in cannot be materialised
+ * — even though the row is right there in `kuma_media` (spot-checked: ids 1384, 1656-1659, all
+ * `deleted = 0`). Wiring the media roots into this pass is the next step. See HANDOVER.md.
  *
  * Candidates are found by content rather than by walking ownership. A migrated page's rich text
  * can sit on the entry, on a nested block, or on a block nested inside that — but wherever it

@@ -926,22 +926,26 @@ class CkeditorRewriterService extends Component
         }
 
         $kumaMediaId = $this->resolveKumaMediaIdForUrl($stripped);
-        if ($kumaMediaId === null) {
-            if ($this->assetResolver !== null && method_exists($this->assetResolver, 'resolveFromLegacyUrl')) {
-                $resolved = $this->assetResolver->resolveFromLegacyUrl($stripped);
-                if ($resolved > 0) {
-                    $this->urlIdCache[$stripped] = $resolved;
-                    $this->urlIdCache['/' . ltrim($stripped, '/')] = $resolved;
-                    return $resolved;
-                }
-            }
 
-            return null;
+        if ($kumaMediaId === null) {
+            return $this->resolveByLegacyUrl($stripped);
         }
 
         $assetId = $this->resolveKumaMediaId($kumaMediaId);
+
         if ($assetId === null) {
-            return null;
+            // Finding a legacy media id and then failing to map it to an asset is NOT a dead end,
+            // and used to be treated as one: the fallback below only ran when the legacy-database
+            // lookup failed outright. That made it a workaround for a missing legacy connection
+            // rather than for a missing mapping — so once `legacyDb` was correctly wired for the
+            // finalize pass, the lookup started succeeding and this path started returning null,
+            // silently, for every image.
+            //
+            // The id→asset cache it consults is warmed only from state rows keyed `kuma_media:`,
+            // and AssetMigrationService writes them keyed `legacy_url:sha1(path)` — on the Enreach
+            // corpus, 978 of the latter and none of the former. So that cache is empty by
+            // construction and this branch is the normal case, not the exception.
+            return $this->resolveByLegacyUrl($stripped);
         }
 
         $this->urlIdCache[$stripped] = $assetId;
@@ -993,6 +997,30 @@ class CkeditorRewriterService extends Component
         }
 
         return '/' . ltrim($path, '/');
+    }
+
+    /**
+     * Last resort: ask the asset resolver to map the legacy URL itself.
+     *
+     * It hashes the path to `legacy_url:sha1(path)`, which is the key AssetMigrationService
+     * actually writes, so it finds rows the id-keyed cache cannot.
+     */
+    private function resolveByLegacyUrl(string $strippedUrl): ?int
+    {
+        if ($this->assetResolver === null || !method_exists($this->assetResolver, 'resolveFromLegacyUrl')) {
+            return null;
+        }
+
+        $resolved = $this->assetResolver->resolveFromLegacyUrl($strippedUrl);
+
+        if ($resolved <= 0) {
+            return null;
+        }
+
+        $this->urlIdCache[$strippedUrl] = $resolved;
+        $this->urlIdCache['/' . ltrim($strippedUrl, '/')] = $resolved;
+
+        return $resolved;
     }
 
     private function warmUrlCacheFromState(): void
