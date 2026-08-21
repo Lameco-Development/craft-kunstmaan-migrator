@@ -26,6 +26,15 @@ use Throwable;
  * and `/uploads/media/...` resolves to a migrated asset. Neither can be answered until the entries
  * and assets are in the state table.
  *
+ * KNOWN GAP — media URLs do not resolve yet. Internal `[NT<id>]` links do: a real run over the
+ * Enreach COM corpus rewrote 863 of them into `{entry:...}` tokens. `/uploads/media/...` image
+ * references do not, and report `unresolved media_url`. The cache the rewriter warms from state
+ * (`warmKumaMediaCacheFromState`) only accepts source keys beginning `kuma_media:`, and
+ * `AssetMigrationService` writes every one of them as `legacy_url:sha1(path)` — 978 rows of the
+ * latter, none of the former, so that cache is empty by construction. The `resolveFromLegacyUrl`
+ * fallback hashes the same way and should still find them, so there is a second failure beneath
+ * the first. Not diagnosed. See the consuming project's HANDOVER.md.
+ *
  * Candidates are found by content rather than by walking ownership. A migrated page's rich text
  * can sit on the entry, on a nested block, or on a block nested inside that — but wherever it
  * lives, it is an `elements_sites` row whose content still carries a legacy marker. Asking the
@@ -96,7 +105,9 @@ final class CkeditorFinalizeService
         $conditions = ['or'];
 
         foreach (self::MARKERS as $marker) {
-            $conditions[] = ['like', 'content', $marker, false];
+            // No fourth operand: Yii's `false` there means "match the value literally", which
+            // turns a contains-check into an equality-check and finds nothing.
+            $conditions[] = ['like', 'content', $marker];
         }
 
         $query->where($conditions);
@@ -156,7 +167,10 @@ final class CkeditorFinalizeService
         $changed = false;
 
         foreach ($layout->getCustomFields() as $field) {
-            if (!$field instanceof CkeditorField || !in_array($field->handle, $ckeditorHandles, true)) {
+            // `instanceof` only. Craft 5 field *instances* may override the handle when a field
+            // is placed on a layout, so the handle here is the instance's — `content`, say —
+            // and never matches the global field handle. Filtering on that finds nothing.
+            if (!$field instanceof CkeditorField) {
                 continue;
             }
 
@@ -166,6 +180,7 @@ final class CkeditorFinalizeService
             if ($html === '' || !$this->carriesMarker($html)) {
                 continue;
             }
+
 
             $rewritten = $this->rewriter->rewrite($html, $siteId);
 

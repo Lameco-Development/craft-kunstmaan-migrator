@@ -114,20 +114,6 @@ final class MigrateController extends Controller
             return ExitCode::USAGE;
         }
 
-        // Finalize resolves against state that already exists — it reads no legacy database and
-        // compiles nothing — so it short-circuits before the mapping is even loaded.
-        if ($this->finalizeOnly) {
-            $plugin = Plugin::getInstance();
-            $report = $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $this->dryRun));
-
-            $this->stdout(json_encode([
-                'finalize' => $report->counts,
-                'problems' => array_slice($report->warnings, 0, 40),
-            ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
-
-            return ($report->counts['failed'] ?? 0) > 0 ? ExitCode::UNSPECIFIED_ERROR : ExitCode::OK;
-        }
-
         $mapping = Mapping::fromFile($this->mapping);
         $gateway = new CraftSchemaGateway();
         $target = new TargetModel($gateway);
@@ -185,6 +171,33 @@ final class MigrateController extends Controller
         $unresolvedAssets = [];
         $droppedAddresses = [];
         $adapters = [];
+
+        // Finalize compiles nothing and needs no target schema, but it does need the legacy
+        // database: resolving `/uploads/media/...` to a migrated asset goes through `kuma_media`.
+        // So it is run per environment, exactly like everything else — repointing `legacyDb` each
+        // time. The pass is idempotent and only touches rows that still carry a marker, so a
+        // reference the COM database cannot answer is simply retried under DE.
+        if ($this->finalizeOnly) {
+            $plugin = Plugin::getInstance();
+            $report = new MigrationReport();
+
+            foreach ($mapping->environments() as $env => $spec) {
+                if ($this->legacyEnv !== null && $env !== $this->legacyEnv) {
+                    continue;
+                }
+
+                $this->applyLegacyDb(Dsn::fromEnvironment(), (string) $spec['database']);
+                $plugin->ckeditorRewriterService->resetLookupCaches();
+                $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $this->dryRun), $report);
+            }
+
+            $this->stdout(json_encode([
+                'finalize' => $report->counts,
+                'problems' => array_slice($report->warnings, 0, 100),
+            ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
+
+            return ($report->counts['failed'] ?? 0) > 0 ? ExitCode::UNSPECIFIED_ERROR : ExitCode::OK;
+        }
 
         foreach ($mapping->environments() as $env => $spec) {
             if ($this->legacyEnv !== null && $env !== $this->legacyEnv) {
