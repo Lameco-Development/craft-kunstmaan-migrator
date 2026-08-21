@@ -24,9 +24,10 @@ use yii\db\Query;
      * delimiter-safe source payload:
      *   <!-- MIGRATION:UNRESOLVED sourceB64=... -->
      * so editors can grep and tooling can recover the source. HTML Purifier
-     * strips comments on save, so rendered pages won't leak them — Plan 09's
-     * `kunstmaan-migrator/migrate/check` scans the raw DB column BEFORE the
-     * save-pipeline runs through Purifier.
+     * strips comments on save, so rendered pages won't leak them — scan the
+     * raw DB column for this marker BEFORE the save-pipeline runs through
+     * Purifier (no dedicated CLI command exists for this; grep the column
+     * directly).
  *
  * Ref-token format (Craft 5 CKEditor, imageMode=img):
  *   {asset:<numeric-id>@<siteId>:url}
@@ -62,6 +63,17 @@ class CkeditorRewriterService extends Component
     public const KUMA_NT_PLACEHOLDER_REGEX = '~(?:\[|%5B)NT(\d+)(?:\]|%5D)~i';
 
     /**
+     * Task 8 / docs/loader-contract.md — the v2 loader's OWN normalized
+     * in-payload media token, e.g. `{{kuma:media:123}}`. Distinct from
+     * KUMA_MEDIA_PLACEHOLDER_REGEX's `[M<id>]`/`%5BM<id>%5D`, which is
+     * Kunstmaan's legacy CKEditor-plugin output surviving in already-migrated
+     * HTML — this is the loader's canonical intermediate representation,
+     * embedded directly into a payload's `fieldValues` body text by the
+     * orchestration side wherever a legacy media reference sits inline.
+     */
+    public const KUMA_MEDIA_TOKEN_REGEX = '~\{\{kuma:media:(\d+)\}\}~';
+
+    /**
      * MigrationStateService — injected by the module. Null-safe: when absent
      * (e.g., tests without a container), cache-warming methods short-circuit.
      */
@@ -92,6 +104,15 @@ class CkeditorRewriterService extends Component
     private array $kumaMediaIdCache = [];
 
     private bool $kumaMediaCacheWarm = false;
+
+    /**
+     * @var array<int, true> kuma_media.id known to have no matching Craft
+     *   asset this request — Task 8 review Finding 2: without this, a broken
+     *   id occurring more than once (same string, different fields, or across
+     *   saves) would re-invoke AssetResolver::resolveFromLegacyId()'s
+     *   expensive legacy-DB ingest attempt every single time.
+     */
+    private array $kumaMediaIdMissCache = [];
 
     /** @var array<int, int> kuma_node_translations.id → Craft entry numeric id */
     private array $ntToEntryCache = [];
@@ -133,6 +154,11 @@ class CkeditorRewriterService extends Component
         // Step 1c — rewrite Kunstmaan `[NT<id>]` internal-link placeholders.
         // NT<id> = kuma_node_translations.id → kuma_nodes → migrated entry.
         $html = $this->rewriteNodeTranslationPlaceholders($html, $siteId);
+
+        // Step 1d — rewrite the loader's own `{{kuma:media:<id>}}` payload
+        // tokens (docs/loader-contract.md), distinct from the legacy
+        // `[M<id>]` placeholder handled by Step 1b.
+        $html = $this->rewriteCurlyMediaTokens($html, $siteId);
 
         // Step 2 — rewrite <a href="/internal/path"> when path resolves to a migrated entry
         if (!empty($entryUrlToId)) {
@@ -277,6 +303,7 @@ class CkeditorRewriterService extends Component
         $this->urlToKumaMediaIdCache = [];
         $this->kumaMediaIdCache = [];
         $this->kumaMediaCacheWarm = false;
+        $this->kumaMediaIdMissCache = [];
         $this->ntToEntryCache = [];
         $this->ntCacheWarm = false;
         $this->unresolvedDiagnostics = [];
@@ -347,13 +374,63 @@ class CkeditorRewriterService extends Component
     }
 
     /**
+     * Rewrite `{{kuma:media:<id>}}` loader payload tokens to Craft asset ref
+     * tokens. Reuses the exact same `kumaMediaIdCache`/`resolveKumaMediaId()`
+     * plumbing as `rewriteMediaPlaceholders()` — only the surface regex
+     * differs, since this is a distinct token grammar (see
+     * KUMA_MEDIA_TOKEN_REGEX docblock).
+     *
+     * Public (Task 8 review Finding 1): `PayloadEntrySaver` calls this method
+     * directly instead of the full `rewrite()` pipeline — the loader-contract
+     * payload path only ever promises `{{kuma:media:<id>}}` rewriting, so it
+     * must not also run `rewrite()`'s `[NT<id>]`/`[M<id>]` placeholder
+     * resolution, raw `<img src="/uploads/media/...">` rewriting, or
+     * `kma-*` class/empty-`<p>` stripping — those remain full-pipeline-only
+     * concerns for whichever caller genuinely wants them (`rewrite()` itself,
+     * still used by `MatrixHandler`/`PlainTextHandler`'s transform-stage
+     * field handlers).
+     */
+    public function rewriteCurlyMediaTokens(string $html, int $siteId): string
+    {
+        if (!str_contains($html, '{{kuma:media:')) {
+            return $html;
+        }
+
+        return preg_replace_callback(
+            self::KUMA_MEDIA_TOKEN_REGEX,
+            function ($m) use ($siteId) {
+                $kumaMediaId = (int) $m[1];
+                $craftAssetId = $this->resolveKumaMediaId($kumaMediaId);
+                if ($craftAssetId !== null) {
+                    return '{asset:' . $craftAssetId . '@' . $siteId . ':url}';
+                }
+                $this->recordUnresolvedDiagnostic(
+                    'media_token',
+                    $kumaMediaId,
+                    $siteId,
+                    (string) $m[0],
+                    'kuma_media:' . $kumaMediaId,
+                    'no matching Craft asset id',
+                );
+                // Inert visible marker: `{{...}}` is not a Craft ref-tag
+                // grammar (single braces), so the original token surviving
+                // verbatim can never be mistaken for a resolved reference.
+                return $m[0] . $this->unresolvedMarker('kuma_media:' . $kumaMediaId);
+            },
+            $html,
+        ) ?? $html;
+    }
+
+    /**
      * Resolve kuma_media.id → Craft asset numeric id via state rows.
      * Cache warmed lazily, then reused across all rewrites this request.
      *
      * Phase 05.5-05 (D-05 / D-07): on cache miss, delegate to AssetResolver
      * so the asset materialises lazily. Positive hits are written back into
      * the rewriter's own per-request cache so subsequent lookups short-circuit
-     * without re-entering the resolver.
+     * without re-entering the resolver. Misses are cached too (Task 8 review
+     * Finding 2) so a genuinely broken id costs at most one resolver call
+     * per request, however many times it recurs.
      */
     private function resolveKumaMediaId(int $kumaMediaId): ?int
     {
@@ -363,6 +440,9 @@ class CkeditorRewriterService extends Component
         if (isset($this->kumaMediaIdCache[$kumaMediaId])) {
             return $this->kumaMediaIdCache[$kumaMediaId];
         }
+        if (isset($this->kumaMediaIdMissCache[$kumaMediaId])) {
+            return null;
+        }
         if ($this->assetResolver === null) {
             return null;
         }
@@ -370,6 +450,7 @@ class CkeditorRewriterService extends Component
         if ($resolved > 0) {
             return $this->kumaMediaIdCache[$kumaMediaId] = $resolved;
         }
+        $this->kumaMediaIdMissCache[$kumaMediaId] = true;
         return null;
     }
 
@@ -845,22 +926,26 @@ class CkeditorRewriterService extends Component
         }
 
         $kumaMediaId = $this->resolveKumaMediaIdForUrl($stripped);
-        if ($kumaMediaId === null) {
-            if ($this->assetResolver !== null && method_exists($this->assetResolver, 'resolveFromLegacyUrl')) {
-                $resolved = $this->assetResolver->resolveFromLegacyUrl($stripped);
-                if ($resolved > 0) {
-                    $this->urlIdCache[$stripped] = $resolved;
-                    $this->urlIdCache['/' . ltrim($stripped, '/')] = $resolved;
-                    return $resolved;
-                }
-            }
 
-            return null;
+        if ($kumaMediaId === null) {
+            return $this->resolveByLegacyUrl($stripped);
         }
 
         $assetId = $this->resolveKumaMediaId($kumaMediaId);
+
         if ($assetId === null) {
-            return null;
+            // Finding a legacy media id and then failing to map it to an asset is NOT a dead end,
+            // and used to be treated as one: the fallback below only ran when the legacy-database
+            // lookup failed outright. That made it a workaround for a missing legacy connection
+            // rather than for a missing mapping — so once `legacyDb` was correctly wired for the
+            // finalize pass, the lookup started succeeding and this path started returning null,
+            // silently, for every image.
+            //
+            // The id→asset cache it consults is warmed only from state rows keyed `kuma_media:`,
+            // and AssetMigrationService writes them keyed `legacy_url:sha1(path)` — on the Enreach
+            // corpus, 978 of the latter and none of the former. So that cache is empty by
+            // construction and this branch is the normal case, not the exception.
+            return $this->resolveByLegacyUrl($stripped);
         }
 
         $this->urlIdCache[$stripped] = $assetId;
@@ -912,6 +997,30 @@ class CkeditorRewriterService extends Component
         }
 
         return '/' . ltrim($path, '/');
+    }
+
+    /**
+     * Last resort: ask the asset resolver to map the legacy URL itself.
+     *
+     * It hashes the path to `legacy_url:sha1(path)`, which is the key AssetMigrationService
+     * actually writes, so it finds rows the id-keyed cache cannot.
+     */
+    private function resolveByLegacyUrl(string $strippedUrl): ?int
+    {
+        if ($this->assetResolver === null || !method_exists($this->assetResolver, 'resolveFromLegacyUrl')) {
+            return null;
+        }
+
+        $resolved = $this->assetResolver->resolveFromLegacyUrl($strippedUrl);
+
+        if ($resolved <= 0) {
+            return null;
+        }
+
+        $this->urlIdCache[$strippedUrl] = $resolved;
+        $this->urlIdCache['/' . ltrim($strippedUrl, '/')] = $resolved;
+
+        return $resolved;
     }
 
     private function warmUrlCacheFromState(): void

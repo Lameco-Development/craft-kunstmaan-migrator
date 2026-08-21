@@ -1,0 +1,7 @@
+handle: contentColumns
+name: Columns
+type: craft\fields\Matrix
+settings:
+  entryTypes:
+    - __assoc__:
+        - [uid, bbbb2222]

@@ -1,0 +1,3 @@
+handle: content
+name: Content
+type: craft\ckeditor\Field

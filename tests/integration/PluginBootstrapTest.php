@@ -7,13 +7,6 @@ namespace lameco\kunstmaanmigrator\tests\integration;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\models\Settings;
-use lameco\kunstmaanmigrator\runs\MigrationRunService;
-use lameco\kunstmaanmigrator\safety\MigrationGateService;
-use lameco\kunstmaanmigrator\safety\MigrationSafety;
-use lameco\kunstmaanmigrator\workflow\AnalyzeWorkflow;
-use lameco\kunstmaanmigrator\workflow\CompileWorkflow;
-use lameco\kunstmaanmigrator\workflow\MigrateWorkflow;
-use lameco\kunstmaanmigrator\workflow\VerifyWorkflow;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -58,96 +51,12 @@ final class PluginBootstrapTest extends TestCase
         );
     }
 
-    /**
-     * Phase 8 / Plan 12 / TAX-08 — Plugin DI must register the
-     * TaxonomyMigrationService component slot, fan its three sibling deps
-     * (legacyDb / migrationState / mappingFile) at init() time, and expose
-     * the @property-read docblock so static analyzers and the
-     * `Plugin::getInstance()->taxonomyMigrationService` call site type-check.
-     */
-    public function testPluginDeclaresTaxonomyMigrationServiceWiring(): void
-    {
-        $source = (string) file_get_contents((new ReflectionClass(Plugin::class))->getFileName());
-
-        // Component slot.
-        self::assertStringContainsString(
-            "'taxonomyMigrationService'",
-            $source,
-            'Plugin::config() must declare taxonomyMigrationService component slot',
-        );
-        self::assertMatchesRegularExpression(
-            "/'taxonomyMigrationService'\s*=>\s*TaxonomyMigrationService::class/",
-            $source,
-            'taxonomyMigrationService component must map to TaxonomyMigrationService::class',
-        );
-
-        // DI fanout — three public sibling slots wired in init().
-        self::assertStringContainsString(
-            'taxonomyMigrationService->legacyDb',
-            $source,
-            'Plugin::init() must fan legacyDb into taxonomyMigrationService',
-        );
-        self::assertStringContainsString(
-            'taxonomyMigrationService->migrationState',
-            $source,
-            'Plugin::init() must fan migrationState into taxonomyMigrationService',
-        );
-        self::assertStringContainsString(
-            'taxonomyMigrationService->mappingFile',
-            $source,
-            'Plugin::init() must fan mappingFile into taxonomyMigrationService',
-        );
-
-        // @property-read docblock.
-        self::assertStringContainsString(
-            '@property-read TaxonomyMigrationService $taxonomyMigrationService',
-            $source,
-            'Plugin class header must expose @property-read TaxonomyMigrationService',
-        );
-    }
-
-    /**
-     * Phase 12 / Plan 07 — CP console and queued workflow services must be
-     * first-class plugin components so CLI, CP, queue jobs, and gates share the
-     * same runtime graph. This remains a source-level assertion because Craft is
-     * not bootstrapped in the PHPUnit integration suite.
-     */
-    public function testPluginDeclaresPhase12ServiceComponents(): void
-    {
-        $source = (string) file_get_contents((new ReflectionClass(Plugin::class))->getFileName());
-
-        $expectedComponents = [
-            'migrationRunService' => MigrationRunService::class,
-            'migrationSafety' => MigrationSafety::class,
-            'migrationGateService' => MigrationGateService::class,
-            'analyzeWorkflow' => AnalyzeWorkflow::class,
-            'compileWorkflow' => CompileWorkflow::class,
-            'migrateWorkflow' => MigrateWorkflow::class,
-            'verifyWorkflow' => VerifyWorkflow::class,
-        ];
-
-        foreach ($expectedComponents as $id => $fqcn) {
-            $short = substr($fqcn, strrpos($fqcn, '\\') + 1);
-            self::assertMatchesRegularExpression(
-                "/'{$id}'\s*=>\s*{$short}::class/",
-                $source,
-                "{$id} component must map to {$short}::class",
-            );
-            self::assertStringContainsString(
-                "@property-read {$short} \${$id}",
-                $source,
-                "Plugin class header must expose @property-read {$short} \${$id}",
-            );
-        }
-    }
-
-    public function testPluginSchemaVersionBumpedForPhase12Migrations(): void
+    public function testPluginSchemaVersionMatchesComposerJson(): void
     {
         $pluginSource = (string) file_get_contents((new ReflectionClass(Plugin::class))->getFileName());
         $composerSource = (string) file_get_contents(dirname(__DIR__, 2) . '/composer.json');
 
         self::assertStringContainsString("public string \$schemaVersion = '1.1.0'", $pluginSource);
         self::assertStringContainsString('"schemaVersion": "1.1.0"', $composerSource);
-        self::assertStringContainsString('m260429_000001_create_migration_runs', (string) file_get_contents(dirname(__DIR__, 2) . '/src/migrations/m260429_000001_create_migration_runs.php'));
     }
 }

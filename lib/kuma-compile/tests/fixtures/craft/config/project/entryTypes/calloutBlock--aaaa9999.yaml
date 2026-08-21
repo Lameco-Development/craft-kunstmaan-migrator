@@ -1,0 +1,15 @@
+handle: calloutBlock
+name: Callout
+fieldLayouts:
+  bbbb9999:
+    - elements:
+        - __assoc__:
+            - [type, 'craft\fieldlayoutelements\CustomField']
+            - [fieldUid, cccc3333]
+            - [handle, heading]
+            - [required, true]
+        - __assoc__:
+            - [type, 'craft\fieldlayoutelements\CustomField']
+            - [fieldUid, ffff8888]
+            - [handle, layout]
+            - [required, true]

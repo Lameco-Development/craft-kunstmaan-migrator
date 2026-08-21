@@ -1,0 +1,50 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use Lameco\KumaCompile\Command\CompileCommand;
+use Lameco\KumaCompile\Command\CoverageCommand;
+use Lameco\KumaCompile\Command\InitCommand;
+use Lameco\KumaCompile\Command\SuggestCommand;
+use Lameco\KumaCompile\Command\DoctorCommand;
+use Lameco\KumaCompile\Command\ReadinessCommand;
+use Lameco\KumaCompile\Command\ValidateCommand;
+use Symfony\Component\Console\Application;
+
+// Candidates, in order: this package's own vendor (standalone checkout), the plugin repo's
+// vendor now that the source lives at <plugin>/lib/kuma-compile/, and the host project's
+// vendor when the plugin is installed as a Composer dependency.
+$autoloads = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../vendor/autoload.php',
+    __DIR__ . '/../../../../autoload.php',
+    __DIR__ . '/../../../../../autoload.php',
+];
+
+$loaded = false;
+
+foreach ($autoloads as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+        $loaded = true;
+
+        break;
+    }
+}
+
+if (!$loaded) {
+    fwrite(STDERR, "kuma-compile: could not find a Composer autoloader.\n");
+
+    exit(1);
+}
+
+$app = new Application('kuma-compile', '0.1.0');
+$app->add(new InitCommand());
+$app->add(new ValidateCommand());
+$app->add(new SuggestCommand());
+$app->add(new DoctorCommand());
+$app->add(new CoverageCommand());
+$app->add(new ReadinessCommand());
+$app->add(new CompileCommand());
+$app->run();

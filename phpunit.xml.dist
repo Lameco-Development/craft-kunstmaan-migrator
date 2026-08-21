@@ -14,14 +14,21 @@
         <testsuite name="Integration">
             <directory>tests/integration</directory>
         </testsuite>
+        <!-- The compile engine: reads the legacy database and the mapping, and knows nothing
+             about Craft. Kept as its own suite because it needs no Craft bootstrap and runs in
+             a fraction of a second, which is worth protecting. -->
+        <testsuite name="Compile">
+            <directory>lib/kuma-compile/tests</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>
-            <file>src/filter/MigrationFilters.php</file>
-            <file>src/mapping/MappingFile.php</file>
-            <file>src/finalize/CkeditorRewriterService.php</file>
-            <file>src/analyze/HeuristicProposer.php</file>
-            <directory>src/fields/handlers</directory>
+            <directory>src/load</directory>
+            <directory>src/fields</directory>
+            <directory>src/finalize</directory>
+            <directory>src/safety</directory>
+            <directory>src/payload</directory>
+            <directory>lib/kuma-compile/src</directory>
         </include>
     </source>
     <coverage>

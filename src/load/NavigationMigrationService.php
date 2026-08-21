@@ -9,7 +9,6 @@ use Throwable;
 use yii\base\Component;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use craft\elements\Entry;
 use verbb\navigation\Navigation;
 use verbb\navigation\elements\Node as NavNode;
@@ -53,16 +52,12 @@ use verbb\navigation\elements\Node as NavNode;
  * When false, the pass is skipped with a distinct warn line so REPORT.md
  * can distinguish operator-opted-out from plugin-not-installed.
  *
- * State key: `('navigation', "kuma_menu_item:{$id}")`. truncate() iterates
- * these state rows and deletes the matching verbb Node elements (which
- * also removes the structureelements + navigation_nodes rows via verbb's
- * deleteElement hook).
+ * State key: `('navigation', "kuma_menu_item:{$id}")`.
  *
  * Two-pass save: first pass creates every node with parentId=null and
  * builds a `kumaItemId → nodeId` map; second pass walks rows with
  * non-null parent_id and re-saves the child with `setParentId()` resolved
- * via the map. Mirrors the AtomicMigrationService hierarchy fix-up
- * pattern — necessary because `kuma_menu_item.parent_id` is a self-FK
+ * via the map — necessary because `kuma_menu_item.parent_id` is a self-FK
  * that must wait for the parent's verbb node to exist.
  *
  * Sites with no MenuBundle data (dewert uses NodeMenu/page-tree instead):
@@ -77,13 +72,6 @@ class NavigationMigrationService extends Component
     public MigrationStateService $stateService;
 
     /**
-     * Filter state wired in Plugin::init() per D-13. Currently informational
-     * only — locale filtering of menus could be wired here later but isn't
-     * needed for v0.1.
-     */
-    public ?MigrationFilters $filters = null;
-
-    /**
      * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
      * Plugin::resolveSitesMap(). Empty map means no sites configured —
      * the service degrades gracefully (warn + return).
@@ -91,6 +79,14 @@ class NavigationMigrationService extends Component
      * @var array<string, string>
      */
     public array $sites = [];
+
+    /**
+     * The legacy environment being migrated, e.g. `COM`.
+     *
+     * Entries are recorded in state as `<ENV>:kuma_nodes` keyed by node id. Without knowing
+     * the environment this service cannot find a single one of them.
+     */
+    public string $environment = '';
 
     /**
      * Source table-name overrides (passed verbatim into raw SQL).
@@ -299,51 +295,6 @@ class NavigationMigrationService extends Component
         $this->migrateNodeMenu($localeToSiteId, $opts, $report);
 
         return $report;
-    }
-
-    /**
-     * Delete every verbb Node element this migrator owns (per state.source='navigation')
-     * and forget the matching state rows. Manually-created nav nodes are
-     * unaffected.
-     *
-     * Returns the count of deleted nodes.
-     */
-    public function truncate(): int
-    {
-        if (Craft::$app->plugins->getPlugin('navigation') === null
-            || !class_exists(Navigation::class)
-            || Navigation::$plugin === null
-        ) {
-            return 0;
-        }
-
-        $deleted = 0;
-        foreach ($this->stateService->all(self::STATE_SOURCE) as $row) {
-            $nodeId = (int) ($row['targetId'] ?? 0);
-            $sourceKey = (string) ($row['sourceKey'] ?? '');
-            if ($nodeId > 0) {
-                try {
-                    $node = Craft::$app->elements->getElementById($nodeId, NavNode::class);
-                    if ($node !== null) {
-                        Craft::$app->elements->deleteElement($node, true);
-                        $deleted++;
-                    }
-                } catch (Throwable $e) {
-                    Craft::warning(
-                        sprintf(
-                            'NavigationMigrationService::truncate: could not delete node id=%d — %s',
-                            $nodeId,
-                            $e->getMessage(),
-                        ),
-                        __METHOD__,
-                    );
-                }
-            }
-            if ($sourceKey !== '') {
-                $this->stateService->forget(self::STATE_SOURCE, $sourceKey);
-            }
-        }
-        return $deleted;
     }
 
     // --------------------------------------------------------------------------
@@ -596,7 +547,7 @@ class NavigationMigrationService extends Component
      *     `globalSettings` — never as nav rows)
      *
      * Idempotent: re-running updates existing nodes via state map keyed
-     * by `kuma_node:<id>`. truncate() walks the same state-source slug.
+     * by `kuma_node:<id>`.
      *
      * Locale strategy — KEY DIFFERENCE FROM SLICE 1:
      * MenuBundle pass emits one verbb node per (item, locale) and disables
@@ -826,8 +777,7 @@ class NavigationMigrationService extends Component
         $stateKey = 'kuma_node:' . $kumaNodeId;
         $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
 
-        $stateSource = str_replace('\\', '_', trim($fqcn, '\\'));
-        $entryId = $this->stateService->getTargetId($stateSource, (string) $refId);
+        $entryId = $this->resolveEntryIdForNode($kumaNodeId, $refId, $fqcn);
         if ($entryId === null) {
             $report->incr('skipped');
             $report->warn(sprintf(
@@ -949,7 +899,7 @@ class NavigationMigrationService extends Component
     {
         try {
             $row = $this->legacyDb->queryOne(
-                'SELECT v.ref_id, v.ref_entity_name
+                'SELECT t.node_id, v.ref_id, v.ref_entity_name
                  FROM ' . $this->nodeTranslationTableName . ' t
                  JOIN ' . $this->nodeVersionTableName . ' v ON v.id = t.public_node_version_id
                  WHERE t.id = :id',
@@ -962,10 +912,42 @@ class NavigationMigrationService extends Component
             return null;
         }
 
-        $refId = (int) $row['ref_id'];
-        $stateSource = str_replace('\\', '_', trim((string) $row['ref_entity_name'], '\\'));
+        return $this->resolveEntryIdForNode(
+            (int) $row['node_id'],
+            (int) $row['ref_id'],
+            (string) $row['ref_entity_name'],
+        );
+    }
 
-        return $this->stateService->getTargetId($stateSource, (string) $refId);
+    /**
+     * The Craft entry a Kunstmaan node became.
+     *
+     * One node is one entry, recorded as `<ENV>:kuma_nodes` keyed by node id — that is the
+     * whole identity model, and it is what makes a re-run an update. This service used to ask
+     * for `App_Entity_Pages_BlogPage` keyed by the page entity's row id, which is the v1
+     * convention: nothing has written it since, so every menu item resolved to nothing and
+     * navigation migrated zero nodes across all three environments while reporting no failure.
+     *
+     * The old key is still tried, so a host still carrying v1 state rows keeps working.
+     */
+    private function resolveEntryIdForNode(int $kumaNodeId, int $refId, string $fqcn): ?int
+    {
+        if ($this->environment !== '' && $kumaNodeId > 0) {
+            $entryId = $this->stateService->getTargetId(
+                sprintf('%s:kuma_nodes', $this->environment),
+                (string) $kumaNodeId,
+            );
+
+            if ($entryId !== null) {
+                return $entryId;
+            }
+        }
+
+        if ($fqcn === '' || $refId <= 0) {
+            return null;
+        }
+
+        return $this->stateService->getTargetId(str_replace('\\', '_', trim($fqcn, '\\')), (string) $refId);
     }
 
     /**

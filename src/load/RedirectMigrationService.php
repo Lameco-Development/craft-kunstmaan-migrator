@@ -6,7 +6,6 @@ namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
@@ -49,8 +48,7 @@ use yii\base\Component;
  *
  * State key: `('redirect', "kuma:{$row['id']}")` for direct imports and
  * `('redirect', "section_move:{source}:{nodeId}:{lang}")` for computed
- * section-move 301s. truncate() iterates these state rows and deletes the
- * matching retour_static_redirects rows by id.
+ * section-move 301s.
  *
  * Threat T-04-09-02 (open-redirect via attacker-supplied target URL):
  * legacy targets are NOT validated against an allowed-host list because
@@ -63,18 +61,6 @@ class RedirectMigrationService extends Component
 {
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
-
-    /**
-     * Filter state wired in Plugin::init() per D-13. When null, the service
-     * behaves as if all filters are disabled (legacy behavior).
-     *
-     * v2 reshape: MigrationFilters is {entities, locales, since} only —
-     * v1's includeDrafts / includeDeleted / includeOffline / cutoffAfter /
-     * cutoffBefore are dropped per D-09..D-13. Defaults hardcoded:
-     * published versions only (public_node_version_id), exclude deleted
-     * nodes, require either-language online, single since floor.
-     */
-    public ?MigrationFilters $filters = null;
 
     /**
      * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
@@ -154,48 +140,52 @@ class RedirectMigrationService extends Component
     }
 
     /**
-     * Delete every Retour row this migrator owns (per state.source='redirect')
-     * and forget the matching state rows. Manually-created Retour redirects
-     * are unaffected.
+     * Task 6 — canonical Retour-presence predicate, reused by
+     * `LoadController::actionRedirects()` (payload-driven `load/redirects`)
+     * so there is exactly one place that decides whether Retour is actually
+     * usable, rather than every caller re-deriving the same three-part check.
      *
-     * D-56: returns 0 silently when Retour is absent.
+     * `migrateAll()` deliberately keeps its own two-branch version of this
+     * check (see above) — it needs to tell "plugin not installed" (soft
+     * warn) apart from "plugin registered but not loaded" (hard failure)
+     * for its own report semantics, a distinction this single boolean
+     * collapses.
      */
-    public function truncate(): int
+    public static function isRetourAvailable(): bool
     {
-        if (Craft::$app->plugins->getPlugin('retour') === null
-            || !class_exists(Retour::class)
-            || Retour::$plugin === null
-        ) {
-            return 0;
-        }
+        return Craft::$app->plugins->getPlugin('retour') !== null
+            && class_exists(Retour::class)
+            && Retour::$plugin !== null;
+    }
 
-        $deleted = 0;
-        $db = Craft::$app->db;
-        foreach ($this->stateService->all(self::STATE_SOURCE) as $row) {
-            $retourId = (int) ($row['targetId'] ?? 0);
-            $sourceKey = (string) ($row['sourceKey'] ?? '');
-            if ($retourId > 0) {
-                try {
-                    $db->createCommand()
-                        ->delete('{{%retour_static_redirects}}', ['id' => $retourId])
-                        ->execute();
-                    $deleted++;
-                } catch (\Throwable $e) {
-                    Craft::warning(
-                        sprintf(
-                            'RedirectMigrationService::truncate: could not delete retour id=%d — %s',
-                            $retourId,
-                            $e->getMessage(),
-                        ),
-                        __METHOD__,
-                    );
-                }
-            }
-            if ($sourceKey !== '') {
-                $this->stateService->forget(self::STATE_SOURCE, $sourceKey);
-            }
-        }
-        return $deleted;
+    /**
+     * Task 6 — payload-driven single-redirect import behind
+     * `LoadController::actionRedirects()`. Reuses `upsertRetourRedirect()`
+     * verbatim — the same idempotent lookup-by-srcUrl-then-save-or-update
+     * logic (Pitfall 5 avoidance) and `self::STATE_SOURCE` state recording
+     * the legacy `migrateAll()` pass already relies on — so this does not
+     * duplicate any Retour-save or state-recording logic, only gives a
+     * payload caller (which has already resolved `srcUrl`/`destUrl` itself,
+     * e.g. via `RefResolver`) a public entry point into it for one
+     * already-resolved pair.
+     *
+     * Caller MUST check `isRetourAvailable()` first — this method assumes
+     * Retour is present and will fail via the underlying Retour calls if it
+     * isn't installed.
+     *
+     * @param array<string, mixed> $extraMeta merged into the state row's meta
+     */
+    public function importOne(
+        string $srcUrl,
+        string $destUrl,
+        int $httpCode,
+        string $stateKey,
+        array $extraMeta = [],
+    ): MigrationReport {
+        $report = new MigrationReport();
+        $this->upsertRetourRedirect($srcUrl, $destUrl, $httpCode, $stateKey, new MigrationOptions(), $report, $extraMeta);
+
+        return $report;
     }
 
     // --------------------------------------------------------------------------
@@ -387,9 +377,6 @@ class RedirectMigrationService extends Component
      */
     private function legacyNodeRowForUrl(string $strippedUrl, ?string $lang): ?array
     {
-        // v2 reshape: MigrationFilters is {entities, locales, since} only —
-        // v1's includeDrafts / includeDeleted / includeOffline / cutoffAfter /
-        // cutoffBefore are dropped per D-09..D-13. Defaults hardcoded.
         $versionCol = 'public_node_version_id';
 
         $whereParts = [
@@ -413,10 +400,6 @@ class RedirectMigrationService extends Component
             if ($localePlaceholders !== []) {
                 $whereParts[] = 'nt.lang IN (' . implode(', ', $localePlaceholders) . ')';
             }
-        }
-        if ($this->filters !== null && $this->filters->since !== null && $this->filters->since !== '') {
-            $whereParts[] = 'nt.created >= :since';
-            $params[':since'] = $this->filters->since;
         }
 
         return $this->legacyDb->queryOne(
@@ -486,10 +469,10 @@ class RedirectMigrationService extends Component
             }
 
             // state.sourceKey carries the refId (page-entity row id), NOT
-            // the kuma_node_id. Recover the actual kumaNodeId from meta;
-            // AtomicMigrationService persists it on every entry save
-            // specifically so this path can pair the right source URLs to
-            // the right Craft entry. Without this, every state row whose
+            // the kuma_node_id. Recover the actual kumaNodeId from meta —
+            // the entry save path must persist it specifically so this path
+            // can pair the right source URLs to the right Craft entry.
+            // Without this, every state row whose
             // sourceKey happens to equal some unrelated node's id pairs the
             // unrelated node's legacy URL with this entry's URI — visible
             // as `/nl/diensten` → `/personeels-dossier` after a clean

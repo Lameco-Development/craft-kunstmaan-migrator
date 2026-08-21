@@ -1,6 +1,6 @@
 {
     "name": "lameco/craft-kunstmaan-migrator",
-    "description": "Kunstmaan → Craft CMS migration plugin — knowledge-first ETL with AI-assisted mapping proposals.",
+    "description": "Thin payload loader for Kunstmaan\u2192Craft migrations",
     "type": "craft-plugin",
     "license": "MIT",
     "authors": [
@@ -11,12 +11,13 @@
     ],
     "require": {
         "php": "^8.3",
-        "craftcms/cms": "^5.0",
+        "ext-json": "*",
+        "ext-pdo": "*",
         "craftcms/ckeditor": "^4.0 || ^5.0",
-        "guzzlehttp/guzzle": "^7.0",
-        "nikic/php-parser": "^5.0",
+        "craftcms/cms": "^5.0",
+        "symfony/console": "^6.4 || ^7.0",
         "symfony/dotenv": "^6.4 || ^7.0",
-        "symfony/yaml": "^6.0 || ^7.0"
+        "symfony/yaml": "^6.4 || ^7.0"
     },
     "suggest": {
         "nystudio107/craft-seomatic": "Enables the SEOmatic adapter (^5.1).",
@@ -27,12 +28,14 @@
     },
     "autoload": {
         "psr-4": {
-            "lameco\\kunstmaanmigrator\\": "src/"
+            "lameco\\kunstmaanmigrator\\": "src/",
+            "Lameco\\KumaCompile\\": "lib/kuma-compile/src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "lameco\\kunstmaanmigrator\\tests\\": "tests/"
+            "lameco\\kunstmaanmigrator\\tests\\": "tests/",
+            "Lameco\\KumaCompile\\Tests\\": "lib/kuma-compile/tests/"
         }
     },
     "scripts": {
@@ -58,5 +61,8 @@
             "craftcms/plugin-installer": true,
             "yiisoft/yii2-composer": true
         }
-    }
+    },
+    "bin": [
+        "lib/kuma-compile/bin/kuma-compile"
+    ]
 }

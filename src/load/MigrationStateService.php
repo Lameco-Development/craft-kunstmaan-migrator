@@ -5,14 +5,15 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\load\MigrationStateReader;
+use lameco\kunstmaanmigrator\payload\RefResolver;
 use Craft;
 use craft\db\Connection;
 use craft\db\Query;
 use craft\helpers\Db;
 use DateTime;
 use Generator;
-use JsonException;
 use RuntimeException;
+use Throwable;
 use yii\base\Component;
 
 /**
@@ -123,6 +124,14 @@ class MigrationStateService extends Component implements MigrationStateReader
     /**
      * Insert (or update-in-place) the mapping row.
      *
+     * Guards against last-write-wins repointing: when a row already exists
+     * at `(source, key, siteId)` recorded against a DIFFERENT `targetId`,
+     * the overwrite is skipped and a warning logged instead — this is the
+     * path `recordAlias()` hits when an alias `sourceUid` collides with a
+     * row already recorded under another primary's target. A re-record
+     * against the SAME `targetId` (the normal re-save/idempotent case)
+     * proceeds as before, including refreshing `meta`.
+     *
      * @param array<string, mixed>|null $meta arbitrary JSON-serialised payload
      */
     public function record(
@@ -134,8 +143,21 @@ class MigrationStateService extends Component implements MigrationStateReader
         ?int $siteId = null,
         ?array $meta = null,
     ): void {
-        $now = Db::prepareDateForDb(new DateTime());
         $existing = $this->get($source, $key, $siteId);
+
+        if ($existing !== null && $this->collidesWithDifferentTarget($existing, $targetId)) {
+            $this->warn(sprintf(
+                'MigrationStateService::record(): refusing to repoint %s:%s (siteId=%s) from targetId=%d to targetId=%d'
+                . ' — a different target is already recorded for this key. Skipping overwrite.',
+                $source,
+                $key,
+                $siteId !== null ? (string) $siteId : 'null',
+                (int) $existing['targetId'],
+                $targetId,
+            ));
+
+            return;
+        }
 
         // Schema note: targetUid is declared via Craft's $this->uid() migration
         // helper (src/migrations/Install.php) which renders as
@@ -145,6 +167,42 @@ class MigrationStateService extends Component implements MigrationStateReader
         // succeeds. Callers that do carry a real Craft uid continue to pass it
         // through verbatim.
         $targetUidSafe = $targetUid ?? '';
+
+        $this->persistRecord($existing, $source, $key, $targetType, $targetId, $targetUidSafe, $siteId, $meta);
+    }
+
+    /**
+     * Pure predicate for the record() collision guard — true when an
+     * existing row's targetId is set and differs from the one about to be
+     * written.
+     *
+     * @param array<string, mixed> $existing
+     */
+    private function collidesWithDifferentTarget(array $existing, int $targetId): bool
+    {
+        return $existing['targetId'] !== null && (int) $existing['targetId'] !== $targetId;
+    }
+
+    /**
+     * The actual DB write for record() — split out so tests can override
+     * just this primitive (see MigrationStateServiceRecordCollisionTest)
+     * and exercise the real collision-guard logic above it without a
+     * booted Craft application.
+     *
+     * @param array<string, mixed>|null $existing
+     * @param array<string, mixed>|null $meta
+     */
+    protected function persistRecord(
+        ?array $existing,
+        string $source,
+        string $key,
+        string $targetType,
+        int $targetId,
+        string $targetUidSafe,
+        ?int $siteId,
+        ?array $meta,
+    ): void {
+        $now = Db::prepareDateForDb(new DateTime());
 
         // Meta column is MySQL JSON; Yii's ColumnSchema auto-encodes arrays on
         // write and auto-decodes on read — pass the array straight through.
@@ -174,6 +232,22 @@ class MigrationStateService extends Component implements MigrationStateReader
             'dateCreated' => $now,
             'dateUpdated' => $now,
         ])->execute();
+    }
+
+    /**
+     * Overridable so tests can capture the message instead of routing
+     * through Craft::warning(), which needs a booted Craft application this
+     * repo's test suite doesn't provide (mirrors the fakeable-primitive
+     * convention used throughout tests/ — e.g. SchemaGateway fakes). The
+     * try/catch is a defensive fallback for any other bootless caller;
+     * production code always has Craft loaded.
+     */
+    protected function warn(string $message): void
+    {
+        try {
+            Craft::warning($message, 'kunstmaan-migrator');
+        } catch (Throwable) {
+        }
     }
 
     /**
@@ -211,6 +285,50 @@ class MigrationStateService extends Component implements MigrationStateReader
             ],
             ['id' => $existing['id']],
         )->execute();
+    }
+
+    /**
+     * Task 4 — resolve a `sourceUid` (`kuma:<ENV>:<table>:<id>`) straight to
+     * the Craft target id it currently resolves to, or null when the target
+     * hasn't been migrated yet. Delegates the grammar parsing to
+     * `RefResolver::parse()` (single source of truth for the regex — see
+     * that class) and only adds the state-table lookup.
+     */
+    public function resolveSourceUid(string $uid): ?int
+    {
+        $parsed = RefResolver::parse($uid);
+        if ($parsed === null) {
+            return null;
+        }
+
+        return $this->getTargetId($parsed['source'], $parsed['key']);
+    }
+
+    /**
+     * Task 4 — record an extra state row for an alias `sourceUid` (e.g. a
+     * duplicated node across environments/locales, per docs/loader-contract.md)
+     * pointing at the same Craft target as its primary `sourceUid`. Meta
+     * carries `alias_of` so a state dump can tell an alias row from a
+     * primary one.
+     *
+     * Silently no-ops on a malformed `aliasUid` — validation of the
+     * `sourceUid` grammar for every alias already happened upstream in
+     * `PayloadValidator` before a live save is ever attempted.
+     */
+    public function recordAlias(string $aliasUid, string $primaryUid, int $targetId): void
+    {
+        $parsed = RefResolver::parse($aliasUid);
+        if ($parsed === null) {
+            return;
+        }
+
+        $this->record(
+            source: $parsed['source'],
+            key: $parsed['key'],
+            targetType: 'entry',
+            targetId: $targetId,
+            meta: ['alias_of' => $primaryUid],
+        );
     }
 
     public function forget(string $source, string $key, ?int $siteId = null): void
@@ -305,58 +423,6 @@ class MigrationStateService extends Component implements MigrationStateReader
             return false;
         }
         return ($decoded['terminalState'] ?? null) === 'permanently_failed';
-    }
-
-    /**
-     * Return the most recent state-row meta as an associative array, or null
-     * if the state table is empty / the newest row has no meta payload.
-     *
-     * Used by migrate/check D-17 drift detection (Plan 05.5-06 Task 3) to
-     * compare last-run filter settings against current CP settings. Reads
-     * the newest row by `dateUpdated DESC` — matches the column declared in
-     * the install migration.
-     *
-     * Decodes JSON only; never calls PHP native deserialize (central-decode policy
-     * preserved). Yii's MySQL driver returns JSON columns already decoded,
-     * but we defensively re-decode in case a row was written through a
-     * different path.
-     *
-     * IMPORTANT: the meta column must be set by the run recorder at migrate
-     * time for this method to return non-null. If no service records a
-     * "run start" row with filter meta, the drift-detection caller falls
-     * back to a warning-only path (see MigrateController::actionCheck).
-     *
-     * @see .planning/phases/05.5-harden-migrator-plugin-error-handling/05.5-CONTEXT.md §D-17
-     * @return array<string, mixed>|null
-     */
-    public function getLastRunMeta(): ?array
-    {
-        $table = $this->table();
-        $row = $this->db()->createCommand(
-            "SELECT meta FROM {$table} ORDER BY dateUpdated DESC LIMIT 1"
-        )->queryOne();
-        if (!$row || !array_key_exists('meta', $row) || $row['meta'] === null) {
-            return null;
-        }
-
-        // Yii may hand back an already-decoded array for MySQL JSON columns.
-        if (is_array($row['meta'])) {
-            return $row['meta'];
-        }
-
-        $raw = (string) $row['meta'];
-        if ($raw === '') {
-            return null;
-        }
-
-        try {
-            $decoded = json_decode($raw, true, 32, JSON_THROW_ON_ERROR);
-        } catch (JsonException $e) {
-            Craft::warning("getLastRunMeta: JSON decode failed: {$e->getMessage()}", __METHOD__);
-            return null;
-        }
-
-        return is_array($decoded) ? $decoded : null;
     }
 
     /**

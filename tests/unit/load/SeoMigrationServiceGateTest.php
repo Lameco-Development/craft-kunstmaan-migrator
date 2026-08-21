@@ -52,19 +52,24 @@ final class SeoMigrationServiceGateTest extends TestCase
         self::assertStringContainsString('SEO adapter disabled', $line);
     }
 
-    public function testLegacyRefFallbackUsesLocaleMapInsteadOfHardcodedNlEnJoins(): void
+    public function testLegacyRefFallbackDerivesClassFromSourceAndIdFromSourceKey(): void
     {
+        // 2026-05-09 — closes the stale-meta gap. Older state rows lack
+        // meta.legacyClass / meta.legacyEntityId; both can be derived
+        // directly from the state row itself:
+        //   legacyClass    ← state.source with `_` → `\` (FQCN-shaped slug)
+        //   legacyEntityId ← (int) state.sourceKey (FQCN entity row id)
+        //
+        // No DB query — the previous kuma_nodes-tree fallback was broken
+        // (assumed sourceKey was a kuma_node_id, but it's the FQCN entity
+        // row id under EntryMigrationService's state-write convention).
         $db = new class extends LegacyDbService {
-            public string $sql = '';
-
-            /** @var array<string, mixed> */
-            public array $params = [];
+            public int $queryCount = 0;
 
             public function queryOne(string $sql, array $params = []): ?array
             {
-                $this->sql = $sql;
-                $this->params = $params;
-                return ['class' => 'App\\Entity\\Pages\\ArticlePage', 'ref_id' => 456];
+                $this->queryCount++;
+                return null;
             }
         };
 
@@ -75,13 +80,58 @@ final class SeoMigrationServiceGateTest extends TestCase
         $rm = new ReflectionMethod(SeoMigrationService::class, 'resolveLegacyRef');
         $result = $rm->invoke($service, 'App_Entity_Pages_ArticlePage', '123', null);
 
-        self::assertSame(['App\\Entity\\Pages\\ArticlePage', 456], $result);
-        self::assertSame(123, $db->params[':id'] ?? null);
-        self::assertSame('fr', $db->params[':locale0'] ?? null);
-        self::assertSame('de', $db->params[':locale1'] ?? null);
-        self::assertStringContainsString('nt.lang IN (:locale0, :locale1)', $db->sql);
-        self::assertStringNotContainsString('nt_nl', $db->sql);
-        self::assertStringNotContainsString(':langNl', $db->sql);
-        self::assertStringNotContainsString(':langEn', $db->sql);
+        self::assertSame(['App\\Entity\\Pages\\ArticlePage', 123], $result);
+        // Derivation must NOT hit the DB at all on the fallback path —
+        // the previous implementation paid a per-skipped-entry roundtrip
+        // for nothing.
+        self::assertSame(0, $db->queryCount);
+    }
+
+    public function testLegacyRefFallbackPrefersMetaWhenPresent(): void
+    {
+        $db = new class extends LegacyDbService {
+            public int $queryCount = 0;
+
+            public function queryOne(string $sql, array $params = []): ?array
+            {
+                $this->queryCount++;
+                return null;
+            }
+        };
+        $service = new SeoMigrationService();
+        $service->legacyDb = $db;
+
+        $rm = new ReflectionMethod(SeoMigrationService::class, 'resolveLegacyRef');
+        $result = $rm->invoke($service, 'App_Entity_Pages_ArticlePage', '123', [
+            // Meta cache wins over the source-derived value: cached id 999
+            // beats the would-be-derived 123. Confirms the per-type migrators
+            // can override the derivation when they have richer info.
+            'legacyClass' => 'App\\Entity\\Pages\\ArticlePage',
+            'legacyEntityId' => 999,
+        ]);
+
+        self::assertSame(['App\\Entity\\Pages\\ArticlePage', 999], $result);
+        self::assertSame(0, $db->queryCount);
+    }
+
+    public function testLegacyRefReturnsNullOnSingleton(): void
+    {
+        $service = new SeoMigrationService();
+        $rm = new ReflectionMethod(SeoMigrationService::class, 'resolveLegacyRef');
+        $result = $rm->invoke($service, 'singleton', 'globalSettings', null);
+
+        self::assertSame([null, 0], $result);
+    }
+
+    public function testLegacyRefReturnsNullWhenSourceKeyIsNotNumeric(): void
+    {
+        // Defensive — non-numeric sourceKey can't be cast to a meaningful
+        // FQCN entity row id, so the fallback gives up rather than silently
+        // associating with row id 0.
+        $service = new SeoMigrationService();
+        $rm = new ReflectionMethod(SeoMigrationService::class, 'resolveLegacyRef');
+        $result = $rm->invoke($service, 'App_Entity_Pages_ArticlePage', 'not-a-number', null);
+
+        self::assertSame([null, 0], $result);
     }
 }

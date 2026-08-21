@@ -11,7 +11,6 @@ use lameco\kunstmaanmigrator\load\MigrationOptions;
 use yii\db\Query;
 use Craft;
 use craft\elements\Entry;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use yii\base\Component;
 
 /**
@@ -45,12 +44,6 @@ class SeoMigrationService extends Component
     public SeomaticPayloadBuilder $seoPayload;
 
     /**
-     * Filter state wired in Plugin::init() per D-13. When null, the service
-     * behaves as if all filters are disabled (legacy behavior).
-     */
-    public ?MigrationFilters $filters = null;
-
-    /**
      * Legacy SEO table name (unwrapped — passed verbatim into raw SQL).
      * Defaults to the canonical Kunstmaan `kuma_seo`; host projects with
      * a non-standard schema override via Settings::$seoTableName. Plan 04-09
@@ -78,6 +71,31 @@ class SeoMigrationService extends Component
 
     private const STATE_SOURCE = 'seo_meta';
     private const SEO_FIELD_HANDLE = 'seo';
+
+    /**
+     * Whether this entry already holds SEO worth clearing on this site.
+     *
+     * Reads the stored value rather than the rendered one: an empty SEOmatic bundle still
+     * normalises into a full object of defaults, so "is there anything here" has to be asked
+     * of the two fields a migration ever writes.
+     */
+    private function hasStoredSeo(Entry $entry): bool
+    {
+        try {
+            $value = $entry->getSerializedFieldValues([self::SEO_FIELD_HANDLE])[self::SEO_FIELD_HANDLE] ?? null;
+        } catch (\Throwable) {
+            return true;
+        }
+
+        if (!is_array($value)) {
+            return false;
+        }
+
+        $vars = $value['metaGlobalVars'] ?? [];
+
+        return trim((string) ($vars['seoTitle'] ?? '')) !== ''
+            || trim((string) ($vars['seoDescription'] ?? '')) !== '';
+    }
 
     /**
      * D-08-19 — build the per-site list to fan out to. Each entry is
@@ -248,84 +266,6 @@ class SeoMigrationService extends Component
         return $report;
     }
 
-    /**
-     * Scoped variant — write SEO for a single Craft entry id. Useful for
-     * `./craft kunstmaan-migrator/migrate/seo --entry={id}` debugging and
-     * for re-running a specific entry after editorial fixes. Returns the
-     * number of sites where SEO was written.
-     *
-     * @param array<string, int>|null $refIdsByLocale When called from
-     *        AtomicMigrationService during the same DB transaction that
-     *        writes the state row, the state meta may not yet be readable
-     *        by the cursor opened inside this method. Passing refIdsByLocale
-     *        directly bypasses the state-meta read for the current run while
-     *        still keeping the persisted value for future standalone re-runs.
-     *
-     * CONFIG-08: returns 0 silently if SEOmatic is not installed.
-     */
-    public function migrateForEntry(int $craftEntryId, MigrationOptions $opts, ?array $refIdsByLocale = null): int
-    {
-        // CONFIG-08 gate — no-op when SEOmatic absent.
-        if (Craft::$app->plugins->getPlugin('seomatic') === null) {
-            Craft::warning(
-                'SEOmatic plugin not installed; migrateForEntry() returning 0.',
-                'kunstmaanmigrator',
-            );
-            return 0;
-        }
-
-        $report = new MigrationReport();
-
-        // D-08-19 — same per-site fan-out as migrateAll(). See buildSiteList()
-        // for the sites: block resolution. Each entry's locale lets
-        // migrateForEntryInternal resolve the correct per-site ref_id from
-        // meta.refIdsByLocale written by AtomicMigrationService.
-        $siteList = $this->buildSiteList($report);
-        if ($siteList === []) {
-            return 0;
-        }
-        /** @var array<int, string> $siteLocales */
-        $siteLocales = [];
-        $siteIds = [];
-        foreach ($siteList as $entry) {
-            $siteLocales[$entry['siteId']] = $entry['locale'];
-            $siteIds[] = $entry['siteId'];
-        }
-
-        // Locate the matching state row across all entry sources.
-        // See migrateAll() above for why we query the state table rather than
-        // iterating a hardcoded alias list.
-        $sources = array_column(
-            (new Query())
-                ->select('source')
-                ->distinct()
-                ->from('{{%kunstmaanmigrator_state}}')
-                ->where(['targetType' => 'entry'])
-                ->all(),
-            'source',
-        );
-        foreach ($sources as $source) {
-            foreach ($this->stateService->all($source) as $row) {
-                if ((int) ($row['targetId'] ?? 0) === $craftEntryId
-                    && ($row['targetType'] ?? '') === 'entry'
-                ) {
-                    return $this->migrateForEntryInternal(
-                        $craftEntryId,
-                        $source,
-                        (string) ($row['sourceKey'] ?? ''),
-                        $row['meta'] ?? null,
-                        $siteIds,
-                        $siteLocales,
-                        $opts,
-                        $report,
-                        $refIdsByLocale,
-                    );
-                }
-            }
-        }
-        return 0;
-    }
-
     // --------------------------------------------------------------------------
     // Private — core per-entry write
     // --------------------------------------------------------------------------
@@ -361,11 +301,11 @@ class SeoMigrationService extends Component
             return 0;
         }
 
-        // Per-locale ref_id map. Prefer the value passed directly by
-        // AtomicMigrationService (avoids reading a state-meta write made
-        // earlier in the same DB transaction, which may not be visible to
-        // the streaming cursor opened by all()). Fall back to whatever was
-        // persisted in meta for standalone re-runs via migrate/seo.
+        // Per-locale ref_id map. $directRefIdsByLocale lets a caller bypass
+        // the state-meta read when it already has the value in hand (e.g.
+        // from the same DB transaction that wrote it, before it's visible
+        // to a streaming cursor). No current caller passes one; migrateAll()
+        // always falls back to whatever was persisted in meta.
         $metaArr = is_array($meta) ? $meta : (is_string($meta) ? (array) (json_decode($meta, true) ?? []) : []);
         $refIdsByLocale = $directRefIdsByLocale !== null && $directRefIdsByLocale !== []
             ? $directRefIdsByLocale
@@ -395,6 +335,7 @@ class SeoMigrationService extends Component
         }
 
         $written = 0;
+        $skippedEmpty = 0;
         foreach ($siteIds as $siteId) {
             $locale = $siteLocales[$siteId] ?? null;
             if ($locale === null) {
@@ -436,6 +377,18 @@ class SeoMigrationService extends Component
             }
 
             $payload = $this->seoPayload->build($seoRow, $siteId);
+
+            // A locale with no legacy SEO row gets an explicit empty payload, to clear
+            // anything Craft propagated from the primary site during the entry save. That is
+            // worth a full `saveElement()` when there is something to clear, and pure waste
+            // when there is not — and there usually is not: on the first real corpus 81% of
+            // these writes were empty-over-empty, ~11,500 of COM's 14,000, each one the most
+            // expensive call available. It put the SEO pass on a fifteen-hour trajectory.
+            if ($seoRow === null && !$this->hasStoredSeo($entry)) {
+                $skippedEmpty++;
+                continue;
+            }
+
             $entry->setFieldValue(self::SEO_FIELD_HANDLE, $payload);
 
             // SEOmatic's SeoSettings field normalizeValue pulls `metaSiteVars`
@@ -487,6 +440,10 @@ class SeoMigrationService extends Component
             }
         }
 
+        if ($skippedEmpty > 0) {
+            $report->incr('seo.skippedEmpty', $skippedEmpty);
+        }
+
         return $written;
     }
 
@@ -519,12 +476,29 @@ class SeoMigrationService extends Component
      *
      * Preferred path: read `meta.legacyClass` + `meta.legacyEntityId` that
      * the per-type migrators (news/cases/team/contentPages/singleton) write
-     * during their pass. Fallback for older state rows: query
-     * `kuma_node_translations` + `kuma_node_versions` via the sourceKey
-     * (kuma_node_id) and pick the public version.
+     * during their pass.
      *
-     * Singleton state rows store the section handle as sourceKey, so they
-     * MUST carry meta — there's no kuma_node_id fallback path for them.
+     * Fallback path (closes the stale-meta gap surfaced 2026-05-09 against
+     * dewert-craft-smoke — 131 entries skipped because older state rows
+     * lacked the meta keys): both values can be derived directly from the
+     * state row.
+     *   - `legacyClass` ← `state.source` with underscores → backslashes.
+     *     The source is FQCN-derived per `EntryMigrationService`'s state-write
+     *     convention (`App_Entity_Pages_TextPage` ↔ `App\Entity\Pages\TextPage`).
+     *   - `legacyEntityId` ← `(int) sourceKey` directly. sourceKey is the
+     *     FQCN entity row id (i.e., `kuma_<entity>.id`), identical to what
+     *     `kuma_seo.ref_id` stores. The meta cache is redundant; falling
+     *     back to the source/sourceKey pair recovers the same value.
+     *
+     * The previous `legacyRefRowForNode()` fallback was broken — it tried
+     * `kuma_nodes WHERE id = sourceKey` on the assumption sourceKey was a
+     * kuma_node_id, which it isn't. That helper has been removed; if any
+     * state row genuinely needs a kuma_node-tree lookup, that's a job for
+     * a different resolver, not this one.
+     *
+     * Singleton state rows store the section handle as sourceKey, so the
+     * derivation produces a string id (`globalSettings`) that's not numeric
+     * — they MUST carry meta and short-circuit at the existing branch.
      *
      * @param array<string, mixed>|string|null $meta
      * @return array{0: ?string, 1: int}
@@ -544,98 +518,20 @@ class SeoMigrationService extends Component
             return [(string) $meta['legacyClass'], (int) $meta['legacyEntityId']];
         }
 
-        // Singletons — no fallback (sourceKey is a section handle, not a node id)
+        // Singletons — no fallback (sourceKey is a section handle, not a numeric id)
         if ($source === 'singleton') {
             return [null, 0];
         }
 
-        // Fallback: sourceKey is a kuma_node_id; query for ref_id + class
-        if (!ctype_digit((string) $sourceKey)) {
+        // Fallback: derive from source + sourceKey directly. Requires source
+        // to be FQCN-shaped (contains underscores → backslashes) and sourceKey
+        // to be numeric (the FQCN entity row id).
+        if (!ctype_digit((string) $sourceKey) || !str_contains($source, '_')) {
             return [null, 0];
         }
 
-        $row = $this->legacyRefRowForNode((int) $sourceKey);
-        if ($row === null || empty($row['class']) || empty($row['ref_id'])) {
-            return [null, 0];
-        }
-        return [(string) $row['class'], (int) $row['ref_id']];
-    }
-
-    /**
-     * @return array{class: mixed, ref_id: mixed}|null
-     */
-    private function legacyRefRowForNode(int $kumaNodeId): ?array
-    {
-        // v2 MigrationFilters is {entities, locales, since} only — v1's includeDrafts /
-        // includeDeleted / includeOffline / cutoffAfter / cutoffBefore are dropped per
-        // D-09..D-13. v2 defaults: published versions only (public_node_version_id),
-        // exclude deleted nodes, require the selected locale row to be online,
-        // single since floor.
-        $versionCol = 'public_node_version_id';
-
-        $whereParts = [
-            'n.id = :id',
-            'n.deleted = 0',
-            'nt.online = 1',
-        ];
-        $params = [
-            ':id' => $kumaNodeId,
-        ];
-        $localePlaceholders = [];
-        foreach ($this->legacyLocales() as $i => $locale) {
-            $placeholder = ':locale' . $i;
-            $localePlaceholders[] = $placeholder;
-            $params[$placeholder] = $locale;
-        }
-        if ($localePlaceholders !== []) {
-            $whereParts[] = 'nt.lang IN (' . implode(', ', $localePlaceholders) . ')';
-        }
-
-        if ($this->filters !== null && $this->filters->since !== null && $this->filters->since !== '') {
-            $whereParts[] = 'nt.created >= :since';
-            $params[':since'] = $this->filters->since;
-        }
-
-        return $this->legacyDb->queryOne(
-            'SELECT'
-            . ' nv.ref_entity_name AS class,'
-            . ' nv.ref_id AS ref_id'
-            . ' FROM kuma_nodes n'
-            . ' INNER JOIN kuma_node_translations nt ON nt.node_id = n.id'
-            . ' INNER JOIN kuma_node_versions nv ON nv.id = nt.' . $versionCol
-            . ' WHERE ' . implode(' AND ', $whereParts)
-            . ' ORDER BY ' . $this->legacyLocaleOrderSql()
-            . ' LIMIT 1',
-            $params,
-        );
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function legacyLocales(): array
-    {
-        $locales = [];
-        foreach (array_keys($this->sites) as $locale) {
-            if (is_string($locale) && $locale !== '' && !in_array($locale, $locales, true)) {
-                $locales[] = $locale;
-            }
-        }
-
-        return $locales;
-    }
-
-    private function legacyLocaleOrderSql(): string
-    {
-        $cases = [];
-        foreach ($this->legacyLocales() as $i => $locale) {
-            $cases[] = "WHEN '" . str_replace("'", "''", $locale) . "' THEN " . $i;
-        }
-        if ($cases === []) {
-            return 'nt.lang ASC';
-        }
-
-        return 'CASE nt.lang ' . implode(' ', $cases) . ' ELSE 999 END';
+        $derivedClass = str_replace('_', '\\', $source);
+        return [$derivedClass, (int) $sourceKey];
     }
 
     /**

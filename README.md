@@ -1,155 +1,71 @@
-# Kunstmaan Migrator (revisited)
+# Kunstmaan Migrator
 
-A Craft CMS 5 plugin that migrates content from a legacy Kunstmaan (Symfony) site
-into an existing Craft CMS site. Craft is the source of truth for schema —
-Kunstmaan content gets mapped onto Craft sections / fields / entry types as
-they already exist.
+A Craft CMS 5 plugin that writes a legacy Kunstmaan (Symfony) site into Craft.
+Kunstmaan Migrator is deliberately thin: it validates a payload against the live
+Craft schema, saves it (upsert, idempotent), resolves cross-entry `_ref`s in a
+second pass, imports redirects, and reports state — nothing more.
 
-> **Status:** v1.0 hardening. The canonical operator workflow is
-> `doctor -> analyze -> map -> compile -> migrate --dry-run -> migrate --live -> verify`.
-> See `.planning/ROADMAP.md` for the full plan.
+All migration intelligence lives in [`lameco/kuma-compile`](https://github.com/lameco/kuma-compile),
+which this plugin requires: reading the legacy database, the mapping file and its
+shape rules, and compiling both into payloads. Nothing is decided at run time. The
+plugin contributes one thing kuma-compile cannot have — a `TargetSchema` that
+answers from the live Craft site rather than from a parse of `config/project/**`.
+
+See [`docs/loader-contract.md`](docs/loader-contract.md) for the payload schema.
 
 ## Requirements
 
 - PHP 8.3+
 - Craft CMS 5 (`^5.0`)
-- A reachable legacy Kunstmaan MySQL database
-- An Anthropic API key (for the `analyze` proposal stage in Phase 2)
 
 ## Installation
-
-> For Kunstmaan surfaces this migrator deliberately does NOT cover (FormBundle,
-> SearchBundle, MenuBundle, user accounts, media folder hierarchy, slug history
-> beyond `kuma_redirects`, drafts), see
-> [Known omissions in v1.0](CHANGELOG.md#known-omissions-in-v10).
 
 ```bash
 composer require lameco/craft-kunstmaan-migrator
 ./craft plugin/install kunstmaan-migrator
 ```
 
-Re-running install (or applying future schema bumps):
+## One command
 
 ```bash
-./craft kunstmaan-migrator/migrate/install
+./craft kunstmaan-migrator/migrate --mapping=migration/mapping/site.yaml --force
 ```
 
-## Configuration
+Reads the legacy Kunstmaan database, compiles it against the mapping, and writes it into
+Craft — in one process. Validates the mapping's shape, then every handle it names against the
+*live* Craft schema, then refuses to run while any `conflict:` is still open.
 
-The plugin owns its legacy MySQL connection internally — you do **not** need
-to declare a `legacyDb` Yii component in `config/app.php`. Configure via env
-vars:
+Per environment, in order: taxonomy entries, page entries with their blocks and assets, then
+SEO meta, redirects, navigation and translations. The four adapters run after that
+environment's entries because each of them resolves a legacy id to an entry that has to exist
+already; `--entriesOnly` skips them while you iterate on the entry pass.
 
-```
-CRAFT_LEGACY_DB_SERVER=localhost
-CRAFT_LEGACY_DB_DATABASE=kunstmaan_dump
-CRAFT_LEGACY_DB_USER=root
-CRAFT_LEGACY_DB_PASSWORD=secret
-CRAFT_LEGACY_DB_PORT=3306             # default 3306
-CRAFT_LEGACY_DB_CHARSET=utf8mb4       # default utf8mb4
-CRAFT_LEGACY_DB_TABLE_PREFIX=         # default empty
+`--dump=<dir>` writes the compiled payloads out for inspection; `--dryRun` compiles and
+reports without writing; `--legacyEnv` and `--limit` narrow the run.
 
-ANTHROPIC_API_KEY=sk-ant-...          # required for Phase 2 analyze
-```
+Compiling and loading were separate tools exchanging NDJSON. The file was a contract, and
+contracts drift: the compiler emitted the documented `{type, fields}` block shape while the
+loader needed a `sourceRef` marker the contract never mentioned, so Matrix rows updated
+partially and neither side could see why. Payloads are still available as an artifact — they
+are just no longer the seam.
 
-Plugin Settings (Settings → Plugins → Kunstmaan Migrator) override env vars
-when set. The Settings UI ships in Phase 4; until then, env vars are the
-canonical configuration surface.
+## Commands
 
-Advanced project-shape hints live in `config/kunstmaan-migrator.php`; see
-`config/kunstmaan-migrator.example.php`. Use these only for schema-specific
-decisions the generic analyze/compile flow cannot infer, such as ambiguous
-rich-text fallback blocks or explicit relation mirrors into Craft presentation
-fields.
+| Command | Description |
+| --- | --- |
+| `kunstmaan-migrator/load/entry --payload=<file> [--dry-run]` | Validates a payload (JSON/NDJSON) against the live Craft schema and, unless `--dry-run` is passed, saves it — idempotent upsert by `sourceUid`, alias recording, deferred `_ref`s parked for the fixup pass. |
+| `kunstmaan-migrator/load/fixup` | Second pass: drains every state row's pending `_ref`s left behind by `load/entry` and patches them in now that the referenced entries exist. Run once every payload in a batch has gone through `load/entry`. |
+| `kunstmaan-migrator/load/redirects --payload=<file>` | Loads a redirects payload (NDJSON), resolving `kuma:<ENV>:<table>:<id>` targets to their migrated entry's URI and writing them via Retour when installed. `migrate` compiles the same records from the mapping's `redirects:` lane and loads them directly, so this is for a payload produced by other means. |
+| `kunstmaan-migrator/state/export` | Streams the migrator's state table as NDJSON (`sourceUid` / `entryId` / `targetType` / `alias_of` per line) for resume/verify tooling. |
+| `kunstmaan-migrator/doctor` | Preflight checks: plugin installed + state table reachable, `storage/migration/` writable, not running in production, Retour presence. |
 
-## Operator workflow
-
-Kunstmaan **Page** entities are the source root. Each accepted Page mapping
-produces a Craft **Entry** in the configured section/entry type; page-owned
-detail rows, page parts, relations, taxonomies/data providers, SEO/redirect
-sidecars, CKEditor references, and referenced assets are accounted for from
-that Page root.
-
-Run the migration in this order:
-
-```bash
-./craft kunstmaan-migrator/doctor
-./craft kunstmaan-migrator/analyze
-# Review and edit storage/migration/mapping.yaml as needed.
-./craft kunstmaan-migrator/map
-./craft kunstmaan-migrator/compile
-./craft kunstmaan-migrator/migrate --dry-run
-./craft kunstmaan-migrator/migrate --live
-./craft kunstmaan-migrator/verify
-```
-
-The `analyze` stage may call Anthropic for mapping proposals. `compile`,
-`migrate`, `finalize`, and `verify` are deterministic and do not make runtime
-AI calls. The Control Panel is not the canonical operation surface; the CLI
-workflow above is.
-
-Generic automation is intentionally partial. Project-specific mapping edits
-are expected, but silent omissions are not accepted: every page-owned source
-surface should be migrated, deliberately dropped with rationale, marked
-out-of-scope, reported as unsupported, or surfaced as a warning.
-
-### Page-rooted coverage report
-
-`compile` writes the operator review artifact at:
-
-```text
-storage/migration/PAGE-ROOTED-COVERAGE.md
-```
-
-Use this report before any live run. Its categories mean:
-
-- `migrated` — accepted mapping routes the source surface into the Craft Entry
-  or a reachable sidecar.
-- `dropped` — operator mapping deliberately excludes the surface; the reason
-  should explain why this is acceptable.
-- `out_of_scope` — the surface is outside v1.0 scope, such as FormBundle,
-  SearchBundle, MenuBundle, users/ACLs, non-public drafts, or full orphan-media
-  import.
-- `unsupported` — the scanner found a structural shape the current migrator
-  cannot safely migrate automatically; either add a mapping/handler that makes
-  it explicit or accept it as release debt.
-- `warning` — more operator review is needed, usually because source metadata
-  or target Craft mapping evidence is incomplete.
-
-A missing surface is acceptable only when its category and reason match the
-project's release intent. For example, an orphan media row that no migrated
-Entry references is expected out-of-scope in v1.0; a page-owned relation with
-no mapping is not acceptable until it is migrated, visibly dropped, or marked
-unsupported with follow-up.
-
-### Asset behavior
-
-Assets are page-driven. Default load is JIT: assets are pulled as migrated
-entries reference them. `--preload-assets` still follows the same model and
-preloads **referenced assets only** from the in-scope transformed payloads. It
-does not import every `kuma_media` row and does not import orphan media by
-default.
-
-## Doctor
-
-Verify configuration before running migration commands:
-
-```bash
-./craft kunstmaan-migrator/doctor
-```
-
-Reports OK / FAIL on:
-
-1. Legacy DB reachability
-2. Anthropic API key presence (presence only — the value is never logged)
-3. `storage/migration/` writable (auto-created if missing)
-
-Exits 0 on full pass, 1 on any FAIL.
+Every command prints machine-readable JSON (or NDJSON) to stdout and exits
+non-zero on failure — no ANSI prose.
 
 ## Production safety
 
-The plugin **refuses to run** when `CRAFT_ENVIRONMENT=production`. It is a
-dev / staging tool only.
+The plugin **refuses to run** any legacy-reading or destructive command when
+`CRAFT_ENVIRONMENT=production`. It is a dev / staging tool only.
 
 ## Development
 
@@ -158,21 +74,8 @@ composer install
 composer test
 ```
 
-CI runs `composer validate --strict` + `composer install` + `composer test` on
-PHP 8.3 / ubuntu-latest on every push and pull request. The scratch-Craft smoke
-job proves the plugin installs and its CLI command loads; if migration runtime
-configuration is absent in that scratch site, the expected doctor failure is
-treated as configuration evidence rather than a successful rehearsal.
-
-Before tagging v1.0, run the transform characterization suite in release mode:
-
-```bash
-RELEASE_REHEARSAL=1 vendor/bin/phpunit tests/integration/transform/TransformCharacterizationTest.php --testdox
-```
-
-That mode fails loudly when the private CQM fixture corpus is empty. Normal
-developer runs skip the empty-corpus sentinel so contributors do not need
-private rehearsal data for unrelated changes.
+CI runs `composer validate --strict` + `composer install` + `composer test`
+on PHP 8.3 / ubuntu-latest on every push and pull request.
 
 ## License
 

@@ -347,6 +347,93 @@ final class CkeditorRewriterServiceTest extends TestCase
         self::assertSame([80 => 1000, 81 => 2000], $result);
     }
 
+    public function testLegacyUrlFallbackIsReachedWhenAMediaIdMapsToNoAsset(): void
+    {
+        // The regression that made every image on a real corpus unresolvable. The fallback used
+        // to run only when the legacy-database lookup failed outright, so finding a kuma_media id
+        // and then failing to map it to an asset returned null and stopped. It is the normal
+        // case, not the exception: the id→asset cache is warmed only from `kuma_media:` state
+        // keys, and AssetMigrationService writes `legacy_url:sha1(path)` ones.
+        $svc = $this->service();
+        $svc->seedUrlIdCache([]);
+        $svc->seedMediaUrlToKumaMediaIdCache(['/uploads/media/known.png' => 1384]);
+        $svc->seedKumaMediaIdCache([]); // the id resolves to no asset
+        $svc->assetResolver = new class {
+            // The id path genuinely fails — that is the case under test.
+            public function resolveFromLegacyId(int $kumaMediaId): int
+            {
+                return 0;
+            }
+
+            public function resolveFromLegacyUrl(string $legacyUrl): int
+            {
+                return $legacyUrl === '/uploads/media/known.png' ? 7331 : 0;
+            }
+        };
+
+        $out = $svc->rewrite('<img src="/uploads/media/known.png?token=%5BM1384%5D">', 3);
+
+        self::assertStringContainsString('src="{asset:7331@3:url}"', $out);
+        self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
+    }
+
+    public function testAMediaIdThatMapsNowhereAndHasNoUrlFallbackIsReportedNotDropped(): void
+    {
+        $svc = $this->service();
+        $svc->seedUrlIdCache([]);
+        $svc->seedMediaUrlToKumaMediaIdCache(['/uploads/media/gone.png' => 4242]);
+        $svc->seedKumaMediaIdCache([]);
+
+        $out = $svc->rewrite('<img src="/uploads/media/gone.png">', 1);
+
+        self::assertStringContainsString('/uploads/media/gone.png', $out, 'the reference is preserved, never silently dropped');
+        self::assertNotSame([], $svc->consumeUnresolvedDiagnostics());
+    }
+
+    public function testKumaClassesAreStripped(): void
+    {
+        $svc = $this->service();
+
+        $out = $svc->rewrite('<p class="kma-lead kma-x">Body</p>', 1);
+
+        self::assertStringNotContainsString('kma-', $out);
+        self::assertStringContainsString('Body', $out);
+    }
+
+    public function testEmptyParagraphsAreRemoved(): void
+    {
+        $svc = $this->service();
+
+        $out = $svc->rewrite('<p>Kept</p><p></p><p>&nbsp;</p>', 1);
+
+        self::assertStringContainsString('Kept', $out);
+        self::assertStringNotContainsString('<p></p>', $out);
+    }
+
+    public function testResetLookupCachesForgetsASeededMapping(): void
+    {
+        // The finalize pass repoints `legacyDb` per environment and resets between passes; a
+        // cache surviving that would answer one environment's question with another's data.
+        $svc = $this->service();
+        $svc->seedUrlIdCache(['/uploads/media/a.png' => 11]);
+        self::assertStringContainsString('{asset:11@1:url}', $svc->rewrite('<img src="/uploads/media/a.png">', 1));
+
+        $svc->resetLookupCaches();
+        $svc->seedUrlIdCache([]);
+
+        self::assertStringNotContainsString('{asset:11@1:url}', $svc->rewrite('<img src="/uploads/media/a.png">', 1));
+    }
+
+    public function testConsumeDiagnosticsDrainsTheBuffer(): void
+    {
+        $svc = $this->service();
+        $svc->seedUrlIdCache([]);
+        $svc->rewrite('<img src="/uploads/media/missing.png">', 1);
+
+        self::assertNotSame([], $svc->consumeUnresolvedDiagnostics());
+        self::assertSame([], $svc->consumeUnresolvedDiagnostics(), 'a second consume returns nothing');
+    }
+
     public function testRewritesInternalEntryLinksWhenMapProvided(): void
     {
         $svc = $this->service();

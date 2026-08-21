@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use Craft;
 use craft\elements\Asset;
 use craft\helpers\App;
@@ -19,13 +18,14 @@ use yii\base\Component;
  *
  * v2 reshape (FH-03 — JIT default + --preload-assets opt-in):
  *  - JIT entry point: resolveFromLegacyId(int $legacyId): int — materialises a
- *    single asset on demand. Called from AssetHandler (state-lookup miss path)
- *    and AtomicMigrationService::ingestAndResolveAssets via the `asset:N`
- *    deferred-token list.
- *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, MigrationFilters, list<int>)
+ *    single asset on demand. Called from CkeditorRewriterService::rewriteCurlyMediaTokens
+ *    for `{{kuma:media:<id>}}` tokens.
+ *  - resolveFromLegacyUrl(string $legacyUrl): int — the `_asset` JIT path,
+ *    called from PayloadEntrySaver and CkeditorRewriterService.
+ *  - --preload-assets opt-in batch: ingestReferenced(MigrationOptions, list<int>)
  *    pre-walks the in-scope referenced kuma_media ids before the entries loop.
- *    Repurposed from v1's batch-by-default; v2 makes it opt-in only (called
- *    when MigrateController parses --preload-assets).
+ *    Repurposed from v1's batch-by-default; v2 makes it opt-in only. Not
+ *    currently wired to a console flag (no caller sets it up yet).
  *
  * Each successful ingest writes a state row via MigrationStateService:
  *   source='media', sourceKey='kuma_media:{id}',
@@ -62,11 +62,34 @@ use yii\base\Component;
  *    becomes a local `$counts[...]` accumulator; `$report->warn(...)` becomes
  *    `Craft::warning(...)`. Plan 03-14 wires the VO and re-binds these markers.
  *  - Drop the v1 typed-config-error import → \RuntimeException.
- *  - ingestReferenced() signature now threads MigrationFilters per FILT-02.
  */
 class AssetMigrationService extends Component
 {
-    private const LEGACY_MEDIA_ROOT_ENV = 'LEGACY_MEDIA_PATH';
+    // Public: Task 8's DoctorController::checkLegacyMediaRoot() reuses this
+    // literal rather than duplicating it.
+    public const LEGACY_MEDIA_ROOT_ENV = 'LEGACY_MEDIA_PATH';
+
+    /**
+     * Media root for the environment currently being migrated.
+     *
+     * Each legacy site keeps its own uploads directory: on the first real corpus, the .com
+     * media resolved 1,045 of 1,046 references while .de resolved 163 of 438 and .lv none at
+     * all, because they are separate installs. A single global path can only ever be right
+     * for one of them, so the caller sets this per environment and the env var stays as the
+     * fallback for single-site migrations.
+     */
+    public ?string $legacyMediaRoot = null;
+
+    /**
+     * Additional roots tried, in order, when a reference is not under the primary one.
+     *
+     * Sites in a group share artwork: 163 of the .de references resolve only against the
+     * .com media directory, because that is where those files are actually hosted. Fetching
+     * a second copy would be inventing a file the source never had.
+     *
+     * @var list<string>
+     */
+    public array $legacyMediaFallbackRoots = [];
     private const STATE_SOURCE = 'media';
 
     /**
@@ -81,6 +104,18 @@ class AssetMigrationService extends Component
      * to place directly in the volume root (not recommended).
      */
     public string $targetSubfolder = 'migrated';
+
+    /**
+     * When true, catches `yii\web\HttpException` thrown from
+     * `Asset::EVENT_BEFORE_SAVE` listeners whose message matches the
+     * starter-kit's "The file is too large" copy, downgrades to a WARN, and
+     * skips that asset. Other validation throws still surface.
+     *
+     * Wired from `Settings::$skipAssetSizeValidation` via Plugin::init.
+     * Surfaced 2026-05-09 — deklerk's >10MB PDF rejected by the starter-kit's
+     * per-extension size cap (modules/lameco/Module.php).
+     */
+    public bool $skipAssetSizeValidation = false;
 
     /** DI slot: LegacyDbService (read-only connection to Kunstmaan MySQL). */
     public ?LegacyDbService $legacyDb = null;
@@ -117,9 +152,8 @@ class AssetMigrationService extends Component
      * row is missing, the file cannot be located, or the asset is a remote
      * video (state row written but no Craft Asset element exists).
      *
-     * Called from AssetHandler (state-lookup miss path) and from
-     * AtomicMigrationService::ingestAndResolveAssets via the `asset:N`
-     * deferred-token list.
+     * Called from CkeditorRewriterService::rewriteCurlyMediaTokens for
+     * `{{kuma:media:<id>}}` tokens.
      *
      * Idempotent: if a state row already exists for this kuma_media id, the
      * stored Craft asset id is returned without re-ingesting (unless force
@@ -152,6 +186,11 @@ class AssetMigrationService extends Component
      * editor content as the source of truth while keeping the state key distinct
      * from real `kuma_media:{id}` rows.
      */
+    private function mediaRoot(): string
+    {
+        return $this->legacyMediaRoot ?? (string) (App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '');
+    }
+
     public function resolveFromLegacyUrl(string $legacyUrl): int
     {
         $path = parse_url($legacyUrl, PHP_URL_PATH);
@@ -169,8 +208,20 @@ class AssetMigrationService extends Component
             return (int) $existing;
         }
 
-        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '';
-        $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
+        $sourcePath = null;
+
+        foreach ([$this->mediaRoot(), ...$this->legacyMediaFallbackRoots] as $rootDir) {
+            if ($rootDir === '') {
+                continue;
+            }
+
+            $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
+
+            if ($sourcePath !== null) {
+                break;
+            }
+        }
+
         if ($sourcePath === null) {
             return 0;
         }
@@ -211,11 +262,11 @@ class AssetMigrationService extends Component
      * @param list<int> $referencedIds in-scope kuma_media ids collected from
      *                                 transformed/extracted payload references
      */
-    public function ingestReferenced(MigrationOptions $opts, MigrationFilters $filters, array $referencedIds = []): void
+    public function ingestReferenced(MigrationOptions $opts, array $referencedIds = []): void
     {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
-        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV);
+        $rootDir = $this->mediaRoot() ?: null;
         if (!is_string($rootDir) || $rootDir === '' || !is_dir($rootDir)) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
@@ -231,7 +282,6 @@ class AssetMigrationService extends Component
         // full-table `SELECT id FROM kuma_media` prewalk. Empty referenced set
         // means there is nothing to preload; JIT resolution still handles any
         // asset token encountered during load.
-        unset($filters);
         $ids = self::normalizeReferencedIds($referencedIds);
         $total = count($ids);
 
@@ -377,7 +427,7 @@ class AssetMigrationService extends Component
         if (!$row) {
             return null;
         }
-        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '';
+        $rootDir = $this->mediaRoot();
         return $this->ingestRow($row, $rootDir, $opts, $counts);
     }
 
@@ -603,11 +653,33 @@ class AssetMigrationService extends Component
         $asset->setScenario(Asset::SCENARIO_CREATE);
 
         $tSaveStart = microtime(true);
-        if (!Craft::$app->elements->saveElement($asset)) {
+        try {
+            if (!Craft::$app->elements->saveElement($asset)) {
+                @unlink($tempPath);
+                throw new RuntimeException(
+                    'Asset save failed: ' . json_encode($asset->getErrors()),
+                );
+            }
+        } catch (\yii\web\HttpException $e) {
+            // Bypass the starter-kit's per-extension size cap when the
+            // operator opted in (Settings::$skipAssetSizeValidation). The
+            // starter-kit's listener throws HttpException(400, "The file is
+            // too large for {$ext} files. Maximum allowed size: …MB.").
+            // Treat that specific message as a skip; bubble everything else.
+            if ($this->skipAssetSizeValidation
+                && $e->statusCode === 400
+                && str_starts_with((string) $e->getMessage(), 'The file is too large')
+            ) {
+                @unlink($tempPath);
+                Craft::warning(
+                    "kuma_media:{$mediaId} skipped — size cap bypassed: " . $e->getMessage(),
+                    __METHOD__,
+                );
+                $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
+                return null;
+            }
             @unlink($tempPath);
-            throw new RuntimeException(
-                'Asset save failed: ' . json_encode($asset->getErrors()),
-            );
+            throw $e;
         }
         $tSave = round((microtime(true) - $tSaveStart) * 1000);
 
@@ -691,7 +763,7 @@ class AssetMigrationService extends Component
     {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
-        $rootDir = App::env(self::LEGACY_MEDIA_ROOT_ENV);
+        $rootDir = $this->mediaRoot() ?: null;
         if (!is_string($rootDir) || $rootDir === '' || !is_dir($rootDir)) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
@@ -826,35 +898,4 @@ class AssetMigrationService extends Component
         return [];
     }
 
-    /**
-     * Deletes every Craft Asset whose state row has source='media' AND
-     * targetType='asset'. Video-type state rows are just unlinked from
-     * state — there's no element to remove.
-     *
-     * Used by kunstmaan-migrator/migrate/truncate so re-runs start from a
-     * clean Craft DB but leave the legacy MySQL untouched.
-     */
-    public function truncate(): int
-    {
-        $deleted = 0;
-        foreach ($this->migrationState->all(self::STATE_SOURCE) as $stateRow) {
-            $targetId = $stateRow['targetId'] ?? null;
-            $targetType = $stateRow['targetType'] ?? null;
-
-            if ($targetType === 'asset' && $targetId) {
-                $asset = Asset::find()->id((int) $targetId)->one();
-                if ($asset) {
-                    Craft::$app->elements->deleteElement($asset, hardDelete: true);
-                    $deleted++;
-                }
-            }
-
-            $this->migrationState->forget(
-                self::STATE_SOURCE,
-                (string) $stateRow['sourceKey'],
-                $stateRow['siteId'] !== null ? (int) $stateRow['siteId'] : null,
-            );
-        }
-        return $deleted;
-    }
 }
