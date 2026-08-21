@@ -4,11 +4,10 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\finalize;
 
-use lameco\kunstmaanmigrator\load\MigrationStateService;
+use lameco\kunstmaanmigrator\load\MigrationStateStream;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use Craft;
 use yii\base\Component;
-use yii\db\Query;
 
 /**
  * Rewrites legacy Kunstmaan CKEditor body HTML into Craft-native form.
@@ -74,10 +73,12 @@ class CkeditorRewriterService extends Component
     public const KUMA_MEDIA_TOKEN_REGEX = '~\{\{kuma:media:(\d+)\}\}~';
 
     /**
-     * MigrationStateService — injected by the module. Null-safe: when absent
-     * (e.g., tests without a container), cache-warming methods short-circuit.
+     * State stream — injected by the module. Typed to the streaming interface,
+     * not to MigrationStateService, so the cache-warming paths below can be
+     * driven by a fake and are reachable without booting Craft. Null-safe:
+     * when nothing is wired, warming yields an empty cache.
      */
-    public ?MigrationStateService $migrationState = null;
+    public ?MigrationStateStream $migrationState = null;
 
     /**
      * LegacyDbService — injected by the module. Null-safe: warmNtCache()
@@ -470,7 +471,7 @@ class CkeditorRewriterService extends Component
 
     private function warmKumaMediaCacheFromState(): void
     {
-        if (!class_exists(Craft::class, false) || $this->migrationState === null) {
+        if ($this->migrationState === null) {
             $this->kumaMediaCacheWarm = true;
             return;
         }
@@ -491,26 +492,24 @@ class CkeditorRewriterService extends Component
         $this->kumaMediaCacheWarm = true;
     }
 
+    /**
+     * Warm the `[NT<id>]` → Craft entry-id cache.
+     *
+     * Three inputs, and the mapping itself lives in the pure static below so
+     * it can be tested without a database: the legacy ref→node lookup and the
+     * node-translation rows both come from the legacy DB, the state rows come
+     * through MigrationStateReader.
+     */
     private function warmNtCache(): void
     {
-        if (!class_exists(Craft::class, false) || $this->migrationState === null) {
+        if ($this->migrationState === null || $this->legacyDb === null) {
             $this->ntCacheWarm = true;
             return;
         }
-        // Build kuma_nodes.id → targetEntryId map by walking state rows.
-        //
-        // state.sourceKey = kuma_node_versions.ref_id (entity-table PK), which is
-        // a DIFFERENT sequence from kuma_nodes.id. The NT join at the bottom of
-        // this method uses kuma_node_translations.node_id = kuma_nodes.id, so we
-        // need to bridge the two via a legacy-DB lookup table:
-        //   ref_entity_name + ref_id  →  kuma_nodes.id
-        //
-        // For non-node-backed sources (singletons): meta carries kumaNodeId
-        // as before.
-        $nodeIdToTargetId = [];
 
-        // Pre-load legacy ref_id+class → kuma_nodes.id map (one query).
-        $refToNodeMap = []; // ['FQCN'][$refId] = $nodeId
+        // Bridge the two legacy id sequences: state.sourceKey is
+        // kuma_node_versions.ref_id, while the NT join needs kuma_nodes.id.
+        $refNodeRows = [];
         try {
             $refNodeRows = $this->legacyDb->queryAll(
                 'SELECT DISTINCT t.node_id, v.ref_id, v.ref_entity_name'
@@ -518,82 +517,21 @@ class CkeditorRewriterService extends Component
                 . ' JOIN kuma_node_versions v ON v.id = t.public_node_version_id'
                 . ' WHERE t.public_node_version_id IS NOT NULL',
             );
-            foreach ($refNodeRows as $r) {
-                $fqcn  = (string) ($r['ref_entity_name'] ?? '');
-                $refId = (int) ($r['ref_id'] ?? 0);
-                $nid   = (int) ($r['node_id'] ?? 0);
-                if ($fqcn !== '' && $refId > 0 && $nid > 0) {
-                    $refToNodeMap[$fqcn][$refId] = $nid;
-                }
-            }
         } catch (\Throwable $e) {
-            Craft::warning(
-                'CkeditorRewriterService: could not load ref->node map: ' . $e->getMessage(),
-                __METHOD__,
-            );
+            $this->warn('could not load ref->node map: ' . $e->getMessage());
         }
 
-        $sources = array_column(
-            (new Query())
-                ->select('source')
-                ->distinct()
-                ->from('{{%kunstmaanmigrator_state}}')
-                ->where(['targetType' => 'entry'])
-                ->all(),
-            'source',
-        );
-
-        foreach ($sources as $source) {
-            // Convert state source slug (underscores) back to FQCN (backslashes)
-            // so it matches ref_entity_name in kuma_node_versions.
-            $fqcn = str_replace('_', '\\', $source);
-
-            foreach ($this->migrationState->all($source) as $row) {
-                if (($row['targetType'] ?? null) !== 'entry' || empty($row['targetId'])) {
-                    continue;
-                }
-                $targetId  = (int) $row['targetId'];
-                $sourceKey = (int) ($row['sourceKey'] ?? 0);
-
-                // Primary path: resolve kuma_nodes.id via the ref_id+class lookup.
-                $kumaNodeId = ($sourceKey > 0) ? ($refToNodeMap[$fqcn][$sourceKey] ?? 0) : 0;
-                if ($kumaNodeId > 0) {
-                    $nodeIdToTargetId[$kumaNodeId] = $targetId;
-                } elseif ($sourceKey > 0) {
-                    // Fallback: for sources not in refToNodeMap (e.g. singletons
-                    // whose sourceKey might already be a kuma_nodes.id), store as-is.
-                    $nodeIdToTargetId[$sourceKey] = $targetId;
-                }
-
-                // Secondary fallback: meta.kumaNodeId (singleton/team legacy case).
-                $meta = $row['meta'] ?? null;
-                if (is_string($meta)) {
-                    $meta = json_decode($meta, true);
-                }
-                if (is_array($meta)) {
-                    $metaNodeId = (int) ($meta['kumaNodeId'] ?? 0);
-                    if ($metaNodeId > 0) {
-                        $nodeIdToTargetId[$metaNodeId] = $targetId;
-                    }
-                }
-            }
-        }
-
-        // Join NT rows from legacy DB to get nt.id → node_id
         try {
             $ntRows = $this->legacyDb->queryAll(
                 'SELECT id AS nt_id, node_id FROM kuma_node_translations WHERE node_id IS NOT NULL',
             );
             $this->ntToEntryCache += self::buildNtToEntryCacheFromRows(
                 $this->stateEntryRows(),
-                $refNodeRows ?? [],
+                $refNodeRows,
                 $ntRows,
             );
         } catch (\Throwable $e) {
-            Craft::warning(
-                'CkeditorRewriterService: could not warm NT cache: ' . $e->getMessage(),
-                __METHOD__,
-            );
+            $this->warn('could not warm NT cache: ' . $e->getMessage());
         }
 
         $this->ntCacheWarm = true;
@@ -663,27 +601,32 @@ class CkeditorRewriterService extends Component
         return $out;
     }
 
-    /** @return list<array<string, mixed>> */
+    /**
+     * Every entry-producing state row.
+     *
+     * @return list<array<string, mixed>>
+     */
     private function stateEntryRows(): array
     {
-        $rows = [];
-        $sources = array_column(
-            (new Query())
-                ->select('source')
-                ->distinct()
-                ->from('{{%kunstmaanmigrator_state}}')
-                ->where(['targetType' => 'entry'])
-                ->all(),
-            'source',
-        );
-        foreach ($sources as $source) {
-            foreach ($this->migrationState->all((string) $source) as $row) {
-                if (is_array($row)) {
-                    $rows[] = ['source' => (string) $source] + $row;
-                }
-            }
+        if ($this->migrationState === null) {
+            return [];
         }
-        return $rows;
+
+        return iterator_to_array($this->migrationState->entryRows(), false);
+    }
+
+    /**
+     * Log a warning when Craft is there to log it.
+     *
+     * Warming runs under PHPUnit as well as under a console command, and the
+     * logger is the only part of these paths that genuinely needs Craft — so
+     * the check belongs here rather than in front of the work.
+     */
+    private function warn(string $message): void
+    {
+        if (class_exists(Craft::class, false)) {
+            Craft::warning('CkeditorRewriterService: ' . $message, __METHOD__);
+        }
     }
 
     private function recordUnresolvedDiagnostic(string $family, int $legacyId, int $siteId, string $token, string $source, string $reason): void
@@ -728,10 +671,7 @@ class CkeditorRewriterService extends Component
                 [':id' => $ntId],
             );
         } catch (\Throwable $e) {
-            Craft::warning(
-                'CkeditorRewriterService: could not classify NT scope: ' . $e->getMessage(),
-                __METHOD__,
-            );
+            $this->warn('could not classify NT scope: ' . $e->getMessage());
             return null;
         }
 
@@ -763,10 +703,7 @@ class CkeditorRewriterService extends Component
                 [':id' => $mediaId],
             );
         } catch (\Throwable $e) {
-            Craft::warning(
-                'CkeditorRewriterService: could not classify kuma_media scope: ' . $e->getMessage(),
-                __METHOD__,
-            );
+            $this->warn('could not classify kuma_media scope: ' . $e->getMessage());
             return null;
         }
 
@@ -1025,9 +962,7 @@ class CkeditorRewriterService extends Component
 
     private function warmUrlCacheFromState(): void
     {
-        // Defensive: if Craft isn't bootstrapped (unit tests that forgot to
-        // seed), skip the scan rather than fatal.
-        if (!class_exists(Craft::class, false) || $this->migrationState === null) {
+        if ($this->migrationState === null) {
             $this->urlCacheWarm = true;
             return;
         }
