@@ -8,6 +8,7 @@ use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
+use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
 use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
@@ -64,7 +65,7 @@ class Plugin extends BasePlugin
 
     // No CP settings page in the v2 loader core — settings come from env vars
     // and config/kunstmaan-migrator.php only (see CLAUDE.md ground rules).
-    public bool $hasCpSettings = false;
+    public bool $hasCpSettings = true;
 
     public static function config(): array
     {
@@ -119,9 +120,9 @@ class Plugin extends BasePlugin
 
         // D-03: console controllerNamespace points at the flat src/console/ directory.
         // No CP controllers/utility/settings surface remains in the v2 loader core.
-        if (Craft::$app->request->getIsConsoleRequest()) {
-            $this->controllerNamespace = 'lameco\\kunstmaanmigrator\\console';
-        }
+        $this->controllerNamespace = Craft::$app->request->getIsConsoleRequest()
+            ? 'lameco\\kunstmaanmigrator\\console'
+            : 'lameco\\kunstmaanmigrator\\controllers';
 
         // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
         // ?object — AssetMigrationService satisfies the duck-typed surface.
@@ -225,5 +226,31 @@ class Plugin extends BasePlugin
     protected function createSettingsModel(): ?Model
     {
         return new Settings();
+    }
+
+    /**
+     * The settings screen.
+     *
+     * The adapter table is rendered from AdapterRegistry rather than from four
+     * hard-coded rows, so a project that registers its own adapter through
+     * EVENT_REGISTER_ADAPTERS gets a row without this template changing.
+     */
+    protected function settingsHtml(): ?string
+    {
+        $registry = new AdapterRegistry();
+        $plugins = new CraftPluginRegistry();
+        $detected = [];
+
+        foreach ($registry->all() as $adapter) {
+            $detected[$adapter->handle] = $adapter->pluginHandle === null
+                ? null
+                : $plugins->versionOf($adapter->pluginHandle);
+        }
+
+        return Craft::$app->getView()->renderTemplate('kunstmaan-migrator/settings', [
+            'settings' => $this->getSettings(),
+            'adapters' => $registry->all(),
+            'detected' => $detected,
+        ]);
     }
 }

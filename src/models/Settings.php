@@ -216,12 +216,39 @@ class Settings extends Model
         return Plugin::getInstance()->kunstmaanEnvReader;
     }
 
+    /**
+     * A legacy-database password must name an environment variable, never carry one.
+     *
+     * Craft writes plugin settings into project config, which is committed and
+     * deployed. A password typed into the settings screen would therefore end
+     * up in git and on production — for a tool that only ever runs locally,
+     * against a database only this machine can reach.
+     *
+     * `EnvAttributeParserBehavior` already resolves `$VAR` for every read, so
+     * storing the name costs nothing.
+     */
+    public function validateIsEnvReference(string $attribute): void
+    {
+        $value = $this->$attribute;
+
+        if (!is_string($value) || $value === '' || str_starts_with($value, '$')) {
+            return;
+        }
+
+        $this->addError(
+            $attribute,
+            'Use an environment variable name such as $CRAFT_LEGACY_DB_PASSWORD. '
+            . 'A value here would be written into project config, committed, and deployed.',
+        );
+    }
+
     public function rules(): array
     {
         return [
             [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
+            [['legacyDbPassword'], 'validateIsEnvReference'],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled'], 'boolean'],
             // Phase 4 / D-57 — adapter source-table overrides.
