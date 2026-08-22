@@ -52,14 +52,53 @@ final class AdapterRegistry extends Component
     private static function builtIn(): array
     {
         return [
-            new Adapter('seo', 'SEO', 'seoEnabled', 'seomatic', static fn () => Plugin::getInstance()->seoMigrationService),
+            new Adapter(
+                'seo',
+                'SEO',
+                'seoEnabled',
+                'seomatic',
+                static fn () => Plugin::getInstance()->seoMigrationService,
+                [
+                    new AdapterSetting(
+                        'fieldHandle',
+                        'SEOmatic field handle',
+                        AdapterSetting::TYPE_STRING,
+                        'seo',
+                        'The SEOmatic field on the entry types being migrated into. A project that '
+                        . 'named it something else writes SEO into nothing, silently.',
+                    ),
+                    new AdapterSetting(
+                        'sourceTable',
+                        'Legacy SEO table',
+                        AdapterSetting::TYPE_STRING,
+                        'kuma_seo',
+                        'Kunstmaan flavours differ here; the default is the canonical schema.',
+                    ),
+                ],
+            ),
 
             // This carried no factory and a paragraph explaining why: the redirect
             // records come from the mapping rather than a table, so the pass needed
             // the mapping and an open connection, and `migrateAll(options, sites)`
             // could hold neither. EnvironmentContext holds both, so the documented
             // permanent exception is now an ordinary adapter.
-            new Adapter('redirects', 'Redirects', 'retourEnabled', 'retour', static fn () => Plugin::getInstance()->redirectMigrationService),
+            new Adapter(
+                'redirects',
+                'Redirects',
+                'retourEnabled',
+                'retour',
+                static fn () => Plugin::getInstance()->redirectMigrationService,
+                [
+                    new AdapterSetting(
+                        'sourceTable',
+                        'Legacy redirects table',
+                        AdapterSetting::TYPE_STRING,
+                        'kuma_redirects',
+                        'Only read by the legacy-table pass. The `redirects:` lane compiles from the '
+                        . 'mapping and does not use it.',
+                    ),
+                ],
+            ),
 
             new Adapter(
                 'navigation',

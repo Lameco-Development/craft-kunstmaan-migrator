@@ -51,6 +51,47 @@
 
 <hr>
 
+<h2>{{ "Assets"|t('kunstmaan-migrator') }}</h2>
+
+<p class="light">
+  {{ "Where migrated files land. These are read by the entry pass, not by an adapter, so they apply to every run."|t('kunstmaan-migrator') }}
+</p>
+
+{# Rendered from Settings::coreSettings(), for the same reason the adapter
+   settings below are rendered from what each adapter declares: a list typed
+   into a template is a list that gets forgotten. `targetVolume` spent this
+   plugin's life invisible while defaulting to a volume half the projects
+   using it do not have. #}
+{% for setting in coreSettings %}
+  {% set pinned = setting.handle in overridden %}
+  {% set warning = pinned
+    ? "Set in config/kunstmaan-migrator.php, which wins over anything saved here."|t('kunstmaan-migrator')
+    : null %}
+
+  {% if setting.type == 'boolean' %}
+    {{ forms.lightswitchField({
+      label: setting.label,
+      instructions: setting.instructions,
+      name: setting.handle,
+      on: settings.core(setting),
+      disabled: pinned,
+      warning: warning,
+    }) }}
+  {% else %}
+    {{ forms.textField({
+      label: setting.label,
+      instructions: setting.instructions,
+      name: setting.handle,
+      value: settings.core(setting),
+      placeholder: setting.default,
+      disabled: pinned,
+      warning: warning,
+    }) }}
+  {% endif %}
+{% endfor %}
+
+<hr>
+
 <h2>{{ "Adapters"|t('kunstmaan-migrator') }}</h2>
 
 <p class="light">
@@ -104,13 +145,14 @@
    could be neither configured nor shown — and meant the single most
    project-specific value in the plugin, the nav the navigation pass writes
    into, was editable only in a PHP config file. #}
-{% for adapter in adapters if adapter.settings %}
+{% for adapter in adapters|filter(adapter => adapter.settings is not empty) %}
   <h3>{{ adapter.label }}</h3>
 
   {% set values = settings.forAdapter(adapter) %}
 
   {% for setting in adapter.settings %}
     {% set name = 'adapters[' ~ adapter.handle ~ '][' ~ setting.handle ~ ']' %}
+
 
     {% if setting.type == 'boolean' %}
       {{ forms.lightswitchField({
@@ -127,6 +169,7 @@
         value: setting.type == 'list'
           ? (values[setting.handle] ?? [])|join(', ')
           : values[setting.handle],
+        placeholder: setting.type == 'list' ? (setting.default ?? [])|join(', ') : setting.default,
       }) }}
     {% endif %}
   {% endfor %}
@@ -137,6 +180,10 @@
 <h2>{{ "Environments"|t('kunstmaan-migrator') }}</h2>
 
 {{ forms.autosuggestField({
+  disabled: 'mappingPath' in overridden,
+  warning: 'mappingPath' in overridden
+    ? "Set in config/kunstmaan-migrator.php, which wins over anything saved here."|t('kunstmaan-migrator')
+    : null,
   label: "Mapping file"|t('kunstmaan-migrator'),
   instructions: "The mapping owns which databases exist, where each one's uploads live, and which legacy locale writes to which Craft site. It is version-controlled next to the field mappings it travels with."|t('kunstmaan-migrator'),
   id: 'mappingPath',

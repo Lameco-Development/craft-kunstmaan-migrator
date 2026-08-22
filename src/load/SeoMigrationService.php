@@ -345,7 +345,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
             // Verify the entry has a SEOmatic field at handle 'seo' before
             // writing — defensive check for entry types without SEO.
             try {
-                $field = $entry->getFieldLayout()?->getFieldByHandle(self::SEO_FIELD_HANDLE);
+                $field = $entry->getFieldLayout()?->getFieldByHandle($this->seoFieldHandle());
             } catch (\Throwable) {
                 $field = null;
             }
@@ -371,7 +371,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
                 continue;
             }
 
-            $entry->setFieldValue(self::SEO_FIELD_HANDLE, $payload);
+            $entry->setFieldValue($this->seoFieldHandle(), $payload);
 
             // SEOmatic's SeoSettings field normalizeValue pulls `metaSiteVars`
             // defaults (siteName, identity, creator, referrer, …) from
@@ -446,7 +446,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
     private function fetchKumaSeoRow(int $legacyEntityId, string $legacyClass): ?array
     {
         return $this->legacyDb->queryOne(
-            'SELECT * FROM ' . self::SEO_TABLE
+            'SELECT * FROM ' . $this->seoTable()
             . ' WHERE ref_id = :rid AND ref_entity_name = :class'
             . ' ORDER BY id DESC LIMIT 1',
             [':rid' => $legacyEntityId, ':class' => $legacyClass],
@@ -516,4 +516,28 @@ class SeoMigrationService extends Component implements MigrationAdapter
         return [$derivedClass, (int) $sourceKey];
     }
 
+
+    /**
+     * The SEOmatic field these entries carry, and the legacy table the data
+     * comes from.
+     *
+     * Both were constants. `seo` is the conventional handle and `kuma_seo` the
+     * canonical table, but neither is guaranteed — a project that named its
+     * field differently wrote SEO into nothing and the run said it had written
+     * thousands of rows. The constants remain as the defaults the adapter
+     * declares.
+     */
+    private function seoFieldHandle(): string
+    {
+        $configured = (string) ($this->config()['fieldHandle'] ?? '');
+
+        return $configured !== '' ? $configured : self::SEO_FIELD_HANDLE;
+    }
+
+    private function seoTable(): string
+    {
+        $configured = (string) ($this->config()['sourceTable'] ?? '');
+
+        return $configured !== '' ? $configured : self::SEO_TABLE;
+    }
 }

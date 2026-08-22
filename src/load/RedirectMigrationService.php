@@ -287,7 +287,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
     private function importDirectRedirects(SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
     {
         $rows = $this->legacyDb->queryAll(
-            'SELECT id, origin, target, permanent FROM ' . self::REDIRECTS_TABLE . ' ORDER BY id',
+            'SELECT id, origin, target, permanent FROM ' . $this->redirectsTable() . ' ORDER BY id',
         );
 
         foreach ($rows as $row) {
@@ -832,4 +832,15 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         return '/' . ltrim($trimmed, '/');
     }
 
+
+    /**
+     * The legacy redirects table, for the pass that reads one. Kunstmaan
+     * flavours differ; the constant is the canonical default.
+     */
+    private function redirectsTable(): string
+    {
+        $configured = (string) ($this->config()['sourceTable'] ?? '');
+
+        return $configured !== '' ? $configured : self::REDIRECTS_TABLE;
+    }
 }
