@@ -341,6 +341,46 @@ final class PayloadEntrySaver
             return ['present' => true, 'value' => $resolvedId];
         }
 
+        // A Craft Link field pointing at an entry stores a reference tag, not an id — the same
+        // `{entry:<id>@<siteId>:url}` form the control panel writes. The compiler cannot know the
+        // Craft id, so it hands over the source uid and the tag is assembled here.
+        if (array_key_exists('_linkRef', $node) && is_string($node['_linkRef'])) {
+            $resolvedId = $this->refResolver->resolve($node['_linkRef']);
+
+            if ($resolvedId === null) {
+                // A link is *set* at its own slot, not appended to a container, so the whole
+                // path is recorded — including the slot itself — and `kind` tells the fixup
+                // pass to write a link there rather than push an id into a list.
+                $deferredRefs[] = [
+                    'field' => $fieldHandle,
+                    'site' => $siteHandle,
+                    'ref' => $node['_linkRef'],
+                    'path' => $path,
+                    'kind' => 'link',
+                    'link' => array_intersect_key($node, array_flip(['label', 'target'])),
+                ];
+
+                return ['present' => false, 'value' => null];
+            }
+
+            // `type` is not optional here. Craft only sniffs the link type when the value is a
+            // bare string; hand it a map — which is the only way to carry a label — and it
+            // defaults to `url`, then fails the reference tag as an invalid URL and takes the
+            // whole entry with it.
+            $link = [
+                'type' => 'entry',
+                'value' => sprintf('{entry:%d@%d:url}', $resolvedId, $siteId),
+            ];
+
+            foreach (['label', 'target'] as $key) {
+                if (isset($node[$key]) && is_string($node[$key]) && $node[$key] !== '') {
+                    $link[$key] = $node[$key];
+                }
+            }
+
+            return ['present' => true, 'value' => $link];
+        }
+
         if (array_key_exists('_asset', $node) && is_string($node['_asset'])) {
             $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset']);
             if ($resolvedId <= 0) {

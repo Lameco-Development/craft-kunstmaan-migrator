@@ -87,9 +87,21 @@ final class FixupService
                 try {
                     $resolvedId = $this->refResolver->resolve($ref);
 
-                    $ok = $resolvedId !== null
-                        && $targetId !== null
-                        && $this->applyPatch($targetId, $site, $path, $resolvedId, $sourceUid, $seenContainers);
+                    if (($pending['kind'] ?? null) === 'link') {
+                        $ok = $resolvedId !== null
+                            && $targetId !== null
+                            && $this->patchLinkField(
+                                $targetId,
+                                $site,
+                                $path,
+                                $resolvedId,
+                                is_array($pending['link'] ?? null) ? $pending['link'] : [],
+                            );
+                    } else {
+                        $ok = $resolvedId !== null
+                            && $targetId !== null
+                            && $this->applyPatch($targetId, $site, $path, $resolvedId, $sourceUid, $seenContainers);
+                    }
                 } catch (Throwable $e) {
                     // A stale site handle, a DB deadlock, or a save failure
                     // for THIS ref must not abort the whole pass — every
@@ -153,6 +165,84 @@ final class FixupService
         }
 
         return $this->patchNestedField($targetId, $site, $path, $resolvedId);
+    }
+
+    /**
+     * Write a resolved entry link at the slot the payload named.
+     *
+     * A relation appends an id to a list; a Link field holds one value at its own key, so the
+     * path addresses the slot itself and the value replaces whatever is there.
+     *
+     * @param list<int|string> $path non-empty; $path[0] is the top-level field handle
+     * @param array<string, mixed> $extra `label` / `target` the payload carried
+     */
+    private function patchLinkField(int $targetId, string $site, array $path, int $resolvedId, array $extra): bool
+    {
+        if ($path === []) {
+            return false;
+        }
+
+        $siteId = Craft::$app->getSites()->getSiteByHandle($site)?->id;
+
+        if ($siteId === null) {
+            return false;
+        }
+
+        $link = ['type' => 'entry', 'value' => sprintf('{entry:%d@%d:url}', $resolvedId, $siteId)];
+
+        foreach (['label', 'target'] as $key) {
+            if (isset($extra[$key]) && is_string($extra[$key]) && $extra[$key] !== '') {
+                $link[$key] = $extra[$key];
+            }
+        }
+
+        $topField = (string) $path[0];
+
+        // A Link field at the top level of the entry is the whole value, not a path into one.
+        if (count($path) === 1) {
+            return $this->entryService->resaveEntryFieldForSite($targetId, $site, $topField, $link);
+        }
+
+        $current = $this->entryService->readEntryFieldValueForSite($targetId, $site, $topField) ?? [];
+
+        try {
+            $mutated = self::setAtPath([$topField => $current], $path, $link);
+        } catch (RuntimeException $e) {
+            Craft::warning('FixupService: ' . $e->getMessage(), 'kunstmaan-migrator');
+
+            return false;
+        }
+
+        return $this->entryService->resaveEntryFieldForSite($targetId, $site, $topField, (array) ($mutated[$topField] ?? []));
+    }
+
+    /**
+     * As `appendAtPath`, but the last segment names the slot to overwrite rather than a list to
+     * push onto.
+     *
+     * @param array<array-key, mixed> $node
+     * @param list<int|string> $path non-empty
+     * @param array<string, mixed> $value
+     * @return array<array-key, mixed>
+     */
+    private static function setAtPath(array $node, array $path, array $value): array
+    {
+        $segment = $path[0];
+        $key = self::realKeyForSegment($node, $segment);
+
+        if (count($path) === 1) {
+            $node[$key] = $value;
+
+            return $node;
+        }
+
+        if (!isset($node[$key]) || !is_array($node[$key])) {
+            throw new RuntimeException(sprintf('path segment "%s" not found or not an array.', (string) $segment));
+        }
+
+        $node[$key] = self::setAtPath($node[$key], array_slice($path, 1), $value);
+
+        return $node;
     }
 
     /**

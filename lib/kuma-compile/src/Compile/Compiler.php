@@ -317,7 +317,7 @@ final class Compiler
                     $this->sharedTitles[$uid] = $title;
                 }
 
-                $fields = $builder->fieldsFrom($spec['map'] ?? [], $row, (string) $name);
+                $fields = $builder->fieldsFrom($spec['map'] ?? [], $row, (string) $name, (string) $spec['entryType']);
                 $site = ['enabled' => true, 'title' => $title];
 
                 if ($fields !== []) {
@@ -398,7 +398,7 @@ final class Compiler
             : null;
 
         $pageFields = $pageRow !== null
-            ? $builder->fieldsFrom($pageSpec['map'] ?? [], $pageRow, $translation['entity'])
+            ? $builder->fieldsFrom($pageSpec['map'] ?? [], $pageRow, $translation['entity'], $entryType)
             : [];
 
         // A page entity can own collections too. Partner branches, contact persons and awards

@@ -172,7 +172,7 @@ final class PayloadValidator
     }
 
     /**
-     * Recursively collect every `_ref` value nested anywhere inside a
+     * Recursively collect every `_ref` and `_linkRef` value nested anywhere inside a
      * fieldValues hash (matrix blocks, relation lists, ...). Non-string
      * values are collected too (not skipped) so the caller can flag them
      * as BAD_REF instead of letting them silently escape validation.
@@ -184,7 +184,9 @@ final class PayloadValidator
     {
         $refs = [];
         foreach ($value as $key => $item) {
-            if ($key === '_ref') {
+            // `_linkRef` carries the same grammar and is resolved the same way, so it is held
+            // to the same check rather than escaping validation.
+            if ($key === '_ref' || $key === '_linkRef') {
                 $refs[] = $item;
                 continue;
             }

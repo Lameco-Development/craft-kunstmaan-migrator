@@ -873,12 +873,16 @@ class EntryMigrationService extends Component
      *    on re-runs; a clean re-run currently requires resetting the
      *    affected Craft elements + state rows by hand.
      *
-     * 2. Lift `title` (and `heading`, which was a typo in CasesMigration's
-     *    newsGridBlock payload) from `fields` to peer-level. Matrix block
-     *    entry types with `hasTitleField: true` expect `title` as a native
-     *    entry property — it must be a peer of `type`/`enabled`/`fields`,
-     *    not nested inside `fields`. `heading` on newsGridBlock is not a
-     *    real custom field either; it was intended for the native title.
+     * 2. Lift `title` from `fields` to peer-level. Matrix block entry types with
+     *    `hasTitleField: true` expect `title` as a native entry property — it must
+     *    be a peer of `type`/`enabled`/`fields`, not nested inside `fields`.
+     *
+     *    `heading` is lifted the same way, but only on entry types that do not
+     *    declare a `heading` field. It was added for CasesMigration's newsGridBlock
+     *    payload, where `heading` was a typo for the native title. On a target whose
+     *    blocks do have a `heading` field, lifting unconditionally moved editorial
+     *    copy out of that field and onto a native title those types do not have, so
+     *    Craft dropped it — measured at 4,196 lost headings on the Enreach corpus.
      *
      * @param array<string, mixed> $fieldValues
      * @return array<string, mixed>
@@ -914,14 +918,22 @@ class EntryMigrationService extends Component
 
                 // Lift native-property keys from fields → peer.
                 // Prefer existing peer-level value if the caller already set one.
+                $blockType = is_string($block['type'] ?? null) ? $block['type'] : null;
                 foreach (['title', 'heading'] as $nativeKey) {
-                    if (array_key_exists($nativeKey, $block['fields'])) {
-                        $lifted = $block['fields'][$nativeKey];
-                        unset($block['fields'][$nativeKey]);
-                        $peerKey = $nativeKey === 'heading' ? 'title' : $nativeKey;
-                        if (!array_key_exists($peerKey, $block)) {
-                            $block[$peerKey] = $lifted;
-                        }
+                    if (!array_key_exists($nativeKey, $block['fields'])) {
+                        continue;
+                    }
+                    // `heading` is a real custom field on most block types. Lifting it there
+                    // would move editorial copy onto a native title the entry type usually
+                    // does not even have, and Craft would drop it.
+                    if ($nativeKey === 'heading' && $this->entryTypeHasField($blockType, 'heading')) {
+                        continue;
+                    }
+                    $lifted = $block['fields'][$nativeKey];
+                    unset($block['fields'][$nativeKey]);
+                    $peerKey = $nativeKey === 'heading' ? 'title' : $nativeKey;
+                    if (!array_key_exists($peerKey, $block)) {
+                        $block[$peerKey] = $lifted;
                     }
                 }
 
@@ -984,6 +996,62 @@ class EntryMigrationService extends Component
     private function hasNonEmptyString(mixed $value): bool
     {
         return is_string($value) && trim($value) !== '';
+    }
+
+    /**
+     * `entryTypeHandle:fieldHandle` pairs the project config declares, or null until read.
+     *
+     * @var array<string, bool>|null
+     */
+    private ?array $entryTypeFieldHandles = null;
+
+    /**
+     * Override the entry-type field lookup. Tests use this to describe a target's shape
+     * without a Craft bootstrap; production leaves it null and reads the real layouts.
+     *
+     * @param callable(string, string): bool $probe
+     */
+    public function setEntryTypeFieldProbe(callable $probe): void
+    {
+        $this->entryTypeFieldProbe = $probe;
+    }
+
+    /** @var (callable(string, string): bool)|null */
+    private $entryTypeFieldProbe = null;
+
+    /**
+     * Does the entry type behind a matrix block declare a custom field with this handle?
+     *
+     * A field instance may re-handle its field on the layout, so the layout is the only
+     * authority — the global field handle can differ from the one the payload names.
+     */
+    private function entryTypeHasField(?string $entryTypeHandle, string $fieldHandle): bool
+    {
+        if ($entryTypeHandle === null || $entryTypeHandle === '') {
+            return false;
+        }
+
+        if ($this->entryTypeFieldProbe !== null) {
+            return ($this->entryTypeFieldProbe)($entryTypeHandle, $fieldHandle);
+        }
+
+        if ($this->entryTypeFieldHandles === null) {
+            $this->entryTypeFieldHandles = [];
+            foreach (Craft::$app->getEntries()->getAllEntryTypes() as $entryType) {
+                $layout = $entryType->getFieldLayout();
+                if ($layout === null) {
+                    continue;
+                }
+                foreach ($layout->getCustomFieldElements() as $element) {
+                    $handle = $element->attribute();
+                    if ($handle !== '') {
+                        $this->entryTypeFieldHandles[$entryType->handle . ':' . $handle] = true;
+                    }
+                }
+            }
+        }
+
+        return isset($this->entryTypeFieldHandles[$entryTypeHandle . ':' . $fieldHandle]);
     }
 
     /**
@@ -1283,6 +1351,14 @@ class EntryMigrationService extends Component
             }
 
             foreach ($this->nestedEntriesOn($localised) as $block) {
+                // A nested entry is one element shared across the sites it exists on, so the
+                // copy reachable from an unpayloaded site is the *same row* the payloaded site
+                // renders. Deleting it there takes the content with it — measured at 294 of 825
+                // pages losing their whole Page Builder on a clean run.
+                if ($this->blockLivesOnAnySite($block, $keep)) {
+                    continue;
+                }
+
                 try {
                     $this->elements()->delete($block, true);
                 } catch (\Throwable $e) {
@@ -1294,6 +1370,24 @@ class EntryMigrationService extends Component
                 }
             }
         }
+    }
+
+    /**
+     * Does this nested entry have a row on any of the sites the payload named?
+     *
+     * @param array<int, bool> $keep site ids the payload named
+     */
+    private function blockLivesOnAnySite(Entry $block, array $keep): bool
+    {
+        if ($block->id === null || $keep === []) {
+            return false;
+        }
+
+        return (new \craft\db\Query())
+            ->from(\craft\db\Table::ELEMENTS_SITES)
+            ->where(['elementId' => $block->id])
+            ->andWhere(['siteId' => array_keys($keep)])
+            ->exists();
     }
 
     /**
