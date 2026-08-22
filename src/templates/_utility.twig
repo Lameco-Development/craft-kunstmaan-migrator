@@ -13,6 +13,12 @@
     <blockquote class="note">
       <p>{{ error }}</p>
     </blockquote>
+    <p>
+      <a class="btn submit" href="{{ url('kunstmaan-migrator/setup') }}">{{ "Set up a migration"|t('kunstmaan-migrator') }}</a>
+    </p>
+    <p class="light">
+      {{ "Finds the Kunstmaan databases on your server and walks through naming them, pointing at their uploads, and choosing which Craft site each locale writes to."|t('kunstmaan-migrator') }}
+    </p>
   </div>
 {% else %}
 

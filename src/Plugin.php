@@ -147,6 +147,8 @@ class Plugin extends BasePlugin
             static function (RegisterUrlRulesEvent $event): void {
                 $event->rules['kunstmaan-migrator/mapping'] = 'kunstmaan-migrator/migration/mapping';
                 $event->rules['kunstmaan-migrator/mapping-row'] = 'kunstmaan-migrator/migration/mapping-row';
+                $event->rules['kunstmaan-migrator/setup'] = 'kunstmaan-migrator/setup/index';
+                $event->rules['kunstmaan-migrator/setup/locales'] = 'kunstmaan-migrator/setup/locales';
             },
         );
 

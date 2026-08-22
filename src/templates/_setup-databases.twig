@@ -1,0 +1,100 @@
+{% extends "_layouts/cp.twig" %}
+{% import "_includes/forms.twig" as forms %}
+
+{% set title = "Set up a migration"|t('kunstmaan-migrator') %}
+
+{% block content %}
+  {% if isProduction %}
+    <blockquote class="note warning">
+      <p>{{ "This is a production environment. The migrator refuses to read a legacy database here."|t('kunstmaan-migrator') }}</p>
+    </blockquote>
+  {% elseif error %}
+    <blockquote class="note warning">
+      <p>{{ "Could not reach the database server:"|t('kunstmaan-migrator') }} {{ error }}</p>
+      <p>{{ "Check the connection in the plugin settings."|t('kunstmaan-migrator') }}</p>
+    </blockquote>
+  {% elseif not mappingPath %}
+    <blockquote class="note warning">
+      <p>{{ "Set a mapping file path in the plugin settings first — that is where this writes to."|t('kunstmaan-migrator') }}</p>
+    </blockquote>
+  {% else %}
+    <div class="readable">
+      <p>
+        {{ "Every Kunstmaan database on this server, found by looking for its core tables — including ones belonging to other projects. Tick the ones this migration covers and name each: the name is what a run reports and what every state row is keyed by."|t('kunstmaan-migrator') }}
+      </p>
+    </div>
+
+    {{ forms.text({
+      id: 'db-filter',
+      placeholder: "Filter by name"|t('kunstmaan-migrator'),
+      class: 'fullwidth',
+    }) }}
+
+    <form method="get" action="{{ url('kunstmaan-migrator/setup/locales') }}">
+      <input type="hidden" name="envs" id="envs">
+      <table class="data fullwidth">
+        <thead>
+          <tr>
+            <th></th>
+            <th>{{ "Database"|t('kunstmaan-migrator') }}</th>
+            <th class="rightalign">{{ "Nodes"|t('kunstmaan-migrator') }}</th>
+            <th>{{ "Call it"|t('kunstmaan-migrator') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for candidate in databases %}
+            <tr>
+              <td style="width: 32px;">
+                <input type="checkbox"
+                       class="checkbox"
+                       id="pick-{{ loop.index }}"
+                       data-label-for="env-{{ loop.index }}">
+                <label for="pick-{{ loop.index }}"></label>
+              </td>
+              <th scope="row"><code>{{ candidate.database }}</code></th>
+              <td class="rightalign">{{ candidate.nodes|number_format }}</td>
+              <td>
+                <input type="text"
+                       class="text"
+                       id="env-{{ loop.index }}"
+                       value="{{ candidate.label }}"
+                       data-database="{{ candidate.database }}"
+                       size="10">
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="light">{{ "No Kunstmaan databases on this server."|t('kunstmaan-migrator') }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="buttons">
+        <button type="submit" class="btn submit">{{ "Next"|t('kunstmaan-migrator') }}</button>
+      </div>
+    </form>
+
+    {% js %}
+      // A server can hold a dozen unrelated Kunstmaan sites, and the two or
+      // three that are this migration usually share a prefix.
+      document.getElementById('db-filter').addEventListener('input', function () {
+        var needle = this.value.toLowerCase();
+        document.querySelectorAll('tbody tr').forEach(function (row) {
+          var name = (row.querySelector('code') || {}).textContent || '';
+          row.style.display = name.toLowerCase().indexOf(needle) === -1 ? 'none' : '';
+        });
+      });
+
+      // The ticked rows become one `envs=LABEL:database,…` parameter, so the
+      // next step's URL says exactly what was chosen and carries no brackets.
+      document.querySelector('form').addEventListener('submit', function () {
+        var chosen = [];
+        document.querySelectorAll('[data-label-for]').forEach(function (box) {
+          if (!box.checked) { return; }
+          var field = document.getElementById(box.getAttribute('data-label-for'));
+          chosen.push(field.value + ':' + field.getAttribute('data-database'));
+        });
+        document.getElementById('envs').value = chosen.join(',');
+      });
+    {% endjs %}
+  {% endif %}
+{% endblock %}
