@@ -100,6 +100,7 @@ runs against the legacy database with no Craft anywhere — which is what lets a
 mapping be authored before the target site exists.
 
 ```bash
+vendor/bin/kuma-compile survey --env=COM=enreach_website
 vendor/bin/kuma-compile init --env=COM=enreach_website > migration/mapping/site.yaml
 vendor/bin/kuma-compile validate migration/mapping/site.yaml --craft=.
 vendor/bin/kuma-compile coverage migration/mapping/site.yaml
@@ -108,6 +109,7 @@ vendor/bin/kuma-compile readiness migration/mapping/site.yaml --craft=.
 
 | Command | |
 | --- | --- |
+| `survey` | **is this corpus in range** — live pages, placements, pagepart classes, page types, locales, and the media/redirect/submission volumes, per environment. Needs no mapping and no Craft. |
 | `init` | discover the inventory — every pagepart class and page type by volume, real table names, child collections with their foreign keys, every locale with its live page count |
 | `validate` | the mapping's own shape, then every handle it names against the target's project config, then whether any Matrix in the target actually accepts each block |
 | `coverage` | **did I miss anything in the legacy site** — anything not named in the mapping is an error, not a silent skip |
@@ -115,6 +117,25 @@ vendor/bin/kuma-compile readiness migration/mapping/site.yaml --craft=.
 | `readiness --craft=. --unfilled` | the *optional* Craft fields no lane fills at all |
 | `suggest` | draft rows for parts the mapping does not name yet |
 | `doctor` | can the legacy environments be reached, and do they hold what the mapping says |
+
+**Start with `survey`.** Scoping a quote used to mean installing the plugin into a
+Craft project that does not exist yet, wiring credentials and running `doctor`.
+`survey` reads a legacy database and nothing else, and reports the counts an estimate
+is actually made against. It resolves everything through the published node version,
+which matters more than it sounds: Kunstmaan clones the whole pagepart graph per node
+version, so a quote written off the raw `kuma_page_part_refs` count is roughly twenty
+times too big. It gives no verdict — how many of 61 pagepart classes collapse into one
+Craft block is the half a machine cannot know.
+
+To rank several sites, run it once per site and compare the JSON:
+
+```bash
+for site in a b c; do
+  vendor/bin/kuma-compile survey --env=X=${site}_db --json \
+    | jq -c "{site: \"$site\", parts: .[0].partClassCount, pages: .[0].pageTypeCount,
+              locales: .[0].localeCount, media: .[0].volumes.media}"
+done
+```
 
 `init` deliberately emits a skeleton that **fails `validate`**: every part lacks
 a disposition, so nothing runs until a human has resolved each one. It is a

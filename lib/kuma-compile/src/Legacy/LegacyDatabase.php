@@ -168,6 +168,54 @@ final class LegacyDatabase
         return (int) $this->pdo->query('SELECT COUNT(*) FROM kuma_page_part_refs')->fetchColumn();
     }
 
+    /**
+     * Live placements per Kunstmaan context — `main`, `form`, the eight `footer-*`.
+     *
+     * A context is where a lane's work lands: `form` placements need the forms lane, `footer-*`
+     * the globals lane, and the editorial ones the blocks lane. Sizing a quote means knowing
+     * how many of each, and the number is one GROUP BY away from data already being read.
+     *
+     * @return array<string, int> context => live placements
+     */
+    public function livePlacementsByContext(): array
+    {
+        $sql = sprintf(
+            'SELECT r.context AS context, COUNT(*) AS n
+             FROM kuma_page_part_refs r
+             JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
+             GROUP BY r.context',
+            self::LIVE_PAGES,
+        );
+
+        $counts = [];
+
+        foreach ($this->pdo->query($sql) as $row) {
+            $counts[(string) $row['context']] = (int) $row['n'];
+        }
+
+        arsort($counts);
+
+        return $counts;
+    }
+
+    /**
+     * `SELECT COUNT(*)` on a table that may not be there.
+     *
+     * The twelve surveyed installs share eighteen bundles but not every table: an install
+     * without the form bundle has no `kuma_form_submissions`, and a survey that dies on it
+     * cannot survey anything. A missing table is null — "not installed" — not zero.
+     */
+    public function countOrNull(string $table, ?string $where = null): ?int
+    {
+        if (!$this->hasTable($table)) {
+            return null;
+        }
+
+        $sql = sprintf('SELECT COUNT(*) FROM %s', $table) . ($where !== null ? ' WHERE ' . $where : '');
+
+        return (int) $this->pdo->query($sql)->fetchColumn();
+    }
+
 
     /**
      * How often a column is actually populated, across live placements of one pagepart class.
