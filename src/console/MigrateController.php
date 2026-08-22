@@ -9,7 +9,9 @@ use craft\console\Controller;
 use craft\helpers\Console;
 use Lameco\KumaCompile\Compile\PayloadWriter;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Schema;
+use Lameco\KumaCompile\Report\Coverage;
 use Lameco\KumaCompile\Target\TargetCheck;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\finalize\FinalizePass;
@@ -142,6 +144,16 @@ final class MigrateController extends Controller
      */
     public bool $resave = true;
 
+    /**
+     * Run anyway when the corpus has grown past the mapping.
+     *
+     * The legacy site stays live while the migration is being built. Editors add pages, and
+     * three weeks in someone adds a *new pagepart class* — which `coverage` catches only if
+     * somebody remembers to run it, and no run did. Anything not named in the mapping is an
+     * error rather than a silent skip, so the run now asks the question itself.
+     */
+    public bool $allowDrift = false;
+
     public function beforeAction($action): bool
     {
         $this->neverProductionExitCode = $this->enforceNeverProduction();
@@ -166,6 +178,7 @@ final class MigrateController extends Controller
             [
                 'mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'entriesOnly',
                 'finalizeOnly', 'only', 'queue', 'failOnLoss', 'skipAssets', 'resave',
+                'allowDrift',
             ],
         );
     }
@@ -197,6 +210,10 @@ final class MigrateController extends Controller
                 sprintf('%d unresolved conflicts — set conflict.status: decided', count($conflicts)),
                 array_map(static fn ($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
             );
+        }
+
+        if ($drift = $this->refuseOnDrift($mapping)) {
+            return $drift;
         }
 
         $only = $this->onlyList();
@@ -491,6 +508,81 @@ final class MigrateController extends Controller
     }
 
     /** @param list<string> $errors */
+    /**
+     * Coverage against the live legacy databases, at the top of the run rather than whenever
+     * somebody remembers.
+     *
+     * The other two preflights read the mapping and the target. Neither can see the source
+     * moving underneath both, and the source is a production site with editors in it. This
+     * costs one snapshot query per environment against a database the run is about to read
+     * anyway.
+     *
+     * A narrowed run warns instead of refusing. `--only=PartnerPage --limit=10` is the tight
+     * iteration loop the whole workflow depends on, and a run that is not claiming to be
+     * complete has no business failing on incompleteness.
+     *
+     * @return int|null the exit code to return, or null to carry on
+     */
+    private function refuseOnDrift(Mapping $mapping): ?int
+    {
+        if ($this->allowDrift || $this->finalizeOnly) {
+            return null;
+        }
+
+        $coverage = new Coverage($mapping);
+        $dsn = EnvironmentPipeline::dsnFromSettings();
+
+        foreach ($mapping->environments() as $env => $spec) {
+            if (!isset($spec['database']) || ($this->legacyEnv !== null && $env !== $this->legacyEnv)) {
+                continue;
+            }
+
+            $coverage->ingest(LegacyDatabase::connect((string) $env, (string) $spec['database'], $dsn)->snapshot());
+        }
+
+        if (!$coverage->hasHoles()) {
+            return null;
+        }
+
+        $holes = [];
+
+        foreach ($coverage->unclaimedParts() as $class => $n) {
+            $holes[] = sprintf('pagepart  %-32s %s live placements', (string) $class, number_format($n));
+        }
+
+        foreach ($coverage->unclaimedPageTypes() as $entity => $n) {
+            $holes[] = sprintf('page      %-32s %s live pages', (string) $entity, number_format($n));
+        }
+
+        $holes[] = 'Claim each in a lane, or declare it under `unmapped:` with a reason.';
+        $holes[] = 'Run `kuma-compile coverage <mapping>` for the whole picture, or --allow-drift to run anyway.';
+
+        if ($this->narrowed()) {
+            $this->stderr("The corpus has grown past the mapping:\n", Console::FG_YELLOW);
+
+            foreach ($holes as $hole) {
+                $this->stderr('  · ' . $hole . "\n");
+            }
+
+            $this->stderr("Continuing: this run is narrowed and is not claiming to be complete.\n");
+
+            return null;
+        }
+
+        return $this->refuse('The corpus has grown past the mapping', $holes);
+    }
+
+    /**
+     * Whether the operator asked for a slice rather than the whole corpus.
+     *
+     * `--entries-only` is not a slice: it skips the adapters and the two closing passes, and
+     * still walks every node. A new pagepart class is exactly as lost there.
+     */
+    private function narrowed(): bool
+    {
+        return $this->onlyList() !== null || $this->limit !== null;
+    }
+
     private function refuse(string $headline, array $errors): int
     {
         $this->stderr($headline . ":\n", Console::FG_RED);

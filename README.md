@@ -167,6 +167,7 @@ media in rich text.
 | `--skip-assets` | skip the asset stage entirely |
 | `--fail-on-loss` | exit non-zero when the run lost content, not only when it failed |
 | `--resave=0` | skip the closing re-save (on by default; see below) |
+| `--allow-drift` | run even though the legacy corpus has grown past the mapping |
 
 **The run re-saves for you.** URIs are computed at save time from the parent's
 URI, so a subtree written before its ancestor's per-site slugs settle keeps a
@@ -177,6 +178,15 @@ finishes. Pass `--resave=0` to skip it, and run it yourself afterwards:
 ```bash
 ./craft resave/entries --section=pages
 ```
+
+**The run checks its own coverage first.** The legacy site is still live while the
+migration is being built: editors add pages, and three weeks in someone adds a new
+pagepart class. `coverage` catches that only when somebody remembers to run it, and
+nobody remembers. `migrate` now takes the same snapshot at the top of the run and
+refuses while any live pagepart class or page type is claimed by no lane —
+`unmapped:` with a reason counts as claimed. A narrowed run (`--only`, `--limit`)
+warns instead, because the tight iteration loop is not claiming to be complete.
+`--allow-drift` runs anyway.
 
 **Losses do not fail a run by default.** A migration that drops content is
 counted and reported, and still exits 0. `--fail-on-loss` makes lossy
