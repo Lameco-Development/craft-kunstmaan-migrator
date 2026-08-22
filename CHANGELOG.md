@@ -6,6 +6,46 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## 2.0.0-alpha.3 — 2026-08-22
+
+Setting the plugin up no longer starts with a text field and prior knowledge.
+
+### Added
+
+- **A four-step setup wizard.** Connect a legacy database, pick the databases to
+  read, bind each legacy locale to a Craft site, then review. Each step
+  validates where it is answered — a bad credential is reported on the
+  connection step, not as a stack trace on the first run — and driver errors are
+  translated into something an operator can act on. The wizard refuses to run
+  against production.
+- **An empty install says what to do next** instead of rendering an empty form,
+  and the mapping editor shows how far through a lane you are.
+- **A run reports itself while it runs.** The utility polls the queue and shows
+  the current job and its progress, rather than leaving the operator to guess
+  whether anything is happening.
+
+### Changed
+
+- **The field map is two dropdowns**, a source column and a transform, read from
+  the live install rather than typed as an expression from memory. Saving a row
+  you did not edit writes nothing — an earlier no-op save rewrote 1,652 lines
+  and destroyed the mapping's comments.
+
+### Fixed
+
+- A `path` repository left in the plugin's own composer.json pointed it at
+  itself and broke installation from a clean checkout.
+- Two bugs found by static analysis in its first run, and four found by parsing
+  every template — including one that took the settings page down entirely.
+
+### Internal
+
+- PHPStan runs in CI at level 1 over `src` and `lib/kuma-compile/src`.
+- The NodeMenu navigation pass is under test. It read Craft's primary site
+  statically, looked entries up around the ElementWriter seam, and constructed
+  elements directly — three things that made it undrivable without a booted
+  CMS, and the reason it shipped two undefined-variable bugs.
+
 ## 2.0.0-alpha.2 — 2026-08-22
 
 The first *tagged* release of v2. `2.0.0-alpha.1` below was written up in July
