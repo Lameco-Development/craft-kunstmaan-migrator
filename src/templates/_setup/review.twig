@@ -1,0 +1,66 @@
+{% extends "kunstmaan-migrator/_setup/_wizard" %}
+{% import "_includes/forms.twig" as forms %}
+
+{% block step %}
+  {{ actionInput('kunstmaan-migrator/setup/write') }}
+  {{ hiddenInput('envs', envs) }}
+  {{ hiddenInput('choices', choices) }}
+
+  <div class="readable">
+    <p>
+      {{ "This creates the mapping file — the list of decisions the migration follows. Nothing is migrated yet, and nothing is written to the old site."|t('kunstmaan-migrator') }}
+    </p>
+  </div>
+
+  <table class="data fullwidth">
+    <thead>
+      <tr>
+        <th>{{ "Site"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Languages coming across"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Not migrating"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Files"|t('kunstmaan-migrator') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in summary %}
+        <tr>
+          <th scope="row">{{ row.label }} <span class="light"><code>{{ row.database }}</code></span></th>
+          <td>
+            {% for locale, site in row.migrating %}
+              <div><code>{{ locale }}</code> → <code>{{ site }}</code></div>
+            {% else %}
+              <span class="error">{{ "Nothing — this site would migrate no pages."|t('kunstmaan-migrator') }}</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% for locale, reason in row.skipping %}
+              <div class="light"><code>{{ locale }}</code> — {{ reason }}</div>
+            {% else %}
+              <span class="light">—</span>
+            {% endfor %}
+          </td>
+          <td>
+            {% for path in row.mediaRoot %}
+              <div><code>{{ path }}</code></div>
+            {% else %}
+              <span class="light">{{ "not set"|t('kunstmaan-migrator') }}</span>
+            {% endfor %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <hr>
+
+  {{ forms.textField({
+    label: "Old site’s code, if you have it"|t('kunstmaan-migrator'),
+    instructions: "Optional. With it, the migrator can name every database table for you. Without it, you fill those in yourself."|t('kunstmaan-migrator'),
+    name: 'source',
+    placeholder: '/Users/you/Sites/old-site',
+  }) }}
+
+  <p class="light">
+    {{ "Writing to"|t('kunstmaan-migrator') }} <code>{{ mappingPath }}</code>
+  </p>
+{% endblock %}
