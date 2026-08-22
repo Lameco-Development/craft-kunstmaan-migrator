@@ -1,0 +1,60 @@
+{% extends "_layouts/cp.twig" %}
+{% import "_includes/forms.twig" as forms %}
+
+{% set title = "Set up a migration"|t('kunstmaan-migrator') %}
+{% set fullPageForm = true %}
+
+{% block content %}
+  {# Where you are, on every screen. A wizard that does not say which step you
+     are on, and which are still to come, is a form split across four pages. #}
+  <ol class="kuma-steps">
+    {% for candidate in steps %}
+      {% set state = candidate.number < step.number ? 'done' : (candidate.number == step.number ? 'current' : 'todo') %}
+      <li class="kuma-step kuma-step--{{ state }}">
+        <span class="kuma-step__marker">
+          {% if state == 'done' %}<span data-icon="check"></span>{% else %}{{ candidate.number }}{% endif %}
+        </span>
+        <span class="kuma-step__label">{{ candidate.title|t('kunstmaan-migrator') }}</span>
+      </li>
+    {% endfor %}
+  </ol>
+
+  <h1 class="kuma-question">{{ step.question|t('kunstmaan-migrator') }}</h1>
+
+  {% block step %}{% endblock %}
+
+  <div class="kuma-actions">
+    {% if back %}
+      <a class="btn" href="{{ back }}">{{ "Back"|t('kunstmaan-migrator') }}</a>
+    {% else %}
+      <span></span>
+    {% endif %}
+  </div>
+
+  {% css %}
+    .kuma-steps {
+      display: flex; gap: 8px; list-style: none; margin: 0 0 24px; padding: 0;
+      flex-wrap: wrap;
+    }
+    .kuma-step {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 14px 6px 6px; border-radius: 999px;
+      background: var(--gray-050, #f3f7fc); color: var(--medium-text-color, #606d7b);
+      font-size: 13px;
+    }
+    .kuma-step__marker {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--gray-200, #cdd8e4); color: var(--text-color, #3f4d5a);
+      font-size: 12px; font-weight: 600;
+    }
+    .kuma-step--current { background: var(--blue-050, #eaf4ff); color: var(--link-color, #0b69a3); font-weight: 600; }
+    .kuma-step--current .kuma-step__marker { background: var(--link-color, #0b69a3); color: #fff; }
+    .kuma-step--done .kuma-step__marker { background: var(--enabled-color, #27ab83); color: #fff; }
+    .kuma-question { font-size: 22px; margin: 0 0 6px; }
+    .kuma-actions { margin-top: 24px; }
+    .kuma-check { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; font-size: 13px; }
+    .kuma-check--ok { color: var(--enabled-color, #27ab83); }
+    .kuma-check--bad { color: var(--error-color, #cf1124); }
+  {% endcss %}
+{% endblock %}

@@ -26,6 +26,11 @@ final class CraftElementWriter implements ElementWriter
         Craft::$app->elements->deleteElement($element, $hardDelete);
     }
 
+    /**
+     * @template T of ElementInterface
+     * @param class-string<T> $class
+     * @return T|null
+     */
     public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
     {
         return Craft::$app->elements->getElementById($id, $class, $siteId);

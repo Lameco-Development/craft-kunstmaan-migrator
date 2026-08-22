@@ -1,0 +1,20 @@
+parameters:
+    level: 1
+    paths:
+        - src
+        - lib/kuma-compile/src
+    bootstrapFiles:
+        - vendor/autoload.php
+    scanFiles:
+        - vendor/craftcms/cms/src/Craft.php
+    scanDirectories:
+        # Symbols the plugin reaches for but does not own. Craft and Yii it
+        # requires; the rest are the optional plugins each adapter writes into,
+        # present here as dev dependencies so the analyser can see them and
+        # absent from `require` on purpose — an adapter detects its plugin at
+        # runtime and reports its absence rather than failing to install.
+        - vendor/craftcms/cms/src
+        - vendor/yiisoft/yii2
+        - vendor/nystudio107/craft-retour/src
+        - vendor/verbb/navigation/src
+        - vendor/verbb/formie/src

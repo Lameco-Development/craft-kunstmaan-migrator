@@ -34,8 +34,14 @@ final class TemplatesCompileTest extends TestCase
     /** @return iterable<string, array{0: string}> */
     public static function templates(): iterable
     {
-        foreach (glob(dirname(__DIR__, 3) . '/src/templates/*.twig') ?: [] as $path) {
-            yield basename($path) => [$path];
+        $root = dirname(__DIR__, 3) . '/src/templates';
+        $files = [
+            ...(glob($root . '/*.twig') ?: []),
+            ...(glob($root . '/*/*.twig') ?: []),
+        ];
+
+        foreach ($files as $path) {
+            yield str_replace($root . '/', '', $path) => [$path];
         }
     }
 

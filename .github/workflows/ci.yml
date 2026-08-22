@@ -13,6 +13,7 @@ jobs:
           coverage: pcov          # D-06: PCOV installed at system level; no composer dep
       - run: composer validate --strict --no-plugins
       - run: composer install --no-interaction --no-progress
+      - run: composer analyse
       - run: composer test
       - run: composer test-coverage    # D-07: per-module 70% gate via tools/check-coverage.php
       - uses: actions/upload-artifact@v5
