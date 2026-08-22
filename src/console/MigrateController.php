@@ -201,8 +201,16 @@ final class MigrateController extends Controller
             return $this->refuse('Mapping is not well-formed', $errors);
         }
 
-        if ($errors = (new TargetCheck($target))->check($mapping)) {
+        $targetCheck = new TargetCheck($target);
+
+        if ($errors = $targetCheck->check($mapping)) {
             return $this->refuse('Mapping does not match this Craft install', $errors);
+        }
+
+        // A block no hosting Matrix accepts is not a shape error and not a handle error — every
+        // name in it exists. It is a pairing the write side rejects, silently, on every placement.
+        if ($errors = $targetCheck->blocksNoPageAccepts($mapping)) {
+            return $this->refuse('Blocks this Craft install accepts nowhere', $errors);
         }
 
         if ($conflicts = $mapping->openConflicts()) {

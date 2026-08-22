@@ -176,6 +176,120 @@ final class TargetCheck
         return $warnings;
     }
 
+    /**
+     * Blocks no page in the mapping can hold.
+     *
+     * A Matrix field names the entry types it accepts, and a part whose block is not on that
+     * list is dropped at write time — 44 blocks on the reference corpus, discovered from a run
+     * report. `check()` cannot see it: it validates that the block and its fields exist, which
+     * they do. What is wrong is the pairing.
+     *
+     * The check is deliberately the total one. Whether a given part ever lands on a given page
+     * type is a fact about the data, not about the mapping, so "allowed on some pages and not
+     * others" is a run-time finding and the run already reports it by name. A block *no*
+     * hosting field accepts is not data-dependent: every placement of that part is lost, every
+     * time, and that is knowable from two YAML files before anything is compiled.
+     *
+     * @return list<string>
+     */
+    public function blocksNoPageAccepts(Mapping $mapping): array
+    {
+        $hosts = $this->hostingFields($mapping);
+
+        if ($hosts === []) {
+            return [];
+        }
+
+        $errors = [];
+
+        foreach ($mapping->parts() as $name => $spec) {
+            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual']) || ($spec['consumedBy'] ?? null) === 'sequence') {
+                continue;
+            }
+
+            foreach ($this->blocksOf($spec) as $block) {
+                if (!$this->schema->hasEntryType($block) || $this->acceptedSomewhere($block, $hosts)) {
+                    continue;
+                }
+
+                $errors[] = sprintf(
+                    'part `%s`: no page in the mapping accepts block `%s` — every placement is dropped at write time',
+                    $name,
+                    $block,
+                );
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * `<page entry type>.<context field>` pairs a compiled block can be written into.
+     *
+     * `contexts:` names the field, per page or from `defaults:`; the compiler falls back to
+     * `pageBuilder` when neither does, so this does too.
+     *
+     * @return list<array{0: string, 1: string}>
+     */
+    private function hostingFields(Mapping $mapping): array
+    {
+        $defaults = $mapping->all()['defaults']['contexts'] ?? ['main' => ['field' => 'commonPageBuilder']];
+        $hosts = [];
+
+        foreach ($mapping->pages() as $spec) {
+            if (!is_array($spec) || isset($spec['manual']) || isset($spec['unmapped'])) {
+                continue;
+            }
+
+            $entryType = (string) ($spec['entryType'] ?? '');
+
+            if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
+                continue;
+            }
+
+            foreach (($spec['contexts'] ?? $defaults) as $target) {
+                $field = is_array($target) ? (string) ($target['field'] ?? 'pageBuilder') : 'pageBuilder';
+                $hosts[$entryType . '.' . $field] = [$entryType, $field];
+            }
+        }
+
+        return array_values($hosts);
+    }
+
+    /** @param list<array{0: string, 1: string}> $hosts */
+    private function acceptedSomewhere(string $block, array $hosts): bool
+    {
+        foreach ($hosts as [$entryType, $field]) {
+            $slot = $this->schema->slot($entryType, $field);
+
+            // An unrestricted Matrix accepts everything, and a field that is not there cannot
+            // reject anything — that is a different error, and `check()` owns it.
+            if ($slot === null || $slot->nested === [] || in_array($block, $slot->nested, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $spec @return list<string> */
+    private function blocksOf(array $spec): array
+    {
+        $blocks = [];
+
+        if (isset($spec['block']) && is_string($spec['block'])) {
+            $blocks[] = $spec['block'];
+        }
+
+        foreach ($spec['switch'] ?? [] as $case) {
+            if (isset($case['block']) && is_string($case['block'])) {
+                $blocks[] = $case['block'];
+            }
+        }
+
+        return array_values(array_unique($blocks));
+    }
+
     /** `heading`, `contentColumns[0].heading` — check each hop exists. */
     /**
      * A child collection has to land in a Matrix, and its columns in fields the nested entry

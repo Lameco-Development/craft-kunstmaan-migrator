@@ -48,7 +48,7 @@ final class ValidateCommand extends Command
         if ($craftRoot = $input->getOption('craft')) {
             $schema = CraftSchema::fromProjectConfig((string) $craftRoot);
             $target = new TargetCheck($schema);
-            $errors = [...$errors, ...$target->check($mapping)];
+            $errors = [...$errors, ...$target->check($mapping), ...$target->blocksNoPageAccepts($mapping)];
             $warnings = $target->unfilledRequired($mapping);
 
             foreach ($specDirs as $dir) {

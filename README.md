@@ -109,7 +109,7 @@ vendor/bin/kuma-compile readiness migration/mapping/site.yaml --craft=.
 | Command | |
 | --- | --- |
 | `init` | discover the inventory — every pagepart class and page type by volume, real table names, child collections with their foreign keys, every locale with its live page count |
-| `validate` | the mapping's own shape, then every handle it names against the target's project config |
+| `validate` | the mapping's own shape, then every handle it names against the target's project config, then whether any Matrix in the target actually accepts each block |
 | `coverage` | **did I miss anything in the legacy site** — anything not named in the mapping is an error, not a silent skip |
 | `readiness --craft=.` | **will every required Craft field get a value** — the mirror of `coverage`, pointed at the target |
 | `readiness --craft=. --unfilled` | the *optional* Craft fields no lane fills at all |
