@@ -72,10 +72,5 @@
     "support": {
         "issues": "https://github.com/Lameco-Development/craft-kunstmaan-migrator/issues",
         "source": "https://github.com/Lameco-Development/craft-kunstmaan-migrator"
-    },
-    "repositories": [{
-        "name": "migrator",
-        "type": "path",
-        "url": "../craft-kunstmaan-migrator-v2"
-    }]
+    }
 }
