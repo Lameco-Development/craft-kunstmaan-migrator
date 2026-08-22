@@ -1,0 +1,100 @@
+{% extends "_layouts/cp.twig" %}
+{% import "_includes/forms.twig" as forms %}
+
+{% set title = row.key %}
+{% set crumbs = [{ label: "Mapping"|t('kunstmaan-migrator'), url: url('kunstmaan-migrator/mapping', { lane: lane }) }] %}
+
+{% block content %}
+  <form method="post" accept-charset="UTF-8">
+    {{ csrfInput() }}
+    {{ actionInput('kunstmaan-migrator/migration/save-mapping-row') }}
+    {{ redirectInput('kunstmaan-migrator/mapping?lane=' ~ lane) }}
+    {{ hiddenInput('lane', lane) }}
+    {{ hiddenInput('key', row.key) }}
+
+    <p class="light">
+      {{ "{count} live placements"|t('kunstmaan-migrator', { count: row.live|number_format }) }}
+      {% if row.table %} · <code>{{ row.table }}</code>{% endif %}
+    </p>
+
+    {% if blocks is not empty %}
+      {# Read from this Craft install, not typed from memory: a handle typed into
+         YAML is checked when a migration runs, hours later. #}
+      {{ forms.selectField({
+        label: "Becomes"|t('kunstmaan-migrator'),
+        instructions: "The Craft block this legacy part becomes. Only blocks this install offers are listed."|t('kunstmaan-migrator'),
+        name: 'target',
+        value: row.target,
+        options: [{ label: "— choose —"|t('kunstmaan-migrator'), value: '' }]|merge(
+          blocks|map(b => { label: b, value: b })
+        ),
+      }) }}
+    {% else %}
+      {{ forms.textField({
+        label: "Becomes"|t('kunstmaan-migrator'),
+        name: 'target',
+        value: row.target,
+      }) }}
+    {% endif %}
+
+    <hr>
+
+    <h2>{{ "Columns"|t('kunstmaan-migrator') }}</h2>
+    <p class="light">
+      {{ "Every legacy column this row knows about. A column left unplaced keeps the row open — that is the point, so a mapping cannot look finished while content still has nowhere to go."|t('kunstmaan-migrator') }}
+    </p>
+
+    <table class="data fullwidth">
+      <thead>
+        <tr>
+          <th>{{ "Column"|t('kunstmaan-migrator') }}</th>
+          <th>{{ "Decision"|t('kunstmaan-migrator') }}</th>
+          <th>{{ "Craft field, or why not"|t('kunstmaan-migrator') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for column in row.columns() %}
+          {% set disposition = row.map[column] is defined ? 'map' : (row.ignore[column] is defined ? 'ignore' : 'unreviewed') %}
+          <tr>
+            <th scope="row"><code>{{ column }}</code></th>
+            <td>
+              {{ forms.select({
+                name: 'columns[' ~ column ~ '][disposition]',
+                value: disposition,
+                options: [
+                  { label: "Not looked at"|t('kunstmaan-migrator'), value: 'unreviewed' },
+                  { label: "Migrate"|t('kunstmaan-migrator'), value: 'map' },
+                  { label: "Deliberately not migrated"|t('kunstmaan-migrator'), value: 'ignore' },
+                ],
+              }) }}
+            </td>
+            <td>
+              {{ forms.text({
+                name: 'columns[' ~ column ~ '][value]',
+                value: disposition == 'map' ? row.map[column] : (disposition == 'ignore' ? row.ignore[column] : ''),
+                placeholder: disposition == 'ignore'
+                  ? "why this is not migrated"|t('kunstmaan-migrator')
+                  : (fields is not empty ? fields|join(', ')|slice(0, 60) : "Craft field"|t('kunstmaan-migrator')),
+              }) }}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="3" class="light">{{ "No columns recorded for this row."|t('kunstmaan-migrator') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <hr>
+
+    {{ forms.textField({
+      label: "Or drop it entirely"|t('kunstmaan-migrator'),
+      instructions: "A reason here means this legacy row has no Craft equivalent and is not migrating. The reason is the point: a run reports a deliberate omission differently from one nobody decided about."|t('kunstmaan-migrator'),
+      name: 'drop',
+      value: row.dropped,
+    }) }}
+
+    <div class="buttons">
+      <button type="submit" class="btn submit">{{ "Save"|t('kunstmaan-migrator') }}</button>
+    </div>
+  </form>
+{% endblock %}

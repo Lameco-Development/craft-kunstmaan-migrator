@@ -8,6 +8,7 @@ use Craft;
 use craft\helpers\App;
 use craft\web\Controller;
 use Lameco\KumaCompile\Mapping\Mapping;
+use lameco\kunstmaanmigrator\mapping\MappingEditor;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\console\StateController;
@@ -17,6 +18,7 @@ use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use lameco\kunstmaanmigrator\run\Diagnostics;
 use lameco\kunstmaanmigrator\utilities\MigrationUtility;
 use Throwable;
+use yii\web\BadRequestHttpException;
 use yii\web\Response;
 
 /**
@@ -27,6 +29,15 @@ use yii\web\Response;
  */
 final class MigrationController extends Controller
 {
+    /**
+     * The lanes whose rows are a decision somebody makes.
+     *
+     * `environments` is deliberately not here — it is topology, and an ordered
+     * media-root fallback chain and a locale marked "not migrated, and here is
+     * why" are things a YAML file states better than a form.
+     */
+    private const EDITABLE_LANES = ['parts', 'pages', 'entities'];
+
     /**
      * The `doctor` checks, in the browser.
      *
@@ -70,6 +81,164 @@ final class MigrationController extends Controller
             'kunstmaan-migration-state.ndjson',
             ['mimeType' => 'application/x-ndjson'],
         );
+    }
+
+    /**
+     * The mapping, row by row.
+     *
+     * A mapping is a long file of decisions, and the two things that make
+     * deciding hard are both things a file cannot do: tell you where the
+     * content actually is, and tell you what you are allowed to say. This is
+     * the screen that does both.
+     */
+    public function actionMapping(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePermission('utility:' . MigrationUtility::id());
+
+        $lane = (string) ($this->request->getQueryParam('lane') ?: 'parts');
+
+        if (!in_array($lane, self::EDITABLE_LANES, true)) {
+            throw new BadRequestHttpException(sprintf('There is no "%s" lane to edit.', $lane));
+        }
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+
+        try {
+            $rows = $editor->rows($lane);
+            $error = null;
+        } catch (Throwable $e) {
+            $rows = [];
+            $error = $e->getMessage();
+        }
+
+        return $this->renderTemplate('kunstmaan-migrator/_mapping', [
+            'lane' => $lane,
+            'lanes' => self::EDITABLE_LANES,
+            'rows' => $rows,
+            'path' => $editor->path(),
+            'error' => $error,
+        ]);
+    }
+
+    /**
+     * One row's decision: which Craft block, and where each legacy column goes.
+     */
+    public function actionMappingRow(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePermission('utility:' . MigrationUtility::id());
+
+        $lane = (string) $this->request->getRequiredQueryParam('lane');
+        $key = (string) $this->request->getRequiredQueryParam('key');
+
+        if (!in_array($lane, self::EDITABLE_LANES, true)) {
+            throw new BadRequestHttpException(sprintf('There is no "%s" lane to edit.', $lane));
+        }
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $row = $editor->row($lane, $key);
+
+        if ($row === null) {
+            throw new BadRequestHttpException(sprintf('The %s lane does not name "%s".', $lane, $key));
+        }
+
+        return $this->renderTemplate('kunstmaan-migrator/_mapping-row', [
+            'lane' => $lane,
+            'row' => $row,
+            'blocks' => $lane === 'parts' ? $editor->availableBlocks() : [],
+            'fields' => $row->target !== null ? $editor->fieldsFor($row->target) : [],
+        ]);
+    }
+
+    /**
+     * Write one row's decision back to the mapping file.
+     *
+     * To the file, because the mapping is reviewed in a pull request and an
+     * edit that did not show up in the diff would not be reviewed.
+     */
+    public function actionSaveMappingRow(): Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission('utility:' . MigrationUtility::id());
+
+        $lane = (string) $this->request->getRequiredBodyParam('lane');
+        $key = (string) $this->request->getRequiredBodyParam('key');
+
+        if (!in_array($lane, self::EDITABLE_LANES, true)) {
+            throw new BadRequestHttpException(sprintf('There is no "%s" lane to edit.', $lane));
+        }
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+
+        try {
+            $editor->patch($lane, $key, $this->changesFromRequest($lane));
+        } catch (Throwable $e) {
+            Craft::$app->getSession()->setError($e->getMessage());
+
+            return $this->redirectToPostedUrl();
+        }
+
+        Craft::$app->getSession()->setNotice(Craft::t('kunstmaan-migrator', 'Mapping updated.'));
+
+        return $this->redirectToPostedUrl();
+    }
+
+    /**
+     * The posted form as a patch.
+     *
+     * A patch rather than the whole row: the form shows a handful of a row's
+     * keys and a row carries more — `live`, `children`, `switch` — so posting
+     * the row back would drop everything the form does not draw.
+     *
+     * @return array<string, mixed>
+     */
+    private function changesFromRequest(string $lane): array
+    {
+        $drop = trim((string) $this->request->getBodyParam('drop', ''));
+
+        if ($drop !== '') {
+            // A dropped row keeps its columns: the decision is "this does not
+            // migrate", not "we never knew what was in it", and someone
+            // revisiting it should still see what they were giving up.
+            return ['drop' => $drop, $this->targetKey($lane) => null];
+        }
+
+        $target = trim((string) $this->request->getBodyParam('target', ''));
+        $map = [];
+        $ignore = [];
+        $unreviewed = [];
+
+        foreach ((array) $this->request->getBodyParam('columns', []) as $column => $decision) {
+            $column = (string) $column;
+            $disposition = (string) ($decision['disposition'] ?? 'unreviewed');
+            $value = trim((string) ($decision['value'] ?? ''));
+
+            match ($disposition) {
+                // An empty target on a mapped column means "same name", which is
+                // what the DSL already means by a bare column expression.
+                'map' => $map[$column] = $value !== '' ? $value : $column,
+                'ignore' => $ignore[$column] = $value !== '' ? $value : 'not migrated',
+                default => $unreviewed[] = $column,
+            };
+        }
+
+        return [
+            $this->targetKey($lane) => $target !== '' ? $target : null,
+            'map' => $map !== [] ? $map : null,
+            'ignore' => $ignore !== [] ? $ignore : null,
+            'unreviewed' => $unreviewed !== [] ? $unreviewed : null,
+            'drop' => null,
+        ];
+    }
+
+    /** Each lane names its target differently; the row does not have to know. */
+    private function targetKey(string $lane): string
+    {
+        return match ($lane) {
+            'pages' => 'entryType',
+            default => 'block',
+        };
     }
 
     public function actionQueue(): Response
