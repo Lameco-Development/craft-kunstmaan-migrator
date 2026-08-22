@@ -116,6 +116,7 @@ final class MigrationController extends Controller
             'lane' => $lane,
             'lanes' => self::EDITABLE_LANES,
             'rows' => $rows,
+            'progress' => $error === null ? $editor->progress($lane) : null,
             'path' => $editor->path(),
             'error' => $error,
         ]);

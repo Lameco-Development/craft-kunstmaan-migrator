@@ -81,6 +81,36 @@ final class MappingEditor
         return $rows;
     }
 
+    /**
+     * How far through a lane the decisions are.
+     *
+     * The mapping editor is where the actual work happens and it was the least
+     * guided screen in the plugin: sixty rows, no sense of how many were done
+     * or how many were left. A count is the difference between "a long list"
+     * and "eleven to go".
+     *
+     * @return array{decided: int, dropped: int, open: int, total: int, percent: int}
+     */
+    public function progress(string $lane): array
+    {
+        $counts = [MappingRow::DECIDED => 0, MappingRow::DROPPED => 0, MappingRow::OPEN => 0];
+
+        foreach ($this->rows($lane) as $row) {
+            $counts[$row->status()]++;
+        }
+
+        $total = array_sum($counts);
+        $settled = $counts[MappingRow::DECIDED] + $counts[MappingRow::DROPPED];
+
+        return [
+            'decided' => $counts[MappingRow::DECIDED],
+            'dropped' => $counts[MappingRow::DROPPED],
+            'open' => $counts[MappingRow::OPEN],
+            'total' => $total,
+            'percent' => $total === 0 ? 100 : (int) round($settled / $total * 100),
+        ];
+    }
+
     public function row(string $lane, string $key): ?MappingRow
     {
         $spec = $this->document()->row($lane, $key);

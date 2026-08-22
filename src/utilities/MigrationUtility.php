@@ -45,9 +45,13 @@ final class MigrationUtility extends Utility
         $environments = [];
         $checks = [];
         $error = null;
+        $notSetUp = false;
 
+        // "Not set up yet" is not an error, and showing it as one is why the
+        // first thing a new operator saw was a warning box. It is the normal
+        // state of a fresh install, and what it needs is an invitation.
         if (!is_string($path) || $path === '' || !is_file($path)) {
-            $error = Craft::t('kunstmaan-migrator', 'Set a mapping file in the plugin settings first.');
+            $notSetUp = true;
         } else {
             try {
                 $environments = Mapping::fromFile($path)->environments();
@@ -65,6 +69,7 @@ final class MigrationUtility extends Utility
             'mappingPath' => $path,
             'checks' => $checks,
             'error' => $error,
+            'notSetUp' => $notSetUp,
             'isProduction' => App::env('CRAFT_ENVIRONMENT') === 'production',
         ]);
     }

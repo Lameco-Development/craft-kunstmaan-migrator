@@ -8,17 +8,26 @@
   </div>
 {% endif %}
 
-{% if error %}
-  <div class="readable">
-    <blockquote class="note">
-      <p>{{ error }}</p>
-    </blockquote>
+{% if notSetUp %}
+  {# The normal state of a fresh install, so it reads as a starting point
+     rather than as something already gone wrong. #}
+  <div class="readable" style="text-align: center; padding: 30px 0;">
+    <h2>{{ "Bring a Kunstmaan site into Craft"|t('kunstmaan-migrator') }}</h2>
     <p>
-      <a class="btn submit" href="{{ url('kunstmaan-migrator/setup') }}">{{ "Set up a migration"|t('kunstmaan-migrator') }}</a>
+      {{ "Four questions: where the old database is, which sites you are migrating, where each language and its files go — then it writes the plan and you review it."|t('kunstmaan-migrator') }}
+    </p>
+    <p style="margin-top: 18px;">
+      <a class="btn submit big" href="{{ url('kunstmaan-migrator/setup') }}">{{ "Start"|t('kunstmaan-migrator') }}</a>
     </p>
     <p class="light">
-      {{ "Finds the Kunstmaan databases on your server and walks through naming them, pointing at their uploads, and choosing which Craft site each locale writes to."|t('kunstmaan-migrator') }}
+      {{ "Nothing is written to the old site, and nothing is migrated until you say so."|t('kunstmaan-migrator') }}
     </p>
+  </div>
+{% elseif error %}
+  <div class="readable">
+    <blockquote class="note warning">
+      <p>{{ "The mapping file could not be read:"|t('kunstmaan-migrator') }} {{ error }}</p>
+    </blockquote>
   </div>
 {% else %}
 
