@@ -1351,6 +1351,14 @@ class EntryMigrationService extends Component
             }
 
             foreach ($this->nestedEntriesOn($localised) as $block) {
+                // A nested entry is one element shared across the sites it exists on, so the
+                // copy reachable from an unpayloaded site is the *same row* the payloaded site
+                // renders. Deleting it there takes the content with it — measured at 294 of 825
+                // pages losing their whole Page Builder on a clean run.
+                if ($this->blockLivesOnAnySite($block, $keep)) {
+                    continue;
+                }
+
                 try {
                     $this->elements()->delete($block, true);
                 } catch (\Throwable $e) {
@@ -1362,6 +1370,24 @@ class EntryMigrationService extends Component
                 }
             }
         }
+    }
+
+    /**
+     * Does this nested entry have a row on any of the sites the payload named?
+     *
+     * @param array<int, bool> $keep site ids the payload named
+     */
+    private function blockLivesOnAnySite(Entry $block, array $keep): bool
+    {
+        if ($block->id === null || $keep === []) {
+            return false;
+        }
+
+        return (new \craft\db\Query())
+            ->from(\craft\db\Table::ELEMENTS_SITES)
+            ->where(['elementId' => $block->id])
+            ->andWhere(['siteId' => array_keys($keep)])
+            ->exists();
     }
 
     /**
