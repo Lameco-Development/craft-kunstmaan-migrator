@@ -12,7 +12,11 @@ use lameco\kunstmaanmigrator\Plugin;
 use yii\console\ExitCode;
 
 /**
- * Task 6 — resume/verify export. `state/export` reads every entry-producing
+ * The state table, out. `state/export` streams it as NDJSON; `state/diff` compares two of those
+ * streams, which is the question correct-and-re-run actually asks and the one that used to be
+ * answered with hand-written SQL against scratch databases.
+ *
+ * `state/export` reads every entry-producing
  * state row (reusing MigrationStateService::entryRows() rather than
  * reimplementing the query — that generator already covers both primary
  * entries and alias rows, since MigrationStateService::recordAlias() also
@@ -46,6 +50,14 @@ use yii\console\ExitCode;
  */
 class StateController extends Controller
 {
+    public ?string $from = null;
+    public ?string $to = null;
+
+    public function options($actionID): array
+    {
+        return array_merge(parent::options($actionID), $actionID === 'diff' ? ['from', 'to'] : []);
+    }
+
     public function actionExport(): int
     {
         $plugin = Plugin::getInstance();
@@ -55,6 +67,140 @@ class StateController extends Controller
         }
 
         return ExitCode::OK;
+    }
+
+    /**
+     * Two exports, and what moved between them.
+     *
+     * `state/export` gives you the files; comparing them was left to the operator, and on the
+     * reference corpus that meant six scratch databases and hand-written SQL. Correct-and-re-run
+     * is the workflow this plugin is built around, so the question "is this run better than the
+     * last one" deserves an answer that exits non-zero rather than one someone has to read.
+     *
+     * What it can answer is bounded by what the export carries. An entry that stopped being
+     * written is a regression, full stop. An entry whose `entryId` moved was re-created rather
+     * than updated, which is the churn signal — anything holding the old element id is stale.
+     * Block counts are not in the export, so this does not claim to see them.
+     */
+    public function actionDiff(): int
+    {
+        if (!is_string($this->from) || !is_string($this->to)) {
+            $this->stderr('state/diff needs --from=<export.ndjson> and --to=<export.ndjson>' . PHP_EOL);
+
+            return ExitCode::USAGE;
+        }
+
+        try {
+            $diff = self::diff(self::readExport($this->from), self::readExport($this->to));
+        } catch (\RuntimeException $e) {
+            $this->stderr($e->getMessage() . PHP_EOL);
+
+            return ExitCode::NOINPUT;
+        }
+
+        $this->stdout(json_encode($diff, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
+
+        // Only a loss fails. New entries and re-created ones are what a corrected mapping is
+        // supposed to produce; an entry the previous run wrote and this one did not is the only
+        // outcome that is a regression regardless of intent.
+        return $diff['lost'] === [] ? ExitCode::OK : ExitCode::DATAERR;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $from
+     * @param list<array<string, mixed>> $to
+     * @return array{counts: array<string, int>, lost: list<string>, added: list<string>, recreated: list<array{sourceUid: string, was: ?int, now: ?int}>}
+     */
+    public static function diff(array $from, array $to): array
+    {
+        $before = self::byUid($from);
+        $after = self::byUid($to);
+
+        $lost = array_values(array_diff(array_keys($before), array_keys($after)));
+        $added = array_values(array_diff(array_keys($after), array_keys($before)));
+        $recreated = [];
+
+        foreach ($after as $uid => $row) {
+            $was = $before[$uid]['entryId'] ?? null;
+
+            if (!isset($before[$uid]) || $was === $row['entryId']) {
+                continue;
+            }
+
+            $recreated[] = ['sourceUid' => $uid, 'was' => $was, 'now' => $row['entryId']];
+        }
+
+        sort($lost);
+        sort($added);
+        usort($recreated, static fn (array $a, array $b): int => strcmp($a['sourceUid'], $b['sourceUid']));
+
+        return [
+            'counts' => [
+                'from' => count($before),
+                'to' => count($after),
+                'lost' => count($lost),
+                'added' => count($added),
+                'recreated' => count($recreated),
+            ],
+            'lost' => $lost,
+            'added' => $added,
+            'recreated' => $recreated,
+        ];
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return array<string, array{entryId: ?int}>
+     */
+    private static function byUid(array $rows): array
+    {
+        $out = [];
+
+        foreach ($rows as $row) {
+            $uid = (string) ($row['sourceUid'] ?? '');
+
+            if ($uid === '') {
+                continue;
+            }
+
+            $out[$uid] = ['entryId' => isset($row['entryId']) ? (int) $row['entryId'] : null];
+        }
+
+        return $out;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private static function readExport(string $path): array
+    {
+        $handle = @fopen($path, 'r');
+
+        if ($handle === false) {
+            throw new \RuntimeException(sprintf('state/diff: cannot read %s', $path));
+        }
+
+        $rows = [];
+
+        while (($line = fgets($handle)) !== false) {
+            $line = trim($line);
+
+            if ($line === '') {
+                continue;
+            }
+
+            $decoded = json_decode($line, true);
+
+            if (!is_array($decoded)) {
+                fclose($handle);
+
+                throw new \RuntimeException(sprintf('state/diff: %s is not NDJSON produced by state/export', $path));
+            }
+
+            $rows[] = $decoded;
+        }
+
+        fclose($handle);
+
+        return $rows;
     }
 
     /**

@@ -9,8 +9,12 @@ use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Target\TargetSchema;
 
 /**
- * Every required field on every Craft entry type the mapping writes to, and whether the mapping
- * has anything to put in it.
+ * Every field on every Craft entry type the mapping writes to, and whether the mapping has
+ * anything to put in it.
+ *
+ * Two questions off one walk. `requirements()` asks the load-blocking one — a required field with
+ * no value. `unfilled()` asks the one nobody was asking: an *optional* field no lane touches,
+ * which is invisible until an editor opens the page and the hero is blank.
  *
  * `TargetCheck::unfilledRequired()` answers a narrower question — required fields of the blocks
  * named by `parts:`. That misses three quarters of the target: nested Matrix entry types
@@ -23,6 +27,18 @@ use Lameco\KumaCompile\Target\TargetSchema;
  */
 final class Readiness
 {
+    /**
+     * Entry fields an adapter lane fills, which the mapping therefore never names.
+     *
+     * Hard-coded because the loader hard-codes it too: `SeomaticPayloadBuilder` writes
+     * `setFieldValue('seo', ...)` with the handle in the source, not from the mapping. Reading
+     * this off the mapping is impossible; leaving it out puts the single most-placed field in the
+     * corpus at the top of a report of holes, which is how a report stops being read.
+     *
+     * @var array<string, string>
+     */
+    private const ADAPTER_FIELDS = ['seo' => 'seo-adapter'];
+
     private readonly Transforms $transforms;
 
     public function __construct(
@@ -34,6 +50,30 @@ final class Readiness
 
     /** @return list<Requirement> */
     public function requirements(): array
+    {
+        return array_values(array_filter($this->all(), static fn (Requirement $r): bool => $r->required));
+    }
+
+    /**
+     * Fields on a target the mapping writes to that no lane supplies at all.
+     *
+     * The mirror of `requirements()`, and the question `readiness` could not answer: an optional
+     * field nothing fills is not a load blocker, so it never appeared here — and 37 hero field
+     * instances across 20 entry types stayed empty on every migrated entry without one report
+     * saying so. Grouping is the caller's job; what this owes is one row per placement.
+     *
+     * @return list<Requirement>
+     */
+    public function unfilled(): array
+    {
+        return array_values(array_filter(
+            $this->all(),
+            static fn (Requirement $r): bool => !$r->required && !$r->isSupplied(),
+        ));
+    }
+
+    /** @return list<Requirement> */
+    public function all(): array
     {
         return [...$this->fromPages(), ...$this->fromParts(), ...$this->fromSequence()];
     }
@@ -59,7 +99,7 @@ final class Readiness
                 subject: (string) $page,
                 entryType: $entryType,
                 map: $spec['map'] ?? [],
-                extra: [],
+                extra: $this->contextFields($spec),
                 live: isset($spec['live']) ? (int) $spec['live'] : null,
             )];
         }
@@ -277,8 +317,8 @@ final class Readiness
             }
         }
 
-        foreach ($this->schema->requiredFields($entryType) as $field) {
-            $slot = $this->schema->slot($entryType, $field);
+        foreach ($this->schema->slots($entryType) as $field => $slot) {
+            $field = (string) $field;
             $source = $map[$field] ?? null;
             $supplier = match (true) {
                 $source !== null          => 'map',
@@ -296,11 +336,36 @@ final class Readiness
                 supplier: $supplier,
                 live: $live,
                 totalTransform: $source !== null && $this->survivesEmpty((string) $source),
-                craftDefault: $slot?->default,
+                craftDefault: $slot->default,
+                required: $slot->required,
             );
         }
 
         return $out;
+    }
+
+    /**
+     * The Matrix fields a page's block stream lands in.
+     *
+     * `contexts:` names them — per page, or from `defaults:` — and the blocks lane fills them, not
+     * the page's `map:`. Without this every page entry type reads as never filling its own page
+     * builder, which is the one field on it that always is filled.
+     *
+     * @param array<string, mixed> $spec
+     * @return array<string, string>
+     */
+    private function contextFields(array $spec): array
+    {
+        $contexts = $spec['contexts'] ?? $this->mapping->all()['defaults']['contexts'] ?? [];
+        $fields = self::ADAPTER_FIELDS;
+
+        foreach ($contexts as $target) {
+            if (is_array($target) && isset($target['field'])) {
+                $fields[(string) $target['field']] = 'blocks';
+            }
+        }
+
+        return $fields;
     }
 
     /**

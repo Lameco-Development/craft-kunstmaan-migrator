@@ -93,6 +93,47 @@ php lib/kuma-compile/bin/kuma-compile init --help
 The grammar is validated by `lib/kuma-compile/src/Mapping/Schema.php`, which is
 the authority on what a mapping may contain.
 
+## Authoring the mapping
+
+The mapping is the program. `kuma-compile` is the tool that writes it, and it
+runs against the legacy database with no Craft anywhere — which is what lets a
+mapping be authored before the target site exists.
+
+```bash
+vendor/bin/kuma-compile init --env=COM=enreach_website > migration/mapping/site.yaml
+vendor/bin/kuma-compile validate migration/mapping/site.yaml --craft=.
+vendor/bin/kuma-compile coverage migration/mapping/site.yaml
+vendor/bin/kuma-compile readiness migration/mapping/site.yaml --craft=.
+```
+
+| Command | |
+| --- | --- |
+| `init` | discover the inventory — every pagepart class and page type by volume, real table names, child collections with their foreign keys, every locale with its live page count |
+| `validate` | the mapping's own shape, then every handle it names against the target's project config |
+| `coverage` | **did I miss anything in the legacy site** — anything not named in the mapping is an error, not a silent skip |
+| `readiness --craft=.` | **will every required Craft field get a value** — the mirror of `coverage`, pointed at the target |
+| `readiness --craft=. --unfilled` | the *optional* Craft fields no lane fills at all |
+| `suggest` | draft rows for parts the mapping does not name yet |
+| `doctor` | can the legacy environments be reached, and do they hold what the mapping says |
+
+`init` deliberately emits a skeleton that **fails `validate`**: every part lacks
+a disposition, so nothing runs until a human has resolved each one. It is a
+checklist, and finishing it is what makes it a program.
+
+`coverage` and `readiness` ask the same question in opposite directions, and a
+mapping can pass one and fail the other. An unmapped legacy column is silent
+data loss; an unfilled required Craft field is an entry an editor cannot save.
+
+**`--unfilled` is the third question**, and the one that went unasked longest: a
+Craft field that is *optional* and that no lane writes to is not a load blocker,
+so it never appeared in `readiness` — and on the reference corpus that was 37
+hero field instances across 20 entry types, empty on every one of 972 migrated
+pages, with nothing reporting it. It groups by field handle, because
+`heroTitle` unfilled on twenty entry types is one decision rather than twenty
+findings. Read the `Craft writes` column: a field with a dropdown default is
+populated on every migrated entry with no legacy data behind it, which is how
+`heroColorScheme` reads as migrated on 6,173 rows and is not.
+
 ## Running it
 
 Point the plugin at a mapping, then either use the control panel utility
@@ -146,6 +187,21 @@ you want in CI once a corpus has a known-good loss count.
 server-wide rather than database-scoped, so two concurrent migrations against
 the same server contend and the loser fails on the structure lock.
 
+**A slug collision is permanent, so a wrong placement cannot be re-run away.**
+Craft never reclaims a base slug once it has handed out `-2`. An entry that
+lands under the wrong parent and is later moved keeps the suffix forever — 204
+of the URL differences in the reference corpus's first verification run were
+this, and no amount of `--force` repairs one. Correct-and-re-run fixes field
+values, block content, slugs that were never taken. It does not fix a slug that
+was. The repair is an empty database and a fresh run, which is why the trial
+runs (`--dry-run`, `--only`, `--limit`) exist and why the first full run should
+go into a scratch database.
+
+**There is no undo.** No rollback, no purge, no "migrate --down". The recovery
+procedure is to drop the database and restore it. That is a survivable answer
+only because the production guard means the only databases this ever touches are
+ones you can afford to drop — see below.
+
 ### The other commands
 
 | Command | |
@@ -154,6 +210,7 @@ the same server contend and the loser fails on the structure lock.
 | `load/fixup` | drain the deferred `_ref`s parked by the load pass |
 | `load/redirects --payload=<file>` | load a redirects payload produced by other means |
 | `state/export` | stream the state table as NDJSON — the file to diff between runs |
+| `state/diff --from=<a> --to=<b>` | what changed between two exports: entries that stopped being written, entries whose block count moved |
 
 Every command prints machine-readable JSON or NDJSON to stdout and exits
 non-zero on failure.

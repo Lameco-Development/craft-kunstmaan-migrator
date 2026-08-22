@@ -58,6 +58,7 @@ final class ReadinessCommand extends Command
             ->addArgument('mapping', InputArgument::REQUIRED, 'Path to the mapping YAML')
             ->addOption('craft', null, InputOption::VALUE_REQUIRED, 'Target Craft project root')
             ->addOption('offline', null, InputOption::VALUE_NONE, 'Skip fill rates — schema check only, no database')
+            ->addOption('unfilled', null, InputOption::VALUE_NONE, 'Invert it: the optional fields no lane fills at all')
             ->addOption('all', null, InputOption::VALUE_NONE, 'Include the required fields that are already satisfied')
             ->addOption('markdown', null, InputOption::VALUE_NONE, 'Emit a Markdown table, for committing next to the mapping')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Emit machine-readable JSON')
@@ -76,7 +77,13 @@ final class ReadinessCommand extends Command
             return Command::INVALID;
         }
 
-        $requirements = (new Readiness($mapping, CraftSchema::fromProjectConfig($craftRoot)))->requirements();
+        $readiness = new Readiness($mapping, CraftSchema::fromProjectConfig($craftRoot));
+
+        if ($input->getOption('unfilled')) {
+            return $this->unfilled($io, $output, $readiness->unfilled(), (bool) $input->getOption('json'));
+        }
+
+        $requirements = $readiness->requirements();
         $problems = [];
 
         if (!$input->getOption('offline')) {
@@ -130,6 +137,83 @@ final class ReadinessCommand extends Command
         $unsatisfied = count(array_filter($requirements, static fn (Requirement $r): bool => $r->verdict() !== Requirement::OK));
 
         return $input->getOption('strict') && $unsatisfied > 0 ? Command::FAILURE : Command::SUCCESS;
+    }
+
+    /**
+     * The fields nothing writes to, grouped by handle.
+     *
+     * Per-placement rows are the wrong unit: `heroTitle` unfilled on twenty entry types is one
+     * decision, not twenty findings, and reading it as twenty is how it stayed unnoticed. The
+     * handle with the most placements is the one an editor meets first.
+     *
+     * @param list<Requirement> $unfilled
+     */
+    private function unfilled(SymfonyStyle $io, OutputInterface $output, array $unfilled, bool $json): int
+    {
+        $byField = [];
+
+        foreach ($unfilled as $r) {
+            $byField[$r->field]['field'] = $r->field;
+            $byField[$r->field]['targets'][] = $r->target;
+            $byField[$r->field]['lanes'][$r->lane] = true;
+            $byField[$r->field]['live'] = ($byField[$r->field]['live'] ?? 0) + ($r->live ?? 0);
+
+            if ($r->craftDefault !== null) {
+                $byField[$r->field]['defaults'][$r->craftDefault] = true;
+            }
+        }
+
+        foreach ($byField as &$row) {
+            $row['targets'] = array_values(array_unique($row['targets']));
+            $row['placements'] = count($row['targets']);
+            $row['lanes'] = array_keys($row['lanes']);
+            $row['craftDefaults'] = array_keys($row['defaults'] ?? []);
+            unset($row['defaults']);
+        }
+
+        unset($row);
+        usort($byField, static fn (array $a, array $b): int => [$b['placements'], $b['live']] <=> [$a['placements'], $a['live']]);
+
+        if ($json) {
+            $output->writeln((string) json_encode(array_values($byField), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            return Command::SUCCESS;
+        }
+
+        $io->title('Fields no lane fills');
+        $io->text(sprintf(
+            '%d field placements across the targets this mapping writes to have no source in any lane — not the'
+            . ' map, not a child collection, not a promote, not the sequence, not the block stream.',
+            count($unfilled),
+        ));
+
+        if ($byField === []) {
+            $io->success('Every field on every target the mapping writes to is filled by something.');
+
+            return Command::SUCCESS;
+        }
+
+        $io->table(
+            ['field', 'entry types', 'lanes', 'live rows', 'Craft writes'],
+            array_map(static fn (array $row): array => [
+                $row['field'],
+                $row['placements'] . ($row['placements'] > 3
+                    ? sprintf(' (%s, …)', implode(', ', array_slice($row['targets'], 0, 3)))
+                    : sprintf(' (%s)', implode(', ', $row['targets']))),
+                implode(', ', $row['lanes']),
+                $row['live'] > 0 ? number_format($row['live']) : '—',
+                $row['craftDefaults'] === [] ? '—' : implode(', ', $row['craftDefaults']),
+            ], $byField),
+        );
+
+        $io->writeln('  Not an error: plenty of fields are meant to be left to editors. It is a list to walk once,');
+        $io->writeln('  because the alternative is finding out from the client which of them they expected filled.');
+        $io->writeln('');
+        $io->writeln('  <comment>Craft writes</comment> is the trap column. A field with a default is populated on every migrated');
+        $io->writeln('  entry without one byte of legacy data behind it, so a spot-check that stops at "is the field');
+        $io->writeln('  set" reads it as migrated. It is on this list because it is not.');
+
+        return Command::SUCCESS;
     }
 
     /**

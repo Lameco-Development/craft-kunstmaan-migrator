@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Lameco\KumaCompile\Report;
 
 /**
- * One required Craft field, and what the mapping does about it.
+ * One Craft field on a target the mapping writes to, and what the mapping does about it.
  *
  * A required field the mapping never fills is not a validation error — the field may carry a
  * default — but it is the thing that decides whether a load survives. The compiler drops empty
@@ -32,6 +32,8 @@ final class Requirement
         public ?int $empty = null,
         public readonly bool $totalTransform = false,
         public readonly ?string $craftDefault = null,
+        /** Whether the entry type marks the field required. An optional field is never a blocker, only a hole. */
+        public readonly bool $required = true,
     ) {
     }
 
