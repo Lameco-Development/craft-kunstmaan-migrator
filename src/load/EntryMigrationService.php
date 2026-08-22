@@ -494,7 +494,11 @@ class EntryMigrationService extends Component
         // Persist the accumulated block UID map to state so the NEXT re-run
         // can thread all UIDs back in and update blocks in place (Pitfall 3).
         // ------------------------------------------------------------------ 8
-        if (!empty($blockUidMap)) {
+        // `!empty($blockUidMap)` until now, which is always true: the primary
+        // site's key is assigned unconditionally above, so the guard never
+        // prevented anything. What it meant to prevent is writing meta that
+        // records nothing.
+        if (array_filter($blockUidMap) !== []) {
             $this->stateService->updateMeta($stateSource, (string) $stateKey, null, ['blockIds' => $blockUidMap]);
         }
 

@@ -48,6 +48,11 @@ final class InMemoryElementWriter implements ElementWriter
         $this->deleted[] = ['element' => $element, 'hardDelete' => $hardDelete];
     }
 
+    /**
+     * @template T of ElementInterface
+     * @param class-string<T> $class
+     * @return T|null
+     */
     public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
     {
         return $this->findable[$this->key($id, $siteId)] ?? $this->findable[$this->key($id, null)] ?? null;

@@ -820,10 +820,18 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         $entryId = $this->resolveEntryIdForNode($kumaNodeId, $refId, $fqcn);
         if ($entryId === null) {
             $report->incr('skipped');
+            // $stateSource until now, which is not a variable this method has.
+            // PHP raises, Craft turns that into an exception, the adapter
+            // summariser catches it — so the *common* outcome of this pass, a
+            // menu item whose entry does not exist yet, killed the whole pass
+            // instead of warning about one node. Second undefined variable in
+            // this file on an error path; both only ever fire when something
+            // has already gone slightly wrong, which is exactly when a report
+            // is worth having.
             $report->warn(sprintf(
                 'kuma_node id=%d → %s ref_id=%d has no migrated entry yet; skipping (re-run after entry migration completes).',
                 $kumaNodeId,
-                $stateSource,
+                $fqcn,
                 $refId,
             ));
             return null;
