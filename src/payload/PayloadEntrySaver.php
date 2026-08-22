@@ -341,6 +341,41 @@ final class PayloadEntrySaver
             return ['present' => true, 'value' => $resolvedId];
         }
 
+        // A Craft Link field pointing at an entry stores a reference tag, not an id — the same
+        // `{entry:<id>@<siteId>:url}` form the control panel writes. The compiler cannot know the
+        // Craft id, so it hands over the source uid and the tag is assembled here.
+        if (array_key_exists('_linkRef', $node) && is_string($node['_linkRef'])) {
+            $resolvedId = $this->refResolver->resolve($node['_linkRef']);
+
+            if ($resolvedId === null) {
+                $deferredRefs[] = [
+                    'field' => $fieldHandle,
+                    'site' => $siteHandle,
+                    'ref' => $node['_linkRef'],
+                    'path' => array_slice($path, 0, -1),
+                ];
+
+                return ['present' => false, 'value' => null];
+            }
+
+            // `type` is not optional here. Craft only sniffs the link type when the value is a
+            // bare string; hand it a map — which is the only way to carry a label — and it
+            // defaults to `url`, then fails the reference tag as an invalid URL and takes the
+            // whole entry with it.
+            $link = [
+                'type' => 'entry',
+                'value' => sprintf('{entry:%d@%d:url}', $resolvedId, $siteId),
+            ];
+
+            foreach (['label', 'target'] as $key) {
+                if (isset($node[$key]) && is_string($node[$key]) && $node[$key] !== '') {
+                    $link[$key] = $node[$key];
+                }
+            }
+
+            return ['present' => true, 'value' => $link];
+        }
+
         if (array_key_exists('_asset', $node) && is_string($node['_asset'])) {
             $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset']);
             if ($resolvedId <= 0) {

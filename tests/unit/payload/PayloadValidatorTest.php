@@ -240,6 +240,27 @@ final class PayloadValidatorTest extends TestCase
         self::assertSame('BAD_REF', $violations[0]->code);
     }
 
+    public function testBadLinkRefProducesViolation(): void
+    {
+        // `_linkRef` carries the same grammar as `_ref` and is resolved the same way, so a
+        // malformed one must not escape validation just because the key is different.
+        $raw = $this->validPayloadArray();
+        $raw['sites']['en']['fieldValues']['body'] = ['_linkRef' => 'not-a-uid', 'label' => 'Read more'];
+        $violations = $this->validator->validate(Payload::fromArray($raw));
+        self::assertCount(1, $violations);
+        self::assertSame('BAD_REF', $violations[0]->code);
+    }
+
+    public function testWellFormedLinkRefPasses(): void
+    {
+        $raw = $this->validPayloadArray();
+        $raw['sites']['en']['fieldValues']['body'] = [
+            '_linkRef' => 'kuma:COM:kuma_nodes:42',
+            'label' => 'Read more',
+        ];
+        self::assertSame([], $this->validator->validate(Payload::fromArray($raw)));
+    }
+
     public function testBadParentRefProducesViolation(): void
     {
         $raw = $this->validPayloadArray();

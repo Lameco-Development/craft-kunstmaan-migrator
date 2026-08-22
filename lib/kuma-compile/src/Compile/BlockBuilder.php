@@ -6,6 +6,7 @@ namespace Lameco\KumaCompile\Compile;
 
 use Lameco\KumaCompile\Legacy\MediaIndex;
 use Lameco\KumaCompile\Legacy\PartReader;
+use Lameco\KumaCompile\Target\Slot;
 use Lameco\KumaCompile\Target\TargetSchema;
 
 /**
@@ -97,15 +98,20 @@ final class BlockBuilder
 
             $blocks = [];
 
+            // A child's map addresses fields on the *nested* entry type, so that is the type the
+            // schema must be asked about while it is evaluated — `commonLink` is a Link field on
+            // `button`, and nothing at all on the block that owns the Matrix.
+            $childType = $this->childBlockType((string) $field);
+
             foreach ($rows as $childRow) {
-                $fields = $this->fieldsFrom($child['map'] ?? [], $childRow, $context . '.' . $field);
+                $fields = $this->fieldsFrom($child['map'] ?? [], $childRow, $context . '.' . $field, $childType);
 
                 if ($trackable && isset($childRow['id'])) {
                     $fields['_sourcePartRef'] = $this->sourceRef((string) $child['table'], (int) $childRow['id']);
                 }
 
                 $blocks[] = [
-                    'type' => $this->childBlockType((string) $field),
+                    'type' => $childType,
                     'fields' => $fields,
                 ];
             }
@@ -123,30 +129,41 @@ final class BlockBuilder
     /**
      * @param array<string, string> $map
      * @param array<string, mixed> $row
+     * @param ?string $owner the entry type these targets name, when the caller knows it — a page
+     *   map addresses a page entry type, and without it the schema is asked about whichever block
+     *   happened to be built last.
      * @return array<string, mixed>
      */
-    public function fieldsFrom(array $map, array $row, string $context): array
+    public function fieldsFrom(array $map, array $row, string $context, ?string $owner = null): array
     {
+        $previous = $this->block;
+
+        if ($owner !== null) {
+            $this->block = $owner;
+        }
+
         $fields = [];
 
         foreach ($map as $target => $expression) {
-            $value = $this->evaluate((string) $expression, $row, $context);
+            $value = $this->evaluate((string) $expression, $row, $context, (string) $target);
 
             if ($value !== null && $value !== '' && $value !== []) {
                 $this->assign($fields, (string) $target, $value);
             }
         }
 
+        $this->block = $previous;
+
         return $fields;
     }
 
     /** `column`, `column | transform`, `column | ref(Entity)`, or `link(url, text, newWindow, type)`. */
-    private function evaluate(string $expression, array $row, string $context): mixed
+    private function evaluate(string $expression, array $row, string $context, string $target = ''): mixed
     {
         $expression = trim($expression);
 
         if (preg_match('/^link\((.*)\)$/', $expression, $m) === 1) {
-            return $this->link(array_map('trim', explode(',', $m[1])), $row);
+            return $this->link(array_map('trim', explode(',', $m[1])), $row, $target);
         }
 
         if (preg_match('/^address\((.*)\)$/s', $expression, $m) === 1) {
@@ -291,35 +308,101 @@ final class BlockBuilder
     }
 
     /**
-     * The legacy link columns collapse into one button. A link with no URL is not a button,
-     * it is an empty row an editor left behind.
+     * The legacy link columns collapse into one link. A link with no URL is not a link, it is
+     * an empty row an editor left behind.
+     *
+     * The shape depends on where it lands, and the schema is what knows: a Craft `Link` field
+     * takes one value keyed `value`, while a Matrix of buttons takes a list of blocks with the
+     * link on the nested entry type. Emitting a list of `url` keys — which is what this did —
+     * satisfies neither, and Craft discards both without a word.
      *
      * @param list<string> $columns
      */
-    private function link(array $columns, array $row): ?array
+    private function link(array $columns, array $row, string $target = ''): mixed
     {
         [$urlCol, $textCol] = [$columns[0] ?? null, $columns[1] ?? null];
-        $url = $urlCol !== null ? ($row[$urlCol] ?? null) : null;
+        $url = $urlCol !== null ? trim((string) ($row[$urlCol] ?? '')) : '';
 
-        if ($url === null || trim((string) $url) === '') {
+        if ($url === '') {
             return null;
         }
 
-        $button = ['url' => (string) $url];
+        // Kunstmaan writes an internal link as `[NT<id>]`, which a Link field rejects outright.
+        // It addresses a node translation, and the node is what becomes an entry, so it is
+        // handed over as a ref for the loader to turn into a reference tag.
+        $ref = $this->entities?->uidFor('nodeLink', $url, $this->environment);
 
-        if ($textCol !== null && ($row[$textCol] ?? null) !== null) {
-            $button['label'] = (string) $row[$textCol];
+        $link = $ref !== null ? ['_linkRef' => $ref] : ['value' => $url];
+
+        if ($textCol !== null && trim((string) ($row[$textCol] ?? '')) !== '') {
+            $link['label'] = (string) $row[$textCol];
         }
 
         if (isset($columns[2]) && (int) ($row[$columns[2]] ?? 0) === 1) {
-            $button['target'] = '_blank';
+            $link['target'] = '_blank';
         }
 
-        if (isset($columns[3]) && ($row[$columns[3]] ?? null) !== null) {
-            $button['type'] = (string) $row[$columns[3]];
+        $slot = $this->slotFor($target);
+
+        if ($slot === null || !$slot->isMatrix()) {
+            return $link;
         }
 
-        return [$button];
+        $nested = $this->childBlockType($target);
+        $linkHandle = $this->soleSlotOfType($nested, 'Link');
+
+        if ($linkHandle === null) {
+            return null;
+        }
+
+        $fields = [$linkHandle => $link];
+        $styleColumn = $columns[3] ?? null;
+        $style = $styleColumn !== null ? trim((string) ($row[$styleColumn] ?? '')) : '';
+        $styleHandle = $style !== '' ? $this->soleSlotOfType($nested, 'Dropdown') : null;
+
+        if ($styleHandle !== null) {
+            $fields[$styleHandle] = $style;
+        }
+
+        return [['type' => $nested, 'fields' => $fields]];
+    }
+
+    /** The slot a simple target names on the entry type currently being built. */
+    private function slotFor(string $target): ?Slot
+    {
+        if ($this->schema === null || $this->block === null || $target === '') {
+            return null;
+        }
+
+        // A target that addresses a nested position already says where it lands.
+        if (str_contains($target, '.') || str_contains($target, '[')) {
+            return null;
+        }
+
+        return $this->schema->slot($this->block, $target);
+    }
+
+    /**
+     * The one field of this type on an entry type, when there is exactly one.
+     *
+     * Reading it from the schema rather than naming `commonLink` keeps this working on a target
+     * whose button block calls its fields something else.
+     */
+    private function soleSlotOfType(string $entryType, string $type): ?string
+    {
+        if ($this->schema === null) {
+            return null;
+        }
+
+        $found = [];
+
+        foreach ($this->schema->slots($entryType) as $handle => $slot) {
+            if ($slot->type === $type) {
+                $found[] = (string) $handle;
+            }
+        }
+
+        return count($found) === 1 ? $found[0] : null;
     }
 
     /** `a.b` and `a[0].b` address nested Matrix positions. */
