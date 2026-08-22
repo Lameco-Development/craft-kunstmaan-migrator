@@ -25,7 +25,7 @@ final class MigrationUtility extends Utility
 {
     public static function displayName(): string
     {
-        return Craft::t('app', 'Kunstmaan Migration');
+        return Craft::t('kunstmaan-migrator', 'Kunstmaan Migration');
     }
 
     public static function id(): string
@@ -47,11 +47,14 @@ final class MigrationUtility extends Utility
         $error = null;
 
         if (!is_string($path) || $path === '' || !is_file($path)) {
-            $error = Craft::t('app', 'Set a mapping file in the plugin settings first.');
+            $error = Craft::t('kunstmaan-migrator', 'Set a mapping file in the plugin settings first.');
         } else {
             try {
                 $environments = Mapping::fromFile($path)->environments();
-                $checks = (new MappingPreflight(new PdoPreflightProbe(EnvironmentPipeline::dsnFromSettings())))
+                $checks = (new MappingPreflight(
+                    new PdoPreflightProbe(EnvironmentPipeline::dsnFromSettings()),
+                    static fn (string $path): string => (string) App::parseEnv($path),
+                ))
                     ->inspect($environments, Craft::$app->getSites()->getAllSites());
             } catch (Throwable $e) {
                 $error = $e->getMessage();

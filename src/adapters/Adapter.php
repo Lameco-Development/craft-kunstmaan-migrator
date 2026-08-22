@@ -18,19 +18,43 @@ namespace lameco\kunstmaanmigrator\adapters;
 final class Adapter
 {
     /**
-     * @param string      $handle       stable key, e.g. 'seo'
-     * @param string      $label        what an operator calls it, e.g. 'SEO'
-     * @param string      $settingsFlag the Settings property carrying the switch
-     * @param string|null $pluginHandle the third-party plugin required, or null
-     *                                  when the adapter is built in — the
-     *                                  translation pass writes Craft's own
-     *                                  catalogs and needs nothing installed
+     * @param string        $handle       stable key, e.g. 'seo'
+     * @param string        $label        what an operator calls it, e.g. 'SEO'
+     * @param string        $settingsFlag the Settings property carrying the switch
+     * @param string|null   $pluginHandle the third-party plugin required, or null
+     *                                    when the adapter is built in — the
+     *                                    translation pass writes Craft's own
+     *                                    catalogs and needs nothing installed
+     * @param \Closure|null $factory      resolves the MigrationAdapter that runs
+     *                                    this pass, called once per environment.
+     *                                    Declaring it is what makes the registry
+     *                                    an execution list rather than a display
+     *                                    list: without it a registered adapter
+     *                                    rendered a settings row and was never
+     *                                    called. Null means the pass is driven
+     *                                    from somewhere other than the adapter
+     *                                    loop — see `redirects` in builtIn().
      */
     public function __construct(
         public readonly string $handle,
         public readonly string $label,
         public readonly string $settingsFlag,
         public readonly ?string $pluginHandle = null,
+        public readonly ?\Closure $factory = null,
     ) {
+    }
+
+    /**
+     * The pass itself, or null when nothing runs it through the adapter loop.
+     */
+    public function service(): ?MigrationAdapter
+    {
+        if ($this->factory === null) {
+            return null;
+        }
+
+        $service = ($this->factory)();
+
+        return $service instanceof MigrationAdapter ? $service : null;
     }
 }

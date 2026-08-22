@@ -117,32 +117,90 @@ class Settings extends Model
         ];
     }
 
-    public function init(): void
+    /**
+     * The legacy connection, resolved.
+     *
+     * Deliberately NOT applied to the properties. Craft persists this model to
+     * project config, so anything written onto an attribute is a value headed
+     * for git — which is how the settings screen came to arrive pre-filled with
+     * a password nobody typed, and then refused to save it. The properties hold
+     * what the operator configured; this resolves it for the code that connects.
+     *
+     * Precedence, first hit wins: the stored setting (with `$VAR` expanded),
+     * CRAFT_LEGACY_DB_*, KUMA_DB_* — which is what `migrate` read directly
+     * before this model governed the connection — then the Kunstmaan project's
+     * own .env DATABASE_URL, then the MySQL default.
+     *
+     * @return array{host: string, port: int, user: string, password: string, charset: string, tablePrefix: string}
+     */
+    public function legacyConnection(): array
     {
-        parent::init();
+        $dsn = $this->kunstmaanDsn();
 
-        // D-12: env-var fallback. config/kunstmaan-migrator.php overrides win when present
-        // (Craft loads the config file BEFORE init() and assigns to the public properties,
-        // so `??=` only fills the unset cases).
-        // KUMA_DB_* is read as a second fallback because `migrate` used to build its
-        // connection from those directly, bypassing this model entirely — so a project
-        // configured the old way keeps working while there is now one source of truth.
-        $this->legacyDbServer      ??= App::env('CRAFT_LEGACY_DB_SERVER') ?: (App::env('KUMA_DB_HOST') ?: null);
-        $this->legacyDbDatabase    ??= App::env('CRAFT_LEGACY_DB_DATABASE') ?: null;
-        $this->legacyDbUser        ??= App::env('CRAFT_LEGACY_DB_USER') ?: (App::env('KUMA_DB_USER') ?: null);
-        $this->legacyDbPassword    ??= App::env('CRAFT_LEGACY_DB_PASSWORD') ?: (App::env('KUMA_DB_PASSWORD') ?: null);
-        $envPort = App::env('CRAFT_LEGACY_DB_PORT') ?: App::env('KUMA_DB_PORT');
-        if ($envPort !== null && $envPort !== '' && $envPort !== false) {
-            $this->legacyDbPort = (int) $envPort;
+        return [
+            'host' => $this->resolve($this->legacyDbServer, 'CRAFT_LEGACY_DB_SERVER', 'KUMA_DB_HOST')
+                ?? $dsn['host'] ?? '127.0.0.1',
+            'port' => (int) ($this->legacyDbPort !== 3306
+                ? $this->legacyDbPort
+                : ($this->resolve(null, 'CRAFT_LEGACY_DB_PORT', 'KUMA_DB_PORT') ?? $dsn['port'] ?? 3306)),
+            'user' => $this->resolve($this->legacyDbUser, 'CRAFT_LEGACY_DB_USER', 'KUMA_DB_USER')
+                ?? $dsn['user'] ?? 'root',
+            'password' => $this->resolve($this->legacyDbPassword, 'CRAFT_LEGACY_DB_PASSWORD', 'KUMA_DB_PASSWORD')
+                ?? $dsn['password'] ?? '',
+            'charset' => $this->resolve($this->legacyDbCharset, 'CRAFT_LEGACY_DB_CHARSET', null) ?? 'utf8mb4',
+            'tablePrefix' => $this->resolve($this->legacyDbTablePrefix, 'CRAFT_LEGACY_DB_TABLE_PREFIX', null) ?? '',
+        ];
+    }
+
+    /**
+     * A stored value beats an env var, and an empty string is an operator
+     * saying "none" rather than an operator saying nothing.
+     */
+    private function resolve(?string $stored, string $primaryEnv, ?string $fallbackEnv): ?string
+    {
+        if ($stored !== null && $stored !== '') {
+            $parsed = App::parseEnv($stored);
+
+            return is_string($parsed) && $parsed !== '' ? $parsed : null;
         }
-        $envCharset = App::env('CRAFT_LEGACY_DB_CHARSET');
-        if (is_string($envCharset) && $envCharset !== '') {
-            $this->legacyDbCharset = $envCharset;
+
+        $value = App::env($primaryEnv) ?: ($fallbackEnv !== null ? App::env($fallbackEnv) : null);
+
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
+     * The Kunstmaan project's own DATABASE_URL, read once.
+     *
+     * D-07 kept this so a migration needs no configuration at all when the
+     * legacy checkout is on the same machine. It used to fill the properties
+     * during validation, which meant a control-panel save wrote the legacy
+     * project's credentials into project config.
+     *
+     * @return array{host?: string, port?: int, user?: string, password?: string, database?: string}
+     */
+    private function kunstmaanDsn(): array
+    {
+        try {
+            $reader = $this->getEnvReader();
+
+            if (($reader->getDatabaseUrl() ?: '') === '') {
+                return [];
+            }
+        } catch (\Throwable) {
+            // No legacy checkout to read, or no application to reach it through.
+            // That is a missing convenience, not a failure — the settings screen
+            // must still render and the configured values still resolve.
+            return [];
         }
-        $envPrefix = App::env('CRAFT_LEGACY_DB_TABLE_PREFIX');
-        if (is_string($envPrefix)) {
-            $this->legacyDbTablePrefix = $envPrefix;
-        }
+
+        return array_filter([
+            'host' => $reader->getDsnHost(),
+            'port' => $reader->getDsnPort(),
+            'user' => $reader->getDsnUser(),
+            'password' => $reader->getDsnPassword(),
+            'database' => $reader->getDsnDatabase(),
+        ], static fn ($value): bool => $value !== null);
     }
 
     /**
@@ -160,54 +218,6 @@ class Settings extends Model
      * treat that exact value as the "operator hasn't customized" sentinel
      * and only fill from the DSN when the operator's value is still 3306.
      */
-    public function beforeValidate(): bool
-    {
-        // Fast path: every string field is operator-filled — skip the env reader entirely.
-        if (
-            $this->legacyDbServer !== null && $this->legacyDbServer !== ''
-            && $this->legacyDbDatabase !== null && $this->legacyDbDatabase !== ''
-            && $this->legacyDbUser !== null && $this->legacyDbUser !== ''
-            && $this->legacyDbPassword !== null && $this->legacyDbPassword !== ''
-        ) {
-            return parent::beforeValidate();
-        }
-
-        $reader = $this->getEnvReader();
-        $dsn = $reader->getDatabaseUrl();
-        if ($dsn === null || $dsn === '') {
-            return parent::beforeValidate();
-        }
-
-        // D-09: non-mysql DSN → reader's parsed components are all null.
-        // Probe the three structurally-required components; if all three are null
-        // the reader rejected the scheme and we have nothing to fill from.
-        if (
-            $reader->getDsnHost() === null
-            && $reader->getDsnUser() === null
-            && $reader->getDsnDatabase() === null
-        ) {
-            return parent::beforeValidate();
-        }
-
-        // D-07: operator values win — `??=` only writes when the field is null.
-        // Empty-string is treated as operator-provided (operator may have intentionally
-        // blanked a field; respect that choice).
-        $this->legacyDbServer   ??= $reader->getDsnHost();
-        $this->legacyDbUser     ??= $reader->getDsnUser();
-        $this->legacyDbPassword ??= $reader->getDsnPassword();
-        $this->legacyDbDatabase ??= $reader->getDsnDatabase();
-
-        // Port special case: the property default is 3306 (the MySQL canonical).
-        // Treat that exact value as the "operator hasn't customized" sentinel.
-        // Any other operator-set port (5555, 33060, etc.) wins.
-        $dsnPort = $reader->getDsnPort();
-        if ($dsnPort !== null && $this->legacyDbPort === 3306) {
-            $this->legacyDbPort = $dsnPort;
-        }
-
-        return parent::beforeValidate();
-    }
-
     /**
      * Test seam (Plan 04.1-02 / D-07 follow-on). Production callers route
      * through `Plugin::getInstance()->kunstmaanEnvReader`; tests subclass
@@ -245,6 +255,32 @@ class Settings extends Model
         );
     }
 
+    /**
+     * An environment variable that does not exist is almost always a typo, and
+     * one that is invisible until a run fails to connect — `$KUMA_DB_PASSWORDd`
+     * saves cleanly, reads as empty, and reports as "cannot connect" an hour
+     * later. Checking at save time is where it costs nothing.
+     */
+    public function validateEnvReferenceResolves(string $attribute): void
+    {
+        $value = $this->$attribute;
+
+        if (!is_string($value) || !str_starts_with($value, '$')) {
+            return;
+        }
+
+        $name = substr($value, 1);
+
+        if ($name === '' || App::env($name) !== null) {
+            return;
+        }
+
+        $this->addError(
+            $attribute,
+            sprintf('%s is not set in this environment — check the spelling, or add it to your .env.', $value),
+        );
+    }
+
     public function rules(): array
     {
         return [
@@ -252,6 +288,10 @@ class Settings extends Model
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['legacyDbPassword'], 'validateIsEnvReference'],
+            [
+                ['legacyDbServer', 'legacyDbUser', 'legacyDbPassword', 'legacyDbCharset', 'mappingPath'],
+                'validateEnvReferenceResolves',
+            ],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled'], 'boolean'],
             [['nodeMenuNavHandle', 'mappingPath'], 'string'],

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\adapters;
 
+use lameco\kunstmaanmigrator\Plugin;
 use yii\base\Component;
 use yii\base\Event;
 
@@ -51,13 +52,25 @@ final class AdapterRegistry extends Component
     private static function builtIn(): array
     {
         return [
-            new Adapter('seo', 'SEO', 'seoEnabled', 'seomatic'),
+            new Adapter('seo', 'SEO', 'seoEnabled', 'seomatic', static fn () => Plugin::getInstance()->seoMigrationService),
+
+            // No factory: the redirect records come from the mapping's `redirects:`
+            // lane rather than from the legacy database, so the pass needs the
+            // compiler and the environment it is compiling — neither of which fits
+            // migrateAll(options, sites). EnvironmentPipeline runs it directly and
+            // this row exists for the gate and the settings screen. The seam that
+            // would let it join the loop is an EnvironmentContext carrying the
+            // environment, its database and its media roots; that is the next step,
+            // and it retires the last three properties the pipeline writes onto
+            // long-lived singletons.
             new Adapter('redirects', 'Redirects', 'retourEnabled', 'retour'),
-            new Adapter('navigation', 'Navigation', 'navigationEnabled', 'navigation'),
+
+            new Adapter('navigation', 'Navigation', 'navigationEnabled', 'navigation', static fn () => Plugin::getInstance()->navigationMigrationService),
+
             // The translation pass writes Craft's own site catalogs, so it
             // needs nothing installed. enupal-translate is an enhancement it
             // checks for separately, not a requirement to run at all.
-            new Adapter('translations', 'Translations', 'translationsEnabled'),
+            new Adapter('translations', 'Translations', 'translationsEnabled', null, static fn () => Plugin::getInstance()->translationMigrationService),
         ];
     }
 }

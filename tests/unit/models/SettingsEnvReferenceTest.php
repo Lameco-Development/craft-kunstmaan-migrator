@@ -68,4 +68,62 @@ final class SettingsEnvReferenceTest extends TestCase
         self::assertCount(1, $rules, 'exactly one attribute is guarded, and it is the secret one');
         self::assertSame(['legacyDbPassword'], array_values($rules)[0][0]);
     }
+
+    /**
+     * The typo this exists to catch: `$KUMA_DB_PASSWORDd` saved cleanly, read
+     * as empty, and surfaced an hour later as "cannot connect". It starts with
+     * a `$`, so the leak guard was satisfied — but the variable does not exist.
+     */
+    public function testAnEnvironmentVariableThatDoesNotExistIsRejected(): void
+    {
+        $settings = SettingsFactory::make(['legacyDbPassword' => '$KUMA_DB_PASSWORD_THAT_IS_NOT_SET']);
+        $settings->validateEnvReferenceResolves('legacyDbPassword');
+
+        self::assertTrue($settings->hasErrors('legacyDbPassword'));
+        self::assertStringContainsString('not set in this environment', (string) $settings->getFirstError('legacyDbPassword'));
+    }
+
+    public function testAnEnvironmentVariableThatExistsIsAccepted(): void
+    {
+        $_SERVER['KUMA_TEST_VAR_THAT_EXISTS'] = 'yes';
+
+        try {
+            $settings = SettingsFactory::make(['legacyDbPassword' => '$KUMA_TEST_VAR_THAT_EXISTS']);
+            $settings->validateEnvReferenceResolves('legacyDbPassword');
+
+            self::assertFalse($settings->hasErrors('legacyDbPassword'));
+        } finally {
+            unset($_SERVER['KUMA_TEST_VAR_THAT_EXISTS']);
+        }
+    }
+
+    public function testAPlainValueIsNotCheckedForResolution(): void
+    {
+        // The leak guard owns that verdict; this one only reads $VAR references.
+        $settings = SettingsFactory::make(['mappingPath' => '/some/path/enreach.yaml']);
+        $settings->validateEnvReferenceResolves('mappingPath');
+
+        self::assertFalse($settings->hasErrors('mappingPath'));
+    }
+
+    /**
+     * Resolution must not write onto the attributes. Craft persists this model
+     * to project config, so a resolved value on an attribute is a secret headed
+     * for git — which is exactly how the settings screen came to arrive
+     * pre-filled with a password nobody typed.
+     */
+    public function testResolvingTheConnectionLeavesTheStoredSettingsAlone(): void
+    {
+        $_SERVER['KUMA_DB_PASSWORD'] = 'super-secret';
+
+        try {
+            $settings = SettingsFactory::make();
+            $connection = $settings->legacyConnection();
+
+            self::assertSame('super-secret', $connection['password'], 'the code that connects gets the value');
+            self::assertNull($settings->legacyDbPassword, 'and what gets saved stays empty');
+        } finally {
+            unset($_SERVER['KUMA_DB_PASSWORD']);
+        }
+    }
 }

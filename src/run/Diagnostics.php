@@ -6,9 +6,11 @@ namespace lameco\kunstmaanmigrator\run;
 
 use Craft;
 use craft\helpers\App;
+use Lameco\KumaCompile\Mapping\Mapping;
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\ProductionGuard;
+use lameco\kunstmaanmigrator\run\MappingPreflight;
 use Throwable;
 
 /**
@@ -35,6 +37,7 @@ final class Diagnostics
             $this->checkRetourPresence(),
             $this->checkLegacyMediaRoot(),
             $this->checkLegacyDb(),
+            ...$this->checkMapping(),
         ];
     }
 
@@ -138,10 +141,10 @@ final class Diagnostics
     }
 
     /**
-     * Check #5: LEGACY_MEDIA_PATH — informational when unset (`_asset`
-     * resolution is filesystem-JIT via AssetMigrationService::resolveFromLegacyUrl,
-     * skipped entirely without a root), fails only when set but not a
-     * readable directory (misconfiguration, not absence).
+     * Check #5: the LEGACY_MEDIA_PATH env var, which is the fallback root —
+     * the per-environment `mediaRoot:` chains in the mapping are the real
+     * source and are checked below, per environment. Informational when unset,
+     * fails only when set but not a readable directory.
      */
     private function checkLegacyMediaRoot(): array
     {
@@ -150,7 +153,7 @@ final class Diagnostics
             return $this->result(
                 'legacy_media_root',
                 true,
-                AssetMigrationService::LEGACY_MEDIA_ROOT_ENV . ' not configured — _asset resolution is skipped for this site.',
+                AssetMigrationService::LEGACY_MEDIA_ROOT_ENV . ' not set — normal; the mapping\'s per-environment mediaRoot chains are the source, checked below.',
             );
         }
 
@@ -170,12 +173,15 @@ final class Diagnostics
     }
 
     /**
-     * Check #6: legacy DB reachability — informational when
-     * Settings::$legacyDbServer/$legacyDbDatabase are both blank
-     * (`{{kuma:media:<id>}}` tokens then only resolve via ids already
-     * cached in state; AssetMigrationService::resolveFromLegacyId's legacy-DB
-     * JIT path is simply unavailable), fails only when configured but the
-     * connection itself doesn't work.
+     * Check #6: the single legacy connection Settings names, used by commands
+     * that run outside a migration.
+     *
+     * A blank `legacyDbDatabase` is the normal case, not an unconfigured one —
+     * the database name is per environment and comes from the mapping. This
+     * check therefore says very little on its own, which is why it used to
+     * report a green "not configured" on an install that could not connect at
+     * all. The per-environment probes below are the ones that answer the
+     * question.
      */
     private function checkLegacyDb(): array
     {
@@ -189,7 +195,7 @@ final class Diagnostics
             return $this->result(
                 'legacy_db',
                 true,
-                'legacy DB not configured — {{kuma:media:<id>}} token resolution falls back to already-cached state only.',
+                'no standalone legacy DB named in Settings — normal; each environment names its own database in the mapping, probed below.',
             );
         }
 
@@ -200,6 +206,70 @@ final class Diagnostics
         } catch (Throwable $e) {
             return $this->result('legacy_db', false, "legacy DB configured but unreachable: {$e->getMessage()}");
         }
+    }
+
+    /**
+     * The mapping, and every environment it declares.
+     *
+     * `doctor` answered six questions and none of them was "can this migration
+     * actually run" — it passed on an install whose mapping pointed nowhere,
+     * whose legacy databases were unreachable and whose uploads directories had
+     * moved, because the two checks that looked like they covered that read an
+     * env var and a settings field the mapping-owns-topology design leaves
+     * blank on purpose. MappingPreflight already asks the right questions; the
+     * control panel ran it and the command could not.
+     *
+     * @return list<array{check: string, ok: bool, detail: string}>
+     */
+    private function checkMapping(): array
+    {
+        $path = App::parseEnv(Plugin::getInstance()->getSettings()->mappingPath);
+
+        if (!is_string($path) || $path === '') {
+            return [$this->result('mapping', false, 'No mapping file configured — set one in the plugin settings.')];
+        }
+
+        if (!is_file($path)) {
+            return [$this->result('mapping', false, sprintf('Mapping file not found: %s', $path))];
+        }
+
+        try {
+            $environments = Mapping::fromFile($path)->environments();
+        } catch (Throwable $e) {
+            return [$this->result('mapping', false, sprintf('Mapping is unreadable: %s', $e->getMessage()))];
+        }
+
+        $checks = [$this->result('mapping', true, sprintf('%s declares %d environment(s).', $path, count($environments)))];
+
+        try {
+            $readiness = (new MappingPreflight(
+                    new PdoPreflightProbe(EnvironmentPipeline::dsnFromSettings()),
+                    static fn (string $path): string => (string) App::parseEnv($path),
+                ))
+                ->inspect($environments, Craft::$app->getSites()->getAllSites());
+        } catch (Throwable $e) {
+            $checks[] = $this->result('environments', false, sprintf('Preflight failed: %s', $e->getMessage()));
+
+            return $checks;
+        }
+
+        foreach ($readiness as $environment) {
+            $problems = $environment->problems();
+
+            $checks[] = $this->result(
+                'environment:' . $environment->name,
+                $problems === [],
+                $problems === []
+                    ? sprintf(
+                        '%s reachable, %s nodes.',
+                        $environment->database,
+                        $environment->nodeCount === null ? '?' : number_format($environment->nodeCount),
+                    )
+                    : implode(' ', $problems),
+            );
+        }
+
+        return $checks;
     }
 
     /**

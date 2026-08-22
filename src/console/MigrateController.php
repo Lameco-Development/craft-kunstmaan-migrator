@@ -6,35 +6,23 @@ namespace lameco\kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
-use craft\elements\Entry;
 use craft\helpers\Console;
-use yii\db\Connection;
-use Lameco\KumaCompile\Compile\Compiler;
 use Lameco\KumaCompile\Compile\PayloadWriter;
-use Lameco\KumaCompile\Compile\RedirectCompiler;
-use Lameco\KumaCompile\Compile\Transforms;
-use Lameco\KumaCompile\Legacy\Dsn;
-use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Target\TargetCheck;
 use lameco\kunstmaanmigrator\compile\TargetModel;
+use lameco\kunstmaanmigrator\finalize\FinalizePass;
 use lameco\kunstmaanmigrator\payload\FixupService;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
-use lameco\kunstmaanmigrator\payload\Payload;
-use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\load\RedirectMigrationService;
-use lameco\kunstmaanmigrator\payload\PayloadValidator;
-use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\queue\FinalizeJob;
 use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
+use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
 use lameco\kunstmaanmigrator\run\RunSettings;
 use lameco\kunstmaanmigrator\run\RunTally;
-use lameco\kunstmaanmigrator\sites\SiteMap;
 use yii\console\ExitCode;
 
 /**
@@ -86,9 +74,6 @@ final class MigrateController extends Controller
 
     /** Directory to write the compiled payloads into, for inspection. */
     public ?string $dump = null;
-
-    /** Directory of target block specs, used to check field-map coverage. */
-    public ?string $specs = null;
 
     /**
      * Skip the adapters that run after the entries: SEO, redirects, navigation, translations.
@@ -150,7 +135,7 @@ final class MigrateController extends Controller
     {
         return array_merge(
             parent::options($actionID),
-            ['mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'specs', 'entriesOnly', 'finalizeOnly', 'only', 'queue'],
+            ['mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'entriesOnly', 'finalizeOnly', 'only', 'queue'],
         );
     }
 
@@ -221,18 +206,7 @@ final class MigrateController extends Controller
         // time. The pass is idempotent and only touches rows that still carry a marker, so a
         // reference the COM database cannot answer is simply retried under DE.
         if ($this->finalizeOnly) {
-            $plugin = Plugin::getInstance();
-            $report = new MigrationReport();
-
-            foreach ($mapping->environments() as $env => $spec) {
-                if ($this->legacyEnv !== null && $env !== $this->legacyEnv) {
-                    continue;
-                }
-
-                EnvironmentPipeline::pointLegacyDbAt(EnvironmentPipeline::dsnFromSettings(), (string) $spec['database']);
-                $plugin->ckeditorRewriterService->resetLookupCaches();
-                $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $this->dryRun), $report);
-            }
+            $report = (new FinalizePass())->run($mapping, $this->dryRun, $this->legacyEnv);
 
             $this->stdout(json_encode([
                 'finalize' => $report->counts,
@@ -261,6 +235,19 @@ final class MigrateController extends Controller
                 ]));
 
                 $queued[] = (string) $env;
+            }
+
+            // The same two corpus-wide passes an inline run performs at the end.
+            // Without them a `--queue` run is not the same migration as the run
+            // it replaces. FIFO gives them the ordering they need.
+            if (!$this->entriesOnly) {
+                Craft::$app->getQueue()->push(new ResolveDeferredRefsJob());
+                Craft::$app->getQueue()->push(new FinalizeJob([
+                    'mappingPath' => $this->mapping,
+                    'dryRun' => $this->dryRun,
+                ]));
+                $queued[] = 'fixup';
+                $queued[] = 'finalize';
             }
 
             $this->stdout(json_encode([
@@ -314,9 +301,9 @@ final class MigrateController extends Controller
         $finalize = null;
 
         if (!$this->entriesOnly) {
-            $finalizeReport = $plugin->ckeditorFinalizeService->run(
-                new MigrationOptions(dryRun: $this->dryRun),
-            );
+            // Per environment, not once: the pass resolves against the legacy database,
+            // and running it after the loop meant it only ever saw the last one.
+            $finalizeReport = (new FinalizePass())->run($mapping, $this->dryRun, $this->legacyEnv);
             $finalize = $finalizeReport->counts;
 
             foreach (array_slice($finalizeReport->warnings, 0, 20) as $warning) {

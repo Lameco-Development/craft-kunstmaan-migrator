@@ -8,10 +8,8 @@ use Craft;
 use Throwable;
 use yii\base\Component;
 use lameco\kunstmaanmigrator\sites\SiteMap;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\adapters\AdapterGate;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
 use lameco\kunstmaanmigrator\craft\NavigationGateway;
 use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
@@ -79,7 +77,7 @@ use verbb\navigation\elements\Node as NavNode;
  * scheduled for v0.2 (walks Pages tree filtered by hiddenFromNav and
  * emits headerMain nodes pointing at top-level pages).
  */
-class NavigationMigrationService extends Component
+class NavigationMigrationService extends Component implements MigrationAdapter
 {
     /**
      * The Kunstmaan schema is fixed: these table names are the same in every
@@ -158,18 +156,11 @@ class NavigationMigrationService extends Component
      * per source row. Idempotent: re-running updates existing nodes via
      * the state map.
      */
-    /**
-     * The adapter gate. Wired in Plugin::init(); read through gate() so no
-     * call site has to cope with "not wired yet".
-     */
-    public ?AdapterGate $adapterGate = null;
+    use GatedAdapter;
 
-    private function gate(): AdapterGate
+    public function handle(): string
     {
-        return $this->adapterGate ??= new AdapterGate(
-            new CraftPluginRegistry(),
-            Plugin::getInstance()->getSettings(),
-        );
+        return 'navigation';
     }
 
     private function elements(): ElementWriter
@@ -186,9 +177,7 @@ class NavigationMigrationService extends Component
     {
         $report = new MigrationReport();
 
-        $gate = $this->gate()->check((new AdapterRegistry())->byHandle('navigation'));
-        if (!$gate->isReady()) {
-            $report->warn((string) $gate->reason());
+        if (!$this->isGateOpen($report)) {
             return $report;
         }
 

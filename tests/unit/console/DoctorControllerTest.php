@@ -203,7 +203,13 @@ final class DoctorControllerTest extends TestCase
             self::assertSame(['check', 'ok', 'detail'], array_keys($result));
             self::assertSame('legacy_media_root', $result['check']);
             self::assertTrue($result['ok'], 'A no-asset site needs no LEGACY_MEDIA_PATH — absence must not fail doctor.');
-            self::assertStringContainsString('not configured', $result['detail']);
+
+            // Absence is the normal case, so the wording has to point at the
+            // mapping's per-environment mediaRoot chains rather than read as a
+            // misconfiguration. Doctor reported a green "not configured" on an
+            // install that could not connect at all.
+            self::assertStringContainsString('not set', $result['detail']);
+            self::assertStringContainsString('mediaRoot', $result['detail']);
         } finally {
             if ($hadPrevious) {
                 $_SERVER['LEGACY_MEDIA_PATH'] = $previous;

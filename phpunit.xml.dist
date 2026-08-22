@@ -23,11 +23,18 @@
     </testsuites>
     <source>
         <include>
-            <directory>src/load</directory>
-            <directory>src/fields</directory>
+            <!-- src/fields and src/safety were listed here until now; both were deleted
+                 by the v2 prune, and a coverage report that names directories which do not
+                 exist is how the gate came to be guarding one file while reading as five. -->
+            <directory>src/adapters</directory>
+            <directory>src/craft</directory>
+            <directory>src/db</directory>
             <directory>src/finalize</directory>
-            <directory>src/safety</directory>
+            <directory>src/load</directory>
             <directory>src/payload</directory>
+            <directory>src/queue</directory>
+            <directory>src/run</directory>
+            <directory>src/sites</directory>
             <directory>lib/kuma-compile/src</directory>
         </include>
     </source>

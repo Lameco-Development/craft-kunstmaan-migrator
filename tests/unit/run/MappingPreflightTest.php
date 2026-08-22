@@ -67,7 +67,13 @@ final class MappingPreflightTest extends TestCase
         self::assertSame(1244, $checks[0]->nodeCount);
     }
 
-    public function testAnUnreachableDatabaseIsTheOnlyThingReported(): void
+    /**
+     * And it says why. "Cannot connect" on its own sends someone reading
+     * configuration files; the driver's own message names the field to fix —
+     * which is how a mistyped env-var reference costs seconds instead of
+     * minutes.
+     */
+    public function testAnUnreachableDatabaseIsTheOnlyThingReportedAndItSaysWhy(): void
     {
         $probe = new InMemoryPreflightProbe(unreachable: ['enreach_website_de']);
 
@@ -75,7 +81,9 @@ final class MappingPreflightTest extends TestCase
             'DE' => ['database' => 'enreach_website_de', 'mediaRoot' => ['/gone'], 'locales' => ['de' => 'nope']],
         ], $this->enreachSites());
 
-        self::assertSame(['Cannot connect to enreach_website_de.'], $checks[0]->problems());
+        self::assertCount(1, $checks[0]->problems(), 'nothing else is worth saying until it connects');
+        self::assertStringContainsString('Cannot connect to enreach_website_de', $checks[0]->problems()[0]);
+        self::assertStringContainsString('Access denied', $checks[0]->problems()[0]);
         self::assertTrue($checks[0]->isBlocked());
     }
 
@@ -207,5 +215,32 @@ final class MappingPreflightTest extends TestCase
 
         self::assertStringContainsString('no nodes to migrate', $checks[0]->problems()[0]);
         self::assertTrue($checks[0]->isBlocked());
+    }
+
+    /**
+     * A mapping is committed and shared, so an absolute media root is a path
+     * that exists on one machine — the same problem as a password in project
+     * config, one field over. The resolver is a parameter rather than a
+     * Craft::parseEnv call so this module stays runnable without a Craft app.
+     */
+    public function testMediaRootsAreResolvedBeforeTheyAreProbed(): void
+    {
+        $probe = new InMemoryPreflightProbe(
+            nodeCounts: ['db' => 1],
+            readableDirectories: ['/resolved/media'],
+        );
+
+        $preflight = new MappingPreflight(
+            $probe,
+            static fn (string $path): string => str_replace('$MEDIA', '/resolved/media', $path),
+        );
+
+        $readiness = $preflight->inspect(
+            ['COM' => ['database' => 'db', 'mediaRoot' => ['$MEDIA'], 'locales' => []]],
+            [],
+        );
+
+        self::assertSame('/resolved/media', $readiness[0]->mediaRoots[0]['path']);
+        self::assertTrue($readiness[0]->mediaRoots[0]['readable']);
     }
 }

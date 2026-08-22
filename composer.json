@@ -54,7 +54,9 @@
         "name": "Kunstmaan Migrator",
         "class": "lameco\\kunstmaanmigrator\\Plugin",
         "schemaVersion": "1.1.0",
-        "developer": "Lameco Development"
+        "developer": "Lameco Development",
+        "documentationUrl": "https://github.com/Lameco-Development/craft-kunstmaan-migrator#readme",
+        "changelogUrl": "https://raw.githubusercontent.com/Lameco-Development/craft-kunstmaan-migrator/development/CHANGELOG.md"
     },
     "config": {
         "sort-packages": true,
@@ -65,5 +67,9 @@
     },
     "bin": [
         "lib/kuma-compile/bin/kuma-compile"
-    ]
+    ],
+    "support": {
+        "issues": "https://github.com/Lameco-Development/craft-kunstmaan-migrator/issues",
+        "source": "https://github.com/Lameco-Development/craft-kunstmaan-migrator"
+    }
 }

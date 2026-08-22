@@ -6,11 +6,8 @@ namespace lameco\kunstmaanmigrator\queue;
 
 use craft\queue\BaseJob;
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\finalize\FinalizePass;
 use lameco\kunstmaanmigrator\ProductionGuard;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
 use RuntimeException;
 
 /**
@@ -18,9 +15,8 @@ use RuntimeException;
  * `/uploads/media/...` to the asset it became.
  *
  * Runs after every environment, because neither can be answered until the
- * entries and assets exist. It repoints the legacy database per environment
- * like everything else — resolving a media reference goes through `kuma_media`,
- * and a reference COM cannot answer is simply retried under DE.
+ * entries and assets exist. The loop itself lives in FinalizePass, which the
+ * console command shares — this job is the queue's way in, and nothing more.
  */
 final class FinalizeJob extends BaseJob
 {
@@ -40,20 +36,14 @@ final class FinalizeJob extends BaseJob
             throw new RuntimeException(sprintf('Mapping file is gone: %s', $this->mappingPath));
         }
 
-        $plugin = Plugin::getInstance();
-        $mapping = Mapping::fromFile($this->mappingPath);
-        $report = new MigrationReport();
-        $dsn = EnvironmentPipeline::dsnFromSettings();
-        $environments = $mapping->environments();
-        $done = 0;
-
-        foreach ($environments as $spec) {
-            EnvironmentPipeline::pointLegacyDbAt($dsn, (string) ($spec['database'] ?? ''));
-            $plugin->ckeditorRewriterService->resetLookupCaches();
-            $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $this->dryRun), $report);
-
-            $this->setProgress($queue, ++$done / max(1, count($environments)));
-        }
+        $report = (new FinalizePass())->run(
+            Mapping::fromFile($this->mappingPath),
+            $this->dryRun,
+            null,
+            function (string $environment, int $done, int $total) use ($queue): void {
+                $this->setProgress($queue, $done / $total, $environment);
+            },
+        );
 
         $this->counts = $report->counts;
     }

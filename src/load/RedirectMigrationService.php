@@ -5,10 +5,8 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use lameco\kunstmaanmigrator\sites\SiteMap;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\adapters\AdapterGate;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
@@ -61,7 +59,7 @@ use yii\base\Component;
  * before each migration run. Internal targets (starting with `/`) are
  * re-resolved through the state map without external network egress.
  */
-class RedirectMigrationService extends Component
+class RedirectMigrationService extends Component implements MigrationAdapter
 {
     /**
      * The Kunstmaan schema is fixed: these table names are the same in every
@@ -84,27 +82,18 @@ class RedirectMigrationService extends Component
      * D-56: if Retour is not installed the pass is skipped with a
      * warning — never a hard error.
      */
-    /**
-     * The adapter gate. Wired in Plugin::init(); read through gate() so no
-     * call site has to cope with "not wired yet".
-     */
-    public ?AdapterGate $adapterGate = null;
+    use GatedAdapter;
 
-    private function gate(): AdapterGate
+    public function handle(): string
     {
-        return $this->adapterGate ??= new AdapterGate(
-            new CraftPluginRegistry(),
-            Plugin::getInstance()->getSettings(),
-        );
+        return 'redirects';
     }
 
     public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
     {
         $report = new MigrationReport();
 
-        $gate = $this->gate()->check((new AdapterRegistry())->byHandle('redirects'));
-        if (!$gate->isReady()) {
-            $report->warn((string) $gate->reason());
+        if (!$this->isGateOpen($report)) {
             return $report;
         }
 

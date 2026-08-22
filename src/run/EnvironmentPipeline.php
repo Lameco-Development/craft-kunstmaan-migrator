@@ -18,6 +18,7 @@ use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\payload\Payload;
 use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
+use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\payload\PayloadValidator;
@@ -97,14 +98,14 @@ final class EnvironmentPipeline
      */
     public static function dsnFromSettings(): Dsn
     {
-        $settings = Plugin::getInstance()->getSettings();
+        $connection = Plugin::getInstance()->getSettings()->legacyConnection();
 
         return new Dsn(
-            host: (string) (App::parseEnv($settings->legacyDbServer) ?: '127.0.0.1'),
-            port: $settings->legacyDbPort,
-            user: (string) (App::parseEnv($settings->legacyDbUser) ?: 'root'),
-            password: (string) App::parseEnv($settings->legacyDbPassword),
-            charset: (string) (App::parseEnv($settings->legacyDbCharset) ?: 'utf8mb4'),
+            host: $connection['host'],
+            port: $connection['port'],
+            user: $connection['user'],
+            password: $connection['password'],
+            charset: $connection['charset'],
         );
     }
 
@@ -149,12 +150,7 @@ final class EnvironmentPipeline
         $this->plugin->navigationMigrationService->environment = $env;
         $this->plugin->entryMigrationService->sites = $siteMap->configured();
 
-        // Each legacy site has its own uploads directory, so the media root travels with
-        // the environment rather than being one global setting.
-        $roots = $spec['mediaRoot'] ?? null;
-        $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [(string) $roots]);
-        $this->plugin->assetMigrationService->legacyMediaRoot = $roots[0] ?? null;
-        $this->plugin->assetMigrationService->legacyMediaFallbackRoots = array_slice($roots, 1);
+        self::applyMediaRoots($spec);
 
         $this->compiler->compile(
             $db,
@@ -217,27 +213,46 @@ final class EnvironmentPipeline
     }
 
     /**
-     * The four adapters, after the entries of this environment exist — every one of them
-     * resolves a legacy id to an entry that has to be there already.
+     * Every registered adapter, after the entries of this environment exist — each of
+     * them resolves a legacy id to an entry that has to be there already.
      *
      * @return array<string, mixed>
      */
     private function runAdapters(LegacyDatabase $db, string $env, SiteMap $siteMap, RunSettings $settings, RedirectCompiler $redirects): array
     {
         $opts = new MigrationOptions(dryRun: $settings->dryRun, force: $settings->force);
+        $out = [];
 
-        return [
-            'seo' => self::summarise(
-                fn (): MigrationReport => $this->plugin->seoMigrationService->migrateAll($opts, $siteMap),
-            ),
-            'redirects' => $this->loadRedirects($db, $env, $settings, $redirects),
-            'navigation' => self::summarise(
-                fn (): MigrationReport => $this->plugin->navigationMigrationService->migrateAll($opts, $siteMap),
-            ),
-            'translations' => self::summarise(
-                fn (): MigrationReport => $this->plugin->translationMigrationService->migrateAll($opts, $siteMap),
-            ),
-        ];
+        // The registry, not a hard-coded four. A project that registers its own
+        // adapter through EVENT_REGISTER_ADAPTERS now has it run, which is what
+        // the registry always claimed and could not deliver while this was a
+        // literal array.
+        foreach ((new AdapterRegistry())->all() as $adapter) {
+            $service = $adapter->service();
+
+            if ($service !== null) {
+                $out[$adapter->handle] = self::summarise(
+                    static fn (): MigrationReport => $service->migrateAll($opts, $siteMap),
+                );
+
+                continue;
+            }
+
+            if ($adapter->handle === 'redirects') {
+                $out['redirects'] = $this->loadRedirects($db, $env, $settings, $redirects);
+
+                continue;
+            }
+
+            // An adapter with no factory and no special case would run silently
+            // never. Saying so beats a missing key in the report.
+            $out[$adapter->handle] = ['error' => sprintf(
+                'Adapter "%s" declares no factory, so nothing ran it.',
+                $adapter->handle,
+            )];
+        }
+
+        return $out;
     }
 
     /**
@@ -264,10 +279,71 @@ final class EnvironmentPipeline
     }
 
     /**
+     * Point the asset service at one environment's uploads directories.
+     *
+     * Each legacy site has its own uploads directory, so the media root travels
+     * with the environment rather than being one global setting. The mapping
+     * accepts either a single path or an ordered list — Enreach's DE
+     * environment looks in its own directory first and falls back to COM's.
+     *
+     * Static and shared because the finalize pass needs the same roots for the
+     * same reason: resolving `/uploads/media/...` to an asset ingests the file
+     * from these directories when no payload pulled it in. It ran without them
+     * and rewrote 24 of 177 image references.
+     *
+     * @param array<string, mixed> $spec the mapping's block for this environment
+     */
+    public static function applyMediaRoots(array $spec): void
+    {
+        $roots = self::mediaRootsFrom($spec);
+
+        $assets = Plugin::getInstance()?->assetMigrationService;
+
+        if ($assets === null) {
+            return;
+        }
+
+        $assets->legacyMediaRoot = $roots[0] ?? null;
+        $assets->legacyMediaFallbackRoots = array_slice($roots, 1);
+    }
+
+    /**
+     * One environment's uploads directories, with `$VAR` and Craft aliases expanded.
+     *
+     * A mapping is committed and shared, so a media root written as an absolute
+     * path is a path that exists on one machine — the same problem as a password
+     * in project config, one field over.
+     *
+     * @param array<string, mixed> $spec
+     * @return list<string>
+     */
+    public static function mediaRootsFrom(array $spec): array
+    {
+        $roots = $spec['mediaRoot'] ?? null;
+        $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [$roots]);
+
+        return array_values(array_filter(array_map(
+            static fn ($path): string => (string) App::parseEnv((string) $path),
+            $roots,
+        ), static fn (string $path): bool => $path !== ''));
+    }
+
+    /**
      * Point Craft's `legacyDb` component at one environment's database.
      *
      * Overwrites the registration rather than the instance, so the next
      * `Craft::$app->get('legacyDb')` builds a fresh connection.
+     *
+     * The rewriter's lookup caches are dropped here rather than by each caller,
+     * because they are keyed on bare legacy ids and a legacy id is only unique
+     * within one database. Three of this plugin's four paths through the
+     * rewriter repointed the connection and kept the caches: COM's
+     * `kuma_media` 412 stayed cached and DE's 412 — a different file — resolved
+     * to COM's asset, and a miss under one environment was cached as a miss for
+     * the other two. Two callers remembered to reset and the entry-load pass,
+     * which runs the rewriter for every rich-text field of every environment,
+     * did not. Switching the database and forgetting the caches is now
+     * unexpressible: this is the one place that switches it.
      */
     public static function pointLegacyDbAt(Dsn $dsn, string $database): void
     {
@@ -279,6 +355,8 @@ final class EnvironmentPipeline
             'charset' => $dsn->charset,
             'attributes' => [\PDO::ATTR_EMULATE_PREPARES => false],
         ]);
+
+        Plugin::getInstance()?->ckeditorRewriterService->resetLookupCaches();
     }
 
     /**
