@@ -263,4 +263,52 @@ final class MappingDocumentTest extends TestCase
             MappingDocument::fromFile($path)->row('parts', 'Quote')['block'],
         );
     }
+
+    /**
+     * The diff is the decision, and nothing else.
+     *
+     * Replacing the whole row was already a big improvement on dumping the
+     * whole file, and it still moved lines nobody edited: Symfony re-quotes any
+     * scalar containing a comma, so a `todo:` sentence showed up in a diff
+     * about an `ignore:` reason and a reviewer had to work out which of the
+     * changed lines was the decision.
+     */
+    #[Test]
+    public function only_the_keys_that_changed_are_rewritten(): void
+    {
+        [$document, $path] = $this->annotated();
+        $before = (string) file_get_contents($path);
+
+        $document->patch('parts', 'Text', ['map' => ['heading' => 'title | inlineHtml']])->save();
+
+        $after = (string) file_get_contents($path);
+        $added = array_diff(explode("\n", $after), explode("\n", $before));
+        $removed = array_diff(explode("\n", $before), explode("\n", $after));
+
+        self::assertSame([], array_values($removed), 'nothing should have been removed');
+        self::assertSame(
+            ['    map:', "      heading: 'title | inlineHtml'"],
+            array_values($added),
+        );
+    }
+
+    /** A key the edit clears leaves with its lines, and takes nothing else. */
+    #[Test]
+    public function clearing_a_key_removes_only_its_lines(): void
+    {
+        [$document, $path] = $this->annotated();
+        $before = (string) file_get_contents($path);
+
+        $document->patch('parts', 'Text', ['ignore' => null])->save();
+
+        $after = (string) file_get_contents($path);
+
+        self::assertStringNotContainsString('ignore:', $after);
+        self::assertStringContainsString('source: [A, S]', $after);
+        self::assertStringContainsString('# The workhorse', $after);
+        self::assertSame(
+            ['    ignore: [alignment, background_color]'],
+            array_values(array_diff(explode("\n", $before), explode("\n", $after))),
+        );
+    }
 }

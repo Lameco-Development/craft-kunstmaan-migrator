@@ -29,7 +29,7 @@ use Symfony\Component\Yaml\Yaml;
  */
 final class MappingDocument
 {
-    /** @var list<array{0: string, 1: string}> lane/key pairs this edit touched */
+    /** @var array<string, list<string>> "lane\0key" => the keys of that row this edit changed */
     private array $touched = [];
 
     /**
@@ -122,7 +122,12 @@ final class MappingDocument
         }
 
         $this->data[$lane][$key] = $row;
-        $this->touched[] = [$lane, $key];
+
+        $slot = $lane . "\0" . $key;
+        $this->touched[$slot] = array_values(array_unique([
+            ...($this->touched[$slot] ?? []),
+            ...array_map(strval(...), array_keys($changes)),
+        ]));
 
         return $this;
     }
@@ -189,18 +194,15 @@ final class MappingDocument
     {
         $text = (string) $this->source;
 
-        foreach ($this->touched as [$lane, $key]) {
+        foreach ($this->touched as $slot => $changedKeys) {
+            [$lane, $key] = explode("\0", $slot, 2);
             $row = $this->data[$lane][$key] ?? null;
 
             if (!is_array($row)) {
                 continue;
             }
 
-            $replacement = self::indent(
-                self::inlineScalarLists(Yaml::dump([$key => $row], 6, 2, Yaml::DUMP_NULL_AS_TILDE)),
-                2,
-            );
-            $spliced = self::replaceRow($text, $lane, $key, $replacement);
+            $spliced = self::replaceRow($text, $lane, $key, $row, $changedKeys);
 
             // A row the writer cannot find is one it must not guess at: falling
             // back to a full dump keeps the edit rather than losing it, and the
@@ -216,18 +218,88 @@ final class MappingDocument
     }
 
     /**
-     * Swap one `lane: -> key:` block for new text, by indentation.
+     * Rewrite only the keys of one row that changed.
      *
-     * The block runs from its own line to the next line at the same indent or
-     * shallower — which is what YAML block structure means, and is why this can
-     * be done on text without reflowing the document.
+     * Replacing the whole row is already a big improvement on dumping the whole
+     * file, and it still moves lines nobody edited: Symfony's dumper re-quotes
+     * any scalar containing a comma, so a `todo:` sentence would show up in a
+     * diff about an `ignore:` reason. A reviewer then has to work out which of
+     * the changed lines is the decision.
+     *
+     * So the row is split into its own top-level keys by indentation — which is
+     * what YAML block structure means, and is why this can be done on text
+     * without reflowing anything — and only the changed ones are re-emitted.
+     *
+     * @param array<string, mixed> $row
+     * @param list<string> $changedKeys
      */
-    private static function replaceRow(string $text, string $lane, string $key, string $replacement): ?string
+    private static function replaceRow(string $text, string $lane, string $key, array $row, array $changedKeys): ?string
     {
         $lines = explode("\n", $text);
+        $bounds = self::rowBounds($lines, $lane, $key);
+
+        if ($bounds === null) {
+            return null;
+        }
+
+        [$start, $end] = $bounds;
+        $out = [$lines[$start]];
+        $written = [];
+
+        foreach (self::keySegments($lines, $start + 1, $end) as [$name, $from, $to]) {
+            if (!in_array($name, $changedKeys, true)) {
+                for ($i = $from; $i < $to; $i++) {
+                    $out[] = $lines[$i];
+                }
+
+                continue;
+            }
+
+            $written[] = $name;
+
+            // A key the edit removed leaves with its lines.
+            if (array_key_exists($name, $row)) {
+                $out[] = self::emit($name, $row[$name]);
+            }
+        }
+
+        // Keys the edit added, which have no lines to replace.
+        foreach ($changedKeys as $name) {
+            if (!in_array($name, $written, true) && array_key_exists($name, $row)) {
+                $out[] = self::emit($name, $row[$name]);
+            }
+        }
+
+        array_splice($lines, $start, $end - $start, array_merge(...array_map(
+            static fn (string $chunk): array => explode("\n", rtrim($chunk, "\n")),
+            $out,
+        )));
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * One key of a row, as the lines it occupies.
+     */
+    private static function emit(string $name, mixed $value): string
+    {
+        return self::indent(
+            self::inlineScalarLists(Yaml::dump([$name => $value], 6, 2, Yaml::DUMP_NULL_AS_TILDE)),
+            4,
+        );
+    }
+
+    /**
+     * Where a row starts and ends: from its own line to the next line at its
+     * indent or shallower. Trailing blank lines belong to the gap between rows.
+     *
+     * @param list<string> $lines
+     * @return array{0: int, 1: int}|null
+     */
+    private static function rowBounds(array $lines, string $lane, string $key): ?array
+    {
         $inLane = false;
         $start = null;
-        $end = null;
 
         foreach ($lines as $i => $line) {
             if (preg_match('~^' . preg_quote($lane, '~') . ':~', $line) === 1) {
@@ -240,12 +312,12 @@ final class MappingDocument
                 continue;
             }
 
-            // Back at column zero: the lane is over.
-            if ($start === null && $line !== '' && !str_starts_with($line, ' ') && !str_starts_with($line, '#')) {
-                return null;
-            }
-
             if ($start === null) {
+                // Back at column zero: the lane is over without the row in it.
+                if ($line !== '' && !str_starts_with($line, ' ') && !str_starts_with($line, '#')) {
+                    return null;
+                }
+
                 if (preg_match('~^  ' . preg_quote($key, '~') . ':~', $line) === 1) {
                     $start = $i;
                 }
@@ -253,47 +325,55 @@ final class MappingDocument
                 continue;
             }
 
-            // The row ends where something at its own indent, or shallower, begins.
-            if ($line !== '' && !str_starts_with($line, '   ') && trim($line) !== '') {
-                $end = $i;
-
-                break;
+            if (trim($line) !== '' && !str_starts_with($line, '   ')) {
+                return [$start, self::withoutTrailingBlanks($lines, $start, $i)];
             }
         }
 
-        if ($start === null) {
-            return null;
+        return $start === null ? null : [$start, self::withoutTrailingBlanks($lines, $start, count($lines))];
+    }
+
+    /** @param list<string> $lines */
+    private static function withoutTrailingBlanks(array $lines, int $start, int $end): int
+    {
+        while ($end - 1 > $start && trim($lines[$end - 1]) === '') {
+            $end--;
         }
 
-        $end ??= count($lines);
-
-        // Trailing blank lines belong to the gap between rows, not to the row,
-        // so they are put back rather than swallowed by the replacement.
-        $blanks = 0;
-
-        for ($i = $end - 1; $i > $start && trim($lines[$i]) === ''; $i--) {
-            $blanks++;
-        }
-
-        array_splice(
-            $lines,
-            $start,
-            $end - $start,
-            [...explode("\n", rtrim($replacement, "\n")), ...array_fill(0, $blanks, '')],
-        );
-
-        return implode("\n", $lines);
+        return $end;
     }
 
     /**
-     * Put short lists of scalars back on one line.
+     * A row's own keys, each with the line range it occupies. A comment line
+     * belongs to the key it precedes, so it travels with it.
      *
-     * The file's own convention, and worth matching: `source: [A, S]` and
-     * `ignore: [color, show_as_slider]` are how every hand-written row in a
-     * mapping reads. Symfony's dumper expands them, which turns a two-line row
-     * into six and puts four lines of noise in a diff whose point is one
-     * decision. Maps stay block — those are the rows people read.
+     * @param list<string> $lines
+     * @return list<array{0: string, 1: int, 2: int}>
      */
+    private static function keySegments(array $lines, int $from, int $to): array
+    {
+        $segments = [];
+        $pending = null;
+
+        for ($i = $from; $i < $to; $i++) {
+            if (preg_match('~^    ([\w-]+):~', $lines[$i], $m) !== 1) {
+                continue;
+            }
+
+            if ($pending !== null) {
+                $segments[] = [$pending[0], $pending[1], $i];
+            }
+
+            $pending = [$m[1], $i];
+        }
+
+        if ($pending !== null) {
+            $segments[] = [$pending[0], $pending[1], $to];
+        }
+
+        return $segments;
+    }
+
     private static function inlineScalarLists(string $yaml): string
     {
         $lines = explode("\n", $yaml);

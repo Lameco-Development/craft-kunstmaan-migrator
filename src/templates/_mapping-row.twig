@@ -21,12 +21,17 @@
       {% if row.table %} · <code>{{ row.table }}</code>{% endif %}
   </p>
 
+  {# Each lane targets a different kind of thing, and calling an entry type a
+     block on the pages screen is the sort of small wrongness that makes an
+     operator distrust the rest of the screen. #}
+  {% set noun = lane == 'parts' ? "block"|t('kunstmaan-migrator') : "entry type"|t('kunstmaan-migrator') %}
+
   {% if blocks is not empty %}
       {# Read from this Craft install, not typed from memory: a handle typed into
          YAML is checked when a migration runs, hours later. #}
       {{ forms.selectField({
         label: "Becomes"|t('kunstmaan-migrator'),
-        instructions: "The Craft block this legacy part becomes. Only blocks this install offers are listed; save to see its fields."|t('kunstmaan-migrator'),
+        instructions: "The Craft {noun} this legacy row becomes. Only what this install offers is listed; save to see its fields."|t('kunstmaan-migrator', { noun: noun }),
         name: 'target',
         value: row.target,
         options: [{ label: "— choose —"|t('kunstmaan-migrator'), value: '' }]|merge(
@@ -46,7 +51,7 @@
 
       <h2>{{ "Field map"|t('kunstmaan-migrator') }}</h2>
       <p class="light">
-        {{ "Each field of the chosen block, and the legacy column that fills it. The rows are the block's real fields, read from this install. A column name is enough; `column | transform` and `link(url, text)` also work."|t('kunstmaan-migrator') }}
+        {{ "Each field of the chosen target, and the legacy column that fills it. The rows are its real fields, read from this install. A column name is enough; `column | transform` and `link(url, text)` also work."|t('kunstmaan-migrator') }}
       </p>
 
       <table class="data fullwidth">
@@ -76,7 +81,7 @@
       {% if unknown is not empty %}
         <blockquote class="note warning">
           <p>
-            {{ "The mapping fills fields this block does not have:"|t('kunstmaan-migrator') }}
+            {{ "The mapping fills fields this target does not have:"|t('kunstmaan-migrator') }}
             <code>{{ unknown|join('</code>, <code>')|raw }}</code>.
             {{ "They are left untouched here; fix them in the file, or change the block."|t('kunstmaan-migrator') }}
           </p>

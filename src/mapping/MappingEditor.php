@@ -30,6 +30,7 @@ final class MappingEditor
         private readonly Settings $settings,
         private readonly SchemaGateway $schema,
         private readonly TargetModel $target,
+        private readonly TargetCatalogue $catalogue,
     ) {
     }
 
@@ -37,7 +38,7 @@ final class MappingEditor
     {
         $schema = new CraftSchemaGateway();
 
-        return new self($settings, $schema, new TargetModel($schema));
+        return new self($settings, $schema, new TargetModel($schema), new CraftTargetCatalogue());
     }
 
     public function path(): ?string
@@ -134,8 +135,25 @@ final class MappingEditor
     }
 
     /**
-     * The fields a chosen block offers, so a column can be pointed at one
-     * rather than spelled.
+     * The targets a lane may choose from, read from this install.
+     *
+     * A `parts` row becomes a page-builder block; a `pages` or `entities` row
+     * becomes an entry type. Same question either way — what may I write here —
+     * so the screen asks the editor rather than knowing per lane.
+     *
+     * @return list<string>
+     */
+    public function targetsFor(string $lane): array
+    {
+        return match ($lane) {
+            'parts' => $this->availableBlocks(),
+            default => $this->catalogue->entryTypes(),
+        };
+    }
+
+    /**
+     * The fields a chosen block or entry type offers, so a column can be
+     * pointed at one rather than spelled.
      *
      * @return list<string>
      */
