@@ -1,0 +1,146 @@
+{% extends "_layouts/cp.twig" %}
+{% import "_includes/forms.twig" as forms %}
+
+{% set title = row.key %}
+{% set crumbs = [{ label: "Mapping"|t('kunstmaan-migrator'), url: url('kunstmaan-migrator/mapping', { lane: lane }) }] %}
+
+{# Craft's own form, not one of ours nested inside it. The layout already wraps
+   the page in a <form> when this is set, and a form inside a form is dropped by
+   the browser — which is why the first version of this screen posted nothing at
+   all when you pressed Save. #}
+{% set fullPageForm = true %}
+
+{% block content %}
+  {{ actionInput('kunstmaan-migrator/migration/save-mapping-row') }}
+  {{ redirectInput('kunstmaan-migrator/mapping?lane=' ~ lane) }}
+  {{ hiddenInput('lane', lane) }}
+  {{ hiddenInput('key', row.key) }}
+
+  <p class="light">
+      {{ row.live|number_format }} {{ "live placements"|t('kunstmaan-migrator') }}
+      {% if row.table %} · <code>{{ row.table }}</code>{% endif %}
+  </p>
+
+  {# Each lane targets a different kind of thing, and calling an entry type a
+     block on the pages screen is the sort of small wrongness that makes an
+     operator distrust the rest of the screen. #}
+  {% set noun = lane == 'parts' ? "block"|t('kunstmaan-migrator') : "entry type"|t('kunstmaan-migrator') %}
+
+  {% if blocks is not empty %}
+      {# Read from this Craft install, not typed from memory: a handle typed into
+         YAML is checked when a migration runs, hours later. #}
+      {{ forms.selectField({
+        label: "Becomes"|t('kunstmaan-migrator'),
+        instructions: "The Craft {noun} this legacy row becomes. Only what this install offers is listed; save to see its fields."|t('kunstmaan-migrator', { noun: noun }),
+        name: 'target',
+        value: row.target,
+        options: [{ label: "— choose —"|t('kunstmaan-migrator'), value: '' }]|merge(
+          blocks|map(b => { label: b, value: b })
+        ),
+      }) }}
+  {% else %}
+      {{ forms.textField({
+        label: "Becomes"|t('kunstmaan-migrator'),
+        name: 'target',
+        value: row.target,
+      }) }}
+  {% endif %}
+
+  {% if fields is not empty %}
+      <hr>
+
+      <h2>{{ "Field map"|t('kunstmaan-migrator') }}</h2>
+      <p class="light">
+        {{ "Each field of the chosen target, and the legacy column that fills it. The rows are its real fields, read from this install. A column name is enough; `column | transform` and `link(url, text)` also work."|t('kunstmaan-migrator') }}
+      </p>
+
+      <table class="data fullwidth">
+        <thead>
+          <tr>
+            <th>{{ "Craft field"|t('kunstmaan-migrator') }}</th>
+            <th>{{ "Filled from"|t('kunstmaan-migrator') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for field in fields %}
+            <tr>
+              <th scope="row"><code>{{ field }}</code></th>
+              <td>
+                {{ forms.text({
+                  name: 'map[' ~ field ~ ']',
+                  value: row.map[field] ?? '',
+                  placeholder: "legacy column, or leave empty"|t('kunstmaan-migrator'),
+                }) }}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% set unknown = row.map|keys|filter(f => f not in fields) %}
+      {% if unknown is not empty %}
+        <blockquote class="note warning">
+          <p>
+            {{ "The mapping fills fields this target does not have:"|t('kunstmaan-migrator') }}
+            <code>{{ unknown|join('</code>, <code>')|raw }}</code>.
+            {{ "They are left untouched here; fix them in the file, or change the block."|t('kunstmaan-migrator') }}
+          </p>
+        </blockquote>
+      {% endif %}
+  {% endif %}
+
+  <hr>
+
+  <h2>{{ "Legacy columns"|t('kunstmaan-migrator') }}</h2>
+  <p class="light">
+      {{ "Columns with no field of their own. One left unplaced keeps this row open — that is deliberate, so a mapping cannot look finished while content still has nowhere to go. A column you fill a field from above does not belong here."|t('kunstmaan-migrator') }}
+  </p>
+
+  <table class="data fullwidth">
+      <thead>
+        <tr>
+          <th>{{ "Column"|t('kunstmaan-migrator') }}</th>
+          <th>{{ "Decision"|t('kunstmaan-migrator') }}</th>
+          <th>{{ "Why not"|t('kunstmaan-migrator') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for column, state in row.columns() %}
+          <tr>
+            <th scope="row"><code>{{ column }}</code></th>
+            <td>
+              {{ forms.select({
+                name: 'columns[' ~ column ~ '][disposition]',
+                value: state.ignored ? 'ignore' : 'unreviewed',
+                options: [
+                  { label: "Not looked at"|t('kunstmaan-migrator'), value: 'unreviewed' },
+                  { label: "Deliberately not migrated"|t('kunstmaan-migrator'), value: 'ignore' },
+                ],
+              }) }}
+            </td>
+            <td>
+              {{ forms.text({
+                name: 'columns[' ~ column ~ '][reason]',
+                value: state.reason,
+                placeholder: state.ignored
+                  ? "decided, but no reason recorded"|t('kunstmaan-migrator')
+                  : "why this is not migrated"|t('kunstmaan-migrator'),
+              }) }}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="3" class="light">{{ "Every column of this table has a home."|t('kunstmaan-migrator') }}</td></tr>
+        {% endfor %}
+      </tbody>
+  </table>
+
+  <hr>
+
+  {{ forms.textField({
+      label: "Or drop it entirely"|t('kunstmaan-migrator'),
+      instructions: "A reason here means this legacy row has no Craft equivalent and is not migrating. The reason is the point: a run reports a deliberate omission differently from one nobody decided about."|t('kunstmaan-migrator'),
+      name: 'drop',
+      value: row.dropped,
+  }) }}
+
+{% endblock %}

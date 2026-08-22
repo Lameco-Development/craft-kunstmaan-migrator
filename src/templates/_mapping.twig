@@ -1,0 +1,77 @@
+{% extends "_layouts/cp.twig" %}
+{% import "_includes/forms.twig" as forms %}
+
+{% set title = "Mapping"|t('kunstmaan-migrator') %}
+
+{% block content %}
+  {% if error %}
+    <div class="readable">
+      <blockquote class="note warning"><p>{{ error }}</p></blockquote>
+    </div>
+  {% else %}
+    <p class="light"><code>{{ path }}</code></p>
+
+    <nav class="btngroup">
+      {% for name in lanes %}
+        <a class="btn{{ name == lane ? ' active' : '' }}"
+           href="{{ url('kunstmaan-migrator/mapping', { lane: name }) }}">{{ name }}</a>
+      {% endfor %}
+    </nav>
+
+    {# Ordered by live volume rather than by name: that is where the content is,
+       and an alphabetical list buries the ten rows that matter under sixty
+       that do not. #}
+    <table class="data fullwidth" style="margin-top: 14px;">
+      <thead>
+        <tr>
+          <th>{{ "Legacy"|t('kunstmaan-migrator') }}</th>
+          <th class="rightalign">{{ "Live"|t('kunstmaan-migrator') }}</th>
+          <th>{{ "Becomes"|t('kunstmaan-migrator') }}</th>
+          <th>{{ "Unplaced columns"|t('kunstmaan-migrator') }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <th scope="row">
+              {% if row.status() == 'decided' %}
+                <span data-icon="check" class="success"></span>
+              {% elseif row.status() == 'dropped' %}
+                <span data-icon="remove" class="light"></span>
+              {% else %}
+                <span data-icon="alert"></span>
+              {% endif %}
+              {{ row.key }}
+              {% if row.table %}<span class="light"><code>{{ row.table }}</code></span>{% endif %}
+            </th>
+            <td class="rightalign">{{ row.live|number_format }}</td>
+            <td>
+              {% if row.dropped %}
+                <span class="light">{{ "not migrated"|t('kunstmaan-migrator') }} — {{ row.dropped }}</span>
+              {% elseif row.target %}
+                <code>{{ row.target }}</code>
+              {% else %}
+                <span class="error">{{ "no target yet"|t('kunstmaan-migrator') }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if row.unreviewed is empty %}
+                <span class="light">—</span>
+              {% else %}
+                <span class="error">{{ row.unreviewed|length }}</span>
+                <span class="light">{{ row.unreviewed|slice(0, 4)|join(', ') }}{% if row.unreviewed|length > 4 %}…{% endif %}</span>
+              {% endif %}
+            </td>
+            <td class="rightalign">
+              <a class="btn small"
+                 href="{{ url('kunstmaan-migrator/mapping-row', { lane: lane, key: row.key }) }}">{{ "Edit"|t('kunstmaan-migrator') }}</a>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="light">{{ "This lane has no rows."|t('kunstmaan-migrator') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}

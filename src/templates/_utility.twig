@@ -16,7 +16,10 @@
   </div>
 {% else %}
 
-  <p class="light"><code>{{ mappingPath }}</code></p>
+  <p class="light">
+    <code>{{ mappingPath }}</code>
+    &nbsp;<a class="btn small" href="{{ url('kunstmaan-migrator/mapping') }}">{{ "Edit mapping"|t('kunstmaan-migrator') }}</a>
+  </p>
 
   <h2>{{ "Preflight"|t('kunstmaan-migrator') }}</h2>
 
