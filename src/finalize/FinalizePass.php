@@ -63,7 +63,7 @@ final class FinalizePass
             // Repointing also drops the rewriter's lookup caches, which are keyed
             // on legacy ids that only mean anything inside one database.
             EnvironmentPipeline::pointLegacyDbAt($dsn, (string) ($spec['database'] ?? ''));
-            EnvironmentPipeline::applyMediaRoots($spec);
+            EnvironmentPipeline::applyMediaRoots($spec, (string) $name, count($environments) > 1);
 
             $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $dryRun), $report);
 

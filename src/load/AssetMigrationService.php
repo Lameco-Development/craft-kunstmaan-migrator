@@ -108,6 +108,48 @@ class AssetMigrationService extends Component
     public string $targetSubfolder = 'migrated';
 
     /**
+     * How the path below $targetSubfolder is built.
+     *
+     * `year` — `{subfolder}/{year}/`, from the file's own `created_at`. The original default.
+     *   A year bucket is a fact about the file that no editor has ever gone looking for.
+     * `legacy-tree` — `{subfolder}/[{ENV}/]{kuma folder chain}/`, mirroring the folder the file
+     *   sat in on the legacy side. The tree is real: `kuma_folders` is a nested set and every
+     *   `kuma_media` row carries `folder_id`, so the client's own organisation survives the move.
+     *
+     * A file whose folder cannot be resolved falls back to `year`, never to the volume root:
+     * an unfiled file is a file to go and look at, not one to scatter.
+     */
+    public string $folderStrategy = 'year';
+
+    /**
+     * Legacy environment currently being migrated (`COM`, `DE`, …), or null for a
+     * single-source corpus.
+     *
+     * Only used by `legacy-tree`, and only when $prefixEnvironment is on: three legacy
+     * installs each ship a folder called `Media/Afbeeldingen`, and merging them into one
+     * Craft tree silently interleaves three clients' worth of files under one name.
+     */
+    public ?string $environmentName = null;
+
+    /**
+     * Root each environment's tree in its own segment.
+     *
+     * Set by the pipeline from the mapping's environment count: one source needs no prefix,
+     * more than one cannot do without it.
+     */
+    public bool $prefixEnvironment = false;
+
+    /**
+     * Resolved `kuma_folders` chains, keyed `{env}:{folderId}`.
+     *
+     * A corpus has a few hundred folders and tens of thousands of files, so the chain for
+     * any one folder is walked once per run rather than once per file.
+     *
+     * @var array<string, string|null>
+     */
+    private array $folderPathCache = [];
+
+    /**
      * When true, catches `yii\web\HttpException` thrown from
      * `Asset::EVENT_BEFORE_SAVE` listeners whose message matches the
      * starter-kit's "The file is too large" copy, downgrades to a WARN, and
@@ -118,6 +160,15 @@ class AssetMigrationService extends Component
      * per-extension size cap (modules/lameco/Module.php).
      */
     public bool $skipAssetSizeValidation = false;
+
+    /**
+     * Skip the asset stage for this run.
+     *
+     * A property rather than only a `MigrationOptions` field because the two JIT entry points
+     * below build their own options — so `--skip-assets` threaded through the pipeline reached
+     * the batch path and silently missed the path every real run actually uses.
+     */
+    public bool $skipAssets = false;
 
     /** DI slot: LegacyDbService (read-only connection to Kunstmaan MySQL). */
     /**
@@ -181,7 +232,7 @@ class AssetMigrationService extends Component
             return (int) $existing;
         }
 
-        $opts = new MigrationOptions();
+        $opts = new MigrationOptions(skipAssets: $this->skipAssets);
         $asset = $this->ingestOne($legacyId, $opts);
         if ($asset instanceof Asset) {
             return (int) $asset->id;
@@ -241,7 +292,7 @@ class AssetMigrationService extends Component
 
         $contentType = function_exists('mime_content_type') ? (string) @mime_content_type($sourcePath) : '';
         $fileSize = @filesize($sourcePath);
-        $opts = new MigrationOptions();
+        $opts = new MigrationOptions(skipAssets: $this->skipAssets);
         $counts = [];
         $syntheticId = (int) sprintf('%u', crc32($path));
         $asset = $this->ingestRow([
@@ -581,10 +632,7 @@ class AssetMigrationService extends Component
             );
         }
 
-        $year       = AssetPathResolver::targetYear((string) ($row['created_at'] ?? ''));
-        $folderPath = $this->targetSubfolder !== ''
-            ? "{$this->targetSubfolder}/{$year}"
-            : $year;
+        $folderPath = $this->targetFolderPath($row);
         $yearFolder = Craft::$app->assets->ensureFolderByFullPathAndVolume($folderPath, $volume);
 
         // Filename derived from the legacy URL (basename), then sanitized.
@@ -872,6 +920,80 @@ class AssetMigrationService extends Component
             return 'too_large';
         }
         return 'deferred_unresolved';
+    }
+
+    /**
+     * Where this file lands inside the target volume.
+     *
+     * @param array<string, mixed> $row kuma_media row
+     */
+    private function targetFolderPath(array $row): string
+    {
+        $chain = null;
+
+        if ($this->folderStrategy === AssetFolderPath::STRATEGY_LEGACY_TREE) {
+            $folderId = isset($row['folder_id']) ? (int) $row['folder_id'] : 0;
+            $chain = $folderId > 0 ? $this->legacyFolderChain($folderId) : null;
+        }
+
+        return AssetFolderPath::compose(
+            $this->folderStrategy,
+            $this->targetSubfolder,
+            $chain,
+            AssetPathResolver::targetYear((string) ($row['created_at'] ?? '')),
+            $this->environmentName,
+            $this->prefixEnvironment,
+        );
+    }
+
+    /**
+     * The `kuma_folders` chain for a folder, root first, as `Media/Afbeeldingen/Visuals`.
+     *
+     * Soft-deleted folders still contribute their segment. A file that sat in a folder an
+     * editor later removed was still in that folder, and dropping the segment re-parents the
+     * file into whatever else shares its grandparent — the same failure the structural
+     * placeholders exist to prevent one layer up.
+     *
+     * Returns null when the chain cannot be walked, which the caller reads as "fall back".
+     */
+    private function legacyFolderChain(int $folderId): ?string
+    {
+        $cacheKey = ($this->environmentName ?? '-') . ':' . $folderId;
+
+        if (array_key_exists($cacheKey, $this->folderPathCache)) {
+            return $this->folderPathCache[$cacheKey];
+        }
+
+        if ($this->legacyDb === null) {
+            return $this->folderPathCache[$cacheKey] = null;
+        }
+
+        $segments = [];
+        $currentId = $folderId;
+        // A malformed parent chain must not spin forever; a Kunstmaan media tree is a
+        // handful of levels deep, and anything past this is a cycle.
+        $guard = 0;
+
+        while ($currentId > 0 && $guard++ < 32) {
+            $folder = $this->legacyDb->queryOne(
+                'SELECT id, parent_id, name FROM kuma_folders WHERE id = :id LIMIT 1',
+                [':id' => $currentId],
+            );
+
+            if (!is_array($folder) || $folder === []) {
+                break;
+            }
+
+            $name = AssetFolderPath::sanitizeSegment((string) ($folder['name'] ?? ''));
+
+            if ($name !== '') {
+                array_unshift($segments, $name);
+            }
+
+            $currentId = isset($folder['parent_id']) ? (int) $folder['parent_id'] : 0;
+        }
+
+        return $this->folderPathCache[$cacheKey] = ($segments === [] ? null : implode('/', $segments));
     }
 
     /**

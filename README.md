@@ -48,6 +48,22 @@ See [`docs/loader-contract.md`](docs/loader-contract.md) for the payload schema,
 and read **Structural placeholders** there: it is what makes migrated URLs match
 the legacy ones.
 
+## Where migrated assets land
+
+By default, `{volume}/migrated/{year}/` — a bucket keyed on the file's own
+created date, which is a fact about the file no editor has gone looking for.
+
+Set `assetFolderStrategy` to `legacy-tree` and the Kunstmaan folder structure is
+mirrored instead: `kuma_folders` is a nested set and every `kuma_media` row
+carries `folder_id`, so the client's own organisation survives the move. A
+corpus with more than one legacy source roots each environment in its own
+segment first — `COM/Media/Afbeeldingen/Visuals/` beside `DE/…` — because three
+installs each ship a folder called `Media/Afbeeldingen` and merging them
+interleaves three sites' files under one name.
+
+Folder names travel as the client wrote them; a file whose folder cannot be
+resolved falls back to the year bucket rather than the volume root.
+
 ## Configuration
 
 Two things, and they live in different places on purpose.
@@ -107,15 +123,24 @@ media in rich text.
 | `--entries-only` | skip the adapters, the fixup and the finalize pass |
 | `--finalize-only` | run the finalize pass alone (idempotent, safe to re-run) |
 | `--queue` | hand the run to Craft's queue, one job per environment |
+| `--skip-assets` | skip the asset stage entirely |
+| `--fail-on-loss` | exit non-zero when the run lost content, not only when it failed |
+| `--resave=0` | skip the closing re-save (on by default; see below) |
 
-**After a full run, re-save the pages.** URIs are computed at save time from the
-parent's URI, so a subtree written before its ancestor's per-site slugs settle
-keeps a stale prefix. On the reference corpus this is the difference between
-76.6% and 97.7% URL fidelity:
+**The run re-saves for you.** URIs are computed at save time from the parent's
+URI, so a subtree written before its ancestor's per-site slugs settle keeps a
+stale prefix — on the reference corpus, the difference between 76.6% and 97.7%
+URL fidelity. Every section the mapping writes into is re-saved when the run
+finishes. Pass `--resave=0` to skip it, and run it yourself afterwards:
 
 ```bash
 ./craft resave/entries --section=pages
 ```
+
+**Losses do not fail a run by default.** A migration that drops content is
+counted and reported, and still exits 0. `--fail-on-loss` makes lossy
+conversions, unresolved assets and unresolved references non-zero, which is what
+you want in CI once a corpus has a known-good loss count.
 
 **Run one migration at a time.** Craft's mutex uses MySQL named locks, which are
 server-wide rather than database-scoped, so two concurrent migrations against

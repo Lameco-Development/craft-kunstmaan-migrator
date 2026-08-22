@@ -56,6 +56,19 @@ class Settings extends Model
     public string  $targetSubfolder      = 'migrated';
 
     /**
+     * How the path below the subfolder is built: `year` or `legacy-tree`.
+     *
+     * `year` buckets by the file's own `created_at`, which is a fact about the file that no
+     * editor has ever gone looking for. `legacy-tree` mirrors the `kuma_folders` chain the file
+     * sat in, so the client's own media organisation survives the migration — rooted per
+     * environment when the corpus has more than one legacy source, because three installs each
+     * ship a folder named `Media/Afbeeldingen`.
+     *
+     * Defaults to `year` so an existing project's asset paths do not move under it.
+     */
+    public string  $assetFolderStrategy  = 'year';
+
+    /**
      * Skip starter-kit / project-side asset-size validators during ingest.
      * When true, AssetMigrationService catches `yii\web\HttpException` thrown
      * from `Asset::EVENT_BEFORE_SAVE` listeners whose message matches the
@@ -236,6 +249,15 @@ class Settings extends Model
     public static function coreSettings(): array
     {
         return [
+            new AdapterSetting(
+                'assetFolderStrategy',
+                'Asset folder structure',
+                AdapterSetting::TYPE_STRING,
+                'year',
+                '`year` buckets migrated assets by their own created date. `legacy-tree` mirrors the '
+                . 'Kunstmaan folder structure instead, rooted per environment when the corpus has more '
+                . 'than one legacy source.',
+            ),
             new AdapterSetting(
                 'targetVolume',
                 'Asset volume',
@@ -531,6 +553,7 @@ class Settings extends Model
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'formsEnabled', 'globalsEnabled'], 'boolean'],
             [['nodeMenuNavHandle', 'mappingPath', 'targetVolume', 'targetSubfolder'], 'string'],
+            [['assetFolderStrategy'], 'in', 'range' => ['year', 'legacy-tree']],
             [['skipAssetSizeValidation'], 'boolean'],
             [['nodeMenuExcludedInternalNames', 'translationDomains', 'adapters'], 'safe'],
         ];

@@ -205,6 +205,16 @@ class Plugin extends BasePlugin
         if ($settingsTargetVolume !== '') {
             $this->assetMigrationService->targetVolume = $settingsTargetVolume;
         }
+        // Unconditional, unlike targetVolume above: '' is a legitimate value here — it means
+        // the volume root — so an empty-string guard would make that setting unreachable. It
+        // was declared on the Settings model and read by nothing until now.
+        $this->assetMigrationService->targetSubfolder =
+            (string) ($this->getSettings()->targetSubfolder ?? 'migrated');
+
+        $settingsFolderStrategy = (string) ($this->getSettings()->assetFolderStrategy ?? '');
+        if ($settingsFolderStrategy !== '') {
+            $this->assetMigrationService->folderStrategy = $settingsFolderStrategy;
+        }
         $this->assetMigrationService->skipAssetSizeValidation =
             (bool) ($this->getSettings()->skipAssetSizeValidation ?? false);
 

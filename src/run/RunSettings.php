@@ -22,6 +22,8 @@ final class RunSettings
         public readonly bool $entriesOnly = false,
         public readonly ?array $only = null,
         public readonly ?string $dumpDir = null,
+        /** Skip the asset stage entirely. */
+        public readonly bool $skipAssets = false,
     ) {
     }
 }

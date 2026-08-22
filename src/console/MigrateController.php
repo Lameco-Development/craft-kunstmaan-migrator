@@ -21,6 +21,7 @@ use lameco\kunstmaanmigrator\queue\FinalizeJob;
 use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
 use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use lameco\kunstmaanmigrator\run\RunOutcome;
 use lameco\kunstmaanmigrator\run\RunSettings;
 use lameco\kunstmaanmigrator\run\RunTally;
 use yii\console\ExitCode;
@@ -114,6 +115,33 @@ final class MigrateController extends Controller
      */
     public bool $queue = false;
 
+    /**
+     * Exit non-zero when the run lost something, rather than only when it failed.
+     *
+     * A migration that drops 496 pageparts exits 0 and looks exactly like one that dropped
+     * none — the losses are counted, reported, and reachable only by reading the JSON. That
+     * makes noticing them optional, which is how a lossy run reaches a client. With this on,
+     * lossy conversions, unresolved assets and fixup orphans are failures.
+     *
+     * Off by default because every real corpus loses something and a green CI is not worth
+     * more than an honest one; turn it on once a corpus has a known-good loss count.
+     */
+    public bool $failOnLoss = false;
+
+    /** Skip the asset stage entirely. Documented on `MigrationOptions` and, until now, unreachable. */
+    public bool $skipAssets = false;
+
+    /**
+     * Re-save the migrated sections when the run finishes.
+     *
+     * URIs are computed at save time from the parent's URI, so a subtree written before its
+     * ancestor's per-site slugs settle keeps a stale prefix. On the reference corpus that is
+     * the difference between 76.6% and 97.7% URL fidelity — which means a run without it is
+     * not finished, and leaving it to the README leaves a quarter of the site's URLs to
+     * whether the operator read one.
+     */
+    public bool $resave = true;
+
     public function beforeAction($action): bool
     {
         $this->neverProductionExitCode = $this->enforceNeverProduction();
@@ -135,7 +163,10 @@ final class MigrateController extends Controller
     {
         return array_merge(
             parent::options($actionID),
-            ['mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'entriesOnly', 'finalizeOnly', 'only', 'queue'],
+            [
+                'mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'entriesOnly',
+                'finalizeOnly', 'only', 'queue', 'failOnLoss', 'skipAssets', 'resave',
+            ],
         );
     }
 
@@ -198,6 +229,7 @@ final class MigrateController extends Controller
             entriesOnly: $this->entriesOnly,
             only: $only,
             dumpDir: $this->dump,
+            skipAssets: $this->skipAssets,
         );
 
         // Finalize compiles nothing and needs no target schema, but it does need the legacy
@@ -311,27 +343,108 @@ final class MigrateController extends Controller
             }
         }
 
+        // URIs are computed at save time, so a subtree written before its ancestor's per-site
+        // slugs settled keeps a stale prefix until something re-saves it. Part of the run, not
+        // a line in the README the operator may or may not have reached.
+        $resave = null;
+
+        if ($this->resave && !$this->dryRun) {
+            $resave = $this->resaveSections($mapping);
+        }
+
+        $lossCount = $pipeline->transforms()->lossCount();
+        $unresolvedAssets = count($tally->unresolvedAssets);
+        $orphans = count($fixup['orphans'] ?? []);
+
         $this->stdout(json_encode([
             'counts' => $tally->counts,
             'fixup' => $fixup,
             'finalize' => $finalize,
-            'lossyConversions' => $pipeline->transforms()->lossCount(),
+            'resave' => $resave,
+            'lossyConversions' => $lossCount,
             'losses' => $pipeline->transforms()->losses(),
             'skippedSources' => $pipeline->compiler()->skipped(),
             'droppedAddresses' => $tally->droppedAddresses,
-            'unresolvedAssets' => count($tally->unresolvedAssets),
+            'unresolvedAssets' => $unresolvedAssets,
             'unresolvedAssetSample' => array_slice(array_unique($tally->unresolvedAssets), 0, 5),
             'problems' => array_slice($tally->problems, 0, 40),
             'only' => $only,
             'adapters' => $tally->adapters,
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
 
-        return $tally->hasFailures() || ($tally->counts['invalid'] ?? 0) > 0 ? ExitCode::UNSPECIFIED_ERROR : ExitCode::OK;
+        // Losses are counted either way; --fail-on-loss is what makes ignoring them a
+        // decision rather than the default.
+        if ($this->failOnLoss && RunOutcome::lost($lossCount, $unresolvedAssets, $orphans)) {
+            $this->stderr(sprintf(
+                "Run lost content: %d lossy conversions, %d unresolved assets, %d unresolved references.\n",
+                $lossCount,
+                $unresolvedAssets,
+                $orphans,
+            ), Console::FG_RED);
+        }
+
+        return RunOutcome::exitCode(
+            $tally->hasFailures(),
+            (int) ($tally->counts['invalid'] ?? 0),
+            $this->failOnLoss,
+            $lossCount,
+            $unresolvedAssets,
+            $orphans,
+        );
     }
 
 
 
 
+
+    /**
+     * Re-save every section the mapping writes into.
+     *
+     * Craft computes a URI at save time from the parent's URI, so an entry written before its
+     * ancestors' per-site slugs settled carries a stale prefix until it is saved again. On the
+     * reference corpus this pass is worth 21 percentage points of URL fidelity.
+     *
+     * Sections come from the mapping rather than a list, so a project that migrates into
+     * something other than `pages` gets its own sections re-saved without editing anything.
+     *
+     * @return array<string, string> section handle → outcome
+     */
+    private function resaveSections(Mapping $mapping): array
+    {
+        $sections = [];
+
+        foreach ([...array_values($mapping->pages()), ...array_values($mapping->entities())] as $spec) {
+            $handle = (string) (((array) $spec)['section'] ?? '');
+
+            if ($handle !== '') {
+                $sections[$handle] = true;
+            }
+        }
+
+        $out = [];
+
+        foreach (array_keys($sections) as $handle) {
+            $this->stdout("Re-saving section {$handle} ...\n");
+
+            try {
+                // Craft's own console action, so this is the same pass an operator would run
+                // by hand — not a second implementation of it that can drift.
+                $exit = Craft::$app->runAction('resave/entries', [
+                    'section' => $handle,
+                    'interactive' => 0,
+                ]);
+
+                $out[$handle] = $exit === ExitCode::OK ? 'ok' : "exit {$exit}";
+            } catch (\Throwable $e) {
+                // A re-save that fails must not discard the migration that already succeeded;
+                // the run reports it and the operator can repeat the pass by hand.
+                $out[$handle] = 'failed: ' . $e->getMessage();
+                $this->reportProblem("resave {$handle}: " . $e->getMessage());
+            }
+        }
+
+        return $out;
+    }
 
     /**
      * A failure, said out loud the moment it happens.

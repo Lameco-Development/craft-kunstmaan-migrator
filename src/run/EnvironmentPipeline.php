@@ -149,7 +149,11 @@ final class EnvironmentPipeline
 
         $this->plugin->entryMigrationService->sites = $siteMap->configured();
 
-        self::applyMediaRoots($spec);
+        self::applyMediaRoots($spec, $env, count($mapping->environments()) > 1);
+
+        // The JIT entry points build their own MigrationOptions, so the flag has to live on
+        // the service to reach them.
+        $this->plugin->assetMigrationService->skipAssets = $settings->skipAssets;
 
         $this->compiler->compile(
             $db,
@@ -224,7 +228,11 @@ final class EnvironmentPipeline
      */
     private function runAdapters(EnvironmentContext $context, RunSettings $settings): array
     {
-        $opts = new MigrationOptions(dryRun: $settings->dryRun, force: $settings->force);
+        $opts = new MigrationOptions(
+            dryRun: $settings->dryRun,
+            force: $settings->force,
+            skipAssets: $settings->skipAssets,
+        );
         $out = [];
 
         // The registry, not a hard-coded four. A project that registers its own
@@ -290,8 +298,10 @@ final class EnvironmentPipeline
      * and rewrote 24 of 177 image references.
      *
      * @param array<string, mixed> $spec the mapping's block for this environment
+     * @param ?string $env  the environment's name, which `legacy-tree` roots its folders under
+     * @param bool $prefixEnvironment whether the corpus has more than one source
      */
-    public static function applyMediaRoots(array $spec): void
+    public static function applyMediaRoots(array $spec, ?string $env = null, bool $prefixEnvironment = false): void
     {
         $roots = self::mediaRootsFrom($spec);
 
@@ -303,6 +313,8 @@ final class EnvironmentPipeline
 
         $assets->legacyMediaRoot = $roots[0] ?? null;
         $assets->legacyMediaFallbackRoots = array_slice($roots, 1);
+        $assets->environmentName = $env;
+        $assets->prefixEnvironment = $prefixEnvironment;
     }
 
     /**

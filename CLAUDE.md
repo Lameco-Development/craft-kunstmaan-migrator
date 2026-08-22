@@ -38,7 +38,9 @@ Don't casually reverse these.
 - **Adapters come from the registry.** A pass that runs after an environment's entries is a `MigrationAdapter` with an `Adapter` row and a factory. Don't add a fifth hard-coded call site; `redirects` is the one documented exception and says why.
 - **Per-environment facts are parameters, not properties.** `SiteMap` already made this trip. The three that remain — the environment name and the two media-root properties — are the standing follow-up, and the reason a cache once outlived its database.
 - **Atomic always on**, per-entry. No `--atomic` flag.
-- **JIT assets.** `--preload-assets` is opt-in.
+- **JIT assets.** Assets materialise on demand; `ingestReferenced()` is an API for a caller
+  that already holds an id set, not a console flag — a preload would need a compile-then-load
+  two-phase run that does not exist.
 - **Deterministic at run time.** No AI in any stage.
 - **`NeverProductionTrait` / `ProductionGuard`** gate every legacy-reading and destructive path — command, queue job and control-panel action alike.
 
