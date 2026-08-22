@@ -21,6 +21,35 @@ final class Transforms
     {
     }
 
+    /**
+     * Every transform, and what it does, in words.
+     *
+     * Declared here beside the implementations so the two cannot drift, and so
+     * an editor can offer them rather than expecting somebody to know that
+     * `niv | titleLevel` is how a legacy heading level becomes a Craft one.
+     *
+     * @return array<string, string> name => what it does
+     */
+    public static function available(): array
+    {
+        return [
+            'bool' => 'Yes/no — 1 becomes true, anything else false',
+            'ckeditor' => 'Rich text — keeps the formatting, rewrites old links and images',
+            'inlineHtml' => 'Plain text — strips block tags, keeps bold and italic',
+            'titleLevel' => 'Heading level — h1 becomes h2 where the field has no h1',
+            'colorScheme' => 'Colour — maps the old palette onto the one Craft offers',
+            'variant' => 'Variant — maps the old style name onto Craft’s',
+            'asset' => 'File — turns a legacy media id into the migrated asset',
+            'ref' => 'Relation — turns a legacy id into the entry it became',
+            'url' => 'Web address — adds https:// to a bare domain',
+            'mailto' => 'Email link',
+            'tel' => 'Phone link',
+            'externalUrl' => 'External link only — refuses internal legacy links',
+            'beforeComma' => 'The part before the first comma',
+            'afterComma' => 'The part after the first comma',
+        ];
+    }
+
     public function apply(string $name, mixed $value, ?string $context = null): mixed
     {
         return match ($name) {

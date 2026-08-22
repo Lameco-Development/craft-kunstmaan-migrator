@@ -43,7 +43,16 @@ interface ElementWriter
     public function delete(ElementInterface $element, bool $hardDelete = false): void;
 
     /**
-     * @param class-string<ElementInterface> $class
+     * The element, as the type the caller asked for.
+     *
+     * Generic on purpose. Returning a bare ElementInterface made every caller
+     * an implicit downcast — `$node->navId`, `$entry->type` — which is a cast
+     * an analyser cannot check and a reader cannot see. Naming the class in the
+     * signature means the type comes back with it.
+     *
+     * @template T of ElementInterface
+     * @param class-string<T> $class
+     * @return T|null
      */
     public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface;
 

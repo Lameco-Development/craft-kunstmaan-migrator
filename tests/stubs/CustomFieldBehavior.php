@@ -1,0 +1,161 @@
+<?php
+
+/*
+ * GENERATED FROM CRAFT'S OWN TEMPLATE — do not hand-edit.
+ *
+ * Craft compiles craft\behaviors\CustomFieldBehavior at runtime from
+ * vendor/craftcms/cms/src/behaviors/CustomFieldBehavior.php.template and writes
+ * it to its compiled-classes directory; only the template ships, so the class is
+ * never autoloadable. Every Craft element attaches it in behaviors(), which made
+ * constructing an element outside a booted Craft impossible — and that, rather
+ * than anything about the code, is why whole passes here went untested.
+ *
+ * This is the no-custom-fields version, which is what Craft generates for a
+ * project that has none. Nothing in the suite reads a custom field off an
+ * element, so the empty form is faithful.
+ *
+ * Regenerate with:
+ *   sed -e 's/{{ fieldHandles }}//' -e 's/{{ generatedFieldHandles }}//' \
+ *     vendor/craftcms/cms/src/behaviors/CustomFieldBehavior.php.template \
+ *     > tests/stubs/CustomFieldBehavior.php
+ */
+/**
+ * @link http://craftcms.com/
+ * @copyright Copyright (c) Pixel & Tonic, Inc.
+ * @license http://craftcms.com/license
+ */
+
+namespace craft\behaviors;
+
+use craft\base\ElementInterface;
+use craft\elements\db\ElementQueryInterface;
+use yii\base\Behavior;
+
+/**
+ * Custom field behavior
+ *
+ * This class provides attributes for all the unique custom field handles.
+ *
+ * @template T of ElementInterface|ElementQueryInterface
+ * @extends Behavior<T>
+{METHOD_DOCS}
+ */
+class CustomFieldBehavior extends Behavior
+{
+    /**
+     * @var bool Whether the behavior should provide methods based on the field handles.
+     */
+    public bool $hasMethods = false;
+
+    /**
+     * @var bool Whether properties on the class should be settable directly.
+     */
+    public bool $canSetProperties = true;
+
+    /**
+     * @var array<string,bool> List of supported field handles.
+     */
+    public static $fieldHandles = [
+/* HANDLES */
+    ];
+
+    /**
+     * @var array<string,bool> List of generated field handles.
+     */
+    public static $generatedFieldHandles = [
+/* GENERATED HANDLES */
+    ];
+
+/* PROPERTIES */
+
+    /**
+     * @var array Additional custom field values we don’t know about yet.
+     */
+    private array $_customFieldValues = [];
+
+    /**
+     * @inheritdoc
+     */
+    public function __call($name, $params)
+    {
+        if (
+            $this->hasMethods &&
+            (isset(self::$fieldHandles[$name]) || isset(self::$generatedFieldHandles[$name])) &&
+            count($params) === 1
+        ) {
+            $this->$name = $params[0];
+            return $this->owner;
+        }
+        return parent::__call($name, $params);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function hasMethod($name): bool
+    {
+        if ($this->hasMethods && (isset(self::$fieldHandles[$name]) || isset(self::$generatedFieldHandles[$name]))) {
+            return true;
+        }
+        return parent::hasMethod($name);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function __isset($name): bool
+    {
+        if (isset(self::$fieldHandles[$name]) || isset(self::$generatedFieldHandles[$name])) {
+            return true;
+        }
+        return parent::__isset($name);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function __get($name)
+    {
+        if (isset(self::$fieldHandles[$name]) || isset(self::$generatedFieldHandles[$name])) {
+            return $this->_customFieldValues[$name] ?? null;
+        }
+        return parent::__get($name);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function __set($name, $value)
+    {
+        if (isset(self::$fieldHandles[$name]) || isset(self::$generatedFieldHandles[$name])) {
+            $this->_customFieldValues[$name] = $value;
+            return;
+        }
+        parent::__set($name, $value);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function canGetProperty($name, $checkVars = true): bool
+    {
+        if ($checkVars && (isset(self::$fieldHandles[$name]) || isset(self::$generatedFieldHandles[$name]))) {
+            return true;
+        }
+        return parent::canGetProperty($name, $checkVars);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function canSetProperty($name, $checkVars = true): bool
+    {
+        if (!$this->canSetProperties) {
+            return false;
+        }
+        if ($checkVars && (isset(self::$fieldHandles[$name]) || isset(self::$generatedFieldHandles[$name]))) {
+            return true;
+        }
+        return parent::canSetProperty($name, $checkVars);
+    }
+}

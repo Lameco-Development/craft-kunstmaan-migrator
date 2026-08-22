@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\queue;
 
+use Craft;
 use craft\queue\BaseJob;
 use lameco\kunstmaanmigrator\payload\FixupService;
 use lameco\kunstmaanmigrator\Plugin;
@@ -38,6 +39,6 @@ final class ResolveDeferredRefsJob extends BaseJob
 
     protected function defaultDescription(): string
     {
-        return 'Resolving deferred references';
+        return 'Linking pages to each other';
     }
 }

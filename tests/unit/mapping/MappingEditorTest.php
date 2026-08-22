@@ -99,4 +99,28 @@ final class MappingEditorTest extends TestCase
         self::assertSame(['contentPage', 'newsPage'], $catalogue->entryTypes());
         self::assertSame(['pages'], $catalogue->sections());
     }
+
+    /**
+     * A row with a target still has unplaced columns, so "decided" has to mean
+     * decided — otherwise a progress bar reads 100% while a third of the
+     * content still has nowhere to go, which is worse than no bar at all.
+     */
+    public function testProgressCountsOnlyRowsThatAreActuallySettled(): void
+    {
+        $rows = [
+            MappingRow::fromSpec('Text', ['block' => 'contentBlock']),
+            MappingRow::fromSpec('Header', ['block' => 'headingBlock', 'unreviewed' => ['niv']]),
+            MappingRow::fromSpec('RowStart', ['drop' => 'layout bracket']),
+            MappingRow::fromSpec('Quote', []),
+        ];
+
+        $counts = array_count_values(array_map(
+            static fn (MappingRow $row): string => $row->status(),
+            $rows,
+        ));
+
+        self::assertSame(1, $counts[MappingRow::DECIDED]);
+        self::assertSame(1, $counts[MappingRow::DROPPED]);
+        self::assertSame(2, $counts[MappingRow::OPEN], 'a row with unplaced columns is not finished');
+    }
 }

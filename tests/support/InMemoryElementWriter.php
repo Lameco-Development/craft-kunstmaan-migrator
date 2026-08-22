@@ -22,6 +22,13 @@ final class InMemoryElementWriter implements ElementWriter
 
     public int $cacheInvalidations = 0;
 
+    /**
+     * Craft stamps an id onto a new element as it saves it, and callers read
+     * that id back to wire relationships. So does this — otherwise a pass that
+     * saves and then links builds its map out of nulls.
+     */
+    public int $nextId = 900;
+
     /** @var array<string, ElementInterface> */
     private array $findable = [];
 
@@ -33,6 +40,12 @@ final class InMemoryElementWriter implements ElementWriter
         if (isset($this->refuse[spl_object_id($element)])) {
             return false;
         }
+
+        if ($element->id === null) {
+            $element->id = $this->nextId++;
+        }
+
+        $this->findable[$this->key((int) $element->id, null)] ??= $element;
 
         $this->saved[] = [
             'element' => $element,
@@ -48,6 +61,11 @@ final class InMemoryElementWriter implements ElementWriter
         $this->deleted[] = ['element' => $element, 'hardDelete' => $hardDelete];
     }
 
+    /**
+     * @template T of ElementInterface
+     * @param class-string<T> $class
+     * @return T|null
+     */
     public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
     {
         return $this->findable[$this->key($id, $siteId)] ?? $this->findable[$this->key($id, null)] ?? null;

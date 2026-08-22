@@ -156,6 +156,11 @@ final class MappingDocumentTest extends TestCase
             table: text_parts
             block: contentBlock
             source: [A, S]
+            map:
+              heading: title | inlineHtml
+              # niv is a free varchar: some rows hold a bare digit, and the
+              # target field starts at h2.
+              titleLevel: niv | titleLevel
             ignore: [alignment, background_color]
 
           Header:
@@ -279,17 +284,16 @@ final class MappingDocumentTest extends TestCase
         [$document, $path] = $this->annotated();
         $before = (string) file_get_contents($path);
 
-        $document->patch('parts', 'Text', ['map' => ['heading' => 'title | inlineHtml']])->save();
+        $map = $document->row('parts', 'Text')['map'];
+        $map['alignment'] = 'align';
+        $document->patch('parts', 'Text', ['map' => $map])->save();
 
         $after = (string) file_get_contents($path);
         $added = array_diff(explode("\n", $after), explode("\n", $before));
         $removed = array_diff(explode("\n", $before), explode("\n", $after));
 
         self::assertSame([], array_values($removed), 'nothing should have been removed');
-        self::assertSame(
-            ['    map:', "      heading: 'title | inlineHtml'"],
-            array_values($added),
-        );
+        self::assertSame(['      alignment: align'], array_values($added));
     }
 
     /** A key the edit clears leaves with its lines, and takes nothing else. */
@@ -309,6 +313,55 @@ final class MappingDocumentTest extends TestCase
         self::assertSame(
             ['    ignore: [alignment, background_color]'],
             array_values(array_diff(explode("\n", $before), explode("\n", $after))),
+        );
+    }
+
+    /**
+     * Opening a row and saving it must leave the file alone.
+     *
+     * A form posts every field it draws, so without this every save counted as
+     * an edit — and an edit rewrites the key, which costs the comments inside
+     * it. The first version of this rewrote all 1,450 lines of the real mapping
+     * when somebody saved a row they had only looked at.
+     */
+    #[Test]
+    public function saving_without_editing_changes_nothing(): void
+    {
+        [$document, $path] = $this->annotated();
+        $before = (string) file_get_contents($path);
+
+        $row = $document->row('parts', 'Text');
+        $document->patch('parts', 'Text', [
+            'block' => $row['block'],
+            // Same entries, different order — which is what a form posts.
+            'map' => ['titleLevel' => $row['map']['titleLevel'], 'heading' => $row['map']['heading']],
+        ])->save();
+
+        self::assertSame($before, (string) file_get_contents($path));
+    }
+
+    /**
+     * `map:` carries the reasoning for the migration — why a column is
+     * transformed the way it is, how many rows it affects. Changing one entry
+     * must not throw the rest away.
+     */
+    #[Test]
+    public function changing_one_field_map_entry_keeps_the_others_and_their_comments(): void
+    {
+        [$document, $path] = $this->annotated();
+        $before = (string) file_get_contents($path);
+
+        $map = $document->row('parts', 'Text')['map'];
+        $map['content'] = 'body | ckeditor';
+        $document->patch('parts', 'Text', ['map' => $map])->save();
+
+        $after = (string) file_get_contents($path);
+
+        self::assertStringContainsString('# niv is a free varchar', $after, 'the explanation went with the rewrite');
+        self::assertStringContainsString('heading: title | inlineHtml', $after, 'an untouched entry was reformatted');
+        self::assertSame(
+            ['      content: \'body | ckeditor\''],
+            array_values(array_diff(explode("\n", $after), explode("\n", $before))),
         );
     }
 }

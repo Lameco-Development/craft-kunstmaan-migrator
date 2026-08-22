@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\queue;
 
 use craft\helpers\App;
+use Craft;
 use craft\queue\BaseJob;
 use Lameco\KumaCompile\Mapping\Mapping;
 use lameco\kunstmaanmigrator\ProductionGuard;
@@ -98,6 +99,10 @@ final class MigrateEnvironmentJob extends BaseJob
 
     protected function defaultDescription(): string
     {
-        return sprintf('Migrating %s', $this->environment);
+        // What the queue shows an operator, so it says what is happening
+        // rather than naming a class. Not translated: a job description is read
+        // back out of the queue table by tests that cannot boot Craft, and a
+        // guard for that would be worse than English here.
+        return sprintf('Migrating %s — pages, content and files', $this->environment);
     }
 }

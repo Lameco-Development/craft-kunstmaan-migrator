@@ -1,0 +1,83 @@
+{% extends "kunstmaan-migrator/_setup/_wizard" %}
+{% import "_includes/forms.twig" as forms %}
+
+{% block step %}
+  {{ actionInput('kunstmaan-migrator/setup/save-connection') }}
+
+  <div class="readable">
+    <p>{{ "The old Kunstmaan site’s database. Nothing is written to it — the migration only reads."|t('kunstmaan-migrator') }}</p>
+  </div>
+
+  {{ forms.autosuggestField({
+    label: "Server"|t('kunstmaan-migrator'),
+    name: 'legacyDbServer',
+    value: settings.legacyDbServer,
+    suggestEnvVars: true,
+    placeholder: '127.0.0.1',
+  }) }}
+
+  {{ forms.textField({
+    label: "Port"|t('kunstmaan-migrator'),
+    name: 'legacyDbPort',
+    type: 'number',
+    size: 6,
+    value: settings.legacyDbPort,
+  }) }}
+
+  {{ forms.autosuggestField({
+    label: "User"|t('kunstmaan-migrator'),
+    name: 'legacyDbUser',
+    value: settings.legacyDbUser,
+    suggestEnvVars: true,
+    placeholder: 'root',
+  }) }}
+
+  {{ forms.autosuggestField({
+    label: "Password"|t('kunstmaan-migrator'),
+    instructions: "Use an environment variable name such as $KUMA_DB_PASSWORD. A password typed here would be saved into project config, committed, and deployed."|t('kunstmaan-migrator'),
+    name: 'legacyDbPassword',
+    value: settings.legacyDbPassword,
+    suggestEnvVars: true,
+    placeholder: '$KUMA_DB_PASSWORD',
+  }) }}
+
+  {# Answered here, not two screens later when a query fails. #}
+  <div class="field">
+    <div class="input">
+      <button type="button" class="btn" id="kuma-test">{{ "Test connection"|t('kunstmaan-migrator') }}</button>
+      <span class="kuma-check" id="kuma-test-result"></span>
+    </div>
+  </div>
+
+  {% js %}
+    document.getElementById('kuma-test').addEventListener('click', function () {
+      var button = this;
+      var result = document.getElementById('kuma-test-result');
+      var form = document.getElementById('main-form');
+
+      button.disabled = true;
+      result.className = 'kuma-check';
+      result.textContent = '{{ "Trying…"|t('kunstmaan-migrator')|e('js') }}';
+
+      Craft.sendActionRequest('POST', 'kunstmaan-migrator/setup/test-connection', {
+        data: {
+          legacyDbServer: form.elements.legacyDbServer.value,
+          legacyDbPort: form.elements.legacyDbPort.value,
+          legacyDbUser: form.elements.legacyDbUser.value,
+          legacyDbPassword: form.elements.legacyDbPassword.value
+        }
+      })
+        .then(function (response) {
+          result.className = 'kuma-check kuma-check--ok';
+          result.innerHTML = '<span data-icon="check"></span> ' + response.data.message;
+        })
+        .catch(function (error) {
+          var message = (error.response && error.response.data && error.response.data.message)
+            || '{{ "Could not reach Craft."|t('kunstmaan-migrator')|e('js') }}';
+          result.className = 'kuma-check kuma-check--bad';
+          result.innerHTML = '<span data-icon="alert"></span> ' + message;
+        })
+        .finally(function () { button.disabled = false; });
+    });
+  {% endjs %}
+{% endblock %}

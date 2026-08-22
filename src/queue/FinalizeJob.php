@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\queue;
 
+use Craft;
 use craft\queue\BaseJob;
 use Lameco\KumaCompile\Mapping\Mapping;
 use lameco\kunstmaanmigrator\finalize\FinalizePass;
@@ -50,6 +51,6 @@ final class FinalizeJob extends BaseJob
 
     protected function defaultDescription(): string
     {
-        return 'Resolving legacy links and media references';
+        return 'Fixing links and images inside text';
     }
 }

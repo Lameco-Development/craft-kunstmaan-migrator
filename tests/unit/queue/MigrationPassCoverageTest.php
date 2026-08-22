@@ -50,12 +50,15 @@ final class MigrationPassCoverageTest extends TestCase
             );
         }
 
-        // The passes `migrate` exposes as flags are options on the run form.
+        // Every pass `migrate` exposes as a flag is reachable from the run
+        // screen. How it is offered is the screen's business — a full run is
+        // one button and the recovery passes live behind a disclosure — but a
+        // pass that is reachable only from a terminal is not.
         foreach (['full', 'entries', 'fixup', 'finalize'] as $pass) {
-            self::assertStringContainsString(
-                sprintf("value: '%s'", $pass),
+            self::assertMatchesRegularExpression(
+                sprintf('~(?:value: \'%1$s\'|data-pass="%1$s"|queue\(\'%1$s\')~', $pass),
                 $template,
-                sprintf('the run form offers no "%s" pass', $pass),
+                sprintf('the run screen offers no "%s" pass', $pass),
             );
             self::assertStringContainsString(sprintf("'%s'", $pass), $controller);
         }

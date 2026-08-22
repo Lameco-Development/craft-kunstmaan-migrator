@@ -18,6 +18,30 @@
       {% endfor %}
     </nav>
 
+    {# Sixty rows with no sense of how many are done is a long list; the same
+       sixty with a count is eleven to go. #}
+    {% if progress and progress.total %}
+      <div class="kuma-progress">
+        <div class="kuma-progress__bar">
+          <span style="width: {{ progress.percent }}%"></span>
+        </div>
+        <p class="kuma-progress__text">
+          {% if progress.open %}
+            <strong>{{ "{n, plural, =1{1 still to decide} other{# still to decide}}"|t('kunstmaan-migrator', { n: progress.open }) }}</strong>
+            <span class="light">
+              — {{ "{d} mapped, {x} not migrating"|t('kunstmaan-migrator', { d: progress.decided, x: progress.dropped }) }}
+            </span>
+          {% else %}
+            <span data-icon="check" class="success"></span>
+            <strong>{{ "Every row decided."|t('kunstmaan-migrator') }}</strong>
+            <span class="light">
+              — {{ "{d} mapped, {x} not migrating"|t('kunstmaan-migrator', { d: progress.decided, x: progress.dropped }) }}
+            </span>
+          {% endif %}
+        </p>
+      </div>
+    {% endif %}
+
     {# Ordered by live volume rather than by name: that is where the content is,
        and an alphabetical list buries the ten rows that matter under sixty
        that do not. #}
@@ -74,4 +98,17 @@
       </tbody>
     </table>
   {% endif %}
+{% css %}
+    .kuma-progress { margin: 14px 0 4px; }
+    .kuma-progress__bar {
+      height: 6px; border-radius: 3px; overflow: hidden;
+      background: var(--gray-200, #cdd8e4);
+    }
+    .kuma-progress__bar span {
+      display: block; height: 100%;
+      background: var(--enabled-color, #27ab83);
+      transition: width .2s ease;
+    }
+    .kuma-progress__text { margin: 6px 0 0; font-size: 13px; }
+  {% endcss %}
 {% endblock %}

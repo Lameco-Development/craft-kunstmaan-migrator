@@ -24,6 +24,8 @@
         "nystudio107/craft-retour": "Enables the Retour adapter (^5.0)."
     },
     "require-dev": {
+        "nystudio107/craft-retour": "^5.0",
+        "phpstan/phpstan": "^2.2",
         "phpunit/phpunit": "^11.0",
         "verbb/formie": "^3.1",
         "verbb/navigation": "^3.0"
@@ -48,6 +50,11 @@
             "@php -r \"if (!extension_loaded('pcov') && !extension_loaded('xdebug')) { fwrite(STDERR, 'install pcov or xdebug to run coverage' . PHP_EOL); exit(1); }\"",
             "vendor/bin/phpunit --coverage-clover=build/coverage/clover.xml",
             "@php tools/check-coverage.php"
+        ],
+        "analyse": "vendor/bin/phpstan analyse --no-progress",
+        "check": [
+            "@analyse",
+            "@test"
         ]
     },
     "extra": {

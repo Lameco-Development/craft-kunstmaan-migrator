@@ -51,7 +51,17 @@ final class MigrationUtilitySurfaceTest extends TestCase
 
         $reflection = new ReflectionClass(MigrationController::class);
 
+        // Craft's own actions are fair game — the run screen reads job progress
+        // from the queue rather than reinventing it — but only the ones named
+        // here, so a typo in a core route still fails rather than being waved
+        // through as "probably Craft's".
+        $craftRoutes = ['queue/get-job-info'];
+
         foreach ($routes as $route) {
+            if (in_array($route, $craftRoutes, true)) {
+                continue;
+            }
+
             $parts = explode('/', $route);
             self::assertSame('kunstmaan-migrator', $parts[0], sprintf('%s is not this plugin\'s route', $route));
             self::assertSame('migration', $parts[1], sprintf('%s does not resolve to MigrationController', $route));

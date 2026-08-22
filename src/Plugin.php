@@ -33,6 +33,7 @@ use lameco\kunstmaanmigrator\load\RedirectMigrationService;
 use lameco\kunstmaanmigrator\load\TranslationMigrationService;
 use lameco\kunstmaanmigrator\load\SeoMigrationService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
+use lameco\kunstmaanmigrator\mapping\SetupStep;
 use lameco\kunstmaanmigrator\models\Settings;
 use lameco\kunstmaanmigrator\utilities\MigrationUtility;
 use PDO;
@@ -147,6 +148,11 @@ class Plugin extends BasePlugin
             static function (RegisterUrlRulesEvent $event): void {
                 $event->rules['kunstmaan-migrator/mapping'] = 'kunstmaan-migrator/migration/mapping';
                 $event->rules['kunstmaan-migrator/mapping-row'] = 'kunstmaan-migrator/migration/mapping-row';
+                $event->rules['kunstmaan-migrator/setup'] = 'kunstmaan-migrator/setup/index';
+
+                foreach (SetupStep::all() as $step) {
+                    $event->rules['kunstmaan-migrator/setup/' . $step->value] = 'kunstmaan-migrator/setup/' . $step->value;
+                }
             },
         );
 
