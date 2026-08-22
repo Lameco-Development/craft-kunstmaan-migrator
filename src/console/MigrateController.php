@@ -356,6 +356,12 @@ final class MigrateController extends Controller
         $unresolvedAssets = count($tally->unresolvedAssets);
         $orphans = count($fixup['orphans'] ?? []);
 
+        // Per-locale block content the target's field configuration cannot hold. Accumulated on
+        // the service because the payload path builds no MigrationReport — without this the
+        // only trace is a line in the Craft log, which is exactly the "reporting is a side
+        // channel" problem one layer down.
+        $perSiteBlockLosses = $plugin->entryMigrationService->perSiteBlockLosses;
+
         $this->stdout(json_encode([
             'counts' => $tally->counts,
             'fixup' => $fixup,
@@ -366,6 +372,8 @@ final class MigrateController extends Controller
             'skippedSources' => $pipeline->compiler()->skipped(),
             'droppedAddresses' => $tally->droppedAddresses,
             'unresolvedAssets' => $unresolvedAssets,
+            'perSiteBlocksNotRepresentable' => count($perSiteBlockLosses),
+            'perSiteBlockLossSample' => array_slice($perSiteBlockLosses, 0, 10),
             'unresolvedAssetSample' => array_slice(array_unique($tally->unresolvedAssets), 0, 5),
             'problems' => array_slice($tally->problems, 0, 40),
             'only' => $only,
@@ -374,7 +382,7 @@ final class MigrateController extends Controller
 
         // Losses are counted either way; --fail-on-loss is what makes ignoring them a
         // decision rather than the default.
-        if ($this->failOnLoss && RunOutcome::lost($lossCount, $unresolvedAssets, $orphans)) {
+        if ($this->failOnLoss && RunOutcome::lost($lossCount, $unresolvedAssets, $orphans + count($perSiteBlockLosses))) {
             $this->stderr(sprintf(
                 "Run lost content: %d lossy conversions, %d unresolved assets, %d unresolved references.\n",
                 $lossCount,
@@ -389,7 +397,7 @@ final class MigrateController extends Controller
             $this->failOnLoss,
             $lossCount,
             $unresolvedAssets,
-            $orphans,
+            $orphans + count($perSiteBlockLosses),
         );
     }
 

@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\load;
 use Craft;
 use craft\base\Element;
 use craft\base\ElementInterface;
+use craft\enums\PropagationMethod;
 use craft\fields\Matrix;
 use craft\elements\Entry;
 use craft\models\Section;
@@ -80,6 +81,18 @@ class EntryMigrationService extends Component
      *
      * @var array<string, string>
      */
+    /**
+     * Per-locale block content this Craft install cannot represent, one message per entry+field.
+     *
+     * A public accumulator rather than a `MigrationReport`, because the payload path builds no
+     * report — the saver never makes one, so `$report` is null for every real run and the
+     * warning reached the log and nothing else. Read by `MigrateController` after the run, the
+     * same way `AssetMigrationService::$assetRcaRows` is.
+     *
+     * @var list<string>
+     */
+    public array $perSiteBlockLosses = [];
+
     public array $sites = [];
 
     /**
@@ -348,6 +361,16 @@ class EntryMigrationService extends Component
         // Extract source-ref positions BEFORE applyPerSiteData strips them.
         $primarySourceRefPositions = $this->extractSourceRefPositions(
             (array) ($primaryData['fieldValues'] ?? []),
+        );
+
+        // Say so before writing, not after: on a field that shares one block set across sites,
+        // locales carrying different legacy parts cannot all survive the save.
+        $this->reportUnrepresentablePerSiteBlocks(
+            $entry,
+            $perSite,
+            $report,
+            $stateSource,
+            (string) $stateKey,
         );
         $this->applyPerSiteData(
             $entry,
@@ -1070,6 +1093,111 @@ class EntryMigrationService extends Component
     private static function isHomePageStateSource(string $stateSource): bool
     {
         return str_ends_with($stateSource, '_HomePage');
+    }
+
+    /**
+     * Report per-locale block content that this Craft install cannot hold.
+     *
+     * A Matrix field with `propagationMethod: all` keeps **one** block set for the owner, shared
+     * across every site. That is fine while each locale's payload names the same legacy parts —
+     * 753 entries on the reference corpus do — but when the locales name *different* parts, the
+     * two sets cannot both exist. Each site's save replaces the other's, forever: measured at 61
+     * blocks replaced per forced run with the live count flat, and the losing locale left showing
+     * the winner's content — a Latvian page serving English blocks.
+     *
+     * The loader cannot fix this. The block set is global by the field's own configuration, so
+     * representing divergent locales needs `propagationMethod: none` (or a per-site
+     * `propagationKeyFormat`) on the Craft side. What the loader can do is stop doing it quietly:
+     * the run reports the loss, and `--fail-on-loss` turns it into a non-zero exit.
+     *
+     * @param array<string, mixed> $perSite payload data keyed by site handle
+     */
+    private function reportUnrepresentablePerSiteBlocks(
+        Entry $entry,
+        array $perSite,
+        ?MigrationReport $report,
+        string $stateSource,
+        string $stateKey,
+    ): void {
+        // sourceRefs per matrix handle per site, from the payload the compiler produced.
+        $refsByField = [];
+
+        foreach ($perSite as $siteHandle => $siteData) {
+            foreach ($this->extractSourceRefPositions((array) ($siteData['fieldValues'] ?? [])) as $fieldHandle => $positions) {
+                $refs = [];
+
+                foreach ($positions as $position) {
+                    if (is_array($position) && $position['ref'] !== null) {
+                        $refs[(string) $position['ref']] = true;
+                    }
+                }
+
+                if ($refs !== []) {
+                    $refsByField[(string) $fieldHandle][(string) $siteHandle] = $refs;
+                }
+            }
+        }
+
+        foreach ($refsByField as $fieldHandle => $perSiteRefs) {
+            if (count($perSiteRefs) < 2) {
+                continue;
+            }
+
+            // Identical refs across locales are representable in one shared set — that is the
+            // common case, and warning on it would make the warning worthless.
+            if (!PerSiteBlockDivergence::isUnrepresentable($perSiteRefs)) {
+                continue;
+            }
+
+            if ($this->matrixPropagatesToAllSites($entry, (string) $fieldHandle) !== true) {
+                continue;
+            }
+
+            $this->perSiteBlockLosses[] = sprintf(
+                '%s:%s field "%s": %d locales carry different legacy parts, but the field '
+                . 'propagates one block set to all sites — only the last locale written survives.',
+                $stateSource,
+                $stateKey,
+                $fieldHandle,
+                count($perSiteRefs),
+            );
+
+            $this->recordFallback(
+                $report,
+                'perSiteBlocksNotRepresentable',
+                sprintf(
+                    '%s:%s field "%s": %d locales carry different legacy parts, but the field '
+                    . 'propagates one block set to all sites — only the last locale written survives. '
+                    . 'Set propagationMethod to none (or a per-site propagationKeyFormat) on this field.',
+                    $stateSource,
+                    $stateKey,
+                    $fieldHandle,
+                    count($perSiteRefs),
+                ),
+            );
+        }
+    }
+
+    /**
+     * Whether a Matrix field keeps one block set across every site.
+     *
+     * Resolved through the entry's field layout rather than the field handle: page-builder
+     * fields are field *instances*, so `getFieldByHandle('pageBuilder')` finds nothing while
+     * the layout knows exactly which field that instance points at.
+     */
+    private function matrixPropagatesToAllSites(Entry $entry, string $fieldHandle): ?bool
+    {
+        try {
+            $field = $entry->getFieldLayout()?->getFieldByHandle($fieldHandle);
+
+            if (!$field instanceof Matrix) {
+                return null;
+            }
+
+            return $field->propagationMethod === PropagationMethod::All;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
