@@ -79,7 +79,10 @@ final class TemplatesCompileTest extends TestCase
             $twig->addFilter(new TwigFilter($filter, static fn (mixed $value): mixed => $value));
         }
 
-        foreach (['actionUrl', 'url', 'siteUrl'] as $function) {
+        foreach ([
+            'actionUrl', 'url', 'siteUrl',
+            'csrfInput', 'actionInput', 'redirectInput', 'hiddenInput',
+        ] as $function) {
             $twig->addFunction(new TwigFunction($function, static fn (mixed ...$args): string => ''));
         }
 

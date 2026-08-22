@@ -11,7 +11,9 @@ use Throwable;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use craft\events\RegisterComponentTypesEvent;
+use craft\events\RegisterUrlRulesEvent;
 use craft\services\Utilities;
+use craft\web\UrlManager;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
@@ -135,6 +137,18 @@ class Plugin extends BasePlugin
         $this->controllerNamespace = Craft::$app->request->getIsConsoleRequest()
             ? 'lameco\\kunstmaanmigrator\\console'
             : 'lameco\\kunstmaanmigrator\\controllers';
+
+        // The mapping editor's own URLs. Two screens rather than a panel inside
+        // the utility, because a mapping is sixty rows and each one is a form —
+        // that wants a page and a back button, not a drawer.
+        Event::on(
+            UrlManager::class,
+            UrlManager::EVENT_REGISTER_CP_URL_RULES,
+            static function (RegisterUrlRulesEvent $event): void {
+                $event->rules['kunstmaan-migrator/mapping'] = 'kunstmaan-migrator/migration/mapping';
+                $event->rules['kunstmaan-migrator/mapping-row'] = 'kunstmaan-migrator/migration/mapping-row';
+            },
+        );
 
         // A Utility, not a CP section: a tool used a handful of times per project
         // has no business in the nav beside Entries.

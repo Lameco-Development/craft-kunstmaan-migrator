@@ -18,10 +18,14 @@ final class MappingRow
     public const OPEN = 'open';
 
     /**
-     * @param list<string>          $unreviewed legacy columns nobody has placed
-     * @param array<string, mixed>  $map        legacy column => Craft field expression
-     * @param array<string, mixed>  $ignore     legacy column => why it is not migrated
-     * @param array<string, mixed>  $spec       the row as the file holds it
+     * @param list<string>           $unreviewed legacy columns nobody has placed
+     * @param array<string, string>  $map        Craft field => legacy column expression.
+     *        That direction is the DSL's: `dynamicsId: dynamics_id` reads "this
+     *        Craft field is filled from that legacy column", and one field can
+     *        consume several columns through an expression, which the other
+     *        direction cannot express.
+     * @param array<string, ?string> $ignore     legacy column => why it is not migrated
+     * @param array<string, mixed>   $spec       the row as the file holds it
      */
     private function __construct(
         public readonly string $key,
@@ -48,8 +52,8 @@ final class MappingRow
             target: self::firstString($spec, ['block', 'entryType', 'target']),
             dropped: self::firstString($spec, ['drop', 'manual', 'consumedBy']),
             unreviewed: array_values(array_map(strval(...), (array) ($spec['unreviewed'] ?? []))),
-            map: (array) ($spec['map'] ?? []),
-            ignore: (array) ($spec['ignore'] ?? []),
+            map: array_map(strval(...), (array) ($spec['map'] ?? [])),
+            ignore: self::normaliseIgnore((array) ($spec['ignore'] ?? [])),
             spec: $spec,
         );
     }
@@ -71,19 +75,61 @@ final class MappingRow
     }
 
     /**
-     * Every legacy column this row knows about, wherever it currently sits.
+     * The legacy columns this row still owes a decision on, or already made one
+     * about — with which of the two it is.
      *
-     * @return list<string>
+     * The distinction is the point, and collapsing it is how a screen comes to
+     * show a decision as an oversight. `ignore: [color, show_as_slider]` is the
+     * list form of a real decision that predates reasons being required; a
+     * column in `unreviewed:` is one nobody has looked at. Both have no reason
+     * attached, and they are not the same thing.
+     *
+     * Columns consumed by `map:` are deliberately absent: a mapped column lives
+     * inside an expression on the Craft field that eats it, and one expression
+     * can consume several. Listing them again as separate decisions would
+     * invite two answers to one question.
+     *
+     * @return array<string, array{ignored: bool, reason: ?string}>
      */
     public function columns(): array
     {
-        $columns = [
-            ...array_keys($this->map),
-            ...array_keys($this->ignore),
-            ...$this->unreviewed,
-        ];
+        $out = [];
 
-        return array_values(array_unique(array_map(strval(...), $columns)));
+        foreach ($this->ignore as $column => $reason) {
+            $out[$column] = ['ignored' => true, 'reason' => $reason];
+        }
+
+        foreach ($this->unreviewed as $column) {
+            $out[$column] ??= ['ignored' => false, 'reason' => null];
+        }
+
+        return $out;
+    }
+
+    /**
+     * `ignore:` comes in two shapes and both are in the wild: a map of column
+     * to reason, which is what the DSL wants, and a bare list of columns from
+     * before reasons were required. Reading only the first shows a list-form
+     * row's columns as `0`, `1`, `2`.
+     *
+     * @param array<mixed, mixed> $ignore
+     * @return array<string, ?string>
+     */
+    private static function normaliseIgnore(array $ignore): array
+    {
+        $out = [];
+
+        foreach ($ignore as $key => $value) {
+            if (is_int($key)) {
+                $out[(string) $value] = null;
+
+                continue;
+            }
+
+            $out[(string) $key] = $value === null ? null : (string) $value;
+        }
+
+        return $out;
     }
 
     /**

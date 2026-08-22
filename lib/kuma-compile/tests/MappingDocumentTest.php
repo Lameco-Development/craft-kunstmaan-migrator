@@ -143,4 +143,124 @@ final class MappingDocumentTest extends TestCase
         self::assertSame('contentBlock', $mapping->parts()['Text']['block']);
         self::assertNull($mapping->all()['environments']['COM']['locales']['sp']);
     }
+
+    private const ANNOTATED = <<<'YAML'
+        # Enreach — Kunstmaan → Craft migration mapping
+        #
+        # Counts are live placements, measured 2026-08-19.
+        version: 1
+        parts:
+          # The workhorse: half the corpus is one of these.
+          Text:
+            live: 82
+            table: text_parts
+            block: contentBlock
+            source: [A, S]
+            ignore: [alignment, background_color]
+
+          Header:
+            live: 40
+            table: header_parts
+            block: ~
+            unreviewed: [title, niv]
+        YAML;
+
+    private function annotated(): array
+    {
+        $path = tempnam(sys_get_temp_dir(), 'kuma') . '.yaml';
+        file_put_contents($path, self::ANNOTATED);
+
+        return [MappingDocument::fromFile($path), $path];
+    }
+
+    /**
+     * The reason to write to the file at all is that a mapping is reviewed in a
+     * pull request. Dumping the whole document is correct and useless: on the
+     * real Enreach mapping one added `ignore:` reason produced a 1,652-line
+     * diff, because every comment went and every inline list became a block.
+     * Nobody reviews that.
+     */
+    #[Test]
+    public function editing_one_row_leaves_every_other_line_alone(): void
+    {
+        [$document, $path] = $this->annotated();
+        $before = explode("\n", (string) file_get_contents($path));
+
+        $document->patch('parts', 'Header', ['block' => 'headingBlock'])->save();
+
+        $after = explode("\n", (string) file_get_contents($path));
+        $changed = [];
+
+        foreach ($before as $i => $line) {
+            if (($after[$i] ?? null) !== $line) {
+                $changed[] = $line;
+            }
+        }
+
+        // Only the edited row's own lines move.
+        foreach ($changed as $line) {
+            self::assertStringNotContainsString('#', $line, 'a comment was rewritten');
+            self::assertStringNotContainsString('Text:', $line, 'an untouched row was rewritten');
+        }
+    }
+
+    #[Test]
+    public function the_file_header_and_row_comments_survive(): void
+    {
+        [$document, $path] = $this->annotated();
+
+        $document->patch('parts', 'Header', ['block' => 'headingBlock'])->save();
+        $written = (string) file_get_contents($path);
+
+        self::assertStringContainsString('# Enreach — Kunstmaan → Craft migration mapping', $written);
+        self::assertStringContainsString('# The workhorse: half the corpus is one of these.', $written);
+        self::assertStringContainsString('# Counts are live placements, measured 2026-08-19.', $written);
+    }
+
+    #[Test]
+    public function the_edit_is_actually_written(): void
+    {
+        [$document, $path] = $this->annotated();
+
+        $document->patch('parts', 'Header', ['block' => 'headingBlock'])->save();
+
+        self::assertSame(
+            'headingBlock',
+            MappingDocument::fromFile($path)->row('parts', 'Header')['block'],
+        );
+    }
+
+    /**
+     * `source: [A, S]` is how every hand-written row in a mapping reads, and
+     * the dumper expands it — four lines of noise in a diff whose point is one
+     * decision.
+     */
+    #[Test]
+    public function short_scalar_lists_stay_on_one_line(): void
+    {
+        [$document, $path] = $this->annotated();
+
+        $document->patch('parts', 'Text', ['block' => 'richTextBlock'])->save();
+
+        self::assertStringContainsString('source: [A, S]', (string) file_get_contents($path));
+        self::assertStringContainsString('ignore: [alignment, background_color]', (string) file_get_contents($path));
+    }
+
+    /**
+     * A row the writer cannot locate must not be guessed at. Falling back to a
+     * full dump keeps the edit rather than losing it, and the size of the diff
+     * says loudly that something unusual happened.
+     */
+    #[Test]
+    public function a_row_that_is_not_in_the_file_yet_still_saves(): void
+    {
+        [$document, $path] = $this->annotated();
+
+        $document->patch('parts', 'Quote', ['table' => 'quote_parts', 'block' => 'quoteBlock'])->save();
+
+        self::assertSame(
+            'quoteBlock',
+            MappingDocument::fromFile($path)->row('parts', 'Quote')['block'],
+        );
+    }
 }

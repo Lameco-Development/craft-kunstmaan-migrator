@@ -29,10 +29,18 @@ use Symfony\Component\Yaml\Yaml;
  */
 final class MappingDocument
 {
-    /** @param array<string, mixed> $data */
+    /** @var list<array{0: string, 1: string}> lane/key pairs this edit touched */
+    private array $touched = [];
+
+    /**
+     * @param array<string, mixed> $data
+     * @param string|null $source the file exactly as it was read, so a save can
+     *        put back everything it did not change
+     */
     private function __construct(
         private array $data,
         private readonly ?string $path = null,
+        private readonly ?string $source = null,
     ) {
     }
 
@@ -48,7 +56,7 @@ final class MappingDocument
             throw new MappingException(sprintf('Mapping file is not a YAML mapping: %s', $path));
         }
 
-        return new self($data, $path);
+        return new self($data, $path, (string) file_get_contents($path));
     }
 
     /** @param array<string, mixed> $data */
@@ -114,6 +122,7 @@ final class MappingDocument
         }
 
         $this->data[$lane][$key] = $row;
+        $this->touched[] = [$lane, $key];
 
         return $this;
     }
@@ -139,6 +148,23 @@ final class MappingDocument
         );
     }
 
+    /**
+     * Write the file back, changing as little of it as possible.
+     *
+     * Dumping the whole document is correct and useless: on the Enreach mapping
+     * one added `ignore:` reason produced a 1,652-line diff, because every
+     * comment went and every inline `{a: b}` became a block. The reason to
+     * write to the file at all is that a mapping is reviewed in a pull request,
+     * and nobody reviews that.
+     *
+     * So an edit rewrites the rows it touched and nothing else. The file keeps
+     * its header, its provenance notes, its `conflict:` explanations and its
+     * formatting, and the diff is the decision somebody made. Comments *inside*
+     * an edited row are lost, which is the honest cost and a local one.
+     *
+     * A document with no source to splice into — one built from an array, or
+     * whose rows could not be located — falls back to a full dump.
+     */
     public function save(?string $path = null): void
     {
         $target = $path ?? $this->path;
@@ -147,9 +173,187 @@ final class MappingDocument
             throw new MappingException('This mapping has no path to save to.');
         }
 
-        if (file_put_contents($target, $this->toYaml()) === false) {
+        $yaml = $this->source !== null && $this->touched !== []
+            ? $this->splicedSource()
+            : $this->toYaml();
+
+        if (file_put_contents($target, $yaml) === false) {
             throw new MappingException(sprintf('Could not write the mapping to %s', $target));
         }
+    }
+
+    /**
+     * The original text with each touched row swapped for its current value.
+     */
+    private function splicedSource(): string
+    {
+        $text = (string) $this->source;
+
+        foreach ($this->touched as [$lane, $key]) {
+            $row = $this->data[$lane][$key] ?? null;
+
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $replacement = self::indent(
+                self::inlineScalarLists(Yaml::dump([$key => $row], 6, 2, Yaml::DUMP_NULL_AS_TILDE)),
+                2,
+            );
+            $spliced = self::replaceRow($text, $lane, $key, $replacement);
+
+            // A row the writer cannot find is one it must not guess at: falling
+            // back to a full dump keeps the edit rather than losing it, and the
+            // diff says loudly that something unusual happened.
+            if ($spliced === null) {
+                return $this->toYaml();
+            }
+
+            $text = $spliced;
+        }
+
+        return $text;
+    }
+
+    /**
+     * Swap one `lane: -> key:` block for new text, by indentation.
+     *
+     * The block runs from its own line to the next line at the same indent or
+     * shallower — which is what YAML block structure means, and is why this can
+     * be done on text without reflowing the document.
+     */
+    private static function replaceRow(string $text, string $lane, string $key, string $replacement): ?string
+    {
+        $lines = explode("\n", $text);
+        $inLane = false;
+        $start = null;
+        $end = null;
+
+        foreach ($lines as $i => $line) {
+            if (preg_match('~^' . preg_quote($lane, '~') . ':~', $line) === 1) {
+                $inLane = true;
+
+                continue;
+            }
+
+            if (!$inLane) {
+                continue;
+            }
+
+            // Back at column zero: the lane is over.
+            if ($start === null && $line !== '' && !str_starts_with($line, ' ') && !str_starts_with($line, '#')) {
+                return null;
+            }
+
+            if ($start === null) {
+                if (preg_match('~^  ' . preg_quote($key, '~') . ':~', $line) === 1) {
+                    $start = $i;
+                }
+
+                continue;
+            }
+
+            // The row ends where something at its own indent, or shallower, begins.
+            if ($line !== '' && !str_starts_with($line, '   ') && trim($line) !== '') {
+                $end = $i;
+
+                break;
+            }
+        }
+
+        if ($start === null) {
+            return null;
+        }
+
+        $end ??= count($lines);
+
+        // Trailing blank lines belong to the gap between rows, not to the row,
+        // so they are put back rather than swallowed by the replacement.
+        $blanks = 0;
+
+        for ($i = $end - 1; $i > $start && trim($lines[$i]) === ''; $i--) {
+            $blanks++;
+        }
+
+        array_splice(
+            $lines,
+            $start,
+            $end - $start,
+            [...explode("\n", rtrim($replacement, "\n")), ...array_fill(0, $blanks, '')],
+        );
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Put short lists of scalars back on one line.
+     *
+     * The file's own convention, and worth matching: `source: [A, S]` and
+     * `ignore: [color, show_as_slider]` are how every hand-written row in a
+     * mapping reads. Symfony's dumper expands them, which turns a two-line row
+     * into six and puts four lines of noise in a diff whose point is one
+     * decision. Maps stay block — those are the rows people read.
+     */
+    private static function inlineScalarLists(string $yaml): string
+    {
+        $lines = explode("\n", $yaml);
+        $out = [];
+
+        for ($i = 0; $i < count($lines); $i++) {
+            $line = $lines[$i];
+
+            if (preg_match('~^(\s*)([\w-]+):\s*$~', $line, $m) !== 1) {
+                $out[] = $line;
+
+                continue;
+            }
+
+            [$all, $indent, $key] = $m;
+            $items = [];
+            $j = $i + 1;
+
+            while ($j < count($lines) && preg_match('~^' . $indent . '  - (.*)$~', $lines[$j], $item) === 1) {
+                // Only plain scalars: anything quoted, nested or long stays as
+                // the dumper wrote it rather than being re-flowed by guesswork.
+                if (preg_match('~^[\w.\/-]+$~', $item[1]) !== 1) {
+                    $items = [];
+
+                    break;
+                }
+
+                $items[] = $item[1];
+                $j++;
+            }
+
+            if ($items === [] || $j === $i + 1) {
+                $out[] = $line;
+
+                continue;
+            }
+
+            $inline = sprintf('%s%s: [%s]', $indent, $key, implode(', ', $items));
+
+            if (strlen($inline) > 96) {
+                $out[] = $line;
+
+                continue;
+            }
+
+            $out[] = $inline;
+            $i = $j - 1;
+        }
+
+        return implode("\n", $out);
+    }
+
+    private static function indent(string $yaml, int $spaces): string
+    {
+        $pad = str_repeat(' ', $spaces);
+
+        return implode("\n", array_map(
+            static fn (string $line): string => $line === '' ? '' : $pad . $line,
+            explode("\n", rtrim($yaml, "\n")),
+        )) . "\n";
     }
 
     /**

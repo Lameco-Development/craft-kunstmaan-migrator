@@ -205,31 +205,82 @@ final class MigrationController extends Controller
         }
 
         $target = trim((string) $this->request->getBodyParam('target', ''));
+
+        // `map` is Craft field => legacy expression, which is the DSL's own
+        // direction: one field can consume several columns through an
+        // expression, and the other direction cannot say that. An empty box
+        // means the field is not filled, so the key goes away rather than
+        // being written as an empty expression that evaluates to nothing.
         $map = [];
+
+        foreach ((array) $this->request->getBodyParam('map', []) as $field => $expression) {
+            $expression = trim((string) $expression);
+
+            if ($expression !== '') {
+                $map[(string) $field] = $expression;
+            }
+        }
+
         $ignore = [];
         $unreviewed = [];
 
         foreach ((array) $this->request->getBodyParam('columns', []) as $column => $decision) {
             $column = (string) $column;
-            $disposition = (string) ($decision['disposition'] ?? 'unreviewed');
-            $value = trim((string) ($decision['value'] ?? ''));
 
-            match ($disposition) {
-                // An empty target on a mapped column means "same name", which is
-                // what the DSL already means by a bare column expression.
-                'map' => $map[$column] = $value !== '' ? $value : $column,
-                'ignore' => $ignore[$column] = $value !== '' ? $value : 'not migrated',
-                default => $unreviewed[] = $column,
-            };
+            if ((string) ($decision['disposition'] ?? 'unreviewed') !== 'ignore') {
+                $unreviewed[] = $column;
+
+                continue;
+            }
+
+            // A reason left empty stays empty. Writing "not migrated" in its
+            // place would invent a rationale nobody gave, and the value of an
+            // `ignore:` entry is precisely that somebody wrote one.
+            $reason = trim((string) ($decision['reason'] ?? ''));
+            $ignore[$column] = $reason !== '' ? $reason : null;
         }
 
-        return [
+        $changes = [
             $this->targetKey($lane) => $target !== '' ? $target : null,
-            'map' => $map !== [] ? $map : null,
-            'ignore' => $ignore !== [] ? $ignore : null,
+            'ignore' => self::ignoreValue($ignore),
             'unreviewed' => $unreviewed !== [] ? $unreviewed : null,
             'drop' => null,
         ];
+
+        // The field map is only drawn once a block is chosen, so a save from
+        // the screen that has not drawn it must not wipe what is there.
+        if ($this->request->getBodyParam('map') !== null) {
+            $changes['map'] = $map !== [] ? $map : null;
+        }
+
+        return $changes;
+    }
+
+    /**
+     * `ignore:` in the shape the file already uses.
+     *
+     * The DSL takes both a list of columns and a map of column to reason. A row
+     * where nobody has given a reason stays a list rather than becoming a map
+     * of nulls — otherwise opening a screen and pressing Save rewrites parts of
+     * the mapping that nobody edited, and a diff full of those is a diff that
+     * hides the one line somebody meant.
+     *
+     * @param array<string, ?string> $ignore
+     * @return list<string>|array<string, string>|null
+     */
+    private static function ignoreValue(array $ignore): array|null
+    {
+        if ($ignore === []) {
+            return null;
+        }
+
+        $withReasons = array_filter($ignore, static fn (?string $reason): bool => $reason !== null);
+
+        if ($withReasons === []) {
+            return array_keys($ignore);
+        }
+
+        return array_map(static fn (?string $reason): string => $reason ?? '', $ignore);
     }
 
     /** Each lane names its target differently; the row does not have to know. */
