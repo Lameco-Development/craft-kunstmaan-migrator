@@ -283,7 +283,27 @@ class Plugin extends BasePlugin
             'adapters' => $registry->all(),
             'detected' => $detected,
             'environments' => $this->declaredEnvironments(),
+            'coreSettings' => Settings::coreSettings(),
+            'overridden' => $this->configFileKeys(),
         ]);
+    }
+
+    /**
+     * The settings this project pins in `config/kunstmaan-migrator.php`.
+     *
+     * A config file beats project config in Craft, so a field backed by one is
+     * a field an operator can edit and save with no effect whatsoever. Enreach
+     * pins two. Craft's own settings screens disable such fields and say why;
+     * a screen that accepts a value it will ignore is worse than one that does
+     * not offer it.
+     *
+     * @return list<string>
+     */
+    private function configFileKeys(): array
+    {
+        $config = Craft::$app->getConfig()->getConfigFromFile($this->handle);
+
+        return array_values(array_map(strval(...), array_keys($config)));
     }
 
     /**

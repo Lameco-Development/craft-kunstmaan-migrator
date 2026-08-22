@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\models;
 
 use craft\base\Model;
 use lameco\kunstmaanmigrator\adapters\Adapter;
+use lameco\kunstmaanmigrator\adapters\AdapterSetting;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
 use lameco\kunstmaanmigrator\Plugin;
@@ -47,6 +48,12 @@ class Settings extends Model
      * via `config/kunstmaan-migrator.php` to align with the actual handle.
      */
     public string  $targetVolume         = 'uploads';
+
+    /**
+     * Subfolder within the volume. Assets land at `{subfolder}/{year}/filename`;
+     * empty puts them at the volume root.
+     */
+    public string  $targetSubfolder      = 'migrated';
 
     /**
      * Skip starter-kit / project-side asset-size validators during ingest.
@@ -208,15 +215,80 @@ class Settings extends Model
         return ($defaults[$property] ?? null) === $this->$property;
     }
 
+    /**
+     * The plugin's own settings, declared so the screen can render them.
+     *
+     * These are not adapter settings — assets are written by the entry pass,
+     * not by a pass that runs after it — so they bind to real Settings
+     * properties rather than to the `adapters` bag, and the services that
+     * already read those properties are untouched. What the declaration buys is
+     * the same thing it buys an adapter: the screen renders what is declared
+     * instead of a list typed into a template, so adding a setting is one line
+     * in one place.
+     *
+     * `targetVolume` in particular has spent this plugin's life invisible while
+     * defaulting to `uploads` and documenting that scaffolder-generated targets
+     * use `media` — which is a first-run migration into the wrong volume, and
+     * exactly the kind of thing an operator should not need to read PHP to find.
+     *
+     * @return list<AdapterSetting>
+     */
+    public static function coreSettings(): array
+    {
+        return [
+            new AdapterSetting(
+                'targetVolume',
+                'Asset volume',
+                AdapterSetting::TYPE_STRING,
+                'uploads',
+                'The Craft volume migrated assets land in. Scaffolder-generated targets use `media`; '
+                . 'the starter kit uses `uploads`. Getting this wrong migrates every asset into the wrong place.',
+            ),
+            new AdapterSetting(
+                'targetSubfolder',
+                'Asset subfolder',
+                AdapterSetting::TYPE_STRING,
+                'migrated',
+                'Assets land at `{subfolder}/{year}/filename`. Leave empty to write to the volume root.',
+            ),
+            new AdapterSetting(
+                'skipAssetSizeValidation',
+                'Ignore asset size limits',
+                AdapterSetting::TYPE_BOOLEAN,
+                false,
+                'A project-side size cap that is right for editor uploads will reject valid legacy assets. '
+                . 'With this on, an oversized asset is skipped and reported instead of taking the whole entry down.',
+            ),
+        ];
+    }
+
+    /**
+     * A core setting's current value, resolved the same way the screen shows it.
+     */
+    public function core(AdapterSetting $setting): mixed
+    {
+        return property_exists($this, $setting->handle)
+            ? $setting->cast($this->{$setting->handle})
+            : $setting->default;
+    }
+
+    /**
+     * The attributes that may hold `$VAR` or `@alias` rather than a value.
+     *
+     * Named once: the behavior needs the list, and so does beforeValidate(),
+     * which captures what the operator typed before the behavior resolves it.
+     */
+    private const ENV_ATTRIBUTES = [
+        'legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyDbPassword',
+        'legacyDbCharset', 'legacyDbTablePrefix', 'mappingPath',
+    ];
+
     public function behaviors(): array
     {
         return [
             'parser' => [
                 'class' => EnvAttributeParserBehavior::class,
-                'attributes' => [
-                    'legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyDbPassword',
-                    'legacyDbCharset', 'legacyDbTablePrefix', 'mappingPath',
-                ],
+                'attributes' => self::ENV_ATTRIBUTES,
             ],
         ];
     }
@@ -346,6 +418,18 @@ class Settings extends Model
      */
     public function validateIsEnvReference(string $attribute): void
     {
+        // Read what the operator typed, not what it resolves to.
+        //
+        // EnvAttributeParserBehavior swaps every parsed attribute for its
+        // resolved value in beforeValidate() and puts the original back in
+        // afterValidate(). So by the time this runs, `$KUMA_DB_PASSWORD` has
+        // already become the password itself — and this validator, whose whole
+        // job is to reject a literal password, rejected it. The settings screen
+        // could not be saved by any project that had done what the field asks.
+        if ($this->unparsed($attribute) !== null) {
+            return;
+        }
+
         $value = $this->$attribute;
 
         if (!is_string($value) || $value === '' || str_starts_with($value, '$')) {
@@ -385,6 +469,54 @@ class Settings extends Model
         );
     }
 
+    /**
+     * @var array<string, string> what the operator typed, captured before the
+     *      env parser swaps in resolved values
+     */
+    private array $typedValues = [];
+
+    /**
+     * Yii calls this, then triggers EVENT_BEFORE_VALIDATE — which is where
+     * EnvAttributeParserBehavior replaces every parsed attribute with its
+     * resolved value. So this is the last moment the typed value still exists,
+     * and capturing it here is what lets validateIsEnvReference tell
+     * `$KUMA_DB_PASSWORD` from the password it stands for.
+     *
+     * The behavior exposes getUnparsedAttribute() for the same purpose, but
+     * reaching it means getBehavior(), which instantiates behaviors through the
+     * Yii container — unavailable in this suite, and the point of a validator is
+     * that it can be tested.
+     */
+    public function beforeValidate(): bool
+    {
+        $this->captureTypedValues();
+
+        return parent::beforeValidate();
+    }
+
+    /**
+     * Separate from beforeValidate() only so it is reachable without a Yii
+     * application: parent::beforeValidate() triggers the event that attaches
+     * behaviours, which needs the container this suite does not have.
+     */
+    public function captureTypedValues(): void
+    {
+        foreach (self::ENV_ATTRIBUTES as $attribute) {
+            $this->typedValues[$attribute] = (string) ($this->$attribute ?? '');
+        }
+    }
+
+    /**
+     * What the operator typed for an attribute, before `$VAR` and `@alias` were
+     * resolved — or null when validation is not running and nothing was captured.
+     */
+    private function unparsed(string $attribute): ?string
+    {
+        $typed = $this->typedValues[$attribute] ?? null;
+
+        return $typed !== null && str_starts_with($typed, '$') ? $typed : null;
+    }
+
     public function rules(): array
     {
         return [
@@ -398,7 +530,8 @@ class Settings extends Model
             ],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'formsEnabled', 'globalsEnabled'], 'boolean'],
-            [['nodeMenuNavHandle', 'mappingPath'], 'string'],
+            [['nodeMenuNavHandle', 'mappingPath', 'targetVolume', 'targetSubfolder'], 'string'],
+            [['skipAssetSizeValidation'], 'boolean'],
             [['nodeMenuExcludedInternalNames', 'translationDomains', 'adapters'], 'safe'],
         ];
     }
