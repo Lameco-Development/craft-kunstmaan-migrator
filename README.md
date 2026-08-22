@@ -251,10 +251,20 @@ ones you can afford to drop — see below.
 | `load/fixup` | drain the deferred `_ref`s parked by the load pass |
 | `load/redirects --payload=<file>` | load a redirects payload produced by other means |
 | `state/export` | stream the state table as NDJSON — the file to diff between runs |
-| `state/diff --from=<a> --to=<b>` | what changed between two exports: entries that stopped being written, entries whose block count moved |
+| `state/diff --from=<a> --to=<b>` | what changed between two exports: entries that stopped being written, entries whose element id moved |
+| `state/explain --node=COM:1285` | one entry, and what became of every pagepart the legacy node held |
 
 Every command prints machine-readable JSON or NDJSON to stdout and exits
 non-zero on failure.
+
+**`state/explain` is the one to reach for when something is empty.** It reconciles
+one migrated entry against the legacy node behind it: what was written comes from the
+state row's `meta.blockIds`, what was *there* to write is re-read from the legacy
+database — because nothing records it, and because that makes the answer correct long
+after the run report is gone. The difference is split in two. `missingByDecision` is
+what another lane owns, or what sits in a context the mapping does not stream;
+`unexplained` is a placement the blocks lane claimed and did not write, which is a
+defect. It exits non-zero when `unexplained` is not empty.
 
 ## What it does not migrate
 

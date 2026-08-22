@@ -199,6 +199,49 @@ final class LegacyDatabase
     }
 
     /**
+     * Every live pagepart placement on one node, in the order the page holds them.
+     *
+     * The per-entry question — "these parts became these blocks, and these did not" — needs the
+     * left-hand side, and nothing records it: the state row knows what *was* written, not what
+     * was there to write. Resolving it through the published version of each translation is the
+     * same rule as everywhere else here, so what comes back is what the live page shows.
+     *
+     * @return list<array{lang: string, context: string, part: string, entity: string, id: int, sequence: int}>
+     */
+    public function livePartsOfNode(int $nodeId): array
+    {
+        $sql = sprintf(
+            'SELECT l.lang AS lang, r.context AS context, r.page_part_entityname AS entity,
+                    r.page_part_id AS partId, r.sequencenumber AS sequence
+             FROM kuma_page_part_refs r
+             JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
+             JOIN kuma_node_translations t2 ON t2.node_id = :node
+             JOIN kuma_node_versions v2 ON v2.id = t2.public_node_version_id
+               AND v2.ref_id = r.pageId AND v2.ref_entity_name = r.pageEntityname
+             GROUP BY l.lang, r.context, r.page_part_entityname, r.page_part_id, r.sequencenumber
+             ORDER BY l.lang, r.context, r.sequencenumber',
+            self::LIVE_PAGES,
+        );
+
+        $statement = $this->pdo->prepare($sql);
+        $statement->execute(['node' => $nodeId]);
+        $out = [];
+
+        foreach ($statement as $row) {
+            $out[] = [
+                'lang' => (string) $row['lang'],
+                'context' => (string) $row['context'],
+                'part' => self::shortName((string) $row['entity'], 'PagePart'),
+                'entity' => (string) $row['entity'],
+                'id' => (int) $row['partId'],
+                'sequence' => (int) $row['sequence'],
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
      * `SELECT COUNT(*)` on a table that may not be there.
      *
      * The twelve surveyed installs share eighteen bundles but not every table: an install

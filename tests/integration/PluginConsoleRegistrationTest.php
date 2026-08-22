@@ -112,15 +112,16 @@ final class PluginConsoleRegistrationTest extends TestCase
     }
 
     /**
-     * Task 7 — the v2 loader core exposes exactly six console commands:
+     * Task 7 — the v2 loader core exposes exactly seven console commands:
      * kunstmaan-migrator/load/entry, kunstmaan-migrator/load/fixup,
      * kunstmaan-migrator/load/redirects, kunstmaan-migrator/state/export,
-     * kunstmaan-migrator/state/diff, kunstmaan-migrator/doctor.
+     * kunstmaan-migrator/state/diff, kunstmaan-migrator/state/explain,
+     * kunstmaan-migrator/doctor.
      * Enumerating every public actionXxx() method declared directly on the
      * three controllers (excluding inherited ones) locks that count so a
      * future addition/removal has to update this test deliberately.
      */
-    public function testExactlySixConsoleActionsAcrossLoadStateAndDoctor(): void
+    public function testExactlySevenConsoleActionsAcrossLoadStateAndDoctor(): void
     {
         $actions = [];
         foreach ([DoctorController::class, LoadController::class, StateController::class] as $fqcn) {
@@ -143,10 +144,11 @@ final class PluginConsoleRegistrationTest extends TestCase
                 LoadController::class . '::actionFixup',
                 LoadController::class . '::actionRedirects',
                 StateController::class . '::actionDiff',
+                StateController::class . '::actionExplain',
                 StateController::class . '::actionExport',
             ],
             $actions,
-            'Expected exactly the six kunstmaan-migrator commands: doctor, load/entry, load/fixup, load/redirects, state/diff, state/export.',
+            'Expected exactly the seven kunstmaan-migrator commands: doctor, load/entry, load/fixup, load/redirects, state/diff, state/explain, state/export.',
         );
     }
 
