@@ -67,8 +67,10 @@ final class MigrationAdapterContractTest extends TestCase
                 return 'acme';
             }
 
-            public function migrateAll($opts, $sites): \lameco\kunstmaanmigrator\load\MigrationReport
-            {
+            public function migrateAll(
+                \lameco\kunstmaanmigrator\load\MigrationOptions $opts,
+                \lameco\kunstmaanmigrator\run\EnvironmentContext $context,
+            ): \lameco\kunstmaanmigrator\load\MigrationReport {
                 return new \lameco\kunstmaanmigrator\load\MigrationReport();
             }
         };
@@ -79,11 +81,13 @@ final class MigrationAdapterContractTest extends TestCase
     }
 
     /**
-     * `redirects` is compiled from the mapping rather than read from the legacy
-     * database, so the pipeline drives it directly. That is a documented
-     * exception, and this is what stops it becoming an undocumented one.
+     * `redirects` was the one exception, because its records come from the
+     * mapping rather than a table and the old signature could carry neither the
+     * mapping nor a connection. EnvironmentContext carries both, so there is no
+     * longer an adapter the loop cannot run — which is the difference between a
+     * registry and a list.
      */
-    public function testOnlyRedirectsOptsOutOfTheAdapterLoop(): void
+    public function testEveryRegisteredAdapterIsRunnableByTheLoop(): void
     {
         $withoutFactory = [];
 
@@ -93,6 +97,6 @@ final class MigrationAdapterContractTest extends TestCase
             }
         }
 
-        self::assertSame(['redirects'], $withoutFactory);
+        self::assertSame([], $withoutFactory);
     }
 }

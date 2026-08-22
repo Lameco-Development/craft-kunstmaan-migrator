@@ -27,6 +27,27 @@ trait GatedAdapter
 
     private ?AdapterRegistry $adapterRegistry = null;
 
+    /**
+     * This adapter's own preferences, resolved.
+     *
+     * Read here rather than patched on from Plugin::init(), which is what made
+     * an adapter's configuration something only Plugin could supply — and
+     * therefore something a project's own adapter could not have at all.
+     *
+     * @return array<string, mixed>
+     */
+    protected function config(): array
+    {
+        $registry = $this->adapterRegistry ??= new AdapterRegistry();
+        $adapter = $registry->byHandle($this->handle());
+
+        if ($adapter === null) {
+            return [];
+        }
+
+        return Plugin::getInstance()->getSettings()->forAdapter($adapter);
+    }
+
     private function gate(): AdapterGate
     {
         return $this->adapterGate ??= new AdapterGate(

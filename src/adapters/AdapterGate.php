@@ -37,17 +37,32 @@ final class AdapterGate
         return GateResult::ready($adapter);
     }
 
+    /**
+     * The operator's switch, wherever it lives.
+     *
+     * This used to be `property_exists($settings, $flag)` and nothing else,
+     * which meant an adapter whose flag Settings does not literally declare was
+     * gated **permanently off** — and told the operator they had disabled it via
+     * a property that does not exist. Since only the four built-ins have literal
+     * properties, every registered adapter was in that state: it rendered a row
+     * on the settings screen, resolved to a runnable service, and could never
+     * run. The registry's promise stopped one method short of true.
+     *
+     * The four built-in flags keep their properties, so nothing about them
+     * changes. Anything else reads from the generic bag, defaulting to on —
+     * registering an adapter is the act of asking for it, and an adapter that
+     * ships disabled by an accident of storage is the bug this replaces.
+     */
     private function isEnabled(Adapter $adapter): bool
     {
         $flag = $adapter->settingsFlag;
 
-        // An adapter naming a property Settings does not have is a wiring
-        // mistake, not an operator choice — treat it as off rather than
-        // silently running something nobody asked for.
-        if (!property_exists($this->settings, $flag)) {
-            return false;
+        if (property_exists($this->settings, $flag)) {
+            return (bool) $this->settings->$flag;
         }
 
-        return (bool) $this->settings->$flag;
+        $stored = $this->settings->adapters[$adapter->handle][$flag] ?? null;
+
+        return $stored === null ? true : (bool) $stored;
     }
 }

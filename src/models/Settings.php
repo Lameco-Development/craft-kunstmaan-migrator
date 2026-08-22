@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\models;
 
 use craft\base\Model;
+use lameco\kunstmaanmigrator\adapters\Adapter;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
 use lameco\kunstmaanmigrator\Plugin;
@@ -103,6 +104,109 @@ class Settings extends Model
     public bool $retourEnabled = true;
     public bool $navigationEnabled = true;
     public bool $translationsEnabled = true;
+
+    /**
+     * The `forms:` lane. A built-in keeps a literal property like the other
+     * four — it is part of the plugin's own surface, so it belongs in project
+     * config as a first-class switch. The generic `adapters` bag is the path for
+     * adapters the plugin does not ship, not the default for the ones it does.
+     */
+    public bool $formsEnabled = true;
+
+    /** The `globals:` lane — the legacy footer, written into navs. */
+    public bool $globalsEnabled = true;
+
+    /**
+     * Adapter-owned preferences: adapter handle => setting handle => value.
+     *
+     * A generic bag rather than more literal properties, because a literal
+     * property can only be added by editing this class — which an adapter
+     * shipped by a project cannot do. The keys an adapter may use are the ones
+     * it declares as AdapterSetting; anything else is ignored on read.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    public array $adapters = [];
+
+    /**
+     * One adapter's configuration, resolved.
+     *
+     * Precedence, first hit wins: the stored value, the legacy Settings property
+     * the setting used to live on (so a project configured through
+     * config/kunstmaan-migrator.php keeps working), then the declared default.
+     *
+     * @return array<string, mixed>
+     */
+    public function forAdapter(Adapter $adapter): array
+    {
+        $stored = $this->adapters[$adapter->handle] ?? [];
+        $out = [];
+
+        foreach ($adapter->settings as $setting) {
+            if (array_key_exists($setting->handle, $stored)) {
+                $out[$setting->handle] = $setting->cast($stored[$setting->handle]);
+
+                continue;
+            }
+
+            $legacy = $setting->legacyProperty;
+
+            if ($legacy !== null && property_exists($this, $legacy) && !$this->isPropertyDefault($legacy)) {
+                $out[$setting->handle] = $setting->cast($this->$legacy);
+
+                continue;
+            }
+
+            $out[$setting->handle] = $setting->default;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Whether this adapter's switch is on, resolved the same way AdapterGate
+     * resolves it — so the control panel cannot show a state the run disagrees
+     * with. The built-in four keep literal properties; anything else lives in
+     * the bag and defaults to on.
+     */
+    public function isAdapterEnabled(Adapter $adapter): bool
+    {
+        $flag = $adapter->settingsFlag;
+
+        if (property_exists($this, $flag)) {
+            return (bool) $this->$flag;
+        }
+
+        $stored = $this->adapters[$adapter->handle][$flag] ?? null;
+
+        return $stored === null ? true : (bool) $stored;
+    }
+
+    /**
+     * The form field name the switch posts to: a literal property for the
+     * built-ins, the adapter's own bag for everything else.
+     */
+    public function adapterEnabledInputName(Adapter $adapter): string
+    {
+        return property_exists($this, $adapter->settingsFlag)
+            ? $adapter->settingsFlag
+            : sprintf('adapters[%s][%s]', $adapter->handle, $adapter->settingsFlag);
+    }
+
+    /**
+     * Whether a legacy property still holds the value it was declared with.
+     *
+     * Without this a legacy default would beat an adapter's declared default and
+     * the two could silently disagree — the migration would follow whichever was
+     * written first rather than whichever the operator meant.
+     */
+    private function isPropertyDefault(string $property): bool
+    {
+        static $defaults = null;
+        $defaults ??= get_class_vars(self::class);
+
+        return ($defaults[$property] ?? null) === $this->$property;
+    }
 
     public function behaviors(): array
     {
@@ -293,9 +397,9 @@ class Settings extends Model
                 'validateEnvReferenceResolves',
             ],
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
-            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled'], 'boolean'],
+            [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'formsEnabled', 'globalsEnabled'], 'boolean'],
             [['nodeMenuNavHandle', 'mappingPath'], 'string'],
-            [['nodeMenuExcludedInternalNames', 'translationDomains'], 'safe'],
+            [['nodeMenuExcludedInternalNames', 'translationDomains', 'adapters'], 'safe'],
         ];
     }
 }

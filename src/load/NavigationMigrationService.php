@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\load;
 use Craft;
 use Throwable;
 use yii\base\Component;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
 use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\adapters\GatedAdapter;
 use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
@@ -173,13 +174,20 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         return $this->navigationGateway ??= new VerbbNavigationGateway();
     }
 
-    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
         if (!$this->isGateOpen($report)) {
             return $report;
         }
+
+        $sites = $context->sites;
+
+        // Which environment is running arrives as a value now. It used to be a
+        // public property the pipeline wrote per environment, which is how a
+        // DE run once resolved its nodes against COM's state rows.
+        $this->environment = $context->name;
 
         if (!$this->navigation()->isAvailable()) {
             $report->warn('verbb/navigation not available; nav migration skipped.');
@@ -212,7 +220,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             ));
             // NodeMenu pass below still runs — that's the right path for
             // dewert and any site that drives its menu off the page tree.
-            $this->migrateNodeMenu($localeToSiteId, $opts, $report);
+            $this->migrateNodeMenu($localeToSiteId, $sites, $opts, $report);
             return $report;
         }
 
@@ -310,7 +318,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         // verbb nav can host both kinds (rare in practice — Lameco sites
         // typically use one or the other — but allowed). Internally
         // skipped when kuma_nodes is empty.
-        $this->migrateNodeMenu($localeToSiteId, $opts, $report);
+        $this->migrateNodeMenu($localeToSiteId, $sites, $opts, $report);
 
         return $report;
     }
@@ -577,13 +585,28 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      *
      * @param array<string, int> $localeToSiteId  kuma_locale → siteId
      */
-    private function migrateNodeMenu(array $localeToSiteId, MigrationOptions $opts, MigrationReport $report): void
-    {
+    /**
+     * $sites was read here as a variable this method never received.
+     *
+     * It was a property until PR #26 made the site map a per-call value; the
+     * refactor updated migrateAll()'s signature and left this method reading a
+     * name that no longer existed in its scope. PHP raises a warning, Craft
+     * turns that into an exception, and the adapter summariser catches it — so
+     * the NodeMenu pass has reported `error: Undefined variable $sites` and
+     * migrated nothing since, while the run reported no failure. Found by
+     * running it, not by reading it.
+     */
+    private function migrateNodeMenu(
+        array $localeToSiteId,
+        SiteMap $sites,
+        MigrationOptions $opts,
+        MigrationReport $report,
+    ): void {
         if ($localeToSiteId === []) {
             return;
         }
 
-        $navId = $this->navigation()->navIdByHandle($this->nodeMenuNavHandle);
+        $navId = $this->navigation()->navIdByHandle($this->navHandle());
         if ($navId === null) {
             $report->warn(sprintf(
                 'NodeMenu target nav handle "%s" not found in verbb; NodeMenu pass skipped (re-run scaffolder + project-config/apply, or override Settings::nodeMenuNavHandle).',
@@ -661,7 +684,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             $parentMap[$kumaNodeId] = (int) ($row['parent_id'] ?? 0);
             $internalName = (string) ($row['internal_name'] ?? '');
             $fqcn = (string) ($row['ref_entity_name'] ?? '');
-            if ($internalName !== '' && in_array($internalName, $this->nodeMenuExcludedInternalNames, true)) {
+            if ($internalName !== '' && in_array($internalName, $this->excludedInternalNames(), true)) {
                 $directlyExcluded[$kumaNodeId] = true;
             } elseif ($this->isSingletonFqcn($fqcn)) {
                 $directlyExcluded[$kumaNodeId] = true;
@@ -968,4 +991,37 @@ class NavigationMigrationService extends Component implements MigrationAdapter
     }
 
 
+
+    /**
+     * The nav this pass writes into, and the internal names it leaves out.
+     *
+     * Both were public properties patched on from Plugin::init(), which is the
+     * shape that made an adapter's configuration Plugin's business. They come
+     * from the adapter's own declared settings now; the properties remain as the
+     * override a test or a caller can still set.
+     */
+    private function navHandle(): string
+    {
+        if ($this->nodeMenuNavHandle !== '' && $this->nodeMenuNavHandle !== 'headerMain') {
+            return $this->nodeMenuNavHandle;
+        }
+
+        $configured = (string) ($this->config()['navHandle'] ?? '');
+
+        return $configured !== '' ? $configured : $this->nodeMenuNavHandle;
+    }
+
+    /** @return list<string> */
+    private function excludedInternalNames(): array
+    {
+        if ($this->nodeMenuExcludedInternalNames !== ['settings']) {
+            return $this->nodeMenuExcludedInternalNames;
+        }
+
+        $configured = $this->config()['excludedInternalNames'] ?? null;
+
+        return is_array($configured) && $configured !== []
+            ? array_values(array_map(strval(...), $configured))
+            : $this->nodeMenuExcludedInternalNames;
+    }
 }

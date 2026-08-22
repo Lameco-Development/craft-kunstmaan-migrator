@@ -23,6 +23,8 @@ use lameco\kunstmaanmigrator\finalize\CkeditorFinalizeService;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\load\EntryMigrationService;
+use lameco\kunstmaanmigrator\load\FormMigrationService;
+use lameco\kunstmaanmigrator\load\GlobalsMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\NavigationMigrationService;
 use lameco\kunstmaanmigrator\load\RedirectMigrationService;
@@ -57,6 +59,8 @@ use yii\db\Connection;
  * @property-read RedirectMigrationService $redirectMigrationService
  * @property-read NavigationMigrationService $navigationMigrationService
  * @property-read TranslationMigrationService $translationMigrationService
+ * @property-read FormMigrationService $formMigrationService
+ * @property-read GlobalsMigrationService $globalsMigrationService
  * @method Settings getSettings()
  */
 class Plugin extends BasePlugin
@@ -89,6 +93,8 @@ class Plugin extends BasePlugin
                 'redirectMigrationService'   => RedirectMigrationService::class,
                 'navigationMigrationService' => NavigationMigrationService::class,
                 'translationMigrationService' => TranslationMigrationService::class,
+                'formMigrationService'        => FormMigrationService::class,
+                'globalsMigrationService'     => GlobalsMigrationService::class,
             ],
         ];
     }
@@ -202,6 +208,13 @@ class Plugin extends BasePlugin
         $this->redirectMigrationService->adapterGate    = $adapterGate;
         $this->navigationMigrationService->adapterGate  = $adapterGate;
         $this->translationMigrationService->adapterGate = $adapterGate;
+        $this->formMigrationService->adapterGate        = $adapterGate;
+        $this->formMigrationService->stateService       = $this->migrationStateService;
+
+        $this->globalsMigrationService->adapterGate       = $adapterGate;
+        $this->globalsMigrationService->stateService      = $this->migrationStateService;
+        $this->globalsMigrationService->elementWriter     = new CraftElementWriter();
+        $this->globalsMigrationService->navigationGateway = new VerbbNavigationGateway();
 
         $this->seoMigrationService->legacyDb      = $this->legacyDbService;
         $this->seoMigrationService->stateService  = $this->migrationStateService;

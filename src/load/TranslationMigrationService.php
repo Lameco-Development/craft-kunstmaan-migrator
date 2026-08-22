@@ -8,6 +8,7 @@ use Craft;
 use Throwable;
 use yii\base\Component;
 use craft\helpers\FileHelper;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
 use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\adapters\GatedAdapter;
 use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
@@ -95,13 +96,15 @@ class TranslationMigrationService extends Component implements MigrationAdapter
         return 'translations';
     }
 
-    public function migrateAll(MigrationOptions $opts, SiteMap $sites): MigrationReport
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
         if (!$this->isGateOpen($report)) {
             return $report;
         }
+
+        $sites = $context->sites;
 
         $localeToLanguage = $sites->localeToLanguage();
         if ($localeToLanguage === []) {
@@ -142,7 +145,7 @@ class TranslationMigrationService extends Component implements MigrationAdapter
         $skippedLocales = [];
         foreach ($rows as $row) {
             $domain = (string) ($row['domain'] ?? '');
-            if (!in_array($domain, $this->allowedDomains, true)) {
+            if (!in_array($domain, $this->domains(), true)) {
                 $skippedDomains[$domain] = ($skippedDomains[$domain] ?? 0) + 1;
                 $report->incr('skipped');
                 continue;
@@ -437,4 +440,25 @@ class TranslationMigrationService extends Component implements MigrationAdapter
         }
     }
 
+
+    /**
+     * The Symfony domains this pass migrates.
+     *
+     * Declared by the adapter rather than patched onto this service from
+     * Plugin::init(); `$allowedDomains` remains as the override a caller sets.
+     *
+     * @return list<string>
+     */
+    private function domains(): array
+    {
+        if ($this->allowedDomains !== ['messages']) {
+            return $this->allowedDomains;
+        }
+
+        $configured = $this->config()['domains'] ?? null;
+
+        return is_array($configured) && $configured !== []
+            ? array_values(array_map(strval(...), $configured))
+            : $this->allowedDomains;
+    }
 }
