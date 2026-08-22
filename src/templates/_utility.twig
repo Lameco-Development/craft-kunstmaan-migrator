@@ -102,7 +102,7 @@
   <h2>{{ "Run"|t('kunstmaan-migrator') }}</h2>
 
   <p class="light">
-    {{ "A run reads the old site and writes into Craft. It takes hours on a real site, and it is safe to stop and start again — nothing is migrated twice."|t('kunstmaan-migrator') }}
+    {{ "A run reads the old site and writes into Craft. It takes hours on a real site, and it is safe to stop and start again — a page already migrated is skipped, not migrated twice."|t('kunstmaan-migrator') }}
   </p>
 
   {{ forms.selectField({
@@ -119,6 +119,17 @@
     instructions: "Reads everything and reports what it would do, without writing anything to Craft. Worth doing once."|t('kunstmaan-migrator'),
     id: 'kuma-dry-run',
     name: 'dryRun',
+  }) }}
+
+  {# Skipping is what makes a stopped run safe to resume, and it is also what makes a corrected
+     mapping do nothing. This is the way to say "read it again anyway" — and it overwrites, so the
+     warning is the point of the field, not decoration. #}
+  {{ forms.lightswitchField({
+    label: "Re-run and overwrite"|t('kunstmaan-migrator'),
+    instructions: "Migrate pages that have already been migrated, instead of skipping them. This is how a corrected mapping reaches pages that came across before it was fixed."|t('kunstmaan-migrator'),
+    warning: "Overwrites what is in Craft. Page content is rewritten from the old site, and a page's blocks are replaced rather than updated — so anything an editor has changed in the control panel is lost. Safe while the migration is still the only thing writing this content; not once editors have started."|t('kunstmaan-migrator'),
+    id: 'kuma-force',
+    name: 'force',
   }) }}
 
   <div class="field">
@@ -241,7 +252,7 @@
           pass: pass,
           environment: document.getElementById('kuma-environment').value,
           dryRun: isOn('kuma-dry-run'),
-          force: 0
+          force: isOn('kuma-force')
         }
       })
         .then(function (response) {
@@ -268,18 +279,41 @@
     // are not the same act, and one button labelled for both is how somebody
     // migrates a live site meaning to rehearse.
     var label = function () {
-      document.getElementById('kuma-queue').textContent = isOn('kuma-dry-run')
-        ? '{{ "Start practice run"|t('kunstmaan-migrator')|e('js') }}'
-        : '{{ "Start the migration"|t('kunstmaan-migrator')|e('js') }}';
+      var button = document.getElementById('kuma-queue');
+
+      if (isOn('kuma-dry-run')) {
+        button.textContent = '{{ "Start practice run"|t('kunstmaan-migrator')|e('js') }}';
+      } else if (isOn('kuma-force')) {
+        button.textContent = '{{ "Re-run and overwrite"|t('kunstmaan-migrator')|e('js') }}';
+      } else {
+        button.textContent = '{{ "Start the migration"|t('kunstmaan-migrator')|e('js') }}';
+      }
     };
 
     // Craft's lightswitch emits `change`; listening for `click` misses the
     // keyboard and misses anything that flips it programmatically.
     $('#kuma-dry-run').on('change', label);
+    $('#kuma-force').on('change', label);
 
     label();
 
+    // Only the combination that overwrites asks. A practice run writes nothing, and a first run
+    // has nothing to overwrite — prompting on those trains people to click through the prompt.
+    var confirmed = function () {
+      if (!isOn('kuma-force') || isOn('kuma-dry-run')) {
+        return true;
+      }
+
+      return window.confirm(
+        '{{ "This re-migrates pages that are already in Craft and overwrites them. Blocks are replaced, so any control-panel edits to them are lost. Continue?"|t('kunstmaan-migrator')|e('js') }}'
+      );
+    };
+
     document.getElementById('kuma-queue').addEventListener('click', function () {
+      if (!confirmed()) {
+        return;
+      }
+
       queue('full', this);
     });
 
