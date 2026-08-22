@@ -44,6 +44,10 @@ so Matrix rows updated partially and neither side could see why. They now run in
 one process. Payloads are still available with `--dump` — they are just no
 longer the seam.
 
+See [`docs/verifying-a-migration.md`](docs/verifying-a-migration.md) before the
+first real run: the procedure, the four constraints that decide whether the numbers
+mean anything, and which of the shipped commands answer which question.
+
 See [`docs/loader-contract.md`](docs/loader-contract.md) for the payload schema,
 and read **Structural placeholders** there: it is what makes migrated URLs match
 the legacy ones.
@@ -293,6 +297,31 @@ only decide about something that has been written down.
 
 On the reference corpus those are, across the three environments: 30 submissions, 64
 users in 11 groups, 32,272 node versions, 16 queued publishes.
+
+Three more that come up on every project, and are decisions rather than absences:
+
+**The AdminList itself.** `entities:` migrates a non-node table into a section and an
+entry type, which covers Kunstmaan's AdminList-driven data. What does not travel is the
+AdminList *around* it — the filters, the sortable columns, the export the client's
+back-office person runs every Monday. On a site where that screen is the client's actual
+job, "the data is in Craft" is not "done", and the Craft-side element index that replaces
+it is build work nobody has scoped. Say so while quoting, not after.
+
+**Article authors.** All twelve surveyed sites install `kunstmaan/article-bundle`, where
+an author is a first-class entity with a name, photo and bio related to every article. In
+Craft that is either an entry or a user, and the DSL does not decide for you: model it as
+an entry through `entities:` and relate it, or as a Craft user and accept that the bio and
+photo need a user field layout. Entry is the usual answer, because an author who never
+logs in is content, not an account.
+
+**A delta run after editors have started in Craft.** There is none, and it is the moment
+every project reaches. The state table records what was written and when, which is most of
+what a delta run needs — the part that is missing is not on the plugin's side. A
+page-builder Matrix with `propagationMethod: all` keeps one block set shared by every site
+(`doctor` checks this), so a re-run replaces block sets wholesale rather than updating
+them, editor changes included. Until that field configuration changes, a cutover needs a
+content freeze on the legacy side for the length of the build. Plan for the freeze; do not
+plan for the delta run.
 
 ## Extending it
 
