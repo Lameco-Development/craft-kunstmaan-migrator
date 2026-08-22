@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
 use craft\base\Element;
+use craft\base\ElementInterface;
 use craft\fields\Matrix;
 use craft\elements\Entry;
 use craft\models\Section;
@@ -1134,9 +1135,19 @@ class EntryMigrationService extends Component
 
         $rewritten = [];
         foreach ($payload as $key => $block) {
+            // A block's own nested Matrixes are threaded first, so reusing a parent in place
+            // reuses its children too rather than rebuilding them underneath it.
+            if (is_array($block) && is_array($block['fields'] ?? null)) {
+                foreach ($block['fields'] as $nestedHandle => $nestedPayload) {
+                    if (is_array($nestedPayload) && $nestedPayload !== [] && $this->looksLikeMatrixPayload($nestedPayload)) {
+                        $block['fields'][$nestedHandle] = $this->threadBlockUidsIntoPageBuilder($nestedPayload, $uidMap);
+                    }
+                }
+            }
+
             $sourceRef = $block['fields']['_sourcePartRef'] ?? null;
             if ($sourceRef !== null && isset($uidMap[$sourceRef])) {
-                // Use the persisted UID as the key so Craft updates in place
+                // Use the persisted id as the key so Craft updates in place
                 $rewritten[$uidMap[$sourceRef]] = $block;
             } else {
                 $rewritten[$key] = $block;
@@ -1174,7 +1185,13 @@ class EntryMigrationService extends Component
             }
             $refs = [];
             foreach (array_values($value) as $block) {
-                $refs[] = is_array($block) ? ($block['fields']['_sourcePartRef'] ?? null) : null;
+                $fields = is_array($block) ? (array) ($block['fields'] ?? []) : [];
+                $refs[] = [
+                    'ref' => $fields['_sourcePartRef'] ?? null,
+                    // A nested Matrix is the same problem one level down, and a block whose
+                    // children cannot be threaded has them rebuilt under it on every re-run.
+                    'children' => $this->extractSourceRefPositions($fields),
+                ];
             }
             $positions[$handle] = $refs;
         }
@@ -1199,7 +1216,7 @@ class EntryMigrationService extends Component
      * @param array<string, list<string|null>> $sourceRefPositions
      * @return array<string, string> sourceRef → elementId (string-cast integer)
      */
-    private function collectBlockUidsByPosition(Entry $entry, array $sourceRefPositions): array
+    private function collectBlockUidsByPosition(ElementInterface $entry, array $sourceRefPositions): array
     {
         $map = [];
         foreach ($sourceRefPositions as $fieldHandle => $sourceRefs) {
@@ -1209,9 +1226,18 @@ class EntryMigrationService extends Component
                     continue;
                 }
                 foreach (array_values($blocks->all()) as $idx => $block) {
-                    $sourceRef = $sourceRefs[$idx] ?? null;
-                    if ($sourceRef !== null && $block->id) {
-                        $map[$sourceRef] = (string) $block->id;
+                    $position = $sourceRefs[$idx] ?? null;
+
+                    if (!is_array($position)) {
+                        continue;
+                    }
+
+                    if ($position['ref'] !== null && $block->id) {
+                        $map[$position['ref']] = (string) $block->id;
+                    }
+
+                    if ($position['children'] !== []) {
+                        $map += $this->collectBlockUidsByPosition($block, $position['children']);
                     }
                 }
             } catch (\Throwable) {

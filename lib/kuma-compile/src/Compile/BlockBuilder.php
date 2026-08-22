@@ -52,6 +52,7 @@ final class BlockBuilder
         $this->block = (string) $block;
         $fields = $this->fieldsFrom($spec['map'] ?? [], $row, $partClass);
         $fields['_sourcePartRef'] = $this->sourceRef((string) $table, $partId);
+        $fields = $this->stampNestedRefs($fields, $fields['_sourcePartRef']);
 
         $fields += $this->childrenOf($spec['children'] ?? [], (string) $block, $partId, $partClass);
 
@@ -106,7 +107,11 @@ final class BlockBuilder
             foreach ($rows as $childRow) {
                 $fields = $this->fieldsFrom($child['map'] ?? [], $childRow, $context . '.' . $field, $childType);
 
-                if ($trackable && isset($childRow['id'])) {
+                // Every block carries its origin, at every depth. The loader threads these back
+                // into the payload on a re-run so Craft updates a block in place instead of
+                // replacing it — and a nested block that carries none is rebuilt every time,
+                // which is what happened to `contentColumn` and `button` on every forced run.
+                if (isset($childRow['id'])) {
                     $fields['_sourcePartRef'] = $this->sourceRef((string) $child['table'], (int) $childRow['id']);
                 }
 
@@ -428,6 +433,43 @@ final class BlockBuilder
         }
 
         return count($found) === 1 ? $found[0] : null;
+    }
+
+    /**
+     * Give every nested block an origin of its own, derived from its parent's.
+     *
+     * A `contentColumns[0].content` path synthesises a block that no legacy row backs, so there
+     * is no id to name it by — but the loader still needs to recognise it on a re-run, or Craft
+     * rebuilds it under a parent it otherwise reuses. The parent's ref plus the path is stable
+     * for exactly as long as the parent is, which is the property that matters.
+     *
+     * @param array<string, mixed> $fields
+     * @return array<string, mixed>
+     */
+    private function stampNestedRefs(array $fields, string $parentRef): array
+    {
+        foreach ($fields as $handle => $value) {
+            if (!is_array($value) || $value === [] || $handle === '_sourcePartRef') {
+                continue;
+            }
+
+            foreach ($value as $index => $block) {
+                if (!is_array($block) || !isset($block['type']) || !is_array($block['fields'] ?? null)) {
+                    continue;
+                }
+
+                $ref = $block['fields']['_sourcePartRef']
+                    ?? sprintf('%s#%s[%s]', $parentRef, $handle, (string) $index);
+
+                $block['fields']['_sourcePartRef'] = $ref;
+                $block['fields'] = $this->stampNestedRefs($block['fields'], $ref);
+                $value[$index] = $block;
+            }
+
+            $fields[$handle] = $value;
+        }
+
+        return $fields;
     }
 
     /** `a.b` and `a[0].b` address nested Matrix positions. */
