@@ -402,10 +402,14 @@ final class MigrationController extends Controller
             $queued[] = 'finalize';
         }
 
+        // What was queued, in words. "Queued LV, fixup, finalize." leaks two
+        // internal pass names at the one moment somebody is watching.
         return $this->asJson([
             'ok' => true,
             'queued' => $queued,
-            'message' => sprintf('Queued %s.', implode(', ', $queued)),
+            'message' => Craft::t('kunstmaan-migrator', '{n, plural, =1{Started. 1 job queued.} other{Started. # jobs queued.}}', [
+                'n' => count($queued),
+            ]),
         ]);
     }
 }

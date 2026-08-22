@@ -101,51 +101,55 @@
 
   <h2>{{ "Run"|t('kunstmaan-migrator') }}</h2>
 
-  {{ forms.selectField({
-    label: "Pass"|t('kunstmaan-migrator'),
-    instructions: "A full run does all of it. The others are for picking up where a run stopped."|t('kunstmaan-migrator'),
-    id: 'kuma-pass',
-    name: 'pass',
-    options: [
-      { label: "Full migration"|t('kunstmaan-migrator'), value: 'full' },
-      { label: "Entries only"|t('kunstmaan-migrator'), value: 'entries' },
-      { label: "Resolve deferred references"|t('kunstmaan-migrator'), value: 'fixup' },
-      { label: "Finalize links and media"|t('kunstmaan-migrator'), value: 'finalize' },
-    ],
-  }) }}
+  <p class="light">
+    {{ "A run reads the old site and writes into Craft. It takes hours on a real site, and it is safe to stop and start again — nothing is migrated twice."|t('kunstmaan-migrator') }}
+  </p>
 
   {{ forms.selectField({
-    label: "Environment"|t('kunstmaan-migrator'),
+    label: "Which sites"|t('kunstmaan-migrator'),
     id: 'kuma-environment',
     name: 'environment',
-    options: [{ label: "Every environment"|t('kunstmaan-migrator'), value: '' }]|merge(
+    options: [{ label: "All of them"|t('kunstmaan-migrator'), value: '' }]|merge(
       checks|map(c => { label: c.name, value: c.name })
     ),
   }) }}
 
   {{ forms.lightswitchField({
-    label: "Dry run"|t('kunstmaan-migrator'),
-    instructions: "Compile and validate without writing anything to Craft."|t('kunstmaan-migrator'),
+    label: "Practice run"|t('kunstmaan-migrator'),
+    instructions: "Reads everything and reports what it would do, without writing anything to Craft. Worth doing once."|t('kunstmaan-migrator'),
     id: 'kuma-dry-run',
     name: 'dryRun',
   }) }}
 
-  {{ forms.lightswitchField({
-    label: "Re-save existing entries"|t('kunstmaan-migrator'),
-    instructions: "Off by default so an interrupted run resumes cheaply. Turn it on after the payload changed."|t('kunstmaan-migrator'),
-    id: 'kuma-force',
-    name: 'force',
-  }) }}
-
   <div class="field">
     <div class="input">
-      <button type="button" class="btn submit" id="kuma-queue">{{ "Queue migration"|t('kunstmaan-migrator') }}</button>
+      <button type="button" class="btn submit big" id="kuma-queue">{{ "Start the migration"|t('kunstmaan-migrator') }}</button>
       <span id="kuma-queue-result" class="light" style="margin-inline-start: 8px;"></span>
     </div>
-    <div class="instructions">
-      <p>{{ "The run happens on Craft's queue. Keep this tab open, or run craft queue/listen."|t('kunstmaan-migrator') }}</p>
-    </div>
   </div>
+
+  {# Live, because the alternative is a button that appears to do nothing for
+     two hours. Craft's queue already knows the progress of every job; this just
+     shows it where somebody is looking. #}
+  <div id="kuma-progress" class="hidden">
+    <h3>{{ "Running"|t('kunstmaan-migrator') }}</h3>
+    <ul class="kuma-jobs" id="kuma-jobs"></ul>
+    <p class="light" id="kuma-jobs-note">
+      {{ "Leave this tab open, or run `craft queue/listen` in a terminal to keep it moving."|t('kunstmaan-migrator') }}
+    </p>
+  </div>
+
+  <details style="margin-top: 22px;">
+    <summary>{{ "If a run stopped part-way"|t('kunstmaan-migrator') }}</summary>
+    <p class="light">
+      {{ "A full run does all of these in order. Run one on its own only to pick up where a run stopped — each is safe to repeat."|t('kunstmaan-migrator') }}
+    </p>
+    <div class="btngroup">
+      <button type="button" class="btn" data-pass="entries">{{ "Pages and content only"|t('kunstmaan-migrator') }}</button>
+      <button type="button" class="btn" data-pass="fixup">{{ "Link pages to each other"|t('kunstmaan-migrator') }}</button>
+      <button type="button" class="btn" data-pass="finalize">{{ "Fix links and images inside text"|t('kunstmaan-migrator') }}</button>
+    </div>
+  </details>
 
   {% js %}
     document.getElementById('kuma-doctor').addEventListener('click', function () {
@@ -178,43 +182,130 @@
         });
     });
 
-    document.getElementById('kuma-queue').addEventListener('click', function () {
-      var button = this;
+    var isOn = function (id) {
+      return document.getElementById(id).getAttribute('aria-checked') === 'true' ? 1 : 0;
+    };
+
+    var poll = null;
+
+    // Craft's queue already knows what every job is doing. Showing it here is
+    // the difference between "started" and two hours of nothing.
+    var track = function () {
+      Craft.sendActionRequest('POST', 'queue/get-job-info', { data: { limit: 50 } })
+        .then(function (response) {
+          var jobs = (response.data.jobs || []).filter(function (job) {
+            return /Migrating |Linking pages|Fixing links/.test(job.description || '');
+          });
+
+          var list = document.getElementById('kuma-jobs');
+          var panel = document.getElementById('kuma-progress');
+
+          if (!jobs.length) {
+            // Clear the list too. Leaving the last job on screen beside "the run
+            // has finished" reads as though it is still going and finished at
+            // the same time.
+            list.innerHTML = '';
+            document.getElementById('kuma-jobs-note').textContent =
+              '{{ "Finished. Nothing left in the queue."|t('kunstmaan-migrator')|e('js') }}';
+            clearInterval(poll);
+            return;
+          }
+
+          panel.classList.remove('hidden');
+          list.innerHTML = '';
+
+          jobs.forEach(function (job) {
+            var item = document.createElement('li');
+            var failed = job.status === 4;
+            item.className = 'kuma-job' + (failed ? ' kuma-job--failed' : '');
+            item.innerHTML =
+              '<div class="kuma-job__name">' + Craft.escapeHtml(job.description || '') + '</div>' +
+              '<div class="kuma-job__bar"><span style="width: ' + (job.progress || 0) + '%"></span></div>' +
+              '<div class="kuma-job__note light">' +
+                Craft.escapeHtml(failed ? (job.error || 'Failed') : (job.progressLabel || '')) +
+              '</div>';
+            list.appendChild(item);
+          });
+        })
+        .catch(function () { clearInterval(poll); });
+    };
+
+    var queue = function (pass, button) {
       var result = document.getElementById('kuma-queue-result');
       button.disabled = true;
       result.className = 'light';
-      result.textContent = '{{ "Queueing…"|t('kunstmaan-migrator')|e('js') }}';
-
-      // A Craft lightswitch is a <button role="switch">, not a checkbox, so the
-      // checkbox property is undefined on it — which posted both of these as 0 no
-      // matter what the operator set. Someone who ticked "Dry run" got a real,
-      // writing migration, into a database a re-run cannot repair.
-      var isOn = function (id) {
-        return document.getElementById(id).getAttribute('aria-checked') === 'true' ? 1 : 0;
-      };
+      result.textContent = '{{ "Starting…"|t('kunstmaan-migrator')|e('js') }}';
 
       Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/queue', {
         data: {
-          pass: document.getElementById('kuma-pass').value,
+          pass: pass,
           environment: document.getElementById('kuma-environment').value,
           dryRun: isOn('kuma-dry-run'),
-          force: isOn('kuma-force')
+          force: 0
         }
       })
         .then(function (response) {
           result.textContent = response.data.message;
           result.className = response.data.ok ? 'success' : 'error';
-          if (response.data.ok) { Craft.cp.runQueue(); }
+
+          if (response.data.ok) {
+            Craft.cp.runQueue();
+            document.getElementById('kuma-progress').classList.remove('hidden');
+            track();
+            clearInterval(poll);
+            poll = setInterval(track, 2000);
+          }
         })
         .catch(function (error) {
           result.textContent = (error.response && error.response.data && error.response.data.message)
             || '{{ "Could not reach Craft."|t('kunstmaan-migrator')|e('js') }}';
           result.className = 'error';
         })
-        .finally(function () {
-          button.disabled = false;
-        });
+        .finally(function () { button.disabled = false; });
+    };
+
+    // The button says what pressing it will do. A practice run and a real one
+    // are not the same act, and one button labelled for both is how somebody
+    // migrates a live site meaning to rehearse.
+    var label = function () {
+      document.getElementById('kuma-queue').textContent = isOn('kuma-dry-run')
+        ? '{{ "Start practice run"|t('kunstmaan-migrator')|e('js') }}'
+        : '{{ "Start the migration"|t('kunstmaan-migrator')|e('js') }}';
+    };
+
+    // Craft's lightswitch emits `change`; listening for `click` misses the
+    // keyboard and misses anything that flips it programmatically.
+    $('#kuma-dry-run').on('change', label);
+
+    label();
+
+    document.getElementById('kuma-queue').addEventListener('click', function () {
+      queue('full', this);
     });
+
+    document.querySelectorAll('[data-pass]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        queue(this.getAttribute('data-pass'), this);
+      });
+    });
+
   {% endjs %}
 
 {% endif %}
+
+{% css %}
+  .kuma-jobs { list-style: none; margin: 0; padding: 0; }
+  .kuma-job { padding: 10px 0; border-bottom: 1px solid var(--hairline-color, #e3e5e8); }
+  .kuma-job__name { font-weight: 600; }
+  .kuma-job__bar {
+    height: 6px; border-radius: 3px; margin: 6px 0 4px;
+    background: var(--gray-200, #cdd8e4); overflow: hidden;
+  }
+  .kuma-job__bar span {
+    display: block; height: 100%;
+    background: var(--enabled-color, #27ab83);
+    transition: width .3s ease;
+  }
+  .kuma-job--failed .kuma-job__bar span { background: var(--error-color, #cf1124); }
+  .kuma-job__note { font-size: 12px; }
+{% endcss %}
