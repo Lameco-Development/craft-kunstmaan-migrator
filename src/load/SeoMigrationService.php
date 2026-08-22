@@ -2,7 +2,12 @@
 
 namespace lameco\kunstmaanmigrator\load;
 
-use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use lameco\kunstmaanmigrator\sites\SiteMap;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
@@ -34,40 +39,22 @@ use yii\base\Component;
  * projects that don't use SEOmatic simply see the skip log line.
  *
  * Table-name override: the legacy SEO table defaults to the canonical
- * `kuma_seo` name but is exposed as `$seoTableName` so host projects with a
- * different Kunstmaan schema flavour can override via Settings::$seoTableName.
+ * `kuma_seo` name, which is fixed across every Kunstmaan corpus.
  */
-class SeoMigrationService extends Component
+class SeoMigrationService extends Component implements MigrationAdapter
 {
+    /**
+     * The Kunstmaan schema is fixed: these table names are the same in every
+     * corpus this migrator targets, so they are constants rather than a
+     * settings surface nobody ever used.
+     */
+    public const SEO_TABLE = 'kuma_seo';
+
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
     public SeomaticPayloadBuilder $seoPayload;
 
-    /**
-     * Legacy SEO table name (unwrapped — passed verbatim into raw SQL).
-     * Defaults to the canonical Kunstmaan `kuma_seo`; host projects with
-     * a non-standard schema override via Settings::$seoTableName. Plan 04-09
-     * config wiring populates this from the plugin Settings.
-     */
-    public string $seoTableName = 'kuma_seo';
 
-    /**
-     * D-08-19 — Kunstmaan locale → Craft site handle map. v2 wires this
-     * from `Plugin::resolveSitesMap()` in `Plugin::init()` (the same map
-     * already feeds `EntryMigrationService::$sites`); v1 sourced it from a
-     * mapping.yaml top-level `sites:` block — that block is gone in v2.
-     *
-     * Drives the per-site fan-out below: every Craft site whose handle
-     * appears in this map gets a SEOmatic write per migrated entry, with
-     * default-locale fallback when the site's own locale row is missing
-     * from kuma_seo.
-     *
-     * Empty by default so the service degrades gracefully (the fan-out
-     * short-circuits with a WARN if the operator hasn't wired locales yet).
-     *
-     * @var array<string, string>
-     */
-    public array $sites = [];
 
     private const STATE_SOURCE = 'seo_meta';
     private const SEO_FIELD_HANDLE = 'seo';
@@ -98,36 +85,31 @@ class SeoMigrationService extends Component
     }
 
     /**
-     * D-08-19 — build the per-site list to fan out to. Each entry is
-     * `{siteId, siteHandle, locale}`. Sites not present in $this->sites
-     * are skipped (with a WARN logged into MigrationReport by the caller).
+     * The per-site list to fan out to, projected from the run's SiteMap.
+     *
+     * A Craft site no locale claims is reported rather than skipped silently:
+     * it is nearly always an operator who forgot to add it to the mapping's
+     * `sites:` block, and finding that out after a full run is expensive.
      *
      * @return list<array{siteId: int, siteHandle: string, locale: string}>
      */
-    private function buildSiteList(MigrationReport $report): array
+    private function buildSiteList(SiteMap $sites, MigrationReport $report): array
     {
-        $out = [];
-
-        // D-08-19: drive the loop from Craft::$app->sites->getAllSites()
-        // and resolve each site's locale via the sites: block. Sites not
-        // mapped are explicit warnings (operator misconfig).
-        foreach (Craft::$app->sites->getAllSites() as $site) {
-            $handle = (string) $site->handle;
-            $locale = array_search($handle, $this->sites, true);
-            if ($locale === false) {
-                $report->warn(sprintf(
-                    'SEO: Craft site handle="%s" not present in mapping.yaml sites: block; skipping site.',
-                    $handle,
-                ));
-                continue;
-            }
-            $out[] = [
-                'siteId'     => (int) $site->id,
-                'siteHandle' => $handle,
-                'locale'     => (string) $locale,
-            ];
+        foreach ($sites->unboundCraftHandles() as $handle) {
+            $report->warn(sprintf(
+                'SEO: Craft site handle="%s" not present in mapping.yaml sites: block; skipping site.',
+                $handle,
+            ));
         }
-        return $out;
+
+        return array_map(
+            static fn ($binding): array => [
+                'siteId' => $binding->siteId,
+                'siteHandle' => $binding->handle,
+                'locale' => $binding->locale,
+            ],
+            $sites->bindings(),
+        );
     }
 
     /**
@@ -138,36 +120,36 @@ class SeoMigrationService extends Component
      * CONFIG-08: if SEOmatic is not installed the pass is skipped with a
      * warning — never a hard error.
      */
-    public function migrateAll(MigrationOptions $opts): MigrationReport
+    /**
+     * The seam at Craft's element writes. Wired in Plugin::init(); read
+     * through elements() so no call site has to cope with "not wired yet".
+     */
+    public ?ElementWriter $elementWriter = null;
+
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
+    }
+
+    use GatedAdapter;
+
+    public function handle(): string
+    {
+        return 'seo';
+    }
+
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
-        // Phase 4.1 / D-25 — settings-disabled gate runs FIRST, BEFORE the
-        // plugin-presence check. D-27: warn-line copy is distinct from
-        // plugin-not-installed so REPORT.md skipped-stages aggregation can
-        // distinguish "operator opted out" from "plugin unavailable".
-        if (!Plugin::getInstance()->getSettings()->seoEnabled) {
-            Craft::info(
-                'SEOmatic adapter explicitly disabled via Settings::seoEnabled; skipping SEO migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(self::disabledWarnLine());
+        if (!$this->isGateOpen($report)) {
             return $report;
         }
 
-        // CONFIG-08: SEOmatic is optional. If the plugin is not installed,
-        // skip the entire SEO migration pass with a warning.
-        if (Craft::$app->plugins->getPlugin('seomatic') === null) {
-            Craft::warning(
-                'SEOmatic plugin not installed; skipping SEO migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn('SEOmatic plugin not installed; SEO migration skipped.');
-            return $report;
-        }
+        $sites = $context->sites;
 
         // D-08-19 — per-site fan-out driven by Plugin::resolveSitesMap().
-        $siteList = $this->buildSiteList($report);
+        $siteList = $this->buildSiteList($sites, $report);
         if ($siteList === []) {
             $report->warn('No Craft sites mapped; SEO migration aborted.');
             return $report;
@@ -255,7 +237,7 @@ class SeoMigrationService extends Component
                 }
 
                 if ((++$rowCount % 50) === 0) {
-                    Craft::$app->elements->invalidateAllCaches();
+                    $this->elements()->invalidateCaches();
                     if (function_exists('gc_collect_cycles')) {
                         gc_collect_cycles();
                     }
@@ -363,7 +345,7 @@ class SeoMigrationService extends Component
             // Verify the entry has a SEOmatic field at handle 'seo' before
             // writing — defensive check for entry types without SEO.
             try {
-                $field = $entry->getFieldLayout()?->getFieldByHandle(self::SEO_FIELD_HANDLE);
+                $field = $entry->getFieldLayout()?->getFieldByHandle($this->seoFieldHandle());
             } catch (\Throwable) {
                 $field = null;
             }
@@ -389,7 +371,7 @@ class SeoMigrationService extends Component
                 continue;
             }
 
-            $entry->setFieldValue(self::SEO_FIELD_HANDLE, $payload);
+            $entry->setFieldValue($this->seoFieldHandle(), $payload);
 
             // SEOmatic's SeoSettings field normalizeValue pulls `metaSiteVars`
             // defaults (siteName, identity, creator, referrer, …) from
@@ -407,7 +389,7 @@ class SeoMigrationService extends Component
             }
             try {
                 $entry->resaving = true;
-                $saved = Craft::$app->elements->saveElement($entry, true, false);
+                $saved = $this->elements()->save($entry);
             } finally {
                 Craft::$app->sites->setCurrentSite($previousSite);
             }
@@ -455,7 +437,7 @@ class SeoMigrationService extends Component
      * v2 reshape: v1 delegated to `LegacyDbService::seoFor()` which used a
      * hardcoded `KunstmaanCoreTables::SEO` constant — meaning the v1
      * `$seoTableName` override surface was declared but never actually flowed
-     * into SQL. v2 inlines the query here so D-57's `$this->seoTableName`
+     * into SQL. v2 inlines the query here so D-57's `self::SEO_TABLE`
      * override genuinely takes effect (the docblock on $seoTableName,
      * "passed verbatim into raw SQL", is now truthful).
      *
@@ -464,7 +446,7 @@ class SeoMigrationService extends Component
     private function fetchKumaSeoRow(int $legacyEntityId, string $legacyClass): ?array
     {
         return $this->legacyDb->queryOne(
-            'SELECT * FROM ' . $this->seoTableName
+            'SELECT * FROM ' . $this->seoTable()
             . ' WHERE ref_id = :rid AND ref_entity_name = :class'
             . ' ORDER BY id DESC LIMIT 1',
             [':rid' => $legacyEntityId, ':class' => $legacyClass],
@@ -534,16 +516,28 @@ class SeoMigrationService extends Component
         return [$derivedClass, (int) $sourceKey];
     }
 
+
     /**
-     * Phase 4.1 / D-25 + D-27 — testable warn-line for the Settings-disabled
-     * gate. Distinct copy from the existing plugin-not-installed line ('SEOmatic
-     * plugin not installed; SEO migration skipped.') so REPORT.md skipped-stages
-     * aggregation can pattern-match operator-opted-out vs adapter-unavailable.
+     * The SEOmatic field these entries carry, and the legacy table the data
+     * comes from.
      *
-     * @internal
+     * Both were constants. `seo` is the conventional handle and `kuma_seo` the
+     * canonical table, but neither is guaranteed — a project that named its
+     * field differently wrote SEO into nothing and the run said it had written
+     * thousands of rows. The constants remain as the defaults the adapter
+     * declares.
      */
-    private static function disabledWarnLine(): string
+    private function seoFieldHandle(): string
     {
-        return 'SEO adapter disabled (explicitly via Settings::seoEnabled); SEO migration skipped.';
+        $configured = (string) ($this->config()['fieldHandle'] ?? '');
+
+        return $configured !== '' ? $configured : self::SEO_FIELD_HANDLE;
+    }
+
+    private function seoTable(): string
+    {
+        $configured = (string) ($this->config()['sourceTable'] ?? '');
+
+        return $configured !== '' ? $configured : self::SEO_TABLE;
     }
 }

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use Craft;
 use craft\elements\Asset;
@@ -118,6 +120,12 @@ class AssetMigrationService extends Component
     public bool $skipAssetSizeValidation = false;
 
     /** DI slot: LegacyDbService (read-only connection to Kunstmaan MySQL). */
+    /**
+     * The seam at Craft's element writes. Wired in Plugin::init(); read
+     * through elements() so no call site has to cope with "not wired yet".
+     */
+    public ?ElementWriter $elementWriter = null;
+
     public ?LegacyDbService $legacyDb = null;
 
     /** DI slot: MigrationStateService (has/record/forget/all state helpers). */
@@ -160,6 +168,11 @@ class AssetMigrationService extends Component
      * is set on the active MigrationOptions — but JIT calls always use the
      * default options instance with force=false to keep per-entry cost low).
      */
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
+    }
+
     public function resolveFromLegacyId(int $legacyId): int
     {
         // Fast path: state already has this media id → return its target id.
@@ -378,7 +391,7 @@ class AssetMigrationService extends Component
 
                 $done++;
                 if ($done % max(1, $opts->batchSize) === 0) {
-                    Craft::$app->elements->invalidateAllCaches();
+                    $this->elements()->invalidateCaches();
                     gc_collect_cycles();
                     if (!$opts->dryRun && $opts->verbosity > 0) {
                         Console::updateProgress($done, $total);
@@ -654,7 +667,7 @@ class AssetMigrationService extends Component
 
         $tSaveStart = microtime(true);
         try {
-            if (!Craft::$app->elements->saveElement($asset)) {
+            if (!$this->elements()->save($asset, true, true)) {
                 @unlink($tempPath);
                 throw new RuntimeException(
                     'Asset save failed: ' . json_encode($asset->getErrors()),

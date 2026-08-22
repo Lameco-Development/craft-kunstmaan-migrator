@@ -1,0 +1,205 @@
+{% import "_includes/forms.twig" as forms %}
+
+{% if isProduction %}
+  <div class="readable">
+    <blockquote class="note warning">
+      <p>{{ "This is a production environment. The migrator refuses to run here."|t('kunstmaan-migrator') }}</p>
+    </blockquote>
+  </div>
+{% endif %}
+
+{% if error %}
+  <div class="readable">
+    <blockquote class="note">
+      <p>{{ error }}</p>
+    </blockquote>
+  </div>
+{% else %}
+
+  <p class="light">
+    <code>{{ mappingPath }}</code>
+    &nbsp;<a class="btn small" href="{{ url('kunstmaan-migrator/mapping') }}">{{ "Edit mapping"|t('kunstmaan-migrator') }}</a>
+  </p>
+
+  <h2>{{ "Preflight"|t('kunstmaan-migrator') }}</h2>
+
+  <table class="data fullwidth">
+    <thead>
+      <tr>
+        <th>{{ "Environment"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Database"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Nodes"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Findings"|t('kunstmaan-migrator') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for check in checks %}
+        <tr>
+          <th scope="row">
+            {% if check.isBlocked %}
+              <span data-icon="alert" class="error"></span>
+            {% elseif check.isReady %}
+              <span data-icon="check" class="success"></span>
+            {% else %}
+              <span data-icon="alert"></span>
+            {% endif %}
+            {{ check.name }}
+          </th>
+          <td><code>{{ check.database }}</code></td>
+          <td>{{ check.nodeCount is null ? '—' : check.nodeCount|number_format }}</td>
+          <td>
+            {% for problem in check.problems %}
+              <div class="{{ check.isBlocked ? 'error' : '' }}">{{ problem }}</div>
+            {% else %}
+              <span class="light">{{ "Ready"|t('kunstmaan-migrator') }}</span>
+            {% endfor %}
+            {% if check.localesNotMigrated %}
+              <div class="light">
+                {{ "Not migrated by design:"|t('kunstmaan-migrator') }} {{ check.localesNotMigrated|join(', ') }}
+              </div>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <hr>
+
+  <h2>{{ "Diagnostics"|t('kunstmaan-migrator') }}</h2>
+
+  <div class="field">
+    <div class="input">
+      <button type="button" class="btn" id="kuma-doctor">{{ "Run doctor"|t('kunstmaan-migrator') }}</button>
+      <a class="btn" href="{{ actionUrl('kunstmaan-migrator/migration/export') }}">{{ "Export state"|t('kunstmaan-migrator') }}</a>
+    </div>
+    <div class="instructions">
+      <p>{{ "Doctor answers the same checks as the console command — the install, and every environment the mapping declares. Export writes the state table as NDJSON — the file to diff between runs."|t('kunstmaan-migrator') }}</p>
+    </div>
+  </div>
+
+  <table class="data fullwidth hidden" id="kuma-doctor-results">
+    <tbody></tbody>
+  </table>
+
+  <hr>
+
+  <h2>{{ "Run"|t('kunstmaan-migrator') }}</h2>
+
+  {{ forms.selectField({
+    label: "Pass"|t('kunstmaan-migrator'),
+    instructions: "A full run does all of it. The others are for picking up where a run stopped."|t('kunstmaan-migrator'),
+    id: 'kuma-pass',
+    name: 'pass',
+    options: [
+      { label: "Full migration"|t('kunstmaan-migrator'), value: 'full' },
+      { label: "Entries only"|t('kunstmaan-migrator'), value: 'entries' },
+      { label: "Resolve deferred references"|t('kunstmaan-migrator'), value: 'fixup' },
+      { label: "Finalize links and media"|t('kunstmaan-migrator'), value: 'finalize' },
+    ],
+  }) }}
+
+  {{ forms.selectField({
+    label: "Environment"|t('kunstmaan-migrator'),
+    id: 'kuma-environment',
+    name: 'environment',
+    options: [{ label: "Every environment"|t('kunstmaan-migrator'), value: '' }]|merge(
+      checks|map(c => { label: c.name, value: c.name })
+    ),
+  }) }}
+
+  {{ forms.lightswitchField({
+    label: "Dry run"|t('kunstmaan-migrator'),
+    instructions: "Compile and validate without writing anything to Craft."|t('kunstmaan-migrator'),
+    id: 'kuma-dry-run',
+    name: 'dryRun',
+  }) }}
+
+  {{ forms.lightswitchField({
+    label: "Re-save existing entries"|t('kunstmaan-migrator'),
+    instructions: "Off by default so an interrupted run resumes cheaply. Turn it on after the payload changed."|t('kunstmaan-migrator'),
+    id: 'kuma-force',
+    name: 'force',
+  }) }}
+
+  <div class="field">
+    <div class="input">
+      <button type="button" class="btn submit" id="kuma-queue">{{ "Queue migration"|t('kunstmaan-migrator') }}</button>
+      <span id="kuma-queue-result" class="light" style="margin-inline-start: 8px;"></span>
+    </div>
+    <div class="instructions">
+      <p>{{ "The run happens on Craft's queue. Keep this tab open, or run craft queue/listen."|t('kunstmaan-migrator') }}</p>
+    </div>
+  </div>
+
+  {% js %}
+    document.getElementById('kuma-doctor').addEventListener('click', function () {
+      var button = this;
+      var table = document.getElementById('kuma-doctor-results');
+      button.disabled = true;
+
+      Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/doctor')
+        .then(function (response) {
+          var body = table.querySelector('tbody');
+          body.innerHTML = '';
+
+          response.data.checks.forEach(function (check) {
+            var row = document.createElement('tr');
+            var name = document.createElement('th');
+            name.setAttribute('scope', 'row');
+            name.innerHTML = '<span data-icon="' + (check.ok ? 'check' : 'alert') + '"></span> ' + check.check;
+            var detail = document.createElement('td');
+            detail.textContent = check.detail;
+            if (!check.ok) { detail.className = 'error'; }
+            row.appendChild(name);
+            row.appendChild(detail);
+            body.appendChild(row);
+          });
+
+          table.classList.remove('hidden');
+        })
+        .finally(function () {
+          button.disabled = false;
+        });
+    });
+
+    document.getElementById('kuma-queue').addEventListener('click', function () {
+      var button = this;
+      var result = document.getElementById('kuma-queue-result');
+      button.disabled = true;
+      result.className = 'light';
+      result.textContent = '{{ "Queueing…"|t('kunstmaan-migrator')|e('js') }}';
+
+      // A Craft lightswitch is a <button role="switch">, not a checkbox, so the
+      // checkbox property is undefined on it — which posted both of these as 0 no
+      // matter what the operator set. Someone who ticked "Dry run" got a real,
+      // writing migration, into a database a re-run cannot repair.
+      var isOn = function (id) {
+        return document.getElementById(id).getAttribute('aria-checked') === 'true' ? 1 : 0;
+      };
+
+      Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/queue', {
+        data: {
+          pass: document.getElementById('kuma-pass').value,
+          environment: document.getElementById('kuma-environment').value,
+          dryRun: isOn('kuma-dry-run'),
+          force: isOn('kuma-force')
+        }
+      })
+        .then(function (response) {
+          result.textContent = response.data.message;
+          result.className = response.data.ok ? 'success' : 'error';
+          if (response.data.ok) { Craft.cp.runQueue(); }
+        })
+        .catch(function (error) {
+          result.textContent = (error.response && error.response.data && error.response.data.message)
+            || '{{ "Could not reach Craft."|t('kunstmaan-migrator')|e('js') }}';
+          result.className = 'error';
+        })
+        .finally(function () {
+          button.disabled = false;
+        });
+    });
+  {% endjs %}
+
+{% endif %}

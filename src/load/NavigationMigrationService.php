@@ -7,15 +7,27 @@ namespace lameco\kunstmaanmigrator\load;
 use Craft;
 use Throwable;
 use yii\base\Component;
-use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use lameco\kunstmaanmigrator\sites\SiteMap;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\NavigationGateway;
+use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use craft\elements\Entry;
-use verbb\navigation\Navigation;
 use verbb\navigation\elements\Node as NavNode;
 
 /**
  * NavigationMigrationService — imports Kunstmaan MenuBundle data
  * (`kuma_menu` + `kuma_menu_item`) into verbb/navigation nodes.
+ *
+ * Two seams, because this module writes across two boundaries: Craft's
+ * elements (ElementWriter) and verbb/navigation (NavigationGateway). The
+ * second exists because the first was not enough — every write path here ran
+ * into `Navigation::$plugin` statically before it reached a save, so the
+ * module stayed untestable with its Craft writes already faked.
  *
  * Source shape (per discovery against deklerk + simac source DBs):
  *   - `kuma_menu` `(id, name, locale)` — one row per (handle, locale).
@@ -66,19 +78,20 @@ use verbb\navigation\elements\Node as NavNode;
  * scheduled for v0.2 (walks Pages tree filtered by hiddenFromNav and
  * emits headerMain nodes pointing at top-level pages).
  */
-class NavigationMigrationService extends Component
+class NavigationMigrationService extends Component implements MigrationAdapter
 {
+    /**
+     * The Kunstmaan schema is fixed: these table names are the same in every
+     * corpus this migrator targets, so they are constants rather than a
+     * settings surface nobody ever used.
+     */
+    public const MENU_TABLE = 'kuma_menu';
+    public const MENU_ITEM_TABLE = 'kuma_menu_item';
+    public const NODES_TABLE = 'kuma_nodes';
+
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
-    /**
-     * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
-     * Plugin::resolveSitesMap(). Empty map means no sites configured —
-     * the service degrades gracefully (warn + return).
-     *
-     * @var array<string, string>
-     */
-    public array $sites = [];
 
     /**
      * The legacy environment being migrated, e.g. `COM`.
@@ -89,14 +102,19 @@ class NavigationMigrationService extends Component
     public string $environment = '';
 
     /**
-     * Source table-name overrides (passed verbatim into raw SQL).
-     * Defaults match the canonical Kunstmaan MenuBundle schema.
+     * The seam at Craft's element writes. Wired in Plugin::init(); read
+     * through elements() so no call site has to cope with "not wired yet".
      */
-    public string $menuTableName = 'kuma_menu';
-    public string $menuItemTableName = 'kuma_menu_item';
+    public ?ElementWriter $elementWriter = null;
+
+    /**
+     * The seam at verbb/navigation. Wired in Plugin::init(); read through
+     * navigation() so no call site has to cope with "not wired yet".
+     */
+    public ?NavigationGateway $navigationGateway = null;
+
     public string $nodeTranslationTableName = 'kuma_node_translations';
     public string $nodeVersionTableName = 'kuma_node_versions';
-    public string $nodesTableName = 'kuma_nodes';
 
     /**
      * Slice 2 (NodeMenu) target nav handle. The scaffolder's slice 7 v0.7
@@ -139,35 +157,44 @@ class NavigationMigrationService extends Component
      * per source row. Idempotent: re-running updates existing nodes via
      * the state map.
      */
-    public function migrateAll(MigrationOptions $opts): MigrationReport
+    use GatedAdapter;
+
+    public function handle(): string
+    {
+        return 'navigation';
+    }
+
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
+    }
+
+    private function navigation(): NavigationGateway
+    {
+        return $this->navigationGateway ??= new VerbbNavigationGateway();
+    }
+
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
-        if (!Plugin::getInstance()->getSettings()->navigationEnabled) {
-            Craft::info(
-                'verbb/navigation adapter explicitly disabled via Settings::navigationEnabled; skipping nav migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(self::disabledWarnLine());
+        if (!$this->isGateOpen($report)) {
             return $report;
         }
 
-        if (Craft::$app->plugins->getPlugin('navigation') === null) {
-            Craft::warning(
-                'verbb/navigation plugin not installed; skipping nav migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn('verbb/navigation plugin not installed; nav migration skipped.');
+        $sites = $context->sites;
+
+        // Which environment is running arrives as a value now. It used to be a
+        // public property the pipeline wrote per environment, which is how a
+        // DE run once resolved its nodes against COM's state rows.
+        $this->environment = $context->name;
+
+        if (!$this->navigation()->isAvailable()) {
+            $report->warn('verbb/navigation not available; nav migration skipped.');
             return $report;
         }
 
-        if (!class_exists(Navigation::class) || Navigation::$plugin === null) {
-            $report->incr('failed');
-            $report->warn('verbb/navigation not loaded (class/plugin null); nav migration aborted.');
-            return $report;
-        }
-
-        $localeToSiteId = $this->buildLocaleToSiteIdMap();
+        $localeToSiteId = $sites->localeToSiteId();
         if ($localeToSiteId === []) {
             $report->warn('No Craft sites mapped; nav migration aborted.');
             return $report;
@@ -175,12 +202,12 @@ class NavigationMigrationService extends Component
 
         try {
             $menus = $this->legacyDb->queryAll(
-                'SELECT id, name, locale FROM ' . $this->menuTableName . ' ORDER BY id',
+                'SELECT id, name, locale FROM ' . self::MENU_TABLE . ' ORDER BY id',
             );
         } catch (Throwable $e) {
             $report->warn(sprintf(
                 'Could not read %s (%s); MenuBundle pass skipped.',
-                $this->menuTableName,
+                self::MENU_TABLE,
                 $e->getMessage(),
             ));
             $menus = [];
@@ -189,11 +216,11 @@ class NavigationMigrationService extends Component
         if ($menus === []) {
             $report->warn(sprintf(
                 'No rows in %s; MenuBundle pass skipped (NodeMenu pass below covers page-tree sites).',
-                $this->menuTableName,
+                self::MENU_TABLE,
             ));
             // NodeMenu pass below still runs — that's the right path for
             // dewert and any site that drives its menu off the page tree.
-            $this->migrateNodeMenu($localeToSiteId, $opts, $report);
+            $this->migrateNodeMenu($localeToSiteId, $sites, $opts, $report);
             return $report;
         }
 
@@ -207,8 +234,7 @@ class NavigationMigrationService extends Component
             if ($handle === '' || isset($navIdByHandle[$handle])) {
                 continue;
             }
-            $nav = Navigation::$plugin->getNavs()->getNavByHandle($handle);
-            $navIdByHandle[$handle] = $nav?->id;
+            $navIdByHandle[$handle] = $this->navigation()->navIdByHandle($handle);
         }
 
         // First pass: create every node with parentId=null. Build the
@@ -241,7 +267,7 @@ class NavigationMigrationService extends Component
             try {
                 $items = $this->legacyDb->queryAll(
                     'SELECT id, parent_id, node_translation_id, type, title, url, new_window, lft, lvl
-                     FROM ' . $this->menuItemTableName . '
+                     FROM ' . self::MENU_ITEM_TABLE . '
                      WHERE menu_id = :menuId
                      ORDER BY lft',
                     [':menuId' => $menuId],
@@ -249,7 +275,7 @@ class NavigationMigrationService extends Component
             } catch (Throwable $e) {
                 $report->warn(sprintf(
                     'Could not read %s for menu id=%d (%s); skipping menu.',
-                    $this->menuItemTableName,
+                    self::MENU_ITEM_TABLE,
                     $menuId,
                     $e->getMessage(),
                 ));
@@ -292,7 +318,7 @@ class NavigationMigrationService extends Component
         // verbb nav can host both kinds (rare in practice — Lameco sites
         // typically use one or the other — but allowed). Internally
         // skipped when kuma_nodes is empty.
-        $this->migrateNodeMenu($localeToSiteId, $opts, $report);
+        $this->migrateNodeMenu($localeToSiteId, $sites, $opts, $report);
 
         return $report;
     }
@@ -338,7 +364,7 @@ class NavigationMigrationService extends Component
 
         $node = null;
         if ($existingNodeId !== null) {
-            $node = Craft::$app->elements->getElementById($existingNodeId, NavNode::class, $siteId);
+            $node = $this->elements()->findById($existingNodeId, NavNode::class, $siteId);
         }
         if ($node === null) {
             $node = new NavNode();
@@ -388,9 +414,9 @@ class NavigationMigrationService extends Component
         // this node by (navId, parentId) without needing a DB round-trip
         // — mirrors NodesController::actionAdd which calls setTempNodes
         // before saveElement to get unsaved siblings into validation.
-        Navigation::$plugin->getNodes()->setTempNodes([$node]);
+        $this->navigation()->registerTempNodes([$node]);
 
-        if (!Craft::$app->elements->saveElement($node, true, false)) {
+        if (!$this->elements()->save($node)) {
             $report->incr('failed');
             $report->warn(sprintf(
                 'saveElement refused nav node for kuma_menu_item id=%d: %s',
@@ -474,14 +500,14 @@ class NavigationMigrationService extends Component
 
         try {
             $rows = $this->legacyDb->queryAll(
-                'SELECT id, parent_id FROM ' . $this->menuItemTableName . '
+                'SELECT id, parent_id FROM ' . self::MENU_ITEM_TABLE . '
                  WHERE id IN (' . implode(',', $placeholders) . ') AND parent_id IS NOT NULL',
                 $params,
             );
         } catch (Throwable $e) {
             $report->warn(sprintf(
                 'Could not read parent linkage from %s (%s); nav tree may be flat.',
-                $this->menuItemTableName,
+                self::MENU_ITEM_TABLE,
                 $e->getMessage(),
             ));
             return;
@@ -505,13 +531,13 @@ class NavigationMigrationService extends Component
 
             try {
                 /** @var NavNode|null $child */
-                $child = Craft::$app->elements->getElementById($childNodeId, NavNode::class);
+                $child = $this->elements()->findById($childNodeId, NavNode::class);
                 if ($child === null) {
                     continue;
                 }
                 $child->setParentId($parentNodeId);
-                Navigation::$plugin->getNodes()->setTempNodes([$child]);
-                if (!Craft::$app->elements->saveElement($child, true, false)) {
+                $this->navigation()->registerTempNodes([$child]);
+                if (!$this->elements()->save($child)) {
                     $report->warn(sprintf(
                         'failed to set parent on nav node id=%d (kuma_menu_item id=%d)',
                         $childNodeId,
@@ -559,21 +585,35 @@ class NavigationMigrationService extends Component
      *
      * @param array<string, int> $localeToSiteId  kuma_locale → siteId
      */
-    private function migrateNodeMenu(array $localeToSiteId, MigrationOptions $opts, MigrationReport $report): void
-    {
+    /**
+     * $sites was read here as a variable this method never received.
+     *
+     * It was a property until PR #26 made the site map a per-call value; the
+     * refactor updated migrateAll()'s signature and left this method reading a
+     * name that no longer existed in its scope. PHP raises a warning, Craft
+     * turns that into an exception, and the adapter summariser catches it — so
+     * the NodeMenu pass has reported `error: Undefined variable $sites` and
+     * migrated nothing since, while the run reported no failure. Found by
+     * running it, not by reading it.
+     */
+    private function migrateNodeMenu(
+        array $localeToSiteId,
+        SiteMap $sites,
+        MigrationOptions $opts,
+        MigrationReport $report,
+    ): void {
         if ($localeToSiteId === []) {
             return;
         }
 
-        $nav = Navigation::$plugin->getNavs()->getNavByHandle($this->nodeMenuNavHandle);
-        if ($nav === null) {
+        $navId = $this->navigation()->navIdByHandle($this->navHandle());
+        if ($navId === null) {
             $report->warn(sprintf(
                 'NodeMenu target nav handle "%s" not found in verbb; NodeMenu pass skipped (re-run scaffolder + project-config/apply, or override Settings::nodeMenuNavHandle).',
                 $this->nodeMenuNavHandle,
             ));
             return;
         }
-        $navId = (int) $nav->id;
 
         $primarySite = Craft::$app->sites->getPrimarySite();
         $primarySiteId = (int) $primarySite->id;
@@ -581,9 +621,9 @@ class NavigationMigrationService extends Component
         // Resolve the primary-locale Kuma code (e.g. 'nl') for sort
         // ordering. Falls back to whatever the first sites map entry
         // points at, then to empty (which makes COALESCE fire below).
-        $primaryLang = array_search((string) $primarySite->handle, $this->sites, true);
+        $primaryLang = $sites->localeForHandle((string) $primarySite->handle) ?? false;
         if (!is_string($primaryLang)) {
-            $primaryLang = (string) (array_key_first($this->sites) ?? '');
+            $primaryLang = (string) ($sites->locales()[0] ?? '');
         }
 
         // Single JOINed query — one row per kuma_node with the page entity's
@@ -606,7 +646,7 @@ class NavigationMigrationService extends Component
                 'SELECT n.id, n.parent_id, n.lvl, n.lft,
                         n.internal_name, n.ref_entity_name,
                         v.ref_id, t.weight AS sort_weight
-                 FROM ' . $this->nodesTableName . ' n
+                 FROM ' . self::NODES_TABLE . ' n
                  LEFT JOIN ' . $this->nodeTranslationTableName . ' t
                    ON t.node_id = n.id AND t.lang = :primaryLang
                  LEFT JOIN ' . $this->nodeVersionTableName . ' v
@@ -618,7 +658,7 @@ class NavigationMigrationService extends Component
         } catch (Throwable $e) {
             $report->warn(sprintf(
                 'Could not read %s for NodeMenu pass (%s); skipped.',
-                $this->nodesTableName,
+                self::NODES_TABLE,
                 $e->getMessage(),
             ));
             return;
@@ -644,7 +684,7 @@ class NavigationMigrationService extends Component
             $parentMap[$kumaNodeId] = (int) ($row['parent_id'] ?? 0);
             $internalName = (string) ($row['internal_name'] ?? '');
             $fqcn = (string) ($row['ref_entity_name'] ?? '');
-            if ($internalName !== '' && in_array($internalName, $this->nodeMenuExcludedInternalNames, true)) {
+            if ($internalName !== '' && in_array($internalName, $this->excludedInternalNames(), true)) {
                 $directlyExcluded[$kumaNodeId] = true;
             } elseif ($this->isSingletonFqcn($fqcn)) {
                 $directlyExcluded[$kumaNodeId] = true;
@@ -734,13 +774,13 @@ class NavigationMigrationService extends Component
 
                 try {
                     /** @var NavNode|null $child */
-                    $child = Craft::$app->elements->getElementById($childVerbbId, NavNode::class);
+                    $child = $this->elements()->findById($childVerbbId, NavNode::class);
                     if ($child === null) {
                         continue;
                     }
                     $child->setParentId($parentVerbbId);
-                    Navigation::$plugin->getNodes()->setTempNodes([$child]);
-                    if (!Craft::$app->elements->saveElement($child, true, false)) {
+                    $this->navigation()->registerTempNodes([$child]);
+                    if (!$this->elements()->save($child)) {
                         $report->warn(sprintf(
                             'failed to set parent on nav node id=%d (kuma_node id=%d)',
                             $childVerbbId,
@@ -791,7 +831,7 @@ class NavigationMigrationService extends Component
 
         $node = null;
         if ($existingNodeId !== null) {
-            $node = Craft::$app->elements->getElementById($existingNodeId, NavNode::class, $primarySiteId);
+            $node = $this->elements()->findById($existingNodeId, NavNode::class, $primarySiteId);
         }
         if ($node === null) {
             $node = new NavNode();
@@ -818,9 +858,9 @@ class NavigationMigrationService extends Component
             return null;
         }
 
-        Navigation::$plugin->getNodes()->setTempNodes([$node]);
+        $this->navigation()->registerTempNodes([$node]);
 
-        if (!Craft::$app->elements->saveElement($node, true, false)) {
+        if (!$this->elements()->save($node)) {
             $report->incr('failed');
             $report->warn(sprintf(
                 'saveElement refused NodeMenu node for kuma_node id=%d: %s',
@@ -950,39 +990,38 @@ class NavigationMigrationService extends Component
         return $this->stateService->getTargetId(str_replace('\\', '_', trim($fqcn, '\\')), (string) $refId);
     }
 
-    /**
-     * Build a `kuma_locale → siteId` lookup from `$this->sites`
-     * (kuma_locale → Craft site handle, populated by Plugin::resolveSitesMap()).
-     * Sites without a mapping entry are silently dropped — they're handled
-     * upstream by SeoMigrationService's per-site warning loop, no need to
-     * duplicate the noise here.
-     *
-     * @return array<string, int>
-     */
-    private function buildLocaleToSiteIdMap(): array
-    {
-        $out = [];
-        foreach (Craft::$app->sites->getAllSites() as $site) {
-            $handle = (string) $site->handle;
-            $locale = array_search($handle, $this->sites, true);
-            if ($locale === false) {
-                continue;
-            }
-            $out[(string) $locale] = (int) $site->id;
-        }
-        return $out;
-    }
+
 
     /**
-     * Phase 4.1 / D-25 + D-27 — testable warn-line for the Settings-disabled
-     * gate. Distinct copy from the plugin-not-installed line so REPORT.md
-     * skipped-stages aggregation can pattern-match operator-opted-out vs
-     * adapter-unavailable.
+     * The nav this pass writes into, and the internal names it leaves out.
      *
-     * @internal
+     * Both were public properties patched on from Plugin::init(), which is the
+     * shape that made an adapter's configuration Plugin's business. They come
+     * from the adapter's own declared settings now; the properties remain as the
+     * override a test or a caller can still set.
      */
-    private static function disabledWarnLine(): string
+    private function navHandle(): string
     {
-        return 'verbb/navigation adapter disabled (explicitly via Settings::navigationEnabled); nav migration skipped.';
+        if ($this->nodeMenuNavHandle !== '' && $this->nodeMenuNavHandle !== 'headerMain') {
+            return $this->nodeMenuNavHandle;
+        }
+
+        $configured = (string) ($this->config()['navHandle'] ?? '');
+
+        return $configured !== '' ? $configured : $this->nodeMenuNavHandle;
+    }
+
+    /** @return list<string> */
+    private function excludedInternalNames(): array
+    {
+        if ($this->nodeMenuExcludedInternalNames !== ['settings']) {
+            return $this->nodeMenuExcludedInternalNames;
+        }
+
+        $configured = $this->config()['excludedInternalNames'] ?? null;
+
+        return is_array($configured) && $configured !== []
+            ? array_values(array_map(strval(...), $configured))
+            : $this->nodeMenuExcludedInternalNames;
     }
 }

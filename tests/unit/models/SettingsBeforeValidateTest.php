@@ -9,7 +9,15 @@ use lameco\kunstmaanmigrator\models\Settings;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Characterization tests for Settings::beforeValidate() (Phase 4.1 / Plan 02 / D-07..D-09).
+ * The Kunstmaan project's own DATABASE_URL as a source of connection details
+ * (Phase 4.1 / Plan 02 / D-07..D-09).
+ *
+ * This used to run in beforeValidate() and write onto the model's attributes.
+ * That was harmless while settings only came from a config file; once the model
+ * gained a control-panel Save button it meant the legacy project's credentials
+ * being written into project config, committed and deployed. Resolution moved
+ * into legacyConnection(), which returns rather than assigns — so these assert
+ * on what the code connects with, not on what gets saved.
  *
  * Pure-PHPUnit shape: no Craft bootstrap. The hook uses a protected
  * `getEnvReader()` test seam — tests subclass Settings and override the seam
@@ -55,13 +63,12 @@ final class SettingsBeforeValidateTest extends TestCase
     {
         $settings = $this->makeSettingsWithEnv("DATABASE_URL=mysql://u:p@h:3308/d\n");
 
-        $settings->beforeValidate();
+        $connection = $settings->legacyConnection();
 
-        self::assertSame('h', $settings->legacyDbServer);
-        self::assertSame('u', $settings->legacyDbUser);
-        self::assertSame('p', $settings->legacyDbPassword);
-        self::assertSame('d', $settings->legacyDbDatabase);
-        self::assertSame(3308, $settings->legacyDbPort);
+        self::assertSame('h', $connection['host']);
+        self::assertSame('u', $connection['user']);
+        self::assertSame('p', $connection['password']);
+        self::assertSame(3308, $connection['port']);
     }
 
     public function testPreservesPartiallyFilledOperatorValues(): void
@@ -69,14 +76,13 @@ final class SettingsBeforeValidateTest extends TestCase
         $settings = $this->makeSettingsWithEnv("DATABASE_URL=mysql://u:p@dsn-host/d\n");
         $settings->legacyDbServer = 'operator-host';
 
-        $settings->beforeValidate();
+        $connection = $settings->legacyConnection();
 
         // Operator-set field stays.
-        self::assertSame('operator-host', $settings->legacyDbServer);
+        self::assertSame('operator-host', $connection['host']);
         // Blanks filled from DSN.
-        self::assertSame('u', $settings->legacyDbUser);
-        self::assertSame('p', $settings->legacyDbPassword);
-        self::assertSame('d', $settings->legacyDbDatabase);
+        self::assertSame('u', $connection['user']);
+        self::assertSame('p', $connection['password']);
     }
 
     public function testOperatorValuesWinWhenAllSet(): void
@@ -85,16 +91,14 @@ final class SettingsBeforeValidateTest extends TestCase
         $settings->legacyDbServer = 'op-host';
         $settings->legacyDbUser = 'op-user';
         $settings->legacyDbPassword = 'op-pass';
-        $settings->legacyDbDatabase = 'op-db';
         $settings->legacyDbPort = 5555; // explicit non-default operator port
 
-        $settings->beforeValidate();
+        $connection = $settings->legacyConnection();
 
-        self::assertSame('op-host', $settings->legacyDbServer);
-        self::assertSame('op-user', $settings->legacyDbUser);
-        self::assertSame('op-pass', $settings->legacyDbPassword);
-        self::assertSame('op-db', $settings->legacyDbDatabase);
-        self::assertSame(5555, $settings->legacyDbPort);
+        self::assertSame('op-host', $connection['host']);
+        self::assertSame('op-user', $connection['user']);
+        self::assertSame('op-pass', $connection['password']);
+        self::assertSame(5555, $connection['port']);
     }
 
     public function testNoOpWhenDsnAbsent(): void
@@ -102,13 +106,14 @@ final class SettingsBeforeValidateTest extends TestCase
         // No .env files written — reader returns null DATABASE_URL.
         $settings = $this->makeSettingsWithEnv(null);
 
-        $settings->beforeValidate();
+        $connection = $settings->legacyConnection();
 
-        self::assertNull($settings->legacyDbServer);
-        self::assertNull($settings->legacyDbUser);
-        self::assertNull($settings->legacyDbPassword);
-        self::assertNull($settings->legacyDbDatabase);
-        self::assertSame(3306, $settings->legacyDbPort); // default untouched
+        // A resolver has to answer with something connectable. Nothing configured
+        // anywhere means the MySQL defaults, not nulls for the caller to handle.
+        self::assertSame('127.0.0.1', $connection['host']);
+        self::assertSame('root', $connection['user']);
+        self::assertSame('', $connection['password']);
+        self::assertSame(3306, $connection['port']);
     }
 
     public function testNoOpWhenDsnNonMysql(): void
@@ -116,13 +121,14 @@ final class SettingsBeforeValidateTest extends TestCase
         // Reader exposes raw DSN (postgres) but parsed components are null per D-09.
         $settings = $this->makeSettingsWithEnv("DATABASE_URL=postgres://u:p@h:5432/d\n");
 
-        $settings->beforeValidate();
+        $connection = $settings->legacyConnection();
 
-        self::assertNull($settings->legacyDbServer);
-        self::assertNull($settings->legacyDbUser);
-        self::assertNull($settings->legacyDbPassword);
-        self::assertNull($settings->legacyDbDatabase);
-        self::assertSame(3306, $settings->legacyDbPort);
+        // D-09: the reader rejects a non-mysql scheme, so there is nothing to
+        // resolve from and the defaults stand.
+        self::assertSame('127.0.0.1', $connection['host']);
+        self::assertSame('root', $connection['user']);
+        self::assertSame('', $connection['password']);
+        self::assertSame(3306, $connection['port']);
     }
 
     public function testPercentDecodedPasswordReachesField(): void
@@ -130,9 +136,9 @@ final class SettingsBeforeValidateTest extends TestCase
         // Reader urldecodes the password before exposing it; Settings stores the decoded form.
         $settings = $this->makeSettingsWithEnv("DATABASE_URL=mysql://u:p%40ss%2Fword@h/d\n");
 
-        $settings->beforeValidate();
+        $connection = $settings->legacyConnection();
 
-        self::assertSame('p@ss/word', $settings->legacyDbPassword);
+        self::assertSame('p@ss/word', $connection['password']);
     }
 
     public function testPortDefaultStaysUntouchedWhenDsnPortAbsent(): void
@@ -140,9 +146,9 @@ final class SettingsBeforeValidateTest extends TestCase
         // DSN has no port; legacyDbPort stays at the property default 3306.
         $settings = $this->makeSettingsWithEnv("DATABASE_URL=mysql://u:p@h/d\n");
 
-        $settings->beforeValidate();
+        $connection = $settings->legacyConnection();
 
-        self::assertSame(3306, $settings->legacyDbPort);
+        self::assertSame(3306, $connection['port']);
     }
 
     public function testPortFillsFromDsnWhenAtDefault(): void
@@ -150,9 +156,9 @@ final class SettingsBeforeValidateTest extends TestCase
         // legacyDbPort default 3306 acts as the "operator hasn't customized" sentinel.
         $settings = $this->makeSettingsWithEnv("DATABASE_URL=mysql://u:p@h:3307/d\n");
 
-        $settings->beforeValidate();
+        $connection = $settings->legacyConnection();
 
-        self::assertSame(3307, $settings->legacyDbPort);
+        self::assertSame(3307, $connection['port']);
     }
 
     /**

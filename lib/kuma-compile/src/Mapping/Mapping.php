@@ -22,6 +22,17 @@ final class Mapping
     ) {
     }
 
+    /**
+     * A mapping from data already in memory — the seam MappingDocument uses to
+     * validate an edit before it is written to disk.
+     *
+     * @param array<string, mixed> $data
+     */
+    public static function fromArray(array $data, string $path = ''): self
+    {
+        return new self($path, self::resolveTags($data));
+    }
+
     public static function fromFile(string $path): self
     {
         if (!is_file($path)) {
@@ -122,6 +133,20 @@ final class Mapping
     public function formFields(): array
     {
         return $this->data['forms']['fields'] ?? [];
+    }
+
+    /**
+     * The `globals:` lane as declared: page type => contexts + parts.
+     *
+     * `globalParts()` below flattens every page's parts into one list, which is
+     * what the lane-collision check needs and the only thing that ever read this
+     * block — so the lane's own structure had no accessor at all.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function globals(): array
+    {
+        return $this->data['globals'] ?? [];
     }
 
     /** @return array<string, array<string, mixed>> */

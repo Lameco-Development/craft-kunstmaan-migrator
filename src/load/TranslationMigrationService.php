@@ -8,7 +8,10 @@ use Craft;
 use Throwable;
 use yii\base\Component;
 use craft\helpers\FileHelper;
-use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use lameco\kunstmaanmigrator\sites\SiteMap;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 
 /**
@@ -55,26 +58,19 @@ use lameco\kunstmaanmigrator\db\LegacyDbService;
  * report warning. They're rarely used in Lameco sites; if needed,
  * Settings::translationDomains can extend the allowed list later.
  */
-class TranslationMigrationService extends Component
+class TranslationMigrationService extends Component implements MigrationAdapter
 {
+    /**
+     * The Kunstmaan schema is fixed: these table names are the same in every
+     * corpus this migrator targets, so they are constants rather than a
+     * settings surface nobody ever used.
+     */
+    public const TRANSLATION_TABLE = 'kuma_translation';
+
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
-    /**
-     * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
-     * Plugin::resolveSitesMap(). Empty map means no sites configured —
-     * the service degrades gracefully (warn + return).
-     *
-     * @var array<string, string>
-     */
-    public array $sites = [];
 
-    /**
-     * Source table name override. Default matches the canonical
-     * Kunstmaan TranslatorBundle schema (`kuma_translation`, singular —
-     * unlike most kuma_* tables, this one is NOT pluralised).
-     */
-    public string $translationTableName = 'kuma_translation';
 
     /**
      * Source domains to migrate. Defaults to `['messages']` — Symfony's
@@ -93,20 +89,24 @@ class TranslationMigrationService extends Component
      * PHP catalog files at `<base>/translations/<lang>/site.php`, and (if
      * enupal-translate is installed) UPSERT parallel DB rows.
      */
-    public function migrateAll(MigrationOptions $opts): MigrationReport
+    use GatedAdapter;
+
+    public function handle(): string
+    {
+        return 'translations';
+    }
+
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
-        if (!Plugin::getInstance()->getSettings()->translationsEnabled) {
-            Craft::info(
-                'Translation adapter explicitly disabled via Settings::translationsEnabled; skipping translation migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(self::disabledWarnLine());
+        if (!$this->isGateOpen($report)) {
             return $report;
         }
 
-        $localeToLanguage = $this->buildLocaleToLanguageMap();
+        $sites = $context->sites;
+
+        $localeToLanguage = $sites->localeToLanguage();
         if ($localeToLanguage === []) {
             $report->warn('No Craft sites mapped; translation migration aborted.');
             return $report;
@@ -115,14 +115,14 @@ class TranslationMigrationService extends Component
         try {
             $rows = $this->legacyDb->queryAll(
                 'SELECT id, keyword, locale, text, domain, status
-                 FROM ' . $this->translationTableName . '
+                 FROM ' . self::TRANSLATION_TABLE . '
                  WHERE status = \'enabled\'
                  ORDER BY keyword, locale',
             );
         } catch (Throwable $e) {
             $report->warn(sprintf(
                 'Could not read %s (%s); translation migration skipped (table may not exist on this Kunstmaan vintage).',
-                $this->translationTableName,
+                self::TRANSLATION_TABLE,
                 $e->getMessage(),
             ));
             return $report;
@@ -131,7 +131,7 @@ class TranslationMigrationService extends Component
         if ($rows === []) {
             $report->warn(sprintf(
                 'No rows in %s; translation migration skipped (NB: TranslatorBundle is optional in Kunstmaan, sites without it use yaml-only translations).',
-                $this->translationTableName,
+                self::TRANSLATION_TABLE,
             ));
             return $report;
         }
@@ -145,7 +145,7 @@ class TranslationMigrationService extends Component
         $skippedLocales = [];
         foreach ($rows as $row) {
             $domain = (string) ($row['domain'] ?? '');
-            if (!in_array($domain, $this->allowedDomains, true)) {
+            if (!in_array($domain, $this->domains(), true)) {
                 $skippedDomains[$domain] = ($skippedDomains[$domain] ?? 0) + 1;
                 $report->incr('skipped');
                 continue;
@@ -267,26 +267,6 @@ class TranslationMigrationService extends Component
     // Private helpers
     // --------------------------------------------------------------------------
 
-    /**
-     * Build a `kuma_locale → craft_language` map. Walks Craft sites and
-     * matches each site's handle against `$this->sites` (kuma_locale →
-     * craft_handle). Sites without a mapping are silently dropped.
-     *
-     * @return array<string, string>
-     */
-    private function buildLocaleToLanguageMap(): array
-    {
-        $out = [];
-        foreach (Craft::$app->sites->getAllSites() as $site) {
-            $handle = (string) $site->handle;
-            $locale = array_search($handle, $this->sites, true);
-            if ($locale === false) {
-                continue;
-            }
-            $out[(string) $locale] = (string) $site->language;
-        }
-        return $out;
-    }
 
     /**
      * Write a flat-key PHP catalog at
@@ -460,8 +440,25 @@ class TranslationMigrationService extends Component
         }
     }
 
-    private static function disabledWarnLine(): string
+
+    /**
+     * The Symfony domains this pass migrates.
+     *
+     * Declared by the adapter rather than patched onto this service from
+     * Plugin::init(); `$allowedDomains` remains as the override a caller sets.
+     *
+     * @return list<string>
+     */
+    private function domains(): array
     {
-        return 'Translation adapter disabled (explicitly via Settings::translationsEnabled); translation migration skipped.';
+        if ($this->allowedDomains !== ['messages']) {
+            return $this->allowedDomains;
+        }
+
+        $configured = $this->config()['domains'] ?? null;
+
+        return is_array($configured) && $configured !== []
+            ? array_values(array_map(strval(...), $configured))
+            : $this->allowedDomains;
     }
 }

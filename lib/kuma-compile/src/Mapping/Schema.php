@@ -15,6 +15,20 @@ use Lameco\KumaCompile\Compile\EntityIndex;
  */
 final class Schema
 {
+    /**
+     * The DSL's top-level keys, in the order a mapping declares them.
+     *
+     * Public because MappingDocument writes the file back in this order: the
+     * file is reviewed in a pull request, and a diff that reorders the whole
+     * document because a hash iterated differently is a diff nobody reads.
+     *
+     * @return list<string>
+     */
+    public static function topLevelKeys(): array
+    {
+        return self::TOP_LEVEL;
+    }
+
     private const TOP_LEVEL = [
         'version', 'environments', 'merge', 'pages', 'defaults', 'entities',
         'sequence', 'parts', 'forms', 'globals', 'redirects', 'transforms', 'unmapped',

@@ -8,6 +8,8 @@ use Craft;
 use craft\ckeditor\Field as CkeditorField;
 use craft\db\Query;
 use craft\elements\Entry;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use Throwable;
@@ -46,6 +48,12 @@ use Throwable;
  */
 final class CkeditorFinalizeService
 {
+    /**
+     * The seam at Craft's element writes. Wired in Plugin::init(); read
+     * through elements() so no call site has to cope with "not wired yet".
+     */
+    public ?ElementWriter $elementWriter = null;
+
     public CkeditorRewriterService $rewriter;
 
     /** Markers the rewriter knows how to resolve. Used to shortlist rows worth loading. */
@@ -61,6 +69,11 @@ final class CkeditorFinalizeService
         if ($rewriter !== null) {
             $this->rewriter = $rewriter;
         }
+    }
+
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
     }
 
     public function run(MigrationOptions $opts, ?MigrationReport $report = null): MigrationReport
@@ -216,7 +229,7 @@ final class CkeditorFinalizeService
         // had the most trouble with.
         $element->resaving = true;
 
-        if (!Craft::$app->elements->saveElement($element, true, false)) {
+        if (!$this->elements()->save($element)) {
             $report->incr('failed');
             $report->warn(sprintf(
                 'finalize: save failed for element %d site %d — %s',

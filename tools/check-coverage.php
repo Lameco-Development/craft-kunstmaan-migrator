@@ -25,31 +25,43 @@ const MODULES = [
     'src/payload/PayloadValidator.php',
     'src/payload/RefResolver.php',
     'src/payload/Payload.php',
+    'src/finalize/CkeditorRewriterService.php',
+
+    // Graduated from WATCHED on a measured 94.1%. It sits above the threshold
+    // because the ElementWriter seam made it reachable — which is the argument
+    // for doing the same to the three below.
+    'src/payload/PayloadEntrySaver.php',
 ];
 
-// EXEMPT, and this is a debt not a dismissal — src/finalize/CkeditorRewriterService.php, 63.5%.
-//
-// It is not under-tested for want of trying: 40 unit tests drive it, and six added on
-// 2026-08-21 moved it 0.2 points. The uncovered third is the state-warming code
-// (warmKumaMediaCacheFromState, warmNtCache, warmUrlCacheFromState, stateEntryRows), and no
-// unit test can reach it. Every one opens with
-//
-//     if (!class_exists(Craft::class, false) || $this->migrationState === null) { ... return; }
-//
-// so it short-circuits whenever Craft is absent, and `$migrationState` is typed as the concrete
-// MigrationStateService rather than the MigrationStateReader interface that exists precisely so
-// this kind of thing can be faked — an interface only RefResolver uses.
-//
-// So the threshold is unreachable by writing tests; it needs a seam. Put `all()` on
-// MigrationStateReader, type the property to the interface, drop the class_exists guard, and put
-// this file back in the list above — the number should move a long way in one go. Until then a
-// gate that cannot be met teaches people to ignore the gate.
-//
-// See docs/migration/ARCHITECTURE-REVIEW.md in the consuming project — this is that document's
-// central finding in one file.
-const EXEMPT = [
-    'src/finalize/CkeditorRewriterService.php' => 'no seam at Craft; see the note above',
+/**
+ * Reported, not gated — yet.
+ *
+ * These are the four largest and most defect-prone modules in the plugin, and
+ * every defect AUDIT.md found lives in them. They were unreachable without
+ * MySQL until the ElementWriter seam landed; the seam was built to buy exactly
+ * this and the gate was never extended to spend it.
+ *
+ * Measured on CI at the commit that added this list:
+ *
+ *   EntryMigrationService       26.1%
+ *   AssetMigrationService       17.7%
+ *   NavigationMigrationService  10.9%
+ *
+ * Which is why they are reported rather than gated: adding them to MODULES at
+ * the 70% threshold would have been red on arrival, and lowering the threshold
+ * to fit them would certify nothing. They are the three modules every defect in
+ * AUDIT.md lives in, and they are now cheap to test — write the tests, watch
+ * the number here, and move each one into MODULES when it clears the bar.
+ *
+ * A file listed here that CI cannot find is a hard failure, same as one in
+ * MODULES — a stale list is worse than no list.
+ */
+const WATCHED = [
+    'src/load/EntryMigrationService.php',
+    'src/load/AssetMigrationService.php',
+    'src/load/NavigationMigrationService.php',
 ];
+
 const HANDLERS_PREFIX = 'src/fields/handlers/';
 
 $cloverPath = __DIR__ . '/../build/coverage/clover.xml';
@@ -91,8 +103,10 @@ foreach ($fileNodes as $file) {
     if ($repoRoot !== false && str_starts_with($absPath, $repoRoot . '/')) {
         $rel = substr($absPath, strlen($repoRoot) + 1);
     }
-    $isModule = in_array($rel, MODULES, true) || str_starts_with($rel, HANDLERS_PREFIX);
-    if (!$isModule) {
+    $isModule  = in_array($rel, MODULES, true) || str_starts_with($rel, HANDLERS_PREFIX);
+    $isWatched = in_array($rel, WATCHED, true);
+
+    if (!$isModule && !$isWatched) {
         continue;
     }
 
@@ -110,8 +124,16 @@ foreach ($fileNodes as $file) {
         $rowsPrinted++;
         continue;
     }
-    $pct        = ($covered / $statements) * 100.0;
-    $marker     = $pct >= THRESHOLD ? 'OK  ' : 'FAIL';
+    $pct = ($covered / $statements) * 100.0;
+
+    if ($isWatched) {
+        // Reported so the number exists to act on, not gated: see WATCHED.
+        fwrite(STDOUT, sprintf("  WATCH %5.1f%%  %s\n", $pct, $rel));
+        $rowsPrinted++;
+        continue;
+    }
+
+    $marker = $pct >= THRESHOLD ? 'OK  ' : 'FAIL';
     fwrite(STDOUT, sprintf("  %s %5.1f%%  %s\n", $marker, $pct, $rel));
     $rowsPrinted++;
     if ($pct < THRESHOLD) {
@@ -126,10 +148,10 @@ if ($rowsPrinted === 0) {
 }
 
 // A module named here but absent from the report is a gate that silently guards nothing.
-$missing = array_values(array_diff(MODULES, array_keys($seen)));
+$missing = array_values(array_diff([...MODULES, ...WATCHED], array_keys($seen)));
 
 if ($missing !== []) {
-    fwrite(STDERR, "\nFAIL: gated module(s) not present in the coverage report:\n  - "
+    fwrite(STDERR, "\nFAIL: named module(s) not present in the coverage report:\n  - "
         . implode("\n  - ", $missing) . "\n");
     fwrite(STDERR, "  Either the file was moved or deleted and MODULES is stale, or it is missing\n");
     fwrite(STDERR, "  from phpunit.xml.dist <source><include>. Fix the list — do not leave it rotting.\n");

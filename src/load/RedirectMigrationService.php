@@ -4,12 +4,19 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
-use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use lameco\kunstmaanmigrator\sites\SiteMap;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationOptions;
 use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use Craft;
+use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\payload\RefResolver;
+use lameco\kunstmaanmigrator\console\LoadController;
+use Lameco\KumaCompile\Compile\RedirectCompiler;
 use craft\elements\Entry;
 use nystudio107\retour\Retour;
 use yii\base\Component;
@@ -22,7 +29,7 @@ use yii\base\Component;
  *
  *   1. **Direct legacy-redirects import** — every row in the legacy
  *      redirects table (default `kuma_redirects`, overridable via
- *      `$redirectsTableName`) is imported verbatim into Retour via
+ *      `kuma_redirects`) is imported verbatim into Retour via
  *      `Retour::$plugin->redirects->saveRedirect()`. The row's `permanent`
  *      flag (tinyint(1)) maps to HTTP 301 / 302. Destinations that point
  *      at a legacy URL (a path that matches a migrated entry's old
@@ -57,28 +64,19 @@ use yii\base\Component;
  * before each migration run. Internal targets (starting with `/`) are
  * re-resolved through the state map without external network egress.
  */
-class RedirectMigrationService extends Component
+class RedirectMigrationService extends Component implements MigrationAdapter
 {
+    /**
+     * The Kunstmaan schema is fixed: these table names are the same in every
+     * corpus this migrator targets, so they are constants rather than a
+     * settings surface nobody ever used.
+     */
+    public const REDIRECTS_TABLE = 'kuma_redirects';
+
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
-    /**
-     * Kuma-locale → Craft-site-handle map. Wired in Plugin::init() from
-     * Plugin::resolveSitesMap() (Plan 04-09). Empty map means no sites
-     * configured — the service degrades gracefully (section-move emission
-     * short-circuits, lookupNewUrlByLegacyUrl returns null).
-     *
-     * @var array<string, string>
-     */
-    public array $sites = [];
 
-    /**
-     * Legacy redirects table name (unwrapped — passed verbatim into raw SQL).
-     * Defaults to the canonical Kunstmaan `kuma_redirects`; host projects
-     * with a non-standard schema override via setComponents. Plan 04-09 config
-     * loader will populate from `Settings::$redirectsTableName`.
-     */
-    public string $redirectsTableName = 'kuma_redirects';
 
     private const STATE_SOURCE = 'redirect';
 
@@ -89,35 +87,129 @@ class RedirectMigrationService extends Component
      * D-56: if Retour is not installed the pass is skipped with a
      * warning — never a hard error.
      */
-    public function migrateAll(MigrationOptions $opts): MigrationReport
+    use GatedAdapter;
+
+    public function handle(): string
+    {
+        return 'redirects';
+    }
+
+    /**
+     * The `redirects:` lane: compile this environment's redirect pages from the
+     * mapping and load them.
+     *
+     * This was 85 lines inside EnvironmentPipeline and the one adapter the loop
+     * could not run, because `migrateAll(MigrationOptions, SiteMap)` had nowhere
+     * to put the mapping it compiles from or the connection it reads. That is
+     * what the registry documented as a permanent exception. With the
+     * environment arriving as a value it is an ordinary adapter, and the
+     * exception is gone rather than explained.
+     *
+     * A redirect page is a node like any other: one legacy row produces one
+     * redirect per published translation, not one in total.
+     */
+    public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
 
-        // Phase 4.1 / D-25 — settings-disabled gate runs FIRST, BEFORE the
-        // plugin-presence check. D-27: warn-line copy is distinct from
-        // plugin-not-installed so REPORT.md skipped-stages aggregation can
-        // distinguish "operator opted out" from "plugin unavailable".
-        if (!Plugin::getInstance()->getSettings()->retourEnabled) {
-            Craft::info(
-                'Retour adapter explicitly disabled via Settings::retourEnabled; skipping redirect migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(self::disabledWarnLine());
+        if (!$this->isGateOpen($report)) {
             return $report;
         }
 
-        // D-56: Retour is optional. If the plugin is not installed,
-        // skip the entire redirect migration pass with a warning.
-        if (Craft::$app->plugins->getPlugin('retour') === null) {
-            Craft::warning(
-                'Retour plugin not installed; skipping redirect migration pass.',
-                'kunstmaanmigrator',
-            );
-            $report->warn(
-                'Retour plugin not installed; redirect migration skipped.',
-            );
+        if ($context->mapping === null || $context->legacy === null) {
+            $report->warn('The redirects lane compiles from the mapping and reads the legacy database; one of them was not supplied.');
+
             return $report;
         }
+
+        $compiler = new RedirectCompiler($context->mapping, $context->only);
+        $records = [];
+
+        $compiler->compile($context->legacy, $context->name, static function (array $record) use (&$records): void {
+            $records[] = $record;
+        });
+
+        foreach ($compiler->skipped() as $reason => $count) {
+            $report->warn(sprintf('%d skipped: %s', $count, $reason));
+        }
+
+        if ($records === []) {
+            return $report;
+        }
+
+        $report->incr('compiled', count($records));
+
+        if ($opts->dryRun) {
+            return $report;
+        }
+
+        $outcome = LoadController::reportForRedirects(
+            $records,
+            new RefResolver(Plugin::getInstance()->migrationStateService),
+            self::isRetourAvailable(),
+            static function (int $entryId, string $siteHandle): ?string {
+                $site = Craft::$app->getSites()->getSiteByHandle($siteHandle);
+
+                if ($site === null) {
+                    return null;
+                }
+
+                $entry = Entry::find()->id($entryId)->siteId((int) $site->id)->status(null)->one();
+
+                return $entry === null || $entry->uri === null ? null : '/' . ltrim($entry->uri, '/');
+            },
+            function (string $from, string $to, int $code, string $key, array $meta): array {
+                $result = $this->importOne($from, $to, $code, $key, $meta);
+
+                if (($result->counts['created'] ?? 0) > 0) {
+                    return ['outcome' => 'created'];
+                }
+
+                if (($result->counts['updated'] ?? 0) > 0) {
+                    return ['outcome' => 'updated'];
+                }
+
+                return ['outcome' => 'failed', 'message' => $result->warnings[0] ?? 'Retour refused to save the redirect.'];
+            },
+        );
+
+        foreach (['created', 'updated', 'resolved', 'skipped'] as $bucket) {
+            if (($outcome[$bucket] ?? 0) > 0) {
+                $report->incr($bucket, (int) $outcome[$bucket]);
+            }
+        }
+
+        // Only the rows that went wrong. A clean run of 156 redirects should not
+        // push 156 lines through a summary.
+        foreach ($outcome['report'] ?? [] as $row) {
+            $status = (string) ($row['status'] ?? '');
+
+            if ($status === '' || str_starts_with($status, 'OK')) {
+                continue;
+            }
+
+            $report->incr('failed');
+            $report->warn(sprintf(
+                '%s -> %s (%s): %s',
+                (string) ($row['from'] ?? '?'),
+                (string) ($row['to'] ?? '?'),
+                (string) ($row['siteHandle'] ?? '?'),
+                (string) ($row['message'] ?? $status),
+            ));
+        }
+
+        return $report;
+    }
+
+    public function migrateLegacyTables(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
+    {
+        $report = new MigrationReport();
+
+        if (!$this->isGateOpen($report)) {
+            return $report;
+        }
+
+        $sites = $context->sites;
 
         // Secondary defensive check — the class-exists / $plugin-null guard
         // catches the rare case where the plugin is registered but Retour::$plugin
@@ -131,10 +223,10 @@ class RedirectMigrationService extends Component
         }
 
         // ----- 1. Direct legacy redirects import (~205 rows expected on dev) ---
-        $this->importDirectRedirects($opts, $report);
+        $this->importDirectRedirects($sites, $opts, $report);
 
         // ----- 2. Section-move 301s for team/news/cases entries ----------------
-        $this->emitSectionMoveRedirects($opts, $report);
+        $this->emitSectionMoveRedirects($sites, $opts, $report);
 
         return $report;
     }
@@ -192,15 +284,15 @@ class RedirectMigrationService extends Component
     // Private — legacy redirects table direct import
     // --------------------------------------------------------------------------
 
-    private function importDirectRedirects(MigrationOptions $opts, MigrationReport $report): void
+    private function importDirectRedirects(SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
     {
         $rows = $this->legacyDb->queryAll(
-            'SELECT id, origin, target, permanent FROM ' . $this->redirectsTableName . ' ORDER BY id',
+            'SELECT id, origin, target, permanent FROM ' . $this->redirectsTable() . ' ORDER BY id',
         );
 
         foreach ($rows as $row) {
             try {
-                $this->importOneKumaRedirect($row, $opts, $report);
+                $this->importOneKumaRedirect($row, $sites, $opts, $report);
             } catch (\Throwable $e) {
                 $report->incr('failed');
                 $report->warn(
@@ -219,7 +311,7 @@ class RedirectMigrationService extends Component
     /**
      * @param array<string, mixed> $row
      */
-    private function importOneKumaRedirect(array $row, MigrationOptions $opts, MigrationReport $report): void
+    private function importOneKumaRedirect(array $row, SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
     {
         $origin = (string) ($row['origin'] ?? '');
         $target = (string) ($row['target'] ?? '');
@@ -229,7 +321,7 @@ class RedirectMigrationService extends Component
         }
 
         $srcUrl = $this->normalisePath($origin);
-        $destUrl = $this->resolveDestUrl($target);
+        $destUrl = $this->resolveDestUrl($target, $sites);
         $httpCode = ((int) ($row['permanent'] ?? 0) === 1) ? 301 : 302;
         $kumaId = (int) ($row['id'] ?? 0);
         $stateKey = 'kuma:' . $kumaId;
@@ -254,7 +346,7 @@ class RedirectMigrationService extends Component
      * legacy path matches a migrated entry's old URL. External URLs (with
      * scheme) and non-matching internal paths pass through verbatim.
      */
-    private function resolveDestUrl(string $rawTarget): string
+    private function resolveDestUrl(string $rawTarget, SiteMap $sites): string
     {
         $target = trim($rawTarget);
         if ($target === '') {
@@ -267,7 +359,7 @@ class RedirectMigrationService extends Component
         }
 
         $normalised = $this->normalisePath($target);
-        $resolved = $this->lookupNewUrlByLegacyUrl($normalised);
+        $resolved = $this->lookupNewUrlByLegacyUrl($normalised, $sites);
         return $resolved ?? $normalised;
     }
 
@@ -279,19 +371,19 @@ class RedirectMigrationService extends Component
      * kuma_node_translations.url matches the supplied path, then query
      * state for the migrated entry, then resolve the entry's site URL.
      */
-    private function lookupNewUrlByLegacyUrl(string $path): ?string
+    private function lookupNewUrlByLegacyUrl(string $path, SiteMap $sites): ?string
     {
         // Strip a configured leading "/{legacy-locale}/" prefix from the URL
         // so it matches kuma_node_translations.url. Locale codes come from the
         // operator's locale map rather than hardcoded nl/en assumptions.
-        [$stripped, $lang] = $this->stripLegacyLocalePrefix($path);
+        [$stripped, $lang] = $this->stripLegacyLocalePrefix($path, $sites);
 
         if ($stripped === '') {
             return null;
         }
 
         try {
-            $row = $this->legacyNodeRowForUrl($stripped, $lang);
+            $row = $this->legacyNodeRowForUrl($stripped, $lang, $sites);
         } catch (\Throwable) {
             return null;
         }
@@ -312,11 +404,11 @@ class RedirectMigrationService extends Component
         $sites = Craft::$app->sites;
 
         $candidateHandles = [];
-        if ($lang !== null && isset($this->sites[$lang])) {
-            $candidateHandles[] = $this->sites[$lang];
+        if ($lang !== null && $sites->handleForLocale($lang) !== null) {
+            $candidateHandles[] = (string) $sites->handleForLocale($lang);
         }
         // Fallback: walk every configured Craft handle in the sites map.
-        foreach ($this->sites as $handle) {
+        foreach ($sites->handles() as $handle) {
             if (!in_array($handle, $candidateHandles, true)) {
                 $candidateHandles[] = $handle;
             }
@@ -341,10 +433,10 @@ class RedirectMigrationService extends Component
      *
      * @return array{0: string, 1: string|null} [language-relative path, locale]
      */
-    private function stripLegacyLocalePrefix(string $path): array
+    private function stripLegacyLocalePrefix(string $path, SiteMap $sites): array
     {
         $stripped = ltrim($path, '/');
-        foreach ($this->legacyLocales() as $locale) {
+        foreach ($this->legacyLocales($sites) as $locale) {
             $prefix = $locale . '/';
             if ($stripped === $locale) {
                 return ['', $locale];
@@ -360,10 +452,10 @@ class RedirectMigrationService extends Component
     /**
      * @return list<string>
      */
-    private function legacyLocales(): array
+    private function legacyLocales(SiteMap $sites): array
     {
         $locales = [];
-        foreach (array_keys($this->sites) as $locale) {
+        foreach ($sites->locales() as $locale) {
             if (is_string($locale) && $locale !== '' && !in_array($locale, $locales, true)) {
                 $locales[] = $locale;
             }
@@ -375,7 +467,7 @@ class RedirectMigrationService extends Component
     /**
      * @return array{kuma_node_id: mixed, class: mixed}|null
      */
-    private function legacyNodeRowForUrl(string $strippedUrl, ?string $lang): ?array
+    private function legacyNodeRowForUrl(string $strippedUrl, ?string $lang, SiteMap $sites): ?array
     {
         $versionCol = 'public_node_version_id';
 
@@ -392,7 +484,7 @@ class RedirectMigrationService extends Component
             $params[':lang'] = $lang;
         } else {
             $localePlaceholders = [];
-            foreach ($this->legacyLocales() as $i => $locale) {
+            foreach ($this->legacyLocales($sites) as $i => $locale) {
                 $placeholder = ':locale' . $i;
                 $localePlaceholders[] = $placeholder;
                 $params[$placeholder] = $locale;
@@ -408,16 +500,16 @@ class RedirectMigrationService extends Component
             . ' INNER JOIN kuma_node_translations nt ON nt.node_id = n.id'
             . ' INNER JOIN kuma_node_versions nv ON nv.id = nt.' . $versionCol
             . ' WHERE ' . implode(' AND ', $whereParts)
-            . ' ORDER BY ' . $this->legacyLocaleOrderSql()
+            . ' ORDER BY ' . $this->legacyLocaleOrderSql($sites)
             . ' LIMIT 1',
             $params,
         );
     }
 
-    private function legacyLocaleOrderSql(): string
+    private function legacyLocaleOrderSql(SiteMap $sites): string
     {
         $cases = [];
-        foreach ($this->legacyLocales() as $i => $locale) {
+        foreach ($this->legacyLocales($sites) as $i => $locale) {
             $cases[] = "WHEN '" . str_replace("'", "''", $locale) . "' THEN " . $i;
         }
         if ($cases === []) {
@@ -452,7 +544,7 @@ class RedirectMigrationService extends Component
     // Private — section-move 301s
     // --------------------------------------------------------------------------
 
-    private function emitSectionMoveRedirects(MigrationOptions $opts, MigrationReport $report): void
+    private function emitSectionMoveRedirects(SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
     {
         foreach ($this->stateService->entryRows() as $stateRow) {
             $entryId = (int) ($stateRow['targetId'] ?? 0);
@@ -495,7 +587,7 @@ class RedirectMigrationService extends Component
             }
 
             try {
-                $this->emitSectionMoveForOne($source, $kumaNodeId, $entryId, $opts, $report);
+                $this->emitSectionMoveForOne($source, $kumaNodeId, $entryId, $sites, $opts, $report);
             } catch (\Throwable $e) {
                 $report->incr('failed');
                 $report->warn(
@@ -536,6 +628,7 @@ class RedirectMigrationService extends Component
         string $source,
         int $kumaNodeId,
         int $entryId,
+        SiteMap $sites,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
@@ -555,7 +648,7 @@ class RedirectMigrationService extends Component
         // so this works on any client whose Craft handles aren't literally 'default'+'en'.
         $sites = Craft::$app->sites;
 
-        foreach ($this->sites as $kumaLang => $craftHandle) {
+        foreach ($sites->configured() as $kumaLang => $craftHandle) {
             $legacyUrl = $legacyUrls[$kumaLang] ?? null;
             if ($legacyUrl === null) {
                 continue;
@@ -739,17 +832,15 @@ class RedirectMigrationService extends Component
         return '/' . ltrim($trimmed, '/');
     }
 
+
     /**
-     * Phase 4.1 / D-25 + D-27 — testable warn-line for the Settings-disabled
-     * gate. Distinct copy from the existing plugin-not-installed line ('Retour
-     * plugin not installed; redirect migration skipped.') so REPORT.md
-     * skipped-stages aggregation can pattern-match operator-opted-out vs
-     * adapter-unavailable.
-     *
-     * @internal
+     * The legacy redirects table, for the pass that reads one. Kunstmaan
+     * flavours differ; the constant is the canonical default.
      */
-    private static function disabledWarnLine(): string
+    private function redirectsTable(): string
     {
-        return 'Retour adapter disabled (explicitly via Settings::retourEnabled); redirect migration skipped.';
+        $configured = (string) ($this->config()['sourceTable'] ?? '');
+
+        return $configured !== '' ? $configured : self::REDIRECTS_TABLE;
     }
 }
