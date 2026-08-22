@@ -8,6 +8,7 @@ use Craft;
 use craft\helpers\App;
 use craft\web\Controller;
 use Lameco\KumaCompile\Mapping\Mapping;
+use lameco\kunstmaanmigrator\mapping\FieldExpression;
 use lameco\kunstmaanmigrator\mapping\MappingEditor;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\ProductionGuard;
@@ -144,11 +145,23 @@ final class MigrationController extends Controller
             throw new BadRequestHttpException(sprintf('The %s lane does not name "%s".', $lane, $key));
         }
 
+        // Each Craft field's current expression, split into the parts somebody
+        // can choose from — which column, and what to do to it.
+        $fields = $row->target !== null ? $editor->fieldsFor($row->target) : [];
+        $expressions = [];
+
+        foreach ($fields as $field) {
+            $expressions[$field] = FieldExpression::parse((string) ($row->map[$field] ?? ''));
+        }
+
         return $this->renderTemplate('kunstmaan-migrator/_mapping-row', [
             'lane' => $lane,
             'row' => $row,
             'blocks' => $editor->targetsFor($lane),
-            'fields' => $row->target !== null ? $editor->fieldsFor($row->target) : [],
+            'fields' => $fields,
+            'expressions' => $expressions,
+            'columns' => $editor->columnsFor($row),
+            'transforms' => $editor->transforms(),
         ]);
     }
 
@@ -214,8 +227,13 @@ final class MigrationController extends Controller
         // being written as an empty expression that evaluates to nothing.
         $map = [];
 
-        foreach ((array) $this->request->getBodyParam('map', []) as $field => $expression) {
-            $expression = trim((string) $expression);
+        foreach ((array) $this->request->getBodyParam('map', []) as $field => $parts) {
+            $parts = (array) $parts;
+            $expression = FieldExpression::compose(
+                (string) ($parts['column'] ?? ''),
+                (string) ($parts['transform'] ?? ''),
+                (string) ($parts['advanced'] ?? ''),
+            );
 
             if ($expression !== '') {
                 $map[(string) $field] = $expression;

@@ -93,6 +93,38 @@ final class LegacyCatalogue
         return $out;
     }
 
+    /**
+     * The columns of one legacy table, minus the ones every table has.
+     *
+     * So a field map can be chosen from what is actually in the database rather
+     * than typed from memory — which is the difference between picking `niv`
+     * and finding out an hour into a run that you wrote `level`.
+     *
+     * @return list<string>
+     */
+    public function columns(string $database, string $table): array
+    {
+        if ($table === '') {
+            return [];
+        }
+
+        try {
+            $statement = $this->connect($database)->prepare(
+                'SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+                 ORDER BY ORDINAL_POSITION'
+            );
+            $statement->execute([$database, $table]);
+        } catch (Throwable) {
+            return [];
+        }
+
+        return array_values(array_diff(
+            array_map(strval(...), $statement->fetchAll(PDO::FETCH_COLUMN)),
+            ['id'],
+        ));
+    }
+
     private function nodeCount(string $database): int
     {
         try {

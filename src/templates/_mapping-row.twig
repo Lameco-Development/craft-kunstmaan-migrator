@@ -51,27 +51,64 @@
 
       <h2>{{ "Field map"|t('kunstmaan-migrator') }}</h2>
       <p class="light">
-        {{ "Each field of the chosen target, and the legacy column that fills it. The rows are its real fields, read from this install. A column name is enough; `column | transform` and `link(url, text)` also work."|t('kunstmaan-migrator') }}
+        {% if columns is not empty %}
+          {{ "The fields of the chosen target, and which column of the old table fills each. Both lists are real — the fields from this Craft install, the columns from the old database."|t('kunstmaan-migrator') }}
+        {% else %}
+          {{ "The fields of the chosen target. The old database is not reachable right now, so type the column names."|t('kunstmaan-migrator') }}
+        {% endif %}
       </p>
 
       <table class="data fullwidth">
         <thead>
           <tr>
             <th>{{ "Craft field"|t('kunstmaan-migrator') }}</th>
-            <th>{{ "Filled from"|t('kunstmaan-migrator') }}</th>
+            <th>{{ "Old column"|t('kunstmaan-migrator') }}</th>
+            <th>{{ "Converted how"|t('kunstmaan-migrator') }}</th>
           </tr>
         </thead>
         <tbody>
           {% for field in fields %}
+            {% set expression = expressions[field] %}
             <tr>
               <th scope="row"><code>{{ field }}</code></th>
-              <td>
-                {{ forms.text({
-                  name: 'map[' ~ field ~ ']',
-                  value: row.map[field] ?? '',
-                  placeholder: "legacy column, or leave empty"|t('kunstmaan-migrator'),
-                }) }}
-              </td>
+
+              {% if expression.isAdvanced() %}
+                {# `link(link_url, title, link_new_window)` composes several
+                   columns into one field and `ref(Entity)` names an entity, not
+                   a column. Neither fits two dropdowns, and a form that
+                   pretended otherwise would quietly drop the arguments. #}
+                <td colspan="2">
+                  {{ forms.text({
+                    name: 'map[' ~ field ~ '][advanced]',
+                    value: expression.advanced,
+                    class: 'code',
+                  }) }}
+                  <span class="light">{{ "Written by hand — leave as it is unless you know the grammar."|t('kunstmaan-migrator') }}</span>
+                </td>
+              {% else %}
+                <td>
+                  {% if columns is not empty %}
+                    {{ forms.selectize({
+                      name: 'map[' ~ field ~ '][column]',
+                      value: expression.column,
+                      options: [{ label: "— not filled —"|t('kunstmaan-migrator'), value: '' }]|merge(
+                        columns|map(c => { label: c, value: c })
+                      ),
+                    }) }}
+                  {% else %}
+                    {{ forms.text({ name: 'map[' ~ field ~ '][column]', value: expression.column }) }}
+                  {% endif %}
+                </td>
+                <td>
+                  {{ forms.selectize({
+                    name: 'map[' ~ field ~ '][transform]',
+                    value: expression.transform,
+                    options: [{ label: "As it is"|t('kunstmaan-migrator'), value: '' }]|merge(
+                      transforms|keys|map(t => { label: transforms[t], value: t })
+                    ),
+                  }) }}
+                </td>
+              {% endif %}
             </tr>
           {% endfor %}
         </tbody>

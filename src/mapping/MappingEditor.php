@@ -5,12 +5,16 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\mapping;
 
 use craft\helpers\App;
+use Lameco\KumaCompile\Compile\Transforms;
+use Lameco\KumaCompile\Legacy\LegacyCatalogue;
 use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Mapping\Schema;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\models\Settings;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\payload\SchemaGateway;
+use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use Throwable;
 
 /**
  * The mapping, as the control panel sees it.
@@ -190,6 +194,44 @@ final class MappingEditor
     public function fieldsFor(string $block): array
     {
         return array_keys($this->target->slots($block));
+    }
+
+    /**
+     * The legacy columns a row's table actually has.
+     *
+     * Read from the first environment the mapping declares: a part's table has
+     * the same shape in each, and connecting to all three to list columns would
+     * make opening a row a three-connection affair.
+     *
+     * @return list<string>
+     */
+    public function columnsFor(MappingRow $row): array
+    {
+        if ($row->table === null) {
+            return [];
+        }
+
+        $environments = $this->document()->lane('environments');
+        $first = is_array(reset($environments)) ? reset($environments) : [];
+        $database = (string) ($first['database'] ?? '');
+
+        if ($database === '') {
+            return [];
+        }
+
+        try {
+            return (new LegacyCatalogue(EnvironmentPipeline::dsnFromSettings()))->columns($database, $row->table);
+        } catch (Throwable) {
+            // A legacy database that is not reachable right now is a reason to
+            // fall back to a text box, not to fail opening the row.
+            return [];
+        }
+    }
+
+    /** @return array<string, string> transform => what it does */
+    public function transforms(): array
+    {
+        return Transforms::available();
     }
 
     /**
