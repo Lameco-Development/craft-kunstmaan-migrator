@@ -22,6 +22,17 @@ final class Mapping
     ) {
     }
 
+    /**
+     * A mapping from data already in memory — the seam MappingDocument uses to
+     * validate an edit before it is written to disk.
+     *
+     * @param array<string, mixed> $data
+     */
+    public static function fromArray(array $data, string $path = ''): self
+    {
+        return new self($path, self::resolveTags($data));
+    }
+
     public static function fromFile(string $path): self
     {
         if (!is_file($path)) {
