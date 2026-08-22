@@ -102,4 +102,40 @@ final class CoverageTest extends TestCase
 
         self::assertSame(0.05, $c->liveShare());
     }
+
+    #[Test]
+    public function a_declared_omission_carries_its_reason_and_its_cost(): void
+    {
+        // The client-facing half. "RowStart is unmapped" is a mapping fact; "76 placements, and
+        // here is the reason it was declared under" is something a client can decide about.
+        $omissions = $this->coverage(new LiveSnapshot(
+            environment: 'COM',
+            partPlacements: ['Text' => 100, 'RowStart' => 76],
+            pageTypes: ['ContentPage' => 20, 'FooterPage' => 1],
+            pagesByLocale: ['en' => 21],
+            allPartRefs: 3_000,
+        ))->declaredOmissions();
+
+        self::assertSame(
+            [
+                ['subject' => 'RowStart', 'kind' => 'pagepart, not migrated', 'reason' => 'layout bracket', 'placements' => 76],
+                ['subject' => 'FooterPage', 'kind' => 'page type, not migrated', 'reason' => 'globals lane', 'placements' => 1],
+            ],
+            $omissions,
+        );
+    }
+
+    #[Test]
+    public function omissions_lead_with_the_one_that_costs_most(): void
+    {
+        $omissions = $this->coverage(new LiveSnapshot(
+            environment: 'COM',
+            partPlacements: ['RowStart' => 2],
+            pageTypes: ['FooterPage' => 900],
+            pagesByLocale: ['en' => 900],
+            allPartRefs: 10,
+        ))->declaredOmissions();
+
+        self::assertSame('FooterPage', $omissions[0]['subject']);
+    }
 }

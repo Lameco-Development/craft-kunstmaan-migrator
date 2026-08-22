@@ -113,6 +113,7 @@ vendor/bin/kuma-compile readiness migration/mapping/site.yaml --craft=.
 | `init` | discover the inventory — every pagepart class and page type by volume, real table names, child collections with their foreign keys, every locale with its live page count |
 | `validate` | the mapping's own shape, then every handle it names against the target's project config, then whether any Matrix in the target actually accepts each block |
 | `coverage` | **did I miss anything in the legacy site** — anything not named in the mapping is an error, not a silent skip |
+| `coverage --markdown` | the same thing addressed to the client: what moves, what does not, and the reason each omission was declared under |
 | `readiness --craft=.` | **will every required Craft field get a value** — the mirror of `coverage`, pointed at the target |
 | `readiness --craft=. --unfilled` | the *optional* Craft fields no lane fills at all |
 | `suggest` | draft rows for parts the mapping does not name yet |
@@ -136,6 +137,14 @@ for site in a b c; do
               locales: .[0].localeCount, media: .[0].volumes.media}"
 done
 ```
+
+**`coverage --markdown` is the deliverable, not the debug output.** A migration's
+result is not only what arrived; it is also an accounting of what did not. Both halves
+are already in hand — placements measured against the live databases, and the written
+reason every `unmapped:`, `drop:` and `manual:` carries — so the report writes itself,
+in lane names a client reads rather than the mapping's. It also states the live share
+up front, because Kunstmaan keeps a copy of a page's whole content graph per saved
+version and a figure quoted off the raw table is roughly twenty times the real one.
 
 `init` deliberately emits a skeleton that **fails `validate`**: every part lacks
 a disposition, so nothing runs until a human has resolved each one. It is a
