@@ -225,6 +225,25 @@ ones you can afford to drop — see below.
 Every command prints machine-readable JSON or NDJSON to stdout and exits
 non-zero on failure.
 
+## What it does not migrate
+
+Every one of the twelve Kunstmaan sites surveyed installs the same eighteen bundles,
+so a lane that does not exist is not a gap on one project — it is a gap on all of
+them. Recorded here for the same reason `unmapped:` exists in the mapping: a
+declared non-goal with a reason is worth more than an absence, and a client can
+only decide about something that has been written down.
+
+| | where it lives | why there is no lane |
+| --- | --- | --- |
+| **Form submissions** | `kuma_form_submissions` (+ `_fields`) | Formie holds submissions natively, so the target exists. Whether years of leads should move is a client decision with a data-retention answer attached, not a default. |
+| **Back-office users, roles, groups** | `kuma_users`, `kuma_roles`, `kuma_groups` | Password hashes do not port, so "migrated" users cannot log in without a reset anyway. Craft's own user model and permission set are not the Kunstmaan one; mapping them is a per-project decision every time. |
+| **Node version history** | `kuma_node_versions` | Craft has revisions and could hold these. A version is a serialised page in the *old* content model, so restoring one after cutover would restore a shape the new templates cannot render. |
+| **Scheduled publishing** | `kuma_node_queued_node_translation_actions` | Craft has `postDate`/`expiryDate` and a mapping can already fill them from a column. What has no lane is the *queue* — a page scheduled to go live after cutover silently does not. Small table, high consequence: check it before cutover. |
+| **The search index** | `kuma_nodes_search` | ⊘ by decision, not by omission. Craft rebuilds its own index from the migrated content, so carrying the old one across would be carrying a stale copy of something free. |
+
+On the reference corpus those are, across the three environments: 30 submissions, 64
+users in 11 groups, 32,272 node versions, 16 queued publishes.
+
 ## Extending it
 
 A pass that runs after an environment's entries exist is a `MigrationAdapter`.
