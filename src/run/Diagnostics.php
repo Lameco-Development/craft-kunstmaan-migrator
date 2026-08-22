@@ -7,7 +7,9 @@ namespace lameco\kunstmaanmigrator\run;
 use Craft;
 use craft\helpers\App;
 use Lameco\KumaCompile\Mapping\Mapping;
+use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
+use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\run\MappingPreflight;
@@ -240,6 +242,7 @@ final class Diagnostics
         }
 
         $checks = [$this->result('mapping', true, sprintf('%s declares %d environment(s).', $path, count($environments)))];
+        $checks[] = $this->checkBlockPropagation(Mapping::fromFile($path));
 
         try {
             $readiness = (new MappingPreflight(
@@ -270,6 +273,63 @@ final class Diagnostics
         }
 
         return $checks;
+    }
+
+    /**
+     * Can the target's page-builder Matrix fields hold per-locale content at all?
+     *
+     * The one precondition the loader cannot work around and the only one that is invisible
+     * until an editor opens the Latvian page and reads English. It belongs in the preflight
+     * because the fix is a project-config change and the run is two hours long.
+     *
+     * @return array{check: string, ok: bool, detail: string}
+     */
+    private function checkBlockPropagation(Mapping $mapping): array
+    {
+        $localesPer = [];
+
+        foreach ($mapping->environments() as $env => $spec) {
+            $localesPer[(string) $env] = count((array) ($spec['locales'] ?? []));
+        }
+
+        $schema = new TargetModel(new CraftSchemaGateway());
+        $contexts = $mapping->all()['defaults']['contexts'] ?? [];
+        $methods = [];
+
+        foreach ($mapping->pages() as $spec) {
+            if (!is_array($spec) || isset($spec['manual'])) {
+                continue;
+            }
+
+            $entryType = (string) ($spec['entryType'] ?? '');
+
+            if ($entryType === '') {
+                continue;
+            }
+
+            // `contexts:` names the layout's *instance* handle — `pageBuilder`, not the
+            // `commonPageBuilder` field it instances. Asking the field service for the instance
+            // handle returns nothing, which reads as "no opinion" and quietly passes the check.
+            // The slot lookup is the same path the compiler resolves the field through.
+            foreach (($spec['contexts'] ?? $contexts) as $target) {
+                $field = is_array($target) ? (string) ($target['field'] ?? '') : '';
+                $slot = $field !== '' ? $schema->slot($entryType, $field) : null;
+
+                if ($slot !== null) {
+                    $methods[$entryType . '.' . $field] = $slot->propagationMethod;
+                }
+            }
+        }
+
+        $problems = BlockPropagation::problems($methods, $localesPer);
+
+        return $this->result(
+            'blockPropagation',
+            $problems === [],
+            $problems === []
+                ? sprintf('%d page-builder field(s) can hold per-locale blocks.', count($methods))
+                : implode(' ', $problems),
+        );
     }
 
     /**

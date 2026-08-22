@@ -8,8 +8,10 @@ namespace Lameco\KumaCompile\Target;
 final readonly class Slot
 {
     /**
-     * @param list<string> $nested  entry type handles a Matrix field allows
-     * @param ?string $default      the value Craft writes when a fresh element omits this field
+     * @param list<string> $nested      entry type handles a Matrix field allows
+     * @param ?string $default          the value Craft writes when a fresh element omits this field
+     * @param ?string $propagationMethod how a Matrix shares its blocks across sites — `all` means
+     *                                   one set for every site, which two locales cannot both own
      */
     public function __construct(
         public string $handle,
@@ -17,6 +19,7 @@ final readonly class Slot
         public bool $required,
         public array $nested = [],
         public ?string $default = null,
+        public ?string $propagationMethod = null,
     ) {
     }
 

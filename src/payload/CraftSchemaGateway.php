@@ -71,7 +71,13 @@ final class CraftSchemaGateway implements SchemaGateway
                 }
 
                 $field = $element->getField();
-                $handle = (string) $field->handle;
+
+                // The layout element's handle, not the field's. A placement can override it —
+                // `commonPageBuilder` is placed as `pageBuilder` — and the mapping names the
+                // placement, because that is what the payload has to be keyed by. Reading the
+                // base handle here made the live schema disagree with the project-config reader
+                // on exactly the fields a page builder is made of.
+                $handle = (string) $element->attribute();
                 $nested = [];
 
                 if ($field instanceof Matrix) {
@@ -84,6 +90,7 @@ final class CraftSchemaGateway implements SchemaGateway
                     'type' => (new \ReflectionClass($field))->getShortName(),
                     'required' => (bool) $element->required,
                     'nested' => $nested,
+                    'propagationMethod' => self::propagationOf($field),
                 ];
             }
         }
@@ -120,6 +127,23 @@ final class CraftSchemaGateway implements SchemaGateway
         }
 
         return [];
+    }
+
+    /**
+     * How a Matrix shares its blocks across sites.
+     *
+     * Craft 5 types this as a `PropagationMethod` enum; a non-Matrix field has no such
+     * property and reads as null, which every caller has to treat as "no opinion" anyway.
+     */
+    private static function propagationOf(\craft\base\FieldInterface $field): ?string
+    {
+        $method = $field instanceof Matrix ? $field->propagationMethod : null;
+
+        if ($method instanceof \BackedEnum) {
+            return (string) $method->value;
+        }
+
+        return is_string($method) ? $method : null;
     }
 
     private function fieldLayoutFor(string $entryTypeHandle): ?\craft\models\FieldLayout

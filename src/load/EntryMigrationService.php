@@ -890,12 +890,25 @@ class EntryMigrationService extends Component
      * Two Phase 04 bugs we clean up here, centrally:
      *
      * 1. Strip `_sourcePartRef` from every block's `fields` hash.
-     *    `_sourcePartRef` was designed as a hidden re-run-tracking field on
-     *    each block, but the project config never added it to the 50 matrix
-     *    block entry types — so Craft's CustomFieldBehavior rejects it as
-     *    an unknown property. Stripping it loses idempotent UID threading
-     *    on re-runs; a clean re-run currently requires resetting the
-     *    affected Craft elements + state rows by hand.
+     *    It is a compile-side marker, not a Craft field: the project config
+     *    never added it to the 50 matrix block entry types, so Craft's
+     *    CustomFieldBehavior rejects it as an unknown property.
+     *
+     *    Stripping it does *not* cost the UID threading, though this docblock
+     *    said so for as long as that was true. The sourceRef→blockId map is
+     *    read off the marker before the strip and persisted in the state row's
+     *    `meta.blockIds`, per site; `threadBlockUidsIntoPageBuilder()` reads it
+     *    back on the next run and keys each block by its existing id, so Craft
+     *    updates in place. Adding the field to the entry types would change
+     *    nothing here — the marker never needed to survive the save, only the
+     *    map does.
+     *
+     *    What does still rebuild a block set on every run is `propagationMethod:
+     *    all` on the page-builder Matrix fields: Craft keeps one block set for
+     *    the owner shared across every site, so two locales naming different
+     *    parts overwrite each other's blocks each save, whatever this thread.
+     *    That is a Craft-side field configuration, not a loader bug — see
+     *    `PerSiteBlockDivergence`, which names the entries it happens to.
      *
      * 2. Lift `title` from `fields` to peer-level. Matrix block entry types with
      *    `hasTitleField: true` expect `title` as a native entry property — it must

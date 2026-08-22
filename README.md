@@ -193,6 +193,16 @@ counted and reported, and still exits 0. `--fail-on-loss` makes lossy
 conversions, unresolved assets and unresolved references non-zero, which is what
 you want in CI once a corpus has a known-good loss count.
 
+**`doctor` checks whether the target can hold per-locale blocks.** A page-builder
+Matrix with `propagationMethod: all` keeps *one* block set for the owner, shared by
+every site. While each locale's payload names the same legacy parts that collapses
+harmlessly; when they name different parts it cannot — each site's save replaces the
+other's blocks, every run, and one locale ends up serving the other's content. The
+loader cannot repair it, because the set is global by the field's own configuration,
+so it is reported as a precondition rather than discovered per entry two hours in.
+The fix is `propagationMethod: none`, or a per-site `propagationKeyFormat`, on the
+field.
+
 **Run one migration at a time.** Craft's mutex uses MySQL named locks, which are
 server-wide rather than database-scoped, so two concurrent migrations against
 the same server contend and the loser fails on the structure lock.
