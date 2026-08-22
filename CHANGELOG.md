@@ -6,6 +6,56 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## 2.0.0-alpha.1 — 2026-08-22
+
+First tagged release of v2. Until now the only way to install this plugin was
+to track a branch, which is why every consumer pinned `dev-v2-loader` — a
+branch that stopped receiving work at PR #19 while the work continued
+elsewhere.
+
+### Added
+
+- **Making a mapping is part of the plugin.** `mapping/init` discovers a legacy
+  corpus across several databases and writes a skeleton for it — pagepart
+  classes and page types by live volume, real table names, unplaced columns,
+  child collections with their foreign keys, every locale with its live page
+  count. `mapping/check` says whether a mapping is well-formed and whether this
+  Craft install accepts it. Both were reachable only through a CLI shipped
+  inside `vendor/`.
+- **The mapping is editable from the control panel**, per lane and per row. The
+  block and field lists are read from the live install rather than typed from
+  memory, and an edit writes back to the file so it stays the single source of
+  truth — rewriting only the keys that changed, so the diff is the decision.
+- **The `forms:` and `globals:` lanes**, declared in the DSL since it was
+  written and compiled by nothing. Forms become Formie forms behind a
+  `FormGateway` seam; the legacy footer becomes navigation nodes, with the
+  target stated per context in the mapping rather than chosen in code.
+- **Adapter-owned configuration.** An adapter declares its own settings and the
+  screen renders what it declares, so a pass a project ships is configurable
+  without editing a model it does not own.
+
+### Fixed
+
+- **A registered adapter could never run.** The gate read the operator's switch
+  with `property_exists()`, and only the four built-ins have a literal
+  property — so every other adapter was gated off permanently while rendering a
+  settings row and resolving to a runnable service.
+- **The settings screen was a 500** (Twig 2 `for … if` syntax), and separately
+  **could never be saved** by any project that had set its password as an
+  environment reference: the env parser swaps in the resolved value before
+  validation, so the validator that exists to reject a literal password
+  rejected `$KUMA_DB_PASSWORD`.
+- **The NodeMenu pass had been erroring since the site-map refactor**, reading a
+  variable it was never given. It migrated nothing and the run reported no
+  failure.
+- **The rewriter cached legacy ids across databases.** They are unique only
+  within one, so one environment's media resolved to another's asset.
+- **The finalize pass had three implementations that disagreed** — one ran once
+  against whichever database the loop ended on; two looped correctly and lost
+  the media roots.
+- **A queued run was not the run it replaced**, skipping the fixup and finalize
+  passes with nothing on screen saying so.
+
 ### BREAKING
 
 - **`lameco/kuma-compile` is no longer a dependency — its source now ships inside this
