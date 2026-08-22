@@ -124,6 +124,35 @@ final class LinkShapeTest extends TestCase
     }
 
     #[Test]
+    public function a_bare_email_address_is_typed_as_one(): void
+    {
+        // Craft only sniffs the link type from a bare string. A map — the only way to carry a
+        // label — defaults to `url`, so an untyped address fails validation and takes the whole
+        // entry with it.
+        self::assertSame(
+            ['link' => ['type' => 'email', 'value' => 'mailto:sales.sp@enreach.com', 'label' => 'Book a meeting']],
+            $this->builder('uspBlockUsp')->fieldsFrom(
+                ['link' => 'link(link_url, link_text)'],
+                ['link_url' => 'sales.sp@enreach.com', 'link_text' => 'Book a meeting'],
+                'Usp',
+            ),
+        );
+    }
+
+    #[Test]
+    public function a_column_that_already_carries_its_scheme_keeps_it(): void
+    {
+        self::assertSame(
+            ['link' => ['type' => 'tel', 'value' => 'tel:+31612345678']],
+            $this->builder('uspBlockUsp')->fieldsFrom(
+                ['link' => 'link(link_url, link_text)'],
+                ['link_url' => 'tel:+31612345678', 'link_text' => ''],
+                'Usp',
+            ),
+        );
+    }
+
+    #[Test]
     public function a_matrix_target_gets_a_button_block_with_the_link_on_the_nested_type(): void
     {
         self::assertSame(

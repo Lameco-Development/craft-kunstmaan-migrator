@@ -332,7 +332,7 @@ final class BlockBuilder
         // handed over as a ref for the loader to turn into a reference tag.
         $ref = $this->entities?->uidFor('nodeLink', $url, $this->environment);
 
-        $link = $ref !== null ? ['_linkRef' => $ref] : ['value' => $url];
+        $link = $ref !== null ? ['_linkRef' => $ref] : $this->linkTarget($url);
 
         if ($textCol !== null && trim((string) ($row[$textCol] ?? '')) !== '') {
             $link['label'] = (string) $row[$textCol];
@@ -365,6 +365,31 @@ final class BlockBuilder
         }
 
         return [['type' => $nested, 'fields' => $fields]];
+    }
+
+    /**
+     * Which kind of link a legacy URL column is holding.
+     *
+     * Craft only sniffs the type when the value is a bare string. A map — the only way to carry
+     * a label — defaults to `url`, so a column holding a bare address is validated as a URL and
+     * fails the whole entry. Four live pages died on `sales.sp@enreach.com` that way.
+     *
+     * @return array<string, string>
+     */
+    private function linkTarget(string $url): array
+    {
+        foreach (['mailto:' => 'email', 'tel:' => 'tel', 'sms:' => 'sms'] as $prefix => $type) {
+            if (stripos($url, $prefix) === 0) {
+                return ['type' => $type, 'value' => $url];
+            }
+        }
+
+        // The old templates wrote the scheme; the column holds the bare address.
+        if (filter_var($url, FILTER_VALIDATE_EMAIL) !== false) {
+            return ['type' => 'email', 'value' => 'mailto:' . $url];
+        }
+
+        return ['value' => $url];
     }
 
     /** The slot a simple target names on the entry type currently being built. */

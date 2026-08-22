@@ -348,11 +348,16 @@ final class PayloadEntrySaver
             $resolvedId = $this->refResolver->resolve($node['_linkRef']);
 
             if ($resolvedId === null) {
+                // A link is *set* at its own slot, not appended to a container, so the whole
+                // path is recorded — including the slot itself — and `kind` tells the fixup
+                // pass to write a link there rather than push an id into a list.
                 $deferredRefs[] = [
                     'field' => $fieldHandle,
                     'site' => $siteHandle,
                     'ref' => $node['_linkRef'],
-                    'path' => array_slice($path, 0, -1),
+                    'path' => $path,
+                    'kind' => 'link',
+                    'link' => array_intersect_key($node, array_flip(['label', 'target'])),
                 ];
 
                 return ['present' => false, 'value' => null];
