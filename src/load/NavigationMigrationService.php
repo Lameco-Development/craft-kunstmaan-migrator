@@ -220,7 +220,8 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             ));
             // NodeMenu pass below still runs — that's the right path for
             // dewert and any site that drives its menu off the page tree.
-            $this->migrateNodeMenu($localeToSiteId, $sites, $opts, $report);
+            [$primarySiteId, $primarySiteHandle] = $this->primarySiteFacts();
+            $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $opts, $report);
             return $report;
         }
 
@@ -318,7 +319,8 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         // verbb nav can host both kinds (rare in practice — Lameco sites
         // typically use one or the other — but allowed). Internally
         // skipped when kuma_nodes is empty.
-        $this->migrateNodeMenu($localeToSiteId, $sites, $opts, $report);
+        [$primarySiteId, $primarySiteHandle] = $this->primarySiteFacts();
+        $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $opts, $report);
 
         return $report;
     }
@@ -367,7 +369,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             $node = $this->elements()->findById($existingNodeId, NavNode::class, $siteId);
         }
         if ($node === null) {
-            $node = new NavNode();
+            $node = $this->newNavNode();
         }
 
         $node->navId = $navId;
@@ -586,6 +588,34 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      * @param array<string, int> $localeToSiteId  kuma_locale → siteId
      */
     /**
+     * Craft's primary site, as the two facts the NodeMenu pass needs.
+     *
+     * Read by the caller rather than inside the pass so the pass can be
+     * driven without a booted Craft — the reason that half of this class
+     * went untested long enough to ship two undefined-variable bugs.
+     *
+     * @return array{int, string}
+     */
+    private function primarySiteFacts(): array
+    {
+        $site = Craft::$app->sites->getPrimarySite();
+
+        return [(int) $site->id, (string) $site->handle];
+    }
+
+    /**
+     * A blank nav node.
+     *
+     * Its own method because constructing a Craft element boots the whole
+     * application, which is the one thing standing between these passes and a
+     * test that can drive their write half.
+     */
+    protected function newNavNode(): NavNode
+    {
+        return new NavNode();
+    }
+
+    /**
      * $sites was read here as a variable this method never received.
      *
      * It was a property until PR #26 made the site map a per-call value; the
@@ -599,6 +629,8 @@ class NavigationMigrationService extends Component implements MigrationAdapter
     private function migrateNodeMenu(
         array $localeToSiteId,
         SiteMap $sites,
+        int $primarySiteId,
+        string $primarySiteHandle,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
@@ -615,13 +647,10 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             return;
         }
 
-        $primarySite = Craft::$app->sites->getPrimarySite();
-        $primarySiteId = (int) $primarySite->id;
-
         // Resolve the primary-locale Kuma code (e.g. 'nl') for sort
         // ordering. Falls back to whatever the first sites map entry
         // points at, then to empty (which makes COALESCE fire below).
-        $primaryLang = $sites->localeForHandle((string) $primarySite->handle) ?? false;
+        $primaryLang = $sites->localeForHandle($primarySiteHandle) ?? false;
         if (!is_string($primaryLang)) {
             $primaryLang = (string) ($sites->locales()[0] ?? '');
         }
@@ -842,7 +871,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             $node = $this->elements()->findById($existingNodeId, NavNode::class, $primarySiteId);
         }
         if ($node === null) {
-            $node = new NavNode();
+            $node = $this->newNavNode();
         }
 
         $node->navId = $navId;
@@ -858,7 +887,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         // verbb's render-time logic resolves the per-site title from the
         // linked element automatically, so the saved title is just a
         // fallback / CP display value.
-        $entry = Craft::$app->entries->getEntryById($entryId, $primarySiteId);
+        $entry = $this->elements()->findById($entryId, Entry::class, $primarySiteId);
         $node->title = $entry !== null ? (string) $entry->title : '(untitled)';
 
         if ($opts->dryRun) {
