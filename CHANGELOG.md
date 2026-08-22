@@ -6,12 +6,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
-## 2.0.0-alpha.1 — 2026-08-22
+## 2.0.0-alpha.2 — 2026-08-22
 
-First tagged release of v2. Until now the only way to install this plugin was
-to track a branch, which is why every consumer pinned `dev-v2-loader` — a
-branch that stopped receiving work at PR #19 while the work continued
-elsewhere.
+The first *tagged* release of v2. `2.0.0-alpha.1` below was written up in July
+and never tagged, so until now the only way to install this plugin was to track
+a branch — which is why every consumer pinned `dev-v2-loader`, a branch that
+stopped receiving work at PR #19 while the work continued elsewhere.
 
 ### Added
 
