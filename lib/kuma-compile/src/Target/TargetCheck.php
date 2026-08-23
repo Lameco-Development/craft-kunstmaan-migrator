@@ -177,6 +177,62 @@ final class TargetCheck
     }
 
     /**
+     * Page entry types with nowhere to put a block at all.
+     *
+     * `contexts:` names the Matrix a page's block stream lands in. When the target's entry type
+     * has no such field, every part on every node of that type is dropped — the compiler says
+     * so (`casePage has no pageBuilder — 18 parts dropped`) and says it into a run report, once
+     * per node, two hours in. On the reference corpus that is 496 pageparts across 51 pages,
+     * the largest single documented loss, and it is knowable from two YAML files.
+     *
+     * A warning rather than an error, deliberately. A page type may legitimately hold no blocks,
+     * and the DSL has no way to say so yet — there is no disposition for "render these into a
+     * rich-text field on the page", which is what this corpus actually wants. Failing the build
+     * would leave nothing to do about it.
+     *
+     * @return list<string>
+     */
+    public function pagesWithNoBlockField(Mapping $mapping): array
+    {
+        $defaults = $mapping->all()['defaults']['contexts'] ?? [];
+        $warnings = [];
+
+        foreach ($mapping->pages() as $name => $spec) {
+            if (!is_array($spec) || isset($spec['manual']) || isset($spec['unmapped'])) {
+                continue;
+            }
+
+            $entryType = (string) ($spec['entryType'] ?? '');
+
+            if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
+                continue;
+            }
+
+            $missing = [];
+
+            foreach (($spec['contexts'] ?? $defaults) as $target) {
+                $field = is_array($target) ? (string) ($target['field'] ?? '') : '';
+
+                if ($field !== '' && $this->schema->slot($entryType, $field) === null) {
+                    $missing[$field] = true;
+                }
+            }
+
+            if ($missing !== []) {
+                $warnings[] = sprintf(
+                    'page `%s` streams blocks into `%s`, which `%s` does not have — every part on'
+                    . ' these pages is dropped',
+                    $name,
+                    implode('`, `', array_keys($missing)),
+                    $entryType,
+                );
+            }
+        }
+
+        return $warnings;
+    }
+
+    /**
      * Blocks no page in the mapping can hold.
      *
      * A Matrix field names the entry types it accepts, and a part whose block is not on that
@@ -263,7 +319,7 @@ final class TargetCheck
             $slot = $this->schema->slot($entryType, $field);
 
             // An unrestricted Matrix accepts everything, and a field that is not there cannot
-            // reject anything — that is a different error, and `check()` owns it.
+            // reject anything — `pagesWithNoBlockField()` above owns that case.
             if ($slot === null || $slot->nested === [] || in_array($block, $slot->nested, true)) {
                 return true;
             }

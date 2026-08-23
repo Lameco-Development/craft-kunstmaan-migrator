@@ -123,4 +123,44 @@ final class EntryExplanationTest extends TestCase
 
         self::assertCount(1, $result['unexplained']);
     }
+
+    #[Test]
+    public function a_part_live_only_in_a_locale_with_no_craft_site_is_missing_by_decision(): void
+    {
+        // COM:sp on the reference corpus — 335 live pages, declared `!unmapped` with a reason.
+        // Counted as loss it put a client decision at the top of the defect list, and it was
+        // 5 of the first 14 findings the tool produced.
+        $result = EntryExplanation::reconcile(
+            'COM',
+            ['comEnUs' => []],
+            $this->parts(['Text', 5, 'main', 'sp']),
+            ['Text' => 'blocks'],
+            ['Text' => 'text_page_parts'],
+            ['main'],
+            ['en', 'fr'],
+        );
+
+        self::assertSame([], $result['unexplained']);
+        self::assertStringContainsString('sp', (string) $result['accountedFor'][0]['why']);
+    }
+
+    #[Test]
+    public function a_part_live_in_one_migrated_locale_and_one_stranded_one_is_still_a_defect(): void
+    {
+        // The langs have to be collected across the whole group before the verdict: judging on
+        // whichever row came first would excuse a real loss because the part also exists in a
+        // locale nobody is migrating.
+        $result = EntryExplanation::reconcile(
+            'COM',
+            ['comEnUs' => []],
+            $this->parts(['Text', 5, 'main', 'sp'], ['Text', 5, 'main', 'en']),
+            ['Text' => 'blocks'],
+            ['Text' => 'text_page_parts'],
+            ['main'],
+            ['en', 'fr'],
+        );
+
+        self::assertCount(1, $result['unexplained']);
+        self::assertSame([], $result['accountedFor']);
+    }
 }

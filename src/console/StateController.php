@@ -133,6 +133,7 @@ class StateController extends Controller
             $mapping->accountedParts(),
             $tables,
             array_map('strval', array_keys((array) ($mapping->all()['defaults']['contexts'] ?? []))),
+            self::migratedLocalesOf($spec),
         );
 
         $this->stdout(json_encode([
@@ -145,6 +146,29 @@ class StateController extends Controller
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
 
         return $reconciled['unexplained'] === [] ? ExitCode::OK : ExitCode::DATAERR;
+    }
+
+    /**
+     * The legacy langs that have a Craft site to land in.
+     *
+     * `!unmapped "<reason>"` resolves to null when the mapping is parsed, so a locale is
+     * migrated exactly when its value is a non-empty handle. Everything else was declared as
+     * having nowhere to go, and its content is missing by decision rather than by defect.
+     *
+     * @param array<string, mixed> $spec
+     * @return list<string>
+     */
+    private static function migratedLocalesOf(array $spec): array
+    {
+        $out = [];
+
+        foreach ((array) ($spec['locales'] ?? []) as $lang => $handle) {
+            if (is_string($handle) && $handle !== '') {
+                $out[] = (string) $lang;
+            }
+        }
+
+        return $out;
     }
 
     /**

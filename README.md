@@ -115,7 +115,7 @@ vendor/bin/kuma-compile readiness migration/mapping/site.yaml --craft=.
 | --- | --- |
 | `survey` | **is this corpus in range** — live pages, placements, pagepart classes, page types, locales, and the media/redirect/submission volumes, per environment. Needs no mapping and no Craft. |
 | `init` | discover the inventory — every pagepart class and page type by volume, real table names, child collections with their foreign keys, every locale with its live page count |
-| `validate` | the mapping's own shape, then every handle it names against the target's project config, then whether any Matrix in the target actually accepts each block |
+| `validate` | the mapping's own shape, then every handle it names against the target's project config, then whether any Matrix in the target actually accepts each block — and warns about a page entry type with no block field at all |
 | `coverage` | **did I miss anything in the legacy site** — anything not named in the mapping is an error, not a silent skip |
 | `coverage --markdown` | the same thing addressed to the client: what moves, what does not, and the reason each omission was declared under |
 | `readiness --craft=.` | **will every required Craft field get a value** — the mirror of `coverage`, pointed at the target |
@@ -269,6 +269,15 @@ ones you can afford to drop — see below.
 
 Every command prints machine-readable JSON or NDJSON to stdout and exits
 non-zero on failure.
+
+**A page entry type with no block field is a warning, not an error.** `contexts:`
+names the Matrix a page's blocks stream into; when the target's entry type has no such
+field, every part on every node of that type is dropped, and the compiler currently
+says so once per node into a run report two hours in. `validate` says it from two YAML
+files. It stays a warning because only the data says what it costs — on the reference
+corpus it fires for five page types, and four of them hold no live pageparts at all
+(`PartnerPage` has 423 live pages and zero placements). The fifth is `casePage`: 618
+placements across 72 pages.
 
 **`state/explain` is the one to reach for when something is empty.** It reconciles
 one migrated entry against the legacy node behind it: what was written comes from the

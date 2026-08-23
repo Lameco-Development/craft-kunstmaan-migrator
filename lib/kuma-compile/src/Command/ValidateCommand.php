@@ -49,7 +49,7 @@ final class ValidateCommand extends Command
             $schema = CraftSchema::fromProjectConfig((string) $craftRoot);
             $target = new TargetCheck($schema);
             $errors = [...$errors, ...$target->check($mapping), ...$target->blocksNoPageAccepts($mapping)];
-            $warnings = $target->unfilledRequired($mapping);
+            $warnings = [...$target->pagesWithNoBlockField($mapping), ...$target->unfilledRequired($mapping)];
 
             foreach ($specDirs as $dir) {
                 $divergence = new SpecDivergence($mapping, SpecNotes::fromDirectory((string) $dir), $schema);
@@ -84,7 +84,7 @@ final class ValidateCommand extends Command
         }
 
         if ($warnings !== []) {
-            $io->section(sprintf('%d required fields never mapped', count($warnings)));
+            $io->section(sprintf('%d warnings', count($warnings)));
 
             foreach ($warnings as $warning) {
                 $io->writeln('  <comment>·</comment> ' . $warning);

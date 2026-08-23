@@ -28,6 +28,7 @@ final readonly class EntryExplanation
      * @param array<string, string>                $lanes     pagepart class => the lane the mapping puts it in
      * @param array<string, string>                $tables    pagepart class => the legacy table the mapping names
      * @param list<string>                         $contexts  Kunstmaan contexts the mapping streams into blocks
+     * @param list<string>                         $locales   legacy langs that have a Craft site to land in
      * @return array{written: int, accountedFor: list<array<string, mixed>>, unexplained: list<array<string, mixed>>}
      */
     public static function reconcile(
@@ -37,6 +38,7 @@ final readonly class EntryExplanation
         array $lanes,
         array $tables,
         array $contexts = [],
+        array $locales = [],
     ): array {
         $written = [];
 
@@ -51,30 +53,54 @@ final readonly class EntryExplanation
 
         $accountedFor = [];
         $unexplained = [];
-        $seen = [];
+
+        // Grouped before it is judged. One placement can be live in several locales — it is one
+        // part and one block — and *which* locales decides whether its absence is a defect at
+        // all, so the langs have to be collected before the first verdict rather than after.
+        $grouped = [];
 
         foreach ($legacyParts as $part) {
+            $key = $part['part'] . ':' . $part['id'];
+            $grouped[$key] ??= $part + ['langs' => []];
+            $grouped[$key]['langs'][(string) $part['lang']] = true;
+        }
+
+        foreach ($grouped as $part) {
             $class = (string) $part['part'];
             $table = $tables[$class] ?? null;
+            $langs = array_keys($part['langs']);
 
             // The legacy row names the Doctrine entity; the state ref names the table the
             // mapping declared for it. The mapping is the only thing that knows both.
             $ref = $table !== null ? sprintf('%s:%s:%d', $environment, $table, $part['id']) : null;
-            $key = $class . ':' . $part['id'];
-
-            // One placement can be live in several locales. It is one part and one block.
-            if (isset($seen[$key])) {
-                continue;
-            }
-
-            $seen[$key] = true;
 
             if ($ref !== null && isset($written[$ref])) {
                 continue;
             }
 
             $lane = $lanes[$class] ?? null;
-            $row = ['part' => $class, 'id' => $part['id'], 'context' => $part['context'], 'lane' => $lane, 'ref' => $ref];
+            $row = [
+                'part' => $class,
+                'id' => $part['id'],
+                'context' => $part['context'],
+                'langs' => $langs,
+                'lane' => $lane,
+                'ref' => $ref,
+            ];
+
+            // A placement that is live only in a locale with no Craft site has nowhere to land,
+            // and the mapping said so with a reason. On this corpus that is COM:sp — 335 live
+            // pages, 208 of them Spanish-only — so counting it as loss would put a declared
+            // client decision at the top of the defect list.
+            if ($locales !== [] && array_intersect($langs, $locales) === []) {
+                $row['why'] = sprintf(
+                    'live only in %s, which the mapping declares as having no Craft site',
+                    implode(', ', $langs),
+                );
+                $accountedFor[] = $row;
+
+                continue;
+            }
 
             // A part the mapping deliberately does not turn into a block is not a hole, and
             // listing it as one buries the ones that are.
@@ -86,8 +112,8 @@ final readonly class EntryExplanation
 
             // A part in a context the mapping does not stream is missing for a stated reason,
             // not for an unknown one — and on a corpus where `form` and eight `footer-*`
-            // contexts are deliberately left out, that is most of what lands here. Reporting
-            // them as defects is what would make this list unreadable.
+            // contexts are deliberately left out, that is most of what would otherwise land in
+            // the defect list.
             if ($contexts !== [] && !in_array((string) $part['context'], $contexts, true)) {
                 $row['why'] = sprintf('`%s` is not one of the contexts the mapping streams into blocks', $part['context']);
                 $accountedFor[] = $row;
