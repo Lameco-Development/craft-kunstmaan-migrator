@@ -16,7 +16,9 @@
     </p>
   </div>
 
-  <div class="tablepane">
+  {# .tablepane bleeds upward with a negative margin; without this it rides
+     over whatever precedes it. #}
+  <div class="tablepane" style="margin-top: 14px;">
   <table class="data fullwidth">
     <thead>
       <tr>

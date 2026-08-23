@@ -320,7 +320,7 @@ final class SetupController extends Controller
             $suggested = [];
 
             foreach (array_keys($locales) as $locale) {
-                $suggested[$locale] = self::suggestSite((string) $locale, $sites);
+                $suggested[$locale] = self::suggestSite((string) $locale, $sites, (string) $label);
             }
 
             $environments[$label] = [
@@ -559,19 +559,40 @@ final class SetupController extends Controller
      *
      * @param list<\craft\models\Site> $sites
      */
-    private static function suggestSite(string $locale, array $sites): string
+    private static function suggestSite(string $locale, array $sites, string $environment = ''): string
     {
+        // Kunstmaan locales are sometimes country codes where Craft languages
+        // are language codes — dk is Danish, br is Brazilian Portuguese.
+        $aliases = ['dk' => 'da', 'br' => 'pt'];
         $locale = strtolower($locale);
+        $language = $aliases[$locale] ?? $locale;
 
-        foreach ($sites as $site) {
-            $language = strtolower((string) $site->language);
+        $matches = array_values(array_filter($sites, static function ($site) use ($language): bool {
+            $siteLanguage = strtolower((string) $site->language);
 
-            if ($language === $locale || str_starts_with($language, $locale . '-')) {
+            return $siteLanguage === $language || str_starts_with($siteLanguage, $language . '-');
+        }));
+
+        if ($matches === []) {
+            return '';
+        }
+
+        // Two sites can share a language (comEnUs and comLvEn are both English).
+        // The environment's own name is the tiebreak — LV's `en` belongs on the
+        // site whose handle says lv — and the primary site takes the rest.
+        foreach ($matches as $site) {
+            if ($environment !== '' && stripos((string) $site->handle, $environment) !== false) {
                 return (string) $site->handle;
             }
         }
 
-        return '';
+        foreach ($matches as $site) {
+            if ($site->primary ?? false) {
+                return (string) $site->handle;
+            }
+        }
+
+        return (string) $matches[0]->handle;
     }
 
     /**
@@ -597,13 +618,24 @@ final class SetupController extends Controller
      */
     private static function envReferenceFor(string $secret): ?string
     {
+        $matches = [];
+
         foreach ([...$_ENV, ...$_SERVER] as $name => $value) {
             if (is_string($value) && $value === $secret && preg_match('/^[A-Z][A-Z0-9_]*$/', (string) $name) === 1) {
-                return (string) $name;
+                $matches[] = (string) $name;
             }
         }
 
-        return null;
+        // On a dev box half the env resolves to the same value (root/root), so
+        // the name has to say what it holds: a variable called *_USER matching
+        // the password is a coincidence, not a reference.
+        foreach ($matches as $name) {
+            if (preg_match('/PASSWORD|SECRET|_PASS(_|$)/', $name) === 1) {
+                return $name;
+            }
+        }
+
+        return $matches[0] ?? null;
     }
 
 
