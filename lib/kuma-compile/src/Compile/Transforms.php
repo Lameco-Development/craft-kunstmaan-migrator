@@ -34,6 +34,7 @@ final class Transforms
     {
         return [
             'bool' => 'Yes/no — 1 becomes true, anything else false',
+            'centered' => 'Alignment — centre/centered becomes on, anything else off',
             'ckeditor' => 'Rich text — keeps the formatting, rewrites old links and images',
             'inlineHtml' => 'Plain text — strips block tags, keeps bold and italic',
             'titleLevel' => 'Heading level — h1 becomes h2 where the field has no h1',
@@ -57,6 +58,7 @@ final class Transforms
             'colorScheme' => $this->colorScheme($value, $context),
             'variant'     => $this->variant($value),
             'bool'        => $value !== null && (int) $value === 1,
+            'centered'    => in_array(strtolower(trim((string) ($value ?? ''))), ['center', 'centered'], true),
             'ckeditor'    => $this->ckeditor($value),
             'inlineHtml'  => $this->inlineHtml($value),
             'externalUrl' => $this->externalUrl($value, $context),

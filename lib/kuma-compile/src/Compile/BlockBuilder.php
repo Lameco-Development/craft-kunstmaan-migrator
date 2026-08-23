@@ -171,6 +171,10 @@ final class BlockBuilder
             return $this->link(array_map('trim', explode(',', $m[1])), $row, $target);
         }
 
+        if (preg_match('/^links\((.*)\)$/', $expression, $m) === 1) {
+            return $this->links($m[1], $row, $target);
+        }
+
         if (preg_match('/^address\((.*)\)$/s', $expression, $m) === 1) {
             return $this->address($m[1], $row, $context);
         }
@@ -187,6 +191,23 @@ final class BlockBuilder
             }
 
             return null;
+        }
+
+        // One target, several columns that each hold part of it. ContactPerson keeps prose in
+        // both `content` and `contact_person_content` — 80 live rows fill both, so picking one
+        // (which is what coalesce does) drops the other's text.
+        if (preg_match('/^concat\((.*)\)$/s', $expression, $m) === 1) {
+            $values = [];
+
+            foreach ($this->splitArguments($m[1]) as $piece) {
+                $value = $this->evaluate($piece, $row, $context);
+
+                if (is_scalar($value) && trim((string) $value) !== '') {
+                    $values[] = (string) $value;
+                }
+            }
+
+            return $values === [] ? null : implode("\n", $values);
         }
 
         $parts = array_map('trim', explode('|', $expression));
@@ -326,34 +347,24 @@ final class BlockBuilder
     private function link(array $columns, array $row, string $target = ''): mixed
     {
         [$urlCol, $textCol] = [$columns[0] ?? null, $columns[1] ?? null];
-        $url = $urlCol !== null ? trim((string) ($row[$urlCol] ?? '')) : '';
+        $url = $urlCol !== null ? (string) ($row[$urlCol] ?? '') : '';
+        $label = $textCol !== null ? (string) ($row[$textCol] ?? '') : '';
+        $newWindow = isset($columns[2]) && (int) ($row[$columns[2]] ?? 0) === 1;
 
-        if ($url === '') {
+        $link = $this->oneLink($url, $label, $newWindow);
+
+        if ($link === null) {
             return null;
         }
 
-        // Kunstmaan writes an internal link as `[NT<id>]`, which a Link field rejects outright.
-        // It addresses a node translation, and the node is what becomes an entry, so it is
-        // handed over as a ref for the loader to turn into a reference tag.
-        $ref = $this->entities?->uidFor('nodeLink', $url, $this->environment);
-
-        $link = $ref !== null ? ['_linkRef' => $ref] : $this->linkTarget($url);
-
-        if ($textCol !== null && trim((string) ($row[$textCol] ?? '')) !== '') {
-            $link['label'] = (string) $row[$textCol];
-        }
-
-        if (isset($columns[2]) && (int) ($row[$columns[2]] ?? 0) === 1) {
-            $link['target'] = '_blank';
-        }
-
-        $slot = $this->slotFor($target);
+        $resolved = $this->resolveTarget($target);
+        $slot = $resolved === null ? null : $this->schema?->slot($resolved[0], $resolved[1]);
 
         if ($slot === null || !$slot->isMatrix()) {
             return $link;
         }
 
-        $nested = $this->childBlockType($target);
+        $nested = $this->schema?->nestedTypeOf($resolved[0], $resolved[1]) ?? $resolved[1];
         $linkHandle = $this->soleSlotOfType($nested, 'Link');
 
         if ($linkHandle === null) {
@@ -370,6 +381,84 @@ final class BlockBuilder
         }
 
         return [['type' => $nested, 'fields' => $fields]];
+    }
+
+    /**
+     * Several single-URL columns, one button each — `links(twitter=Twitter, linkedin=LinkedIn)`.
+     *
+     * `link()` gathers the four-column pattern one legacy link is spread across; this is its
+     * complement for the opposite shape, N sibling URL columns each carrying a whole link whose
+     * label the table never stored. SocialMedia holds five network columns and targets
+     * `linksBlock.buttons`, a required Matrix nothing could fill.
+     *
+     * Matrix targets only: a Craft Link field holds one link, and a part with several columns
+     * has several.
+     *
+     * @return list<array{type: string, fields: array<string, mixed>}>|null
+     */
+    private function links(string $arguments, array $row, string $target): ?array
+    {
+        $resolved = $this->resolveTarget($target);
+        $slot = $resolved === null ? null : $this->schema?->slot($resolved[0], $resolved[1]);
+
+        if ($slot === null || !$slot->isMatrix()) {
+            return null;
+        }
+
+        $nested = $this->schema?->nestedTypeOf($resolved[0], $resolved[1]) ?? $resolved[1];
+        $linkHandle = $this->soleSlotOfType($nested, 'Link');
+
+        if ($linkHandle === null) {
+            return null;
+        }
+
+        $blocks = [];
+
+        foreach ($this->splitArguments($arguments) as $argument) {
+            [$column, $label] = str_contains($argument, '=')
+                ? array_map(trim(...), explode('=', $argument, 2))
+                : [$argument, ''];
+
+            $link = $this->oneLink((string) ($row[$column] ?? ''), $label, false);
+
+            if ($link !== null) {
+                $blocks[] = ['type' => $nested, 'fields' => [$linkHandle => $link]];
+            }
+        }
+
+        return $blocks === [] ? null : $blocks;
+    }
+
+    /**
+     * One link map from a URL, a label and a new-window flag. A link with no URL is not a
+     * link, it is an empty row an editor left behind.
+     *
+     * Kunstmaan writes an internal link as `[NT<id>]`, which a Link field rejects outright.
+     * It addresses a node translation, and the node is what becomes an entry, so it is
+     * handed over as a ref for the loader to turn into a reference tag.
+     *
+     * @return array<string, string>|null
+     */
+    private function oneLink(string $url, string $label, bool $newWindow): ?array
+    {
+        $url = trim($url);
+
+        if ($url === '') {
+            return null;
+        }
+
+        $ref = $this->entities?->uidFor('nodeLink', $url, $this->environment);
+        $link = $ref !== null ? ['_linkRef' => $ref] : $this->linkTarget($url);
+
+        if (trim($label) !== '') {
+            $link['label'] = $label;
+        }
+
+        if ($newWindow) {
+            $link['target'] = '_blank';
+        }
+
+        return $link;
     }
 
     /**
@@ -397,19 +486,46 @@ final class BlockBuilder
         return ['value' => $url];
     }
 
-    /** The slot a simple target names on the entry type currently being built. */
+    /** The slot a target names, walked through any nested positions it addresses. */
     private function slotFor(string $target): ?Slot
+    {
+        $resolved = $this->resolveTarget($target);
+
+        return $resolved === null ? null : $this->schema?->slot($resolved[0], $resolved[1]);
+    }
+
+    /**
+     * The entry type and field a target path lands on.
+     *
+     * `buttons` names a field on the block being built; `cards[0].buttons` names one on the
+     * nested card type. Without the walk, `link()` aimed at an indexed position could not see
+     * it was feeding a Matrix and emitted a bare link map Craft discards without a word.
+     *
+     * @return array{0: string, 1: string}|null
+     */
+    private function resolveTarget(string $target): ?array
     {
         if ($this->schema === null || $this->block === null || $target === '') {
             return null;
         }
 
-        // A target that addresses a nested position already says where it lands.
+        $owner = $this->block;
+
+        while (preg_match('/^(\w+)\[\d+\]\.(.+)$/', $target, $m) === 1) {
+            $nested = $this->schema->nestedTypeOf($owner, $m[1]);
+
+            if ($nested === null) {
+                return null;
+            }
+
+            [$owner, $target] = [$nested, $m[2]];
+        }
+
         if (str_contains($target, '.') || str_contains($target, '[')) {
             return null;
         }
 
-        return $this->schema->slot($this->block, $target);
+        return [$owner, $target];
     }
 
     /**

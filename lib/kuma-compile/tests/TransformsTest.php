@@ -74,6 +74,18 @@ final class TransformsTest extends TestCase
     }
 
     #[Test]
+    public function centered_reads_the_legacy_alignment_string(): void
+    {
+        $t = $this->transforms();
+
+        self::assertTrue($t->apply('centered', 'center'));
+        self::assertTrue($t->apply('centered', 'Centered'));
+        self::assertFalse($t->apply('centered', ''), 'the legacy default is left-aligned');
+        self::assertFalse($t->apply('centered', null));
+        self::assertFalse($t->apply('centered', 'left'));
+    }
+
+    #[Test]
     public function variant_never_guesses_boxed(): void
     {
         $t = $this->transforms();

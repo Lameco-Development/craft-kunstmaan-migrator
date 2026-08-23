@@ -6,6 +6,29 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- **`links(column=Label, …)` field expression** — N sibling single-URL columns
+  become one button each in a Matrix of buttons, with the label carried by the
+  mapping because the legacy table never stored one. Built for SocialMedia's
+  five network columns, which target `linksBlock.buttons`, a required Matrix
+  nothing could fill.
+- **`concat(expr, expr, …)` field expression** — joins every non-empty
+  alternative where `coalesce()` keeps only the first. Built for ContactPerson,
+  which keeps prose in both `content` and `contact_person_content` on 80 live
+  rows; the spec folds them into one field.
+- **`centered` transform** — a legacy alignment string (`center`/`centered`)
+  becomes the alignment Lightswitch value.
+
+### Fixed
+
+- **`link()` aimed at an indexed nested position now sees its Matrix.** A target
+  like `cards[0].buttons` addresses the buttons Matrix on the nested card type;
+  the slot resolver only looked at top-level targets, so `link()` emitted a bare
+  link map Craft discards without a word. The resolver now walks nested
+  positions, which is what lets a single-tile part (Product: title + link, no
+  child table) compile as a cardsBlock holding one card.
+
 ## 2.0.0-alpha.3 — 2026-08-22
 
 Setting the plugin up no longer starts with a text field and prior knowledge.

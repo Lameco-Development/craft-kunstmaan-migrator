@@ -40,6 +40,13 @@ final class LinkShapeTest extends TestCase
                     'uspBlockUsp' => [
                         'link' => new Slot('link', 'Link', false),
                     ],
+                    'cardsBlock' => [
+                        'cards' => new Slot('cards', 'Matrix', false, ['cardsCard']),
+                    ],
+                    'cardsCard' => [
+                        'heading' => new Slot('heading', 'PlainText', false),
+                        'buttons' => new Slot('buttons', 'Matrix', false, ['button']),
+                    ],
                 ];
             }
 
@@ -198,6 +205,87 @@ final class LinkShapeTest extends TestCase
                 ['buttons' => 'link(link_url, link_text, link_new_window, link_type)'],
                 ['link_url' => 'https://example.com/z', 'link_text' => '', 'link_new_window' => 0, 'link_type' => null],
                 'ContentMedia',
+            ),
+        );
+    }
+    #[Test]
+    public function links_builds_one_button_per_filled_column(): void
+    {
+        // SocialMedia: five sibling URL columns, no label columns — the label lives in the
+        // mapping. An empty column produces no button, same as link()'s empty-row rule.
+        self::assertSame(
+            ['buttons' => [
+                ['type' => 'button', 'fields' => ['commonLink' => ['value' => 'https://x.com/enreach', 'label' => 'Twitter']]],
+                ['type' => 'button', 'fields' => ['commonLink' => ['value' => 'https://linkedin.com/company/enreach', 'label' => 'LinkedIn']]],
+            ]],
+            $this->builder('contentMediaBlock')->fieldsFrom(
+                ['buttons' => 'links(twitter=Twitter, linkedin=LinkedIn, instagram=Instagram)'],
+                ['twitter' => 'https://x.com/enreach', 'linkedin' => 'https://linkedin.com/company/enreach', 'instagram' => ''],
+                'SocialMedia',
+            ),
+        );
+    }
+
+    #[Test]
+    public function links_with_nothing_filled_produces_no_field_at_all(): void
+    {
+        self::assertSame(
+            [],
+            $this->builder('contentMediaBlock')->fieldsFrom(
+                ['buttons' => 'links(twitter=Twitter)'],
+                ['twitter' => '  '],
+                'SocialMedia',
+            ),
+        );
+    }
+
+    #[Test]
+    public function concat_joins_every_filled_alternative_where_coalesce_keeps_one(): void
+    {
+        // ContactPerson keeps prose in both `content` and `contact_person_content` on 80 live
+        // rows; the spec folds them into one field.
+        self::assertSame(
+            ['content' => "<p>Intro</p>\n<p>Person</p>"],
+            $this->builder('uspBlockUsp')->fieldsFrom(
+                ['content' => 'concat(content, contact_person_content)'],
+                ['content' => '<p>Intro</p>', 'contact_person_content' => '<p>Person</p>'],
+                'ContactPerson',
+            ),
+        );
+
+        self::assertSame(
+            ['content' => '<p>Person</p>'],
+            $this->builder('uspBlockUsp')->fieldsFrom(
+                ['content' => 'concat(content, contact_person_content)'],
+                ['content' => '', 'contact_person_content' => '<p>Person</p>'],
+                'ContactPerson',
+            ),
+        );
+    }
+    #[Test]
+    public function a_link_aimed_at_an_indexed_nested_position_still_sees_its_matrix(): void
+    {
+        // Product is one card: `cards[0].buttons` addresses the buttons Matrix on the nested
+        // card type. Before the target walk, link() could not resolve the slot and emitted a
+        // bare link map Craft discards.
+        self::assertSame(
+            ['cards' => [[
+                'type' => 'cardsCard',
+                'fields' => [
+                    'heading' => 'Enreach Contact',
+                    'buttons' => [[
+                        'type' => 'button',
+                        'fields' => ['commonLink' => ['value' => 'https://example.com/p', 'label' => 'Read more']],
+                    ]],
+                ],
+            ]]],
+            $this->builder('cardsBlock')->fieldsFrom(
+                [
+                    'cards[0].heading' => 'title',
+                    'cards[0].buttons' => 'link(link_url, link_text, link_new_window)',
+                ],
+                ['title' => 'Enreach Contact', 'link_url' => 'https://example.com/p', 'link_text' => 'Read more', 'link_new_window' => 0],
+                'Product',
             ),
         );
     }
