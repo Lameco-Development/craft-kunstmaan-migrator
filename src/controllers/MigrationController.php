@@ -254,7 +254,7 @@ final class MigrationController extends Controller
         return $this->renderTemplate('kunstmaan-migrator/_mapping-row', [
             'lane' => $lane,
             'row' => $row,
-            'blocks' => $editor->targetsFor($lane),
+            'targetOptions' => $editor->targetOptions($lane),
             'fields' => $fields,
             'expressions' => $expressions,
             'columns' => $editor->columnsFor($row),

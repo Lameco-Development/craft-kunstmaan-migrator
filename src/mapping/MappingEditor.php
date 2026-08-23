@@ -169,20 +169,50 @@ final class MappingEditor
     }
 
     /**
-     * The targets a lane may choose from, read from this install.
+     * The target dropdown's options, grouped where grouping means something.
      *
      * A `parts` row becomes a page-builder block; a `pages` or `entities` row
-     * becomes an entry type. Same question either way — what may I write here —
-     * so the screen asks the editor rather than knowing per lane.
+     * becomes an entry type. Entry types come grouped by the section that uses them — a flat list of
+     * every handle in the install is a list you search, not read — with the
+     * types no section uses (Matrix block types) together at the end, because
+     * on the pages and entities lanes they are almost never the answer.
      *
-     * @return list<string>
+     * @return list<array{label: string, value: string}|array{optgroup: string}>
      */
-    public function targetsFor(string $lane): array
+    public function targetOptions(string $lane): array
     {
-        return match ($lane) {
-            'parts' => $this->availableBlocks(),
-            default => $this->catalogue->entryTypes(),
-        };
+        $option = static fn (string $handle): array => ['label' => $handle, 'value' => $handle];
+
+        if ($lane === 'parts') {
+            return array_map($option, $this->availableBlocks());
+        }
+
+        $options = [];
+        $grouped = [];
+
+        foreach ($this->catalogue->entryTypesBySection() as $section => $handles) {
+            $options[] = ['optgroup' => $section];
+
+            foreach ($handles as $handle) {
+                $options[] = $option($handle);
+                $grouped[$handle] = true;
+            }
+        }
+
+        $rest = array_filter(
+            $this->catalogue->entryTypes(),
+            static fn (string $handle): bool => !isset($grouped[$handle]),
+        );
+
+        if ($rest !== []) {
+            if ($options !== []) {
+                $options[] = ['optgroup' => \Yii::t('kunstmaan-migrator', 'Not in a section')];
+            }
+
+            $options = [...$options, ...array_map($option, array_values($rest))];
+        }
+
+        return $options;
     }
 
     /**
@@ -288,8 +318,16 @@ final class MappingEditor
      */
     public function patch(string $lane, string $key, array $changes): void
     {
+        // Only errors this edit introduces block the save. A fresh skeleton
+        // fails whole-document validation by design — every row still open —
+        // and this screen is the advertised way to close them one at a time.
+        // Holding one row's save hostage to sixty untouched rows made the
+        // editor unusable on exactly the file it exists for.
+        $schema = new Schema();
+        $before = $schema->validate($this->document()->mapping());
+
         $document = $this->document()->patch($lane, $key, $changes);
-        $errors = (new Schema())->validate($document->mapping());
+        $errors = array_values(array_diff($schema->validate($document->mapping()), $before));
 
         if ($errors !== []) {
             throw new MappingEditorException(sprintf(

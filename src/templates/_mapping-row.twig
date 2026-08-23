@@ -41,17 +41,16 @@
          directly. The field list below is the union across the page entry types;
          a field a type does not carry is dropped and counted at compile time. #}
       <p class="light">{{ "Writes onto the page it decorates — no target to choose. Fields a page entry type does not carry are dropped for that page and counted."|t('kunstmaan-migrator') }}</p>
-  {% elseif blocks is not empty %}
+  {% elseif targetOptions is not empty %}
       {# Read from this Craft install, not typed from memory: a handle typed into
-         YAML is checked when a migration runs, hours later. #}
-      {{ forms.selectField({
+         YAML is checked when a migration runs, hours later. Selectize, because
+         sixty handles is a list you search, not scroll. #}
+      {{ forms.selectizeField({
         label: "Becomes"|t('kunstmaan-migrator'),
         instructions: "The Craft {noun} this legacy row becomes. Only what this install offers is listed; save to see its fields."|t('kunstmaan-migrator', { noun: noun }),
         name: 'target',
         value: row.target,
-        options: [{ label: "— choose —"|t('kunstmaan-migrator'), value: '' }]|merge(
-          blocks|map(b => { label: b, value: b })
-        ),
+        options: [{ label: "— choose —"|t('kunstmaan-migrator'), value: '' }]|merge(targetOptions),
       }) }}
   {% else %}
       {{ forms.textField({

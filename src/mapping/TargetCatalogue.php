@@ -28,4 +28,14 @@ interface TargetCatalogue
      * @return list<string>
      */
     public function sections(): array;
+
+    /**
+     * Entry type handles grouped by the section that uses them.
+     *
+     * Types no section uses — Matrix block types — are absent here;
+     * `entryTypes()` still lists them.
+     *
+     * @return array<string, list<string>> section name => entry type handles
+     */
+    public function entryTypesBySection(): array;
 }

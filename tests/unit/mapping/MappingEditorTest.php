@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\unit\mapping;
 
+use lameco\kunstmaanmigrator\mapping\MappingEditor;
+use lameco\kunstmaanmigrator\mapping\MappingEditorException;
 use lameco\kunstmaanmigrator\mapping\MappingRow;
 use lameco\kunstmaanmigrator\mapping\TargetCatalogue;
+use lameco\kunstmaanmigrator\compile\TargetModel;
+use lameco\kunstmaanmigrator\payload\SchemaGateway;
 use lameco\kunstmaanmigrator\tests\support\InMemoryTargetCatalogue;
+use lameco\kunstmaanmigrator\tests\support\SettingsFactory;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -122,5 +127,89 @@ final class MappingEditorTest extends TestCase
         self::assertSame(1, $counts[MappingRow::DECIDED]);
         self::assertSame(1, $counts[MappingRow::DROPPED]);
         self::assertSame(2, $counts[MappingRow::OPEN], 'a row with unplaced columns is not finished');
+    }
+
+    /**
+     * A fresh skeleton fails whole-document validation by design — every row
+     * still open — and the row screen is the advertised way to close them one
+     * at a time. A save may only be refused for the damage it does itself.
+     */
+    public function testASaveIsNotBlockedByRowsItDidNotTouch(): void
+    {
+        $path = $this->mappingFile();
+
+        $this->editor($path)->patch('pages', 'ContentPage', ['entryType' => 'contentPage']);
+
+        self::assertStringContainsString('entryType: contentPage', (string) file_get_contents($path));
+    }
+
+    public function testASaveThatBreaksItsOwnRowStillFails(): void
+    {
+        $path = $this->mappingFile();
+
+        try {
+            $this->editor($path)->patch('pages', 'ContentPage', ['bogus' => 'x']);
+            self::fail('an edit introducing an error must not be written');
+        } catch (MappingEditorException $e) {
+            self::assertStringContainsString('bogus', $e->getMessage());
+        }
+
+        self::assertStringNotContainsString('bogus', (string) file_get_contents($path));
+    }
+
+    /**
+     * Sixty flat handles is a list you search, not read: entry types come
+     * grouped by section, with the types no section uses closing the list.
+     */
+    public function testTargetOptionsGroupEntryTypesBySection(): void
+    {
+        $editor = $this->editor($this->mappingFile(), new InMemoryTargetCatalogue(
+            ['article', 'contentPage', 'quote'],
+            ['news', 'pages'],
+            ['News' => ['article'], 'Pages' => ['contentPage']],
+        ));
+
+        self::assertSame(
+            [
+                ['optgroup' => 'News'],
+                ['label' => 'article', 'value' => 'article'],
+                ['optgroup' => 'Pages'],
+                ['label' => 'contentPage', 'value' => 'contentPage'],
+                ['optgroup' => 'Not in a section'],
+                ['label' => 'quote', 'value' => 'quote'],
+            ],
+            $editor->targetOptions('pages'),
+        );
+    }
+
+    /** Two open pages, as `mapping/init` leaves them. */
+    private function mappingFile(): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'mapping') . '.yaml';
+
+        file_put_contents($path, <<<'YAML'
+            version: 1
+            environments:
+              COM:
+                database: legacy
+                locales: { en: siteEn }
+            pages:
+              ContentPage: {}
+              BlogPage: {}
+            YAML);
+
+        return $path;
+    }
+
+    private function editor(string $path, ?TargetCatalogue $catalogue = null): MappingEditor
+    {
+        $schema = $this->createStub(SchemaGateway::class);
+
+        return new MappingEditor(
+            SettingsFactory::make(['mappingPath' => $path]),
+            $schema,
+            new TargetModel($schema),
+            $catalogue ?? new InMemoryTargetCatalogue(),
+        );
     }
 }

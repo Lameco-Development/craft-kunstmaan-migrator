@@ -31,4 +31,24 @@ final class CraftTargetCatalogue implements TargetCatalogue
 
         return array_values(array_unique($handles));
     }
+
+    public function entryTypesBySection(): array
+    {
+        $groups = [];
+
+        foreach (Craft::$app->getEntries()->getAllSections() as $section) {
+            foreach ($section->getEntryTypes() as $entryType) {
+                $groups[(string) $section->name][(string) $entryType->handle] = true;
+            }
+        }
+
+        ksort($groups);
+
+        return array_map(static function (array $handles): array {
+            $handles = array_keys($handles);
+            sort($handles);
+
+            return $handles;
+        }, $groups);
+    }
 }
