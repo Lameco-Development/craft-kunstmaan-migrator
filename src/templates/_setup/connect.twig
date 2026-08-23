@@ -6,6 +6,9 @@
 
   <div class="readable">
     <p>{{ "The old Kunstmaan site’s database. Nothing is written to it — the migration only reads."|t('kunstmaan-migrator') }}</p>
+    {% if settings.legacyDbDatabase %}
+      <p class="light">{{ "The detect step read {db} out of the old site's .env — the test below looks for exactly that database."|t('kunstmaan-migrator', { db: '<code>' ~ settings.legacyDbDatabase ~ '</code>' })|raw }}</p>
+    {% endif %}
   </div>
 
   {{ forms.autosuggestField({
@@ -64,7 +67,8 @@
           legacyDbServer: form.elements.legacyDbServer.value,
           legacyDbPort: form.elements.legacyDbPort.value,
           legacyDbUser: form.elements.legacyDbUser.value,
-          legacyDbPassword: form.elements.legacyDbPassword.value
+          legacyDbPassword: form.elements.legacyDbPassword.value,
+          legacyDbDatabase: {{ settings.legacyDbDatabase|json_encode|raw }}
         }
       })
         .then(function (response) {

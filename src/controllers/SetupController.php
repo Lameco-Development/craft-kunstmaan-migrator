@@ -104,6 +104,7 @@ final class SetupController extends Controller
             $settings->legacyDbServer = $checkout['database']['host'];
             $settings->legacyDbPort = $checkout['database']['port'];
             $settings->legacyDbUser = $checkout['database']['user'];
+            $settings->legacyDbDatabase = $checkout['database']['database'];
 
             // A literal password is refused by the settings model — it would be
             // written into project config and committed. So the prefill is a
@@ -197,6 +198,35 @@ final class SetupController extends Controller
             return $this->asFailure(self::readable($e));
         }
 
+        // The detect step read a database name out of the checkout's .env; the
+        // test should answer about *that* site, not count everything on the
+        // server. Without one, the count is the only answer there is.
+        $detected = trim((string) ($this->request->getBodyParam('legacyDbDatabase')
+            ?? Plugin::getInstance()->getSettings()->legacyDbDatabase ?? ''));
+
+        if ($detected !== '') {
+            $names = array_map(static fn (array $c): string => (string) $c['database'], $found);
+            $siblings = self::siblingsOf($detected, $names);
+
+            if (in_array($detected, $names, true)) {
+                return $this->asJson([
+                    'message' => $siblings === []
+                        ? Craft::t('kunstmaan-migrator', 'Connected — {db} found.', ['db' => $detected])
+                        : Craft::t('kunstmaan-migrator', 'Connected — {db} found, plus {n, plural, =1{1 sibling database} other{# sibling databases}} ({siblings}).', [
+                            'db' => $detected,
+                            'n' => count($siblings),
+                            'siblings' => implode(', ', $siblings),
+                        ]),
+                ]);
+            }
+
+            return $this->asFailure(Craft::t(
+                'kunstmaan-migrator',
+                'Connected, but no database called {db} on this server. The next step lists the {n} Kunstmaan sites it does hold.',
+                ['db' => $detected, 'n' => count($found)],
+            ));
+        }
+
         return $this->asJson([
             'message' => Craft::t('kunstmaan-migrator', '{n, plural, =0{Connected, but found no Kunstmaan sites} =1{Connected — 1 Kunstmaan site found} other{Connected — # Kunstmaan sites found}}', [
                 'n' => count($found),
@@ -219,8 +249,18 @@ final class SetupController extends Controller
             $error = self::readable($e);
         }
 
+        // The database the detect step read from the checkout's .env, and its
+        // siblings by naming convention (enreach_website -> enreach_website_de),
+        // arrive pre-checked. A pre-check is a suggestion, not a decision — the
+        // near-duplicate that should stay behind is unticked here, once.
+        $detected = trim((string) (Plugin::getInstance()->getSettings()->legacyDbDatabase ?? ''));
+        $names = array_map(static fn (array $c): string => (string) $c['database'], $databases);
+        $siblings = $detected !== '' ? self::siblingsOf($detected, $names) : [];
+
         foreach ($databases as $i => $candidate) {
-            $databases[$i]['label'] = SetupDraft::suggestLabel((string) $candidate['database']);
+            $database = (string) $candidate['database'];
+            $databases[$i]['label'] = SetupDraft::suggestLabel($database);
+            $databases[$i]['preselected'] = $database === $detected || in_array($database, $siblings, true);
         }
 
         return $this->step(SetupStep::Sites, 'sites', [
@@ -420,6 +460,22 @@ final class SetupController extends Controller
     }
 
     // ── Plumbing ─────────────────────────────────────────────────────────────
+
+    /**
+     * Sibling databases of the detected one, by the naming convention every
+     * multi-country Kunstmaan install here follows: the same stem with a
+     * suffix — enreach_website, enreach_website_de, enreach_website_lv.
+     *
+     * @param list<string> $candidates
+     * @return list<string>
+     */
+    private static function siblingsOf(string $database, array $candidates): array
+    {
+        return array_values(array_filter(
+            $candidates,
+            static fn (string $name): bool => $name !== $database && str_starts_with($name, $database . '_'),
+        ));
+    }
 
     /**
      * The name of an environment variable this project already holds that

@@ -13,7 +13,7 @@
   {% else %}
     <div class="readable">
       <p>
-        {{ "These are the Kunstmaan sites on that server. One site is usually one database, and a multi-language site often has one per country."|t('kunstmaan-migrator') }}
+        {{ "These are the Kunstmaan sites on that server. One site is usually one database, and a multi-language site often has one per country. The one the detect step found — and its sibling databases — are already ticked; untick anything that should stay behind."|t('kunstmaan-migrator') }}
       </p>
     </div>
 
@@ -32,7 +32,7 @@
         {% for candidate in databases %}
           <tr data-name="{{ candidate.database }}">
             <td>
-              <input type="checkbox" class="checkbox kuma-pick" id="pick-{{ loop.index }}" data-database="{{ candidate.database }}">
+              <input type="checkbox" class="checkbox kuma-pick" id="pick-{{ loop.index }}" data-database="{{ candidate.database }}"{% if candidate.preselected ?? false %} checked{% endif %}>
               <label for="pick-{{ loop.index }}"></label>
             </td>
             <th scope="row"><code>{{ candidate.database }}</code></th>
