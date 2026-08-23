@@ -18,7 +18,15 @@
   {{ hiddenInput('key', row.key) }}
 
   <p class="light">
-      {{ row.live|number_format }} {{ "live placements"|t('kunstmaan-migrator') }}
+      {# Each lane counts a different thing; calling entity rows "placements" is
+         the small wrongness that makes an operator distrust the number. #}
+      {% set liveNoun = {
+        parts: "live placements"|t('kunstmaan-migrator'),
+        pages: "live pages"|t('kunstmaan-migrator'),
+        entities: "rows that become entries"|t('kunstmaan-migrator'),
+        sidecars: "live pages decorated"|t('kunstmaan-migrator'),
+      } %}
+      {{ row.live|number_format }} {{ liveNoun[lane] ?? "live"|t('kunstmaan-migrator') }}
       {% if row.table %} · <code>{{ row.table }}</code>{% endif %}
   </p>
 

@@ -63,7 +63,7 @@ final class Skeleton
         $out = $this->header($parts, $pages);
         $out .= $this->environments($databases, $locales);
         $out .= $this->pagesSection($pages);
-        $out .= $this->entitiesSection();
+        $out .= $this->entitiesSection($probe instanceof LegacyDatabase ? $probe : null);
         $out .= $this->sequenceSection();
         $out .= $this->partsSection($parts, $probe, $childTables);
         $out .= $this->sidecarsSection($probe instanceof LegacyDatabase ? $probe : null);
@@ -82,7 +82,7 @@ final class Skeleton
      * skeleton lists each with its real table and a title guess, and fails
      * validation until section, entry type and the dedupe decision are filled in.
      */
-    private function entitiesSection(): string
+    private function entitiesSection(?LegacyDatabase $db): string
     {
         $candidates = $this->entityCandidates();
 
@@ -98,8 +98,16 @@ final class Skeleton
         }
 
         foreach ($candidates as $name => $candidate) {
+            // Rows, not placements: an entity table's rows are the entries it becomes.
+            $rows = $db?->countOrNull($candidate['table']);
+
             $out .= sprintf("\n  %s:\n", $name);
             $out .= sprintf("    # related to by %s\n", implode(', ', $candidate['referencedBy']));
+
+            if ($rows !== null) {
+                $out .= sprintf("    live: %d\n", $rows);
+            }
+
             $out .= sprintf("    table: %s\n", $candidate['table']);
             $out .= "    section: ~                          # TODO: Craft section handle\n";
             $out .= "    entryType: ~                        # TODO: Craft entry type handle\n";
@@ -219,6 +227,7 @@ final class Skeleton
             $found++;
             $rest = array_values(array_diff($columns, ['id', 'ref_id', 'ref_entity_name']));
             $out .= sprintf("\n  %s:\n", $this->sidecarName($table));
+            $out .= sprintf("    live: %d\n", $db->liveSidecarRows($table));
             $out .= sprintf("    table: %s\n", $table);
             $out .= "    map: {}\n";
             $out .= sprintf("    ignore: [%s]\n", implode(', ', $rest));

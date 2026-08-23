@@ -48,7 +48,7 @@ final class Schema
     private const PAGE_KEYS = ['live', 'table', 'section', 'entryType', 'map', 'children', 'ignore',
         'unreviewed', 'contexts', 'postDate', 'manual', 'drop', 'todo', 'note'];
 
-    private const ENTITY_KEYS = ['table', 'section', 'entryType', 'title', 'softDelete', 'dedupe',
+    private const ENTITY_KEYS = ['live', 'table', 'section', 'entryType', 'title', 'softDelete', 'dedupe',
         'map', 'ignore', 'unreviewed', 'todo', 'note'];
 
     private const REDIRECT_KEYS = ['live', 'table', 'map', 'defaultType', 'ignore', 'unreviewed', 'todo', 'note'];

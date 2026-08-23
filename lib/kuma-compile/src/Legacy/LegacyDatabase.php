@@ -65,6 +65,32 @@ final class LegacyDatabase
         );
     }
 
+    /**
+     * Sidecar rows reachable from a published page — the live share.
+     *
+     * Sidecars are cloned per node version exactly like pageparts, so the raw
+     * table is roughly twenty times the live content; the only honest count
+     * resolves through the published version, the same way everything else here
+     * does.
+     */
+    public function liveSidecarRows(string $table): int
+    {
+        try {
+            $stmt = $this->pdo->query(sprintf(
+                'SELECT COUNT(DISTINCT s.id)
+                 FROM `%s` s
+                 JOIN kuma_node_versions v ON v.ref_id = s.ref_id AND v.ref_entity_name = s.ref_entity_name
+                 JOIN kuma_node_translations t ON t.public_node_version_id = v.id AND t.online = 1
+                 JOIN kuma_nodes n ON n.id = t.node_id AND n.deleted = 0',
+                $table,
+            ));
+
+            return (int) $stmt->fetchColumn();
+        } catch (\PDOException) {
+            return 0;
+        }
+    }
+
     /** @return list<string> */
     public function tables(): array
     {
