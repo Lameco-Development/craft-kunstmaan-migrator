@@ -6,7 +6,7 @@
 {% set title = "Coverage"|t('kunstmaan-migrator') %}
 
 {% block content %}
-  {% if entryTypes is empty %}
+  {% if targets is empty %}
     <div class="readable">
       <blockquote class="note">
         <p>{{ "No page row targets an entry type yet. Decide the pages lane first — coverage is the view you verify those decisions with."|t('kunstmaan-migrator') }}</p>
@@ -20,24 +20,36 @@
     {% if gaps is not empty %}
       <div class="readable" style="margin-bottom: 16px;">
         <blockquote class="note {{ gaps|filter(g => g.required > 0) is not empty ? 'warning' }}">
-          <p>{{ "Entry types with unfed fields:"|t('kunstmaan-migrator') }}
+          <p>{{ "Targets with unfed fields:"|t('kunstmaan-migrator') }}
             {% for gap in gaps %}
-              <a href="{{ url('kunstmaan-migrator/coverage', { entryType: gap.entryType }) }}">{{ gap.entryType }}</a>
+              <a href="{{ url('kunstmaan-migrator/coverage', { kind: gap.kind, handle: gap.handle }) }}">{{ gap.handle }}</a>{% if gap.kind != 'page' %} <span class="light">({{ gap.kind }})</span>{% endif %}
               ({{ gap.unfed }}{% if gap.required > 0 %}, <strong>{{ "{count} required"|t('kunstmaan-migrator', { count: gap.required }) }}</strong>{% endif %}){{ not loop.last ? ' · ' }}
             {% endfor %}
           </p>
         </blockquote>
       </div>
     {% else %}
-      <p class="light">{{ "✓ Every field of every mapped entry type is fed."|t('kunstmaan-migrator') }}</p>
+      <p class="light">{{ "✓ Every field of every mapped target is fed."|t('kunstmaan-migrator') }}</p>
     {% endif %}
 
+    {% set kindLabels = { page: 'Pages'|t('kunstmaan-migrator'), entity: 'Entities'|t('kunstmaan-migrator'), block: 'Blocks'|t('kunstmaan-migrator') } %}
+    {% set options = [] %}
+    {% for kindKey, label in kindLabels %}
+      {% set ofKind = targets|filter(t => t.kind == kindKey) %}
+      {% if ofKind is not empty %}
+        {% set options = options|merge([{ optgroup: label }])|merge(
+          ofKind|map(t => { label: t.handle, value: t.kind ~ ':' ~ t.handle })
+        ) %}
+      {% endif %}
+    {% endfor %}
+
     {{ forms.selectizeField({
-      label: "Entry type"|t('kunstmaan-migrator'),
+      label: "Target"|t('kunstmaan-migrator'),
+      instructions: "A page entry type, an entity entry type, or a block — everything migrated content lands in."|t('kunstmaan-migrator'),
       id: 'kuma-coverage-type',
-      name: 'entryType',
-      value: entryType,
-      options: entryTypes|map(t => { label: t, value: t }),
+      name: 'target',
+      value: kind ~ ':' ~ handle,
+      options: options,
     }) }}
 
     {% js %}
@@ -45,17 +57,20 @@
         var container = document.getElementById('kuma-coverage-table');
 
         $('#kuma-coverage-type').on('change', function () {
-          var entryType = this.value;
+          var value = this.value;
 
           // Selectize fires a change with an empty value while the picker is
           // being cleared mid-choice; there is nothing to ask about yet.
-          if (!entryType) { return; }
+          if (!value) { return; }
 
-          kumaSwap(container, 'kunstmaan-migrator/migration/coverage-table', { entryType: entryType }, {
+          var kind = value.slice(0, value.indexOf(':'));
+          var handle = value.slice(value.indexOf(':') + 1);
+
+          kumaSwap(container, 'kunstmaan-migrator/migration/coverage-table', { kind: kind, handle: handle }, {
             onDone: function () {
               // The address keeps meaning something: reloading or sharing the
-              // URL lands on the type being looked at.
-              history.replaceState(null, '', Craft.getCpUrl('kunstmaan-migrator/coverage', { entryType: entryType }));
+              // URL lands on the target being looked at.
+              history.replaceState(null, '', Craft.getCpUrl('kunstmaan-migrator/coverage', { kind: kind, handle: handle }));
             },
           });
         });

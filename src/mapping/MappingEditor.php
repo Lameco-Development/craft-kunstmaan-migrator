@@ -82,7 +82,11 @@ final class MappingEditor
      */
     private function provenance(): FieldProvenance
     {
-        return $this->provenance ??= FieldProvenance::of($this->document()->mapping(), $this->target);
+        return $this->provenance ??= FieldProvenance::of(
+            $this->document()->mapping(),
+            $this->target,
+            $this->availableBlocks(),
+        );
     }
 
     /**
@@ -283,13 +287,24 @@ final class MappingEditor
     }
 
     /**
-     * Where every field of an entry type gets its content from, across lanes.
+     * Where every field of one target gets its content from, across lanes.
      *
-     * @return array{pageTypes: list<string>, fields: array<string, array{required: bool, pages: list<array{page: string, expression: string}>, sidecars: list<array{sidecar: string, expression: string}>, parts: ?int}>}
+     * @return array{kind: string, receives: list<string>, fields: array<string, array{required: bool, feeders: list<array{lane: string, name: string, expression: string}>, partsCount: ?int}>}
      */
-    public function coverageFor(string $entryType): array
+    public function coverageFor(string $kind, string $handle): array
     {
-        return $this->provenance()->coverage($entryType);
+        return $this->provenance()->coverage($kind, $handle);
+    }
+
+    /**
+     * Everything that receives content — page entry types, entity entry
+     * types, blocks — for the coverage picker.
+     *
+     * @return list<array{handle: string, kind: string}>
+     */
+    public function coverageTargets(): array
+    {
+        return $this->provenance()->targets();
     }
 
     /**
@@ -410,11 +425,11 @@ final class MappingEditor
     }
 
     /**
-     * The entry types whose fields are not all fed — the roll-up that saves
-     * clicking through every entry type to find the three with holes. An
-     * empty return is the finished state.
+     * The targets whose fields are not all fed — the roll-up that saves
+     * clicking through every target to find the three with holes. An empty
+     * return is the finished state.
      *
-     * @return list<array{entryType: string, unfed: int, required: int}>
+     * @return list<array{handle: string, kind: string, unfed: int, required: int}>
      */
     public function coverageGaps(): array
     {

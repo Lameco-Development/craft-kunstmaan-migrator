@@ -326,16 +326,25 @@ final class MigrationController extends Controller
         $this->requirePermission(Plugin::PERMISSION);
 
         $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
-        $entryTypes = $editor->mappedEntryTypes();
-        $entryType = (string) $this->request->getQueryParam('entryType', $entryTypes[0] ?? '');
+        $targets = $editor->coverageTargets();
+
+        // Old links said only ?entryType= — they keep meaning the page kind.
+        $kind = (string) $this->request->getQueryParam('kind', 'page');
+        $handle = (string) ($this->request->getQueryParam('handle')
+            ?? $this->request->getQueryParam('entryType', $targets[0]['handle'] ?? ''));
+
+        if (!in_array(['handle' => $handle, 'kind' => $kind], $targets, true)) {
+            [$handle, $kind] = [$targets[0]['handle'] ?? '', $targets[0]['kind'] ?? 'page'];
+        }
 
         return $this->renderTemplate('kunstmaan-migrator/_coverage', [
             'gaps' => $editor->coverageGaps(),
-            'entryTypes' => $entryTypes,
-            'entryType' => $entryType,
-            'coverage' => $entryType !== '' && in_array($entryType, $entryTypes, true)
-                ? $editor->coverageFor($entryType)
-                : ['pageTypes' => [], 'fields' => []],
+            'targets' => $targets,
+            'kind' => $kind,
+            'handle' => $handle,
+            'coverage' => $handle !== ''
+                ? $editor->coverageFor($kind, $handle)
+                : ['kind' => $kind, 'receives' => [], 'fields' => []],
         ]);
     }
 
@@ -348,16 +357,17 @@ final class MigrationController extends Controller
         $this->requireAcceptsJson();
         $this->requirePermission(Plugin::PERMISSION);
 
-        $entryType = (string) $this->request->getRequiredBodyParam('entryType');
+        $kind = (string) $this->request->getRequiredBodyParam('kind');
+        $handle = (string) $this->request->getRequiredBodyParam('handle');
         $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
 
-        if (!in_array($entryType, $editor->mappedEntryTypes(), true)) {
-            throw new BadRequestHttpException(sprintf('The pages lane does not target "%s".', $entryType));
+        if (!in_array(['handle' => $handle, 'kind' => $kind], $editor->coverageTargets(), true)) {
+            throw new BadRequestHttpException(sprintf('The mapping has no %s target "%s".', $kind, $handle));
         }
 
         return $this->asJson([
             'html' => Craft::$app->getView()->renderTemplate('kunstmaan-migrator/_coverage-table', [
-                'coverage' => $editor->coverageFor($entryType),
+                'coverage' => $editor->coverageFor($kind, $handle),
             ]),
         ]);
     }

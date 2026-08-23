@@ -314,7 +314,9 @@ final class MappingEditorTest extends TestCase
                 map: { summary: 'summary | ckeditor' }
               NewsPage: { entryType: newsPage }
             parts:
-              Text: { block: contentBlock }
+              Text:
+                block: contentBlock
+                map: { content: 'content | ckeditor' }
               RowStart: { drop: layout bracket }
             sidecars:
               headerTab:
@@ -323,12 +325,19 @@ final class MappingEditorTest extends TestCase
             YAML);
 
         $schema = $this->createStub(SchemaGateway::class);
-        $schema->method('fieldSlotsFor')->willReturn([
-            'pageBuilder' => ['type' => 'matrix', 'required' => false, 'nested' => ['contentBlock']],
-            'summary' => ['type' => 'ckeditor', 'required' => false, 'nested' => []],
-            'heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []],
-            'orphan' => ['type' => 'plaintext', 'required' => true, 'nested' => []],
-        ]);
+        $schema->method('fieldSlotsFor')->willReturnCallback(static fn (string $handle): array => match ($handle) {
+            'contentPage', 'newsPage' => [
+                'pageBuilder' => ['type' => 'matrix', 'required' => false, 'nested' => ['contentBlock']],
+                'summary' => ['type' => 'ckeditor', 'required' => false, 'nested' => []],
+                'heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []],
+                'orphan' => ['type' => 'plaintext', 'required' => true, 'nested' => []],
+            ],
+            'contentBlock' => [
+                'content' => ['type' => 'ckeditor', 'required' => false, 'nested' => []],
+                'unfedBlockField' => ['type' => 'plaintext', 'required' => false, 'nested' => []],
+            ],
+            default => [],
+        });
 
         $editor = new MappingEditor(
             SettingsFactory::make(['mappingPath' => $path]),
@@ -337,24 +346,34 @@ final class MappingEditorTest extends TestCase
             new InMemoryTargetCatalogue(),
         );
 
-        $coverage = $editor->coverageFor('contentPage');
+        $coverage = $editor->coverageFor('page', 'contentPage');
 
-        self::assertSame(['ContentPage'], $coverage['pageTypes']);
-        self::assertSame(1, $coverage['fields']['pageBuilder']['parts'], 'one part becomes a block; a dropped part feeds nothing');
+        self::assertSame(['ContentPage'], $coverage['receives']);
+        self::assertSame(1, $coverage['fields']['pageBuilder']['partsCount'], 'one part becomes a block; a dropped part feeds nothing');
         self::assertSame(
-            [['page' => 'ContentPage', 'expression' => 'summary | ckeditor']],
-            $coverage['fields']['summary']['pages'],
+            [['lane' => 'pages', 'name' => 'ContentPage', 'expression' => 'summary | ckeditor']],
+            $coverage['fields']['summary']['feeders'],
         );
         self::assertSame(
-            [['sidecar' => 'headerTab', 'expression' => 'title | inlineHtml']],
-            $coverage['fields']['heroTitle']['sidecars'],
+            [['lane' => 'sidecars', 'name' => 'headerTab', 'expression' => 'title | inlineHtml']],
+            $coverage['fields']['heroTitle']['feeders'],
         );
-        self::assertTrue($coverage['fields']['orphan']['required']);
         self::assertSame(
-            ['required' => true, 'pages' => [], 'sidecars' => [], 'parts' => null],
+            ['required' => true, 'feeders' => [], 'partsCount' => null],
             $coverage['fields']['orphan'],
             'nothing feeds it, and the screen must say so',
         );
+
+        // Blocks are targets too: the part that becomes contentBlock feeds its
+        // content field, and the field it never maps shows as unfed.
+        $block = $editor->coverageFor('block', 'contentBlock');
+
+        self::assertSame(['Text'], $block['receives']);
+        self::assertSame(
+            [['lane' => 'parts', 'name' => 'Text', 'expression' => 'content | ckeditor']],
+            $block['fields']['content']['feeders'],
+        );
+        self::assertSame([], $block['fields']['unfedBlockField']['feeders']);
     }
 
 
@@ -422,7 +441,7 @@ final class MappingEditorTest extends TestCase
         );
 
         self::assertSame(
-            [['entryType' => 'newsPage', 'unfed' => 1, 'required' => 1]],
+            [['handle' => 'newsPage', 'kind' => 'page', 'unfed' => 1, 'required' => 1]],
             $editor->coverageGaps(),
             'contentPage is fully fed by the sidecar and stays out of the list',
         );

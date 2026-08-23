@@ -1,12 +1,39 @@
-{# One entry type's coverage — included by _coverage and rendered standalone
-   by migration/coverage-table, so the picker redraws it without a page load. #}
-{% if coverage.pageTypes is not empty %}
+{# One target's coverage — included by _coverage and rendered standalone by
+   migration/coverage-table, so the picker redraws it without a page load. #}
+{% set laneOf = { pages: 'pages', entities: 'entities', sidecars: 'sidecars', parts: 'parts' } %}
+
+{% if coverage.kind == 'page' and coverage.receives is not empty %}
   <p class="light">
     {{ "Receives {count} legacy page types: {pages}."|t('kunstmaan-migrator', {
-      count: coverage.pageTypes|length,
-      pages: coverage.pageTypes|join(', '),
+      count: coverage.receives|length,
+      pages: coverage.receives|join(', '),
     }) }}
   </p>
+{% elseif coverage.kind == 'entity' and coverage.receives is not empty %}
+  <p class="light">
+    {{ "Fed by the entities lane: {entities}."|t('kunstmaan-migrator', { entities: coverage.receives|join(', ') }) }}
+  </p>
+{% elseif coverage.kind == 'block' %}
+  {% if coverage.receives is not empty %}
+    <p class="light">
+      {{ "Becomes from {count} legacy pagepart types: {parts}."|t('kunstmaan-migrator', {
+        count: coverage.receives|length,
+        parts: coverage.receives|join(', '),
+      }) }}
+    </p>
+  {% else %}
+    <p class="light">
+      {{ "No legacy pagepart becomes this block — the migration never creates one; only editors will."|t('kunstmaan-migrator') }}
+    </p>
+  {% endif %}
+{% endif %}
+
+{% if coverage.kind == 'block' and coverage.fields is empty %}
+  <div class="readable">
+    <blockquote class="note warning">
+      <p>{{ "This install offers no fields for this handle — a part that names it maps into nothing."|t('kunstmaan-migrator') }}</p>
+    </blockquote>
+  </div>
 {% endif %}
 
 <table class="data fullwidth">
@@ -18,28 +45,29 @@
   </thead>
   <tbody>
     {% for field, state in coverage.fields %}
-      {% set fed = state.pages is not empty or state.sidecars is not empty or state.parts is not null %}
+      {% set fed = state.feeders is not empty or state.partsCount is not null %}
       <tr>
         <th scope="row">
           <code>{{ field }}</code>
           {% if state.required %}<span class="required" aria-label="{{ 'Required'|t('app') }}"></span>{% endif %}
         </th>
         <td>
-          {% for fill in state.pages %}
+          {% for feeder in state.feeders %}
             <div>
-              {{ fill.page }} — <code>{{ fill.expression }}</code>
-              · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'pages', key: fill.page }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
+              {% if feeder.lane == 'sidecars' %}
+                {{ "{sidecar} sidecar"|t('kunstmaan-migrator', { sidecar: feeder.name }) }}
+              {% else %}
+                {{ feeder.name }}
+              {% endif %}
+              — <code>{{ feeder.expression }}</code>
+              {% if laneOf[feeder.lane] is defined %}
+                · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: laneOf[feeder.lane], key: feeder.name }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
+              {% endif %}
             </div>
           {% endfor %}
-          {% for fill in state.sidecars %}
+          {% if state.partsCount is not null %}
             <div>
-              {{ "{sidecar} sidecar"|t('kunstmaan-migrator', { sidecar: fill.sidecar }) }} — <code>{{ fill.expression }}</code>
-              · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'sidecars', key: fill.sidecar }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
-            </div>
-          {% endfor %}
-          {% if state.parts is not null %}
-            <div>
-              {{ "the parts lane — {count} pagepart types become blocks here"|t('kunstmaan-migrator', { count: state.parts }) }}
+              {{ "the parts lane — {count} pagepart types become blocks here"|t('kunstmaan-migrator', { count: state.partsCount }) }}
               · <a href="{{ url('kunstmaan-migrator/mapping', { lane: 'parts' }) }}">{{ "view"|t('kunstmaan-migrator') }}</a>
             </div>
           {% endif %}
@@ -47,7 +75,7 @@
             {# Empty-by-decision and empty-by-oversight look identical here; only
                a required field is provably a problem, so only it gets the alarm. #}
             {% if state.required %}
-              <span class="error">{{ "nothing feeds this, and the entry type requires it"|t('kunstmaan-migrator') }}</span>
+              <span class="error">{{ "nothing feeds this, and the layout requires it"|t('kunstmaan-migrator') }}</span>
             {% else %}
               <span class="light">{{ "nothing feeds this — it arrives empty"|t('kunstmaan-migrator') }}</span>
             {% endif %}
