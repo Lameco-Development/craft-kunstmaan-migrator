@@ -33,37 +33,10 @@
   }) }}
   <p><a class="btn" id="kuma-rescan">{{ "Look again"|t('kunstmaan-migrator') }}</a></p>
 
-  {% if checkouts is empty %}
-    <p class="zilch">{{ "No Kunstmaan sites found in {root} — a site is a folder whose composer.lock names a kunstmaan/* package."|t('kunstmaan-migrator', { root: root }) }}</p>
-  {% else %}
-    <div class="tablepane" style="margin-top: 10px;">
-    <table class="data fullwidth">
-      <thead>
-        <tr>
-          <th style="width: 40px;"></th>
-          <th>{{ "Site"|t('kunstmaan-migrator') }}</th>
-          <th>{{ "Kunstmaan"|t('kunstmaan-migrator') }}</th>
-          <th>{{ "Database"|t('kunstmaan-migrator') }}</th>
-          <th>{{ "Uploads"|t('kunstmaan-migrator') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for checkout in checkouts %}
-          <tr>
-            <td>
-              <input type="radio" name="pick" class="kuma-pick" id="pick-{{ loop.index }}" value="{{ checkout.path }}">
-              <label for="pick-{{ loop.index }}"></label>
-            </td>
-            <th scope="row"><label for="pick-{{ loop.index }}">{{ checkout.name }}</label><br><span class="light"><code>{{ checkout.path }}</code></span></th>
-            <td>{{ checkout.kunstmaan }}</td>
-            <td>{% if checkout.database %}<span class="status on"></span><code>{{ checkout.database.database }}</code>{% else %}<span class="status"></span><span class="light">{{ "not in .env"|t('kunstmaan-migrator') }}</span>{% endif %}</td>
-            <td>{% if checkout.mediaRoot %}<span class="status on"></span>{{ "found"|t('kunstmaan-migrator') }}{% else %}<span class="status"></span><span class="light">—</span>{% endif %}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    </div>
-  {% endif %}
+  <div id="kuma-detect-results">
+    {% include 'kunstmaan-migrator/_setup/_detect-results' %}
+  </div>
+
 
   <p style="margin-top: 16px;">
     <a class="go" href="{{ url('kunstmaan-migrator/setup/connect') }}">{{ "The old site is not on this machine — enter the connection by hand"|t('kunstmaan-migrator') }}</a>
@@ -80,9 +53,25 @@
       saves().forEach(function (b) { b.disabled = false; });
     });
 
-    document.getElementById('kuma-rescan').addEventListener('click', function () {
-      var root = document.getElementById('kuma-root').value;
-      window.location = '{{ url('kunstmaan-migrator/setup/detect') }}' + (root ? '?root=' + encodeURIComponent(root) : '');
-    });
+    var results = document.getElementById('kuma-detect-results');
+    var rescanBtn = document.getElementById('kuma-rescan');
+    var rootField = document.getElementById('kuma-root');
+
+    var rescan = function () {
+      rescanBtn.classList.add('loading');
+      Craft.sendActionRequest('POST', 'kunstmaan-migrator/setup/detect-results', {
+        data: { root: rootField.value },
+      }).then(function (response) {
+        results.innerHTML = response.data.html;
+        // The picked checkout is gone with the old list.
+        path.value = '';
+        saves().forEach(function (b) { b.disabled = true; });
+      }).finally(function () {
+        rescanBtn.classList.remove('loading');
+      });
+    };
+
+    rescanBtn.addEventListener('click', rescan);
+    rootField.addEventListener('change', rescan);
   {% endjs %}
 {% endblock %}

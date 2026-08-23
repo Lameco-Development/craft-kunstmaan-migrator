@@ -81,6 +81,30 @@ final class SetupController extends Controller
         ]);
     }
 
+    /**
+     * The checkout list alone, for the detect screen's live "Look again" —
+     * the same scan actionDetect runs, minus the page around it.
+     */
+    public function actionDetectResults(): Response
+    {
+        $this->guard();
+        $this->requirePostRequest();
+        $this->requireAcceptsJson();
+
+        $root = trim((string) $this->request->getBodyParam('root', ''));
+
+        if ($root === '') {
+            $root = dirname((string) Craft::getAlias('@root'));
+        }
+
+        return $this->asJson([
+            'html' => Craft::$app->getView()->renderTemplate('kunstmaan-migrator/_setup/_detect-results', [
+                'root' => $root,
+                'checkouts' => (new CheckoutScanner())->scan($root),
+            ]),
+        ]);
+    }
+
     public function actionChooseCheckout(): Response
     {
         $this->guard();

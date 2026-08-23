@@ -316,6 +316,61 @@ final class MigrationController extends Controller
     }
 
     /**
+     * The field map for a hypothetical target, redrawn live.
+     *
+     * "Save to see its fields" made choosing a Becomes a two-step guess; the
+     * dropdown now asks this action and swaps the map in place. Nothing is
+     * written — the row is read from the file as it is, only the target is
+     * taken from the request — so browsing targets costs nothing.
+     */
+    public function actionFieldMap(): Response
+    {
+        $this->requirePostRequest();
+        $this->requireAcceptsJson();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $lane = (string) $this->request->getRequiredBodyParam('lane');
+        $key = (string) $this->request->getRequiredBodyParam('key');
+        $target = trim((string) $this->request->getBodyParam('target', ''));
+
+        if (!in_array($lane, self::EDITABLE_LANES, true)) {
+            throw new BadRequestHttpException(sprintf('There is no "%s" lane to edit.', $lane));
+        }
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $row = $editor->row($lane, $key);
+
+        if ($row === null) {
+            throw new BadRequestHttpException(sprintf('The %s lane does not name "%s".', $lane, $key));
+        }
+
+        $fields = $target !== '' ? $editor->fieldsFor($target) : [];
+        $expressions = [];
+
+        foreach ($fields as $field) {
+            $expressions[$field] = FieldExpression::parse((string) ($row->map[$field] ?? ''));
+        }
+
+        // The partial's own {% js %} (selectize init) lands in a buffer and
+        // travels with the HTML — swapped-in markup is otherwise dead.
+        $view = Craft::$app->getView();
+        $view->startJsBuffer();
+        $html = $view->renderTemplate('kunstmaan-migrator/_mapping-row-fields', [
+            'lane' => $lane,
+            'row' => $row,
+            'fields' => $fields,
+            'expressions' => $expressions,
+            'columns' => $editor->columnsFor($row),
+            'transforms' => $editor->transforms(),
+            'sidecarFills' => $lane === 'pages' && $target !== '' ? $editor->sidecarFillsFor($target) : [],
+            'carriage' => [],
+        ]);
+        $js = $view->clearJsBuffer();
+
+        return $this->asJson(['html' => $html, 'js' => is_string($js) ? $js : '']);
+    }
+
+    /**
      * `mapping/check`, as a button: is the file well-formed, does it match
      * this install, are the conflicts decided. The same three questions in the
      * same order the CLI and `migrate` ask them — a mapping that is not

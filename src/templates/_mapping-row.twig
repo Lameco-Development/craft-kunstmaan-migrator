@@ -47,7 +47,7 @@
          sixty handles is a list you search, not scroll. #}
       {{ forms.selectizeField({
         label: "Becomes"|t('kunstmaan-migrator'),
-        instructions: "The Craft {noun} this legacy row becomes. Only what this install offers is listed; save to see its fields."|t('kunstmaan-migrator', { noun: noun }),
+        instructions: "The Craft {noun} this legacy row becomes. Only what this install offers is listed; the field map below follows your choice, and Save records it."|t('kunstmaan-migrator', { noun: noun }),
         name: 'target',
         value: row.target,
         options: [{ label: "— choose —"|t('kunstmaan-migrator'), value: '' }]|merge(targetOptions),
@@ -60,123 +60,9 @@
       }) }}
   {% endif %}
 
-  {% if fields is not empty %}
-      <hr>
-
-      <h2>{{ "Field map"|t('kunstmaan-migrator') }}</h2>
-      <p class="light">
-        {% if columns is not empty %}
-          {{ "The fields of the chosen target, and which column of the old table fills each. Both lists are real — the fields from this Craft install, the columns from the old database."|t('kunstmaan-migrator') }}
-        {% else %}
-          {{ "The fields of the chosen target. The old database is not reachable right now, so type the column names."|t('kunstmaan-migrator') }}
-        {% endif %}
-      </p>
-
-      <table class="data fullwidth">
-        <thead>
-          <tr>
-            <th>{{ "Craft field"|t('kunstmaan-migrator') }}</th>
-            <th>{{ "Old column"|t('kunstmaan-migrator') }}</th>
-            <th>{{ "Converted how"|t('kunstmaan-migrator') }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for field in fields %}
-            {% set expression = expressions[field] %}
-            {% set fills = sidecarFills[field] ?? [] %}
-            <tr>
-              <th scope="row">
-                <code>{{ field }}</code>
-                {# The sidecar fills this field on every page it decorates, and a
-                   screen that shows it as "not filled" is lying. Named here, with
-                   the way out — the page's own map wins a collision, so a column
-                   chosen on this row is an override, not a conflict. #}
-                {% for fill in fills %}
-                  <div class="light">
-                    {{ "filled by the {sidecar} sidecar"|t('kunstmaan-migrator', { sidecar: fill.sidecar }) }}
-                    (<code>{{ fill.expression }}</code>)
-                    · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'sidecars', key: fill.sidecar }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
-                  </div>
-                {% endfor %}
-                {# The compiler drops a field the page's type lacks and counts it —
-                   hours later. The count belongs here, while it is cheap to act on. #}
-                {% set fieldCarriage = carriage[field] ?? null %}
-                {% if fieldCarriage %}
-                  {% if fieldCarriage.missing is empty %}
-                    <div class="light">{{ "on every mapped entry type"|t('kunstmaan-migrator') }}</div>
-                  {% else %}
-                    <div class="light warning-with-icon">
-                      {% set shown = fieldCarriage.missing|slice(0, 5) %}
-                      {{ "on {carried} of {total} mapped entry types — dropped on {missing}"|t('kunstmaan-migrator', {
-                        carried: fieldCarriage.carried,
-                        total: fieldCarriage.total,
-                        missing: shown|join(', ') ~ (fieldCarriage.missing|length > 5
-                          ? ' ' ~ "and {more} more"|t('kunstmaan-migrator', { more: fieldCarriage.missing|length - 5 })
-                          : ''),
-                      }) }}
-                    </div>
-                  {% endif %}
-                {% endif %}
-              </th>
-
-              {% if expression.isAdvanced() %}
-                {# `link(link_url, title, link_new_window)` composes several
-                   columns into one field and `ref(Entity)` names an entity, not
-                   a column. Neither fits two dropdowns, and a form that
-                   pretended otherwise would quietly drop the arguments. #}
-                <td colspan="2">
-                  {{ forms.text({
-                    name: 'map[' ~ field ~ '][advanced]',
-                    value: expression.advanced,
-                    class: 'code',
-                  }) }}
-                  <span class="light">{{ "Written by hand — leave as it is unless you know the grammar."|t('kunstmaan-migrator') }}</span>
-                </td>
-              {% else %}
-                <td>
-                  {% if columns is not empty %}
-                    {{ forms.selectize({
-                      name: 'map[' ~ field ~ '][column]',
-                      value: expression.column,
-                      options: [{
-                        label: fills is not empty
-                          ? "— the sidecar fills this —"|t('kunstmaan-migrator')
-                          : "— not filled —"|t('kunstmaan-migrator'),
-                        value: '',
-                      }]|merge(
-                        columns|map(c => { label: c, value: c })
-                      ),
-                    }) }}
-                  {% else %}
-                    {{ forms.text({ name: 'map[' ~ field ~ '][column]', value: expression.column }) }}
-                  {% endif %}
-                </td>
-                <td>
-                  {{ forms.selectize({
-                    name: 'map[' ~ field ~ '][transform]',
-                    value: expression.transform,
-                    options: [{ label: "As it is"|t('kunstmaan-migrator'), value: '' }]|merge(
-                      transforms|keys|map(t => { label: transforms[t], value: t })
-                    ),
-                  }) }}
-                </td>
-              {% endif %}
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-
-      {% set unknown = row.map|keys|filter(f => f not in fields) %}
-      {% if unknown is not empty %}
-        <blockquote class="note warning">
-          <p>
-            {{ "The mapping fills fields this target does not have:"|t('kunstmaan-migrator') }}
-            <code>{{ unknown|join('</code>, <code>')|raw }}</code>.
-            {{ "They are left untouched here; fix them in the file, or change the block."|t('kunstmaan-migrator') }}
-          </p>
-        </blockquote>
-      {% endif %}
-  {% endif %}
+  <div id="kuma-field-map">
+    {% include 'kunstmaan-migrator/_mapping-row-fields' %}
+  </div>
 
   <hr>
 
@@ -238,14 +124,20 @@
   }) }}
 
 
-{% if samples is not empty %}
-  {# `title` next to `page_title` is a coin flip until you see what each holds.
-     The hint follows the dropdown's current choice; selectize forwards its
-     change events to the original select. #}
-  {% js %}
-    (function () {
-      var samples = {{ samples|json_encode|raw }};
-      document.querySelectorAll('select[name^="map["][name$="][column]"]').forEach(function (sel) {
+{# Two live behaviours share this block. Sample hints: `title` next to
+   `page_title` is a coin flip until you see what each holds, and the hint
+   follows the dropdown's current choice. Live field map: choosing a Becomes
+   used to require a save before the fields appeared; now the choice redraws
+   the map immediately — Save still records it. Rebinding is guarded per
+   element because the field map is swapped wholesale. #}
+{% js %}
+  (function () {
+    var samples = {{ samples|json_encode|raw }};
+
+    window.kumaBindSamples = function (root) {
+      root.querySelectorAll('select[name^="map["][name$="][column]"]').forEach(function (sel) {
+        if (sel.dataset.kumaSamples) { return; }
+        sel.dataset.kumaSamples = '1';
         var hint = document.createElement('div');
         hint.className = 'light';
         sel.closest('td').appendChild(hint);
@@ -256,8 +148,27 @@
         $(sel).on('change', sync);
         sync();
       });
-    })();
-  {% endjs %}
-{% endif %}
+    };
+    kumaBindSamples(document);
+
+    var becomes = document.querySelector('select[name="target"]');
+    var container = document.getElementById('kuma-field-map');
+
+    if (becomes && container) {
+      $(becomes).on('change', function () {
+        container.style.opacity = '0.5';
+        Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/field-map', {
+          data: { lane: {{ lane|json_encode|raw }}, key: {{ row.key|json_encode|raw }}, target: becomes.value },
+        }).then(function (response) {
+          container.innerHTML = response.data.html;
+          if (response.data.js) { Craft.appendBodyHtml(response.data.js); }
+          kumaBindSamples(container);
+        }).finally(function () {
+          container.style.opacity = '';
+        });
+      });
+    }
+  })();
+{% endjs %}
 
 {% endblock %}

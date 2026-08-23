@@ -10,7 +10,9 @@ use Lameco\KumaCompile\Mapping\Mapping;
 use Throwable;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
+use craft\events\RegisterComponentTypesEvent;
 use craft\events\RegisterUrlRulesEvent;
+use craft\services\Utilities;
 use craft\web\UrlManager;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
@@ -202,6 +204,17 @@ class Plugin extends BasePlugin
                 foreach (SetupStep::all() as $step) {
                     $event->rules['kunstmaan-migrator/setup/' . $step->value] = 'kunstmaan-migrator/setup/' . $step->value;
                 }
+            },
+        );
+
+        // The read-only run history lives in Utilities beside Craft's own
+        // logs — distinct content, not a second door to the workspace. The
+        // workflow itself (mapping, coverage, run, setup) stays in the section.
+        Event::on(
+            Utilities::class,
+            Utilities::EVENT_REGISTER_UTILITIES,
+            static function (RegisterComponentTypesEvent $event): void {
+                $event->types[] = \lameco\kunstmaanmigrator\utilities\LogUtility::class;
             },
         );
 

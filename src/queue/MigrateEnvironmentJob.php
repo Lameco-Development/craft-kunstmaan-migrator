@@ -10,6 +10,7 @@ use craft\queue\BaseJob;
 use Lameco\KumaCompile\Mapping\Mapping;
 use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use lameco\kunstmaanmigrator\run\RunLog;
 use lameco\kunstmaanmigrator\run\RunSettings;
 use lameco\kunstmaanmigrator\run\RunTally;
 use RuntimeException;
@@ -73,6 +74,17 @@ final class MigrateEnvironmentJob extends BaseJob
             only: $this->only,
         );
 
+        $log = RunLog::default();
+        $log->append([
+            'event' => 'started',
+            'job' => 'migrate',
+            'environment' => $this->environment,
+            'dryRun' => $this->dryRun,
+            'force' => $this->force,
+            'limit' => $this->limit,
+            'only' => $this->only,
+        ]);
+
         $tally = new RunTally();
 
         // The label moves, the bar does not: reporting a problem as progress 0.0
@@ -82,19 +94,49 @@ final class MigrateEnvironmentJob extends BaseJob
             $this->setProgress($queue, $progress, $problem);
         };
 
-        EnvironmentPipeline::build($mapping, $settings)
-            ->run($mapping, $this->environment, $spec, $settings, $tally);
+        try {
+            EnvironmentPipeline::build($mapping, $settings)
+                ->run($mapping, $this->environment, $spec, $settings, $tally);
+        } catch (\Throwable $e) {
+            $log->append([
+                'event' => 'failed',
+                'job' => 'migrate',
+                'environment' => $this->environment,
+                'counts' => $tally->counts,
+                'message' => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
 
         $this->counts = $tally->counts;
 
         if ($tally->hasFailures()) {
-            throw new RuntimeException(sprintf(
+            $message = sprintf(
                 '%s: %d payloads failed — %s',
                 $this->environment,
                 $tally->counts['failed'],
                 $tally->problems[0] ?? 'no detail recorded',
-            ));
+            );
+            $log->append([
+                'event' => 'failed',
+                'job' => 'migrate',
+                'environment' => $this->environment,
+                'counts' => $tally->counts,
+                'message' => $message,
+            ]);
+
+            throw new RuntimeException($message);
         }
+
+        $log->append([
+            'event' => 'finished',
+            'job' => 'migrate',
+            'environment' => $this->environment,
+            'dryRun' => $this->dryRun,
+            'counts' => $tally->counts,
+            'problems' => count($tally->problems),
+        ]);
     }
 
     protected function defaultDescription(): string

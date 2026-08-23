@@ -87,8 +87,9 @@ final class RunSurfaceTest extends TestCase
     /**
      * The run used to be a Utility, and its screens lived in two nav areas.
      * Now it is a page of the section: the route, the subnav item and the
-     * action all have to agree, and no Utilities registration may creep back —
-     * that would put the workflow in two places again.
+     * action all have to agree, and the run screen may not creep back into
+     * Utilities — that would put the workflow in two places again. The log
+     * utility is allowed: read-only history is Utilities content.
      */
     public function testTheRunIsAPageOfTheSectionAndNotAUtility(): void
     {
@@ -96,7 +97,9 @@ final class RunSurfaceTest extends TestCase
 
         self::assertStringContainsString("'kunstmaan-migrator/run'", $plugin);
         self::assertStringContainsString("'kunstmaan-migrator/migration/run'", $plugin);
-        self::assertStringNotContainsString('Utilities::', $plugin);
+        // The one Utility left is the read-only run log — never the run screen.
+        self::assertStringNotContainsString('MigrationUtility', $plugin);
+        self::assertStringContainsString('LogUtility::class', $plugin);
         self::assertTrue(
             (new ReflectionClass(MigrationController::class))->hasMethod('actionRun'),
             'the run route resolves to MigrationController::actionRun(), which does not exist',

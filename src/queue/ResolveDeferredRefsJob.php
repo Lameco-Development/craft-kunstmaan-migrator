@@ -9,6 +9,7 @@ use craft\queue\BaseJob;
 use lameco\kunstmaanmigrator\payload\FixupService;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\ProductionGuard;
+use lameco\kunstmaanmigrator\run\RunLog;
 use RuntimeException;
 
 /**
@@ -30,11 +31,21 @@ final class ResolveDeferredRefsJob extends BaseJob
         }
 
         $plugin = Plugin::getInstance();
+        $log = RunLog::default();
+        $log->append(['event' => 'started', 'job' => 'fixup']);
 
-        $this->report = (new FixupService(
-            $plugin->migrationStateService,
-            $plugin->entryMigrationService,
-        ))->run();
+        try {
+            $this->report = (new FixupService(
+                $plugin->migrationStateService,
+                $plugin->entryMigrationService,
+            ))->run();
+        } catch (\Throwable $e) {
+            $log->append(['event' => 'failed', 'job' => 'fixup', 'message' => $e->getMessage()]);
+
+            throw $e;
+        }
+
+        $log->append(['event' => 'finished', 'job' => 'fixup', 'counts' => $this->report]);
     }
 
     protected function defaultDescription(): string
