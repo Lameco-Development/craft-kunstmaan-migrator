@@ -8,6 +8,16 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`kuma-compile bootstrap`** — starting a migration is one command: it runs
+  `survey` (size the corpus), `introspect` (read the application's wiring) and
+  `init` (generate the mapping skeleton) in order, writing
+  `<dir>/introspection.json` and `<dir>/mapping.yaml`. A mapping that exists is
+  never overwritten — bootstrap is how a migration starts, not how it starts
+  over — while the survey and the artifact refresh on every run. The three
+  steps stay available individually. `init` gained `--introspection=` and
+  prefers the artifact's booted metadata (exact tables, child-collection
+  ownership from resolved associations) over its static source scan.
+
 - **`kuma-compile introspect`** — dumps the legacy application's own account of
   itself as a committed artifact: booted Doctrine metadata when the checkout
   runs on this machine's PHP (exact tables, columns, associations including

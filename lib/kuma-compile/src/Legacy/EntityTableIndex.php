@@ -30,6 +30,52 @@ final class EntityTableIndex
         return new self([], []);
     }
 
+    /**
+     * The same index, from a committed introspection artifact instead of a fresh scan.
+     *
+     * Booted metadata is exact where the regex scan is best-effort: inheritance is resolved
+     * and every owning ManyToOne carries its join column, so child-collection ownership
+     * needs no attribute-order gymnastics. A static-mode artifact degrades gracefully — its
+     * associations are empty, which leaves the children map empty and the caller on the
+     * naming heuristic, exactly as if no source had been scanned.
+     */
+    public static function fromIntrospection(Introspection $introspection): self
+    {
+        $tables = [];
+        $children = [];
+
+        foreach ($introspection->entities as $class => $spec) {
+            if (!is_array($spec) || ($spec['mappedSuperclass'] ?? false) || !isset($spec['table'])) {
+                continue;
+            }
+
+            $parts = explode('\\', (string) $class);
+            $basename = (string) end($parts);
+            $tables[self::shortName($basename)] = (string) $spec['table'];
+
+            foreach ((array) ($spec['associations'] ?? []) as $assoc) {
+                $target = (string) ($assoc['target'] ?? '');
+                $joinColumns = (array) ($assoc['joinColumns'] ?? []);
+
+                if (($assoc['kind'] ?? '') !== 'ManyToOne' || !str_ends_with($target, 'PagePart') || $joinColumns === []) {
+                    continue;
+                }
+
+                $targetParts = explode('\\', $target);
+                $children[self::shortName((string) end($targetParts))][] = [
+                    'table' => (string) $spec['table'],
+                    'fk' => (string) $joinColumns[0],
+                ];
+            }
+        }
+
+        foreach ($children as &$collections) {
+            usort($collections, static fn (array $a, array $b): int => $a['table'] <=> $b['table']);
+        }
+
+        return new self($tables, $children);
+    }
+
     /** Scans `<source>/src/Entity` for `#[ORM\Table(name: '...')]` and its annotation form. */
     public static function fromSource(string $sourceRoot): self
     {

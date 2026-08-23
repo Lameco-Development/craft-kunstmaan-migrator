@@ -104,18 +104,25 @@ runs against the legacy database with no Craft anywhere — which is what lets a
 mapping be authored before the target site exists.
 
 ```bash
-vendor/bin/kuma-compile survey --env=COM=enreach_website
-vendor/bin/kuma-compile init --env=COM=enreach_website > migration/mapping/site.yaml
-vendor/bin/kuma-compile validate migration/mapping/site.yaml --craft=.
-vendor/bin/kuma-compile coverage migration/mapping/site.yaml
-vendor/bin/kuma-compile readiness migration/mapping/site.yaml --craft=.
+# one command starts a migration: survey the corpus, introspect the source,
+# generate the mapping skeleton
+vendor/bin/kuma-compile bootstrap --env=COM=enreach_website \
+                                  --source=~/Sites/enreach-website --dir=migration
+
+# then decide every row, and check the result three ways
+vendor/bin/kuma-compile validate migration/mapping.yaml --craft=. \
+                                 --introspection=migration/introspection.json
+vendor/bin/kuma-compile coverage migration/mapping.yaml
+vendor/bin/kuma-compile readiness migration/mapping.yaml --craft=.
 ```
 
 | Command | |
 | --- | --- |
-| `survey` | **is this corpus in range** — live pages, placements, pagepart classes, page types, locales, and the media/redirect/submission volumes, per environment. Needs no mapping and no Craft. |
-| `init` | discover the inventory — every pagepart class and page type by volume, real table names, child collections with their foreign keys, every locale with its live page count |
-| `validate` | the mapping's own shape, then every handle it names against the target's project config, then whether any Matrix in the target actually accepts each block — and warns about a page entry type with no block field at all |
+| `bootstrap` | **start here** — runs `survey`, `introspect` and `init` in order, writes `<dir>/introspection.json` and `<dir>/mapping.yaml`, and never overwrites a mapping that exists. The three steps stay available individually for re-runs. |
+| `survey` | **is this corpus in range** — live pages, placements, pagepart classes, page types, locales, sidecar tables, and the media/redirect/submission volumes, per environment. Needs no mapping and no Craft. |
+| `introspect` | **what the application wired up** — booted Doctrine metadata (tables, columns, associations including ManyToMany join tables) with a static fallback, plus the NodeListener sidecar wirings and every form type's field list, as a committed artifact |
+| `init` | discover the inventory — every pagepart class and page type by volume, real table names, child collections with their foreign keys, every locale with its live page count. Reads the introspection artifact when given (`--introspection=`), the static source scan otherwise |
+| `validate` | the mapping's own shape, then every handle it names against the target's project config, then whether any Matrix in the target actually accepts each block — and warns about a page entry type with no block field at all. With `--introspection=`: unclaimed ManyToMany selections, editor-facing columns ignored without a reason, mapped columns the entity does not have |
 | `coverage` | **did I miss anything in the legacy site** — anything not named in the mapping is an error, not a silent skip |
 | `coverage --markdown` | the same thing addressed to the client: what moves, what does not, and the reason each omission was declared under |
 | `readiness --craft=.` | **will every required Craft field get a value** — the mirror of `coverage`, pointed at the target |

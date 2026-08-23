@@ -6,6 +6,7 @@ namespace Lameco\KumaCompile\Command;
 
 use Lameco\KumaCompile\Legacy\Dsn;
 use Lameco\KumaCompile\Legacy\EntityTableIndex;
+use Lameco\KumaCompile\Legacy\Introspection;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Skeleton;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -28,6 +29,9 @@ final class InitCommand extends Command
                 'Legacy environment as NAME=database, repeatable (e.g. --env=COM=enreach_website)')
             ->addOption('source', null, InputOption::VALUE_REQUIRED,
                 'Kunstmaan source checkout, for entity -> table names')
+            ->addOption('introspection', null, InputOption::VALUE_REQUIRED,
+                'Introspection artifact from `introspect` — exact entity tables and child-collection '
+                . 'ownership from booted metadata, instead of the static --source scan')
             ->addOption('out', null, InputOption::VALUE_REQUIRED, 'Write to this path instead of stdout');
     }
 
@@ -55,10 +59,15 @@ final class InitCommand extends Command
         }
 
         $source = $input->getOption('source');
-        $entities = $source !== null ? EntityTableIndex::fromSource((string) $source) : EntityTableIndex::empty();
+        $artifact = $input->getOption('introspection');
+        $entities = match (true) {
+            $artifact !== null => EntityTableIndex::fromIntrospection(Introspection::fromFile((string) $artifact)),
+            $source !== null   => EntityTableIndex::fromSource((string) $source),
+            default            => EntityTableIndex::empty(),
+        };
 
         if ($entities->isEmpty()) {
-            $io->warning('No --source given: table names are left as TODO. Pass the Kunstmaan checkout to fill them in.');
+            $io->warning('No --introspection or --source given: table names are left as TODO. Pass the artifact or the Kunstmaan checkout to fill them in.');
         }
 
         $yaml = (new Skeleton($entities))->generate($databases);

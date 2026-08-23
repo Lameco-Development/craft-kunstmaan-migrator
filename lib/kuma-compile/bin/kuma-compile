@@ -3,6 +3,7 @@
 
 declare(strict_types=1);
 
+use Lameco\KumaCompile\Command\BootstrapCommand;
 use Lameco\KumaCompile\Command\CompileCommand;
 use Lameco\KumaCompile\Command\CoverageCommand;
 use Lameco\KumaCompile\Command\InitCommand;
@@ -42,6 +43,7 @@ if (!$loaded) {
 }
 
 $app = new Application('kuma-compile', '0.1.0');
+$app->add(new BootstrapCommand());
 $app->add(new SurveyCommand());
 $app->add(new IntrospectCommand());
 $app->add(new InitCommand());
