@@ -405,7 +405,7 @@ final class SetupController extends Controller
             $skipping = [];
 
             foreach ((array) ($choices['locales'][$label] ?? []) as $locale => $choice) {
-                $site = trim((string) ($choice['site'] ?? ''));
+                $site = self::chosenSite($choice);
 
                 if ($site !== '') {
                     $migrating[(string) $locale] = $site;
@@ -478,6 +478,19 @@ final class SetupController extends Controller
     }
 
     // ── Plumbing ─────────────────────────────────────────────────────────────
+
+    /**
+     * The site a posted locale row chose — `-` is the selectize-safe spelling
+     * of "Not migrating" (an empty-valued option cannot be selected back).
+     *
+     * @param array<string, mixed> $choice
+     */
+    private static function chosenSite(array $choice): string
+    {
+        $site = trim((string) ($choice['site'] ?? ''));
+
+        return $site === '-' ? '' : $site;
+    }
 
     /**
      * Where the old site's uploads live: the override from the plugin settings
@@ -618,7 +631,7 @@ final class SetupController extends Controller
         $out = [];
 
         foreach ($posted as $locale => $choice) {
-            $site = trim((string) ($choice['site'] ?? ''));
+            $site = self::chosenSite((array) $choice);
 
             if ($site !== '') {
                 $out[(string) $locale] = $site;

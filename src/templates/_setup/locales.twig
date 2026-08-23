@@ -30,10 +30,12 @@
               <th scope="row"><code>{{ locale }}</code></th>
               <td class="rightalign">{{ pages|number_format }}</td>
               <td>
+                {# "Not migrating" carries a real value: selectize cannot select an
+                   empty-valued option back once a site has been picked. #}
                 {{ forms.selectize({
                   name: 'locales[' ~ label ~ '][' ~ locale ~ '][site]',
-                  value: chosen.site ?? environment.suggested[locale] ?? '',
-                  options: [{ label: "Not migrating"|t('kunstmaan-migrator'), value: '' }]|merge(
+                  value: chosen.site|default('') ?: environment.suggested[locale]|default('') ?: '-',
+                  options: [{ label: "Not migrating"|t('kunstmaan-migrator'), value: '-' }]|merge(
                     sites|map(s => { label: s.name, value: s.handle })
                   ),
                   class: 'kuma-site',
