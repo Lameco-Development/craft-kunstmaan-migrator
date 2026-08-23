@@ -6,9 +6,6 @@
 
   <div class="readable">
     <p>{{ "The old Kunstmaan site’s database. Nothing is written to it — the migration only reads."|t('kunstmaan-migrator') }}</p>
-    {% if settings.legacyDbDatabase %}
-      <p class="light">{{ "The detect step read {db} out of the old site's .env — the test below looks for exactly that database."|t('kunstmaan-migrator', { db: '<code>' ~ settings.legacyDbDatabase ~ '</code>' })|raw }}</p>
-    {% endif %}
   </div>
 
   {{ forms.autosuggestField({
@@ -25,6 +22,17 @@
     type: 'number',
     size: 6,
     value: settings.legacyDbPort,
+  }) }}
+
+  {{ forms.autosuggestField({
+    label: "Database"|t('kunstmaan-migrator'),
+    instructions: settings.legacyDbDatabase
+      ? "Read out of the old site's .env by the detect step — the test below looks for exactly this database, and the next step pre-ticks it and its siblings. Leave it empty to just count what the server holds."|t('kunstmaan-migrator')
+      : "Optional. With it, the test answers about this database instead of counting everything on the server."|t('kunstmaan-migrator'),
+    name: 'legacyDbDatabase',
+    value: settings.legacyDbDatabase,
+    suggestEnvVars: true,
+    placeholder: 'enreach_website',
   }) }}
 
   {{ forms.autosuggestField({
@@ -68,7 +76,7 @@
           legacyDbPort: form.elements.legacyDbPort.value,
           legacyDbUser: form.elements.legacyDbUser.value,
           legacyDbPassword: form.elements.legacyDbPassword.value,
-          legacyDbDatabase: {{ settings.legacyDbDatabase|json_encode|raw }}
+          legacyDbDatabase: form.elements.legacyDbDatabase.value
         }
       })
         .then(function (response) {

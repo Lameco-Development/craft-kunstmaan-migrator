@@ -1,5 +1,6 @@
 {% extends "kunstmaan-migrator/_setup/_wizard" %}
 {% import "_includes/forms.twig" as forms %}
+{% set nextLabel = "Use this site"|t('kunstmaan-migrator') %}
 
 {% block step %}
   {{ actionInput('kunstmaan-migrator/setup/choose-checkout') }}
@@ -59,13 +60,13 @@
 
   {% js %}
     var path = document.getElementById('kuma-checkout-path');
-    var save = document.querySelector('#main-form button[type=submit]');
-    if (save) { save.disabled = true; }
+    var saves = function () { return [].slice.call(document.querySelectorAll('#main-form button[type=submit]')); };
+    saves().forEach(function (b) { b.disabled = true; });
 
     document.addEventListener('change', function (e) {
       if (!e.target.classList.contains('kuma-pick')) { return; }
       path.value = e.target.value;
-      if (save) { save.disabled = false; }
+      saves().forEach(function (b) { b.disabled = false; });
     });
 
     document.getElementById('kuma-rescan').addEventListener('click', function () {

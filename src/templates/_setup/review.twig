@@ -1,5 +1,6 @@
 {% extends "kunstmaan-migrator/_setup/_wizard" %}
 {% import "_includes/forms.twig" as forms %}
+{% set nextLabel = "Create the mapping"|t('kunstmaan-migrator') %}
 
 {% block step %}
   {{ actionInput('kunstmaan-migrator/setup/write') }}

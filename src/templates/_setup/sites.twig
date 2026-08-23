@@ -65,9 +65,10 @@
 
       document.getElementById('envs').value = pairs.join(',');
 
-      var save = document.querySelector('#main-form button[type=submit]');
       var named = picked.every(function (b) { return b.closest('tr').querySelector('.kuma-label').value.trim() !== ''; });
-      if (save) { save.disabled = picked.length === 0 || !named; }
+      [].slice.call(document.querySelectorAll('#main-form button[type=submit]')).forEach(function (save) {
+        save.disabled = picked.length === 0 || !named;
+      });
 
       document.getElementById('kuma-count').textContent = picked.length === 0
         ? '{{ "Nothing selected yet."|t('kunstmaan-migrator')|e('js') }}'

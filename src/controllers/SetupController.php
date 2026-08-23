@@ -159,7 +159,7 @@ final class SetupController extends Controller
         $plugin = Plugin::getInstance();
         $settings = $plugin->getSettings();
 
-        foreach (['legacyDbServer', 'legacyDbUser', 'legacyDbPassword'] as $attribute) {
+        foreach (['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyDbPassword'] as $attribute) {
             $settings->$attribute = trim((string) $this->request->getBodyParam($attribute, ''));
         }
 
