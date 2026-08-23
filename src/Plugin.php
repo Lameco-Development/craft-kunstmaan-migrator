@@ -111,7 +111,7 @@ class Plugin extends BasePlugin
                 'url' => 'kunstmaan-migrator/run',
             ],
             'setup' => [
-                'label' => Craft::t('kunstmaan-migrator', 'Set up'),
+                'label' => Craft::t('kunstmaan-migrator', 'Wizard'),
                 'url' => 'kunstmaan-migrator/setup',
             ],
         ];
