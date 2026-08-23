@@ -65,19 +65,19 @@ final class IntrospectionCheckTest extends TestCase
     }
 
     #[Test]
-    public function an_editor_facing_column_silently_ignored_is_a_warning(): void
+    public function an_ignore_is_a_decision_with_or_without_prose(): void
     {
+        // The reasoned/unreasoned distinction is gone: mapping a column or
+        // ignoring it IS the decision, and neither form warns.
         $warnings = (new IntrospectionCheck(
-            // `hide_title` has a form widget and sits in a list-form ignore; the m2m is not
-            // claimed either, so filter to the form-widget warning.
             $this->mapping(['map' => ['heading' => 'title'], 'ignore' => ['hide_title']]),
             $this->introspection(),
         ))->warnings();
 
-        $formWidget = array_values(array_filter($warnings, fn (string $w) => str_contains($w, 'form widget')));
-
-        self::assertCount(1, $formWidget);
-        self::assertStringContainsString('hide_title', $formWidget[0]);
+        self::assertSame(
+            [],
+            array_values(array_filter($warnings, fn (string $w) => str_contains($w, 'form widget'))),
+        );
     }
 
     #[Test]

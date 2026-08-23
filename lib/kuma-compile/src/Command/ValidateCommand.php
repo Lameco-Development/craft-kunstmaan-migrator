@@ -72,26 +72,10 @@ final class ValidateCommand extends Command
             $warnings = [...$warnings, ...$check->warnings()];
         }
 
-        $unreasoned = $mapping->unreasonedIgnores();
-
-        if ($errors === [] && $warnings === [] && $unreasoned === []) {
+        if ($errors === [] && $warnings === []) {
             $io->success(sprintf('%s is well-formed.', $mapping->path));
 
             return Command::SUCCESS;
-        }
-
-        if ($unreasoned !== []) {
-            $columns = array_sum(array_map('count', $unreasoned));
-            $io->section(sprintf('%d columns ignored without a reason, across %d subjects', $columns, count($unreasoned)));
-            $io->writeln('  The list form of `ignore:` records that a column is not migrated, but not that anyone');
-            $io->writeln('  decided so — it is also what the generator used to emit. Give each a reason to tell the');
-            $io->writeln('  two apart: <info>ignore: {column: "why"}</info>. Run with -v to list them.');
-
-            if ($output->isVerbose()) {
-                foreach ($unreasoned as $subject => $cols) {
-                    $io->writeln(sprintf('  <comment>·</comment> %s: %s', $subject, implode(', ', $cols)));
-                }
-            }
         }
 
         if ($warnings !== []) {

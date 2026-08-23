@@ -309,31 +309,6 @@ final class Mapping
         return $out;
     }
 
-    /**
-     * Ignored columns carrying no reason — the legacy list form, `ignore: [a, b, c]`.
-     *
-     * Not an error: the list form is how every mapping was written before reasons existed, and
-     * failing on it would brick a corpus rather than improve it. But it is the state where a
-     * decision and a generator default look identical, so it is counted and reported rather than
-     * left to look settled.
-     *
-     * @return array<string, list<string>> subject => column names
-     */
-    public function unreasonedIgnores(): array
-    {
-        $out = [];
-
-        foreach ($this->reviewableSubjects() as $subject => $spec) {
-            $ignore = $spec['ignore'] ?? null;
-
-            // A map is `column: reason`; a list is the unreasoned legacy form.
-            if (is_array($ignore) && $ignore !== [] && array_is_list($ignore)) {
-                $out[$subject] = array_values(array_map(strval(...), $ignore));
-            }
-        }
-
-        return $out;
-    }
 
     /**
      * Everything that can carry `ignore:` / `unreviewed:`, keyed by a human-readable path.

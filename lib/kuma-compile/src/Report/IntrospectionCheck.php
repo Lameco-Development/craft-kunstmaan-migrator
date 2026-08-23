@@ -37,7 +37,6 @@ final class IntrospectionCheck
 
         return [
             ...$this->unclaimedManyToMany($text),
-            ...$this->editorFacingIgnoredSilently(),
             ...$this->mappedColumnsMissing(),
         ];
     }
@@ -100,35 +99,6 @@ final class IntrospectionCheck
         return $out;
     }
 
-    /**
-     * @return list<string>
-     */
-    private function editorFacingIgnoredSilently(): array
-    {
-        $out = [];
-        $unreasoned = $this->mapping->unreasonedIgnores();
-
-        foreach ($this->subjects() as $subject) {
-            $silent = $unreasoned[$this->ignoreKey($subject['lane'], $subject['subject'])] ?? [];
-
-            if ($silent === []) {
-                continue;
-            }
-
-            $editable = $this->introspection->editableColumns($subject['class']);
-
-            foreach (array_intersect($silent, $editable) as $column) {
-                $out[] = sprintf(
-                    '%s `%s`: `%s` has a form widget in the legacy CP and is ignored without a reason — editor content needs a written decision',
-                    $subject['lane'],
-                    $subject['subject'],
-                    $column,
-                );
-            }
-        }
-
-        return $out;
-    }
 
     /**
      * @return list<string>
@@ -178,11 +148,4 @@ final class IntrospectionCheck
         return end($parts) ?: $class;
     }
 
-    /** The key `Mapping::unreasonedIgnores()` files a subject under. */
-    private function ignoreKey(string $lane, string $subject): string
-    {
-        $noun = ['parts' => 'part', 'pages' => 'page', 'entities' => 'entity', 'sidecars' => 'sidecar'][$lane] ?? $lane;
-
-        return sprintf('%s `%s`', $noun, $subject);
-    }
 }

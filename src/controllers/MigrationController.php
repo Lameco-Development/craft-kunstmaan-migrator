@@ -571,15 +571,11 @@ final class MigrationController extends Controller
                 continue;
             }
 
-            // A reason left empty stays empty. Writing "not migrated" in its
-            // place would invent a rationale nobody gave, and the value of an
-            // `ignore:` entry is precisely that somebody wrote one.
-            $reason = trim((string) ($decision['reason'] ?? ''));
-            $ignore[$column] = $reason !== '' ? $reason : null;
+            $ignore[] = $column;
         }
 
         $changes = [
-            'ignore' => self::ignoreValue($ignore),
+            'ignore' => $ignore !== [] ? $ignore : null,
             'unreviewed' => $unreviewed !== [] ? $unreviewed : null,
             'drop' => null,
         ];
@@ -595,33 +591,6 @@ final class MigrationController extends Controller
         }
 
         return $changes;
-    }
-
-    /**
-     * `ignore:` in the shape the file already uses.
-     *
-     * The DSL takes both a list of columns and a map of column to reason. A row
-     * where nobody has given a reason stays a list rather than becoming a map
-     * of nulls — otherwise opening a screen and pressing Save rewrites parts of
-     * the mapping that nobody edited, and a diff full of those is a diff that
-     * hides the one line somebody meant.
-     *
-     * @param array<string, ?string> $ignore
-     * @return list<string>|array<string, string>|null
-     */
-    private static function ignoreValue(array $ignore): array|null
-    {
-        if ($ignore === []) {
-            return null;
-        }
-
-        $withReasons = array_filter($ignore, static fn (?string $reason): bool => $reason !== null);
-
-        if ($withReasons === []) {
-            return array_keys($ignore);
-        }
-
-        return array_map(static fn (?string $reason): string => $reason ?? '', $ignore);
     }
 
     /** Each lane names its target differently; the row does not have to know. */

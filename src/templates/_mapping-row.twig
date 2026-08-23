@@ -77,7 +77,6 @@
         <tr>
           <th>{{ "Column"|t('kunstmaan-migrator') }}</th>
           <th>{{ "Decision"|t('kunstmaan-migrator') }}</th>
-          <th>{{ "Why not"|t('kunstmaan-migrator') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -99,29 +98,21 @@
                 ],
               }) }}
             </td>
-            <td>
-              {{ forms.text({
-                name: 'columns[' ~ column ~ '][reason]',
-                value: state.reason,
-                placeholder: state.ignored
-                  ? "decided, but no reason recorded"|t('kunstmaan-migrator')
-                  : "why this is not migrated"|t('kunstmaan-migrator'),
-              }) }}
-            </td>
           </tr>
         {% else %}
-          <tr><td colspan="3" class="light">{{ "Every column of this table has a home."|t('kunstmaan-migrator') }}</td></tr>
+          <tr><td colspan="2" class="light">{{ "Every column of this table has a home."|t('kunstmaan-migrator') }}</td></tr>
         {% endfor %}
       </tbody>
   </table>
 
   <hr>
 
-  {{ forms.textField({
-      label: "Or drop it entirely"|t('kunstmaan-migrator'),
-      instructions: "A reason here means this legacy row has no Craft equivalent and is not migrating. The reason is the point: a run reports a deliberate omission differently from one nobody decided about."|t('kunstmaan-migrator'),
+  {{ forms.lightswitchField({
+      label: "Drop it entirely"|t('kunstmaan-migrator'),
+      instructions: "This legacy row has no Craft equivalent and does not migrate. A run reports a deliberate omission differently from one nobody decided about."|t('kunstmaan-migrator'),
       name: 'drop',
-      value: row.dropped,
+      on: row.dropped is not null,
+      value: row.dropped ?? 'not migrating',
   }) }}
 
 
