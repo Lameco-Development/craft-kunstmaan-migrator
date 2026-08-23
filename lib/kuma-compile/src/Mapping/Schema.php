@@ -82,6 +82,53 @@ final class Schema
     }
 
     /**
+     * One row, checked for damage only.
+     *
+     * The row screen saves work in progress: a target not yet chosen, columns
+     * still unreviewed, a part with no disposition. Those are what the
+     * progress bar counts — refusing to save them is how a mapping editor
+     * fights its own workflow. This blocks only what is malformed: unknown
+     * keys, non-mapping values, conflicting dispositions, broken children or
+     * promotions, and a class claimed by two lanes. `validate()` remains the
+     * gate a run must pass in full.
+     *
+     * @return list<string> violations; empty means the row may be written
+     */
+    public function validateRow(Mapping $mapping, string $lane, string $key): array
+    {
+        $errors = [];
+        $spec = match ($lane) {
+            'pages' => $mapping->pages()[$key] ?? null,
+            'parts' => $mapping->parts()[$key] ?? null,
+            'entities' => $mapping->entities()[$key] ?? null,
+            'sidecars' => $mapping->sidecars()[$key] ?? null,
+            default => null,
+        };
+
+        if ($spec === null) {
+            return $errors;
+        }
+
+        match ($lane) {
+            'pages' => $this->checkPage($key, $spec, $errors, completeness: false),
+            'parts' => $this->checkPart($key, $spec, $errors, completeness: false),
+            'entities' => $this->checkEntity($key, $spec, $errors, completeness: false),
+            'sidecars' => $this->checkSidecar($key, $spec, $errors, completeness: false),
+        };
+
+        $collisions = [];
+        $this->checkLaneCollisions($mapping, $collisions);
+
+        foreach ($collisions as $collision) {
+            if (str_starts_with($collision, sprintf('`%s` is claimed', $key))) {
+                $errors[] = $collision;
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
      * A generated skeleton lists every column it could not place under `unreviewed:`. Until a
      * human moves each one into `map:` or `ignore:` with a reason, the mapping is a draft.
      *
@@ -268,40 +315,56 @@ final class Schema
     private function checkPages(Mapping $mapping, array &$errors): void
     {
         foreach ($mapping->pages() as $name => $spec) {
-            if (!is_array($spec)) {
-                $errors[] = sprintf('page `%s` is not a mapping', $name);
+            $this->checkPage((string) $name, $spec, $errors);
+        }
+    }
 
-                continue;
-            }
+    /**
+     * One page row. `$completeness = false` checks only that the row is
+     * well-formed — an editor saving work in progress may leave the target
+     * unchosen and columns unreviewed; those are progress, not damage.
+     *
+     * @param list<string> $errors
+     */
+    private function checkPage(string $name, mixed $spec, array &$errors, bool $completeness = true): void
+    {
+        if (!is_array($spec)) {
+            $errors[] = sprintf('page `%s` is not a mapping', $name);
 
-            foreach (array_diff(array_keys($spec), self::PAGE_KEYS) as $key) {
-                $errors[] = sprintf('page `%s`: unknown key `%s`', $name, $key);
-            }
+            return;
+        }
 
-            if (isset($spec['manual']) || isset($spec['drop'])) {
-                continue;
-            }
+        foreach (array_diff(array_keys($spec), self::PAGE_KEYS) as $key) {
+            $errors[] = sprintf('page `%s`: unknown key `%s`', $name, $key);
+        }
 
-            if (($spec['entryType'] ?? '') === '') {
-                $errors[] = sprintf('page `%s`: no `entryType:`', $name);
-            }
+        if (isset($spec['manual']) || isset($spec['drop'])) {
+            return;
+        }
 
-            $this->checkChildren(sprintf('page `%s`', $name), $spec, $errors);
+        $this->checkChildren(sprintf('page `%s`', $name), $spec, $errors);
 
-            // `ignore: []` present-but-empty is a declaration in its own right: this table
-            // carries nothing beyond the columns the node already supplies. Absent is not the
-            // same as empty, so test for the key rather than its contents.
-            if (isset($spec['table'])
-                && ($spec['map'] ?? []) === []
-                && !array_key_exists('ignore', $spec)
-                && !array_key_exists('unreviewed', $spec)
-            ) {
-                $errors[] = sprintf(
-                    'page `%s`: names table `%s` but neither maps nor ignores any of its columns',
-                    $name,
-                    $spec['table'],
-                );
-            }
+        if (!$completeness) {
+            return;
+        }
+
+        if (($spec['entryType'] ?? '') === '') {
+            $errors[] = sprintf('page `%s`: no `entryType:`', $name);
+        }
+
+        // `ignore: []` present-but-empty is a declaration in its own right: this table
+        // carries nothing beyond the columns the node already supplies. Absent is not the
+        // same as empty, so test for the key rather than its contents.
+        if (isset($spec['table'])
+            && ($spec['map'] ?? []) === []
+            && !array_key_exists('ignore', $spec)
+            && !array_key_exists('unreviewed', $spec)
+        ) {
+            $errors[] = sprintf(
+                'page `%s`: names table `%s` but neither maps nor ignores any of its columns',
+                $name,
+                $spec['table'],
+            );
         }
     }
 
@@ -320,45 +383,57 @@ final class Schema
     private function checkEntities(Mapping $mapping, array &$errors): void
     {
         foreach ($mapping->entities() as $name => $spec) {
-            if (!is_array($spec)) {
-                $errors[] = sprintf('entity `%s` is not a mapping', $name);
+            $this->checkEntity((string) $name, $spec, $errors);
+        }
+    }
 
-                continue;
-            }
+    /** @param list<string> $errors */
+    private function checkEntity(string $name, mixed $spec, array &$errors, bool $completeness = true): void
+    {
+        if (!is_array($spec)) {
+            $errors[] = sprintf('entity `%s` is not a mapping', $name);
 
-            foreach (array_diff(array_keys($spec), self::ENTITY_KEYS) as $key) {
-                $errors[] = sprintf('entity `%s`: unknown key `%s`', $name, $key);
-            }
+            return;
+        }
 
-            foreach (['table', 'section', 'entryType', 'title'] as $required) {
-                if (($spec[$required] ?? '') === '') {
-                    $errors[] = sprintf('entity `%s`: missing `%s:`', $name, $required);
-                }
-            }
+        foreach (array_diff(array_keys($spec), self::ENTITY_KEYS) as $key) {
+            $errors[] = sprintf('entity `%s`: unknown key `%s`', $name, $key);
+        }
 
-            if (!array_key_exists('dedupe', $spec)) {
-                $errors[] = sprintf(
-                    'entity `%s`: no `dedupe:` — say whether rows with the same id in different '
-                    . 'environments are the same thing',
-                    $name,
-                );
-            } elseif (!is_bool($spec['dedupe'])) {
-                $errors[] = sprintf('entity `%s`: `dedupe:` is %s, not true or false', $name, get_debug_type($spec['dedupe']));
-            }
+        if (array_key_exists('dedupe', $spec) && !is_bool($spec['dedupe'])) {
+            $errors[] = sprintf('entity `%s`: `dedupe:` is %s, not true or false', $name, get_debug_type($spec['dedupe']));
+        }
 
-            // Same map-or-ignore rule the other lanes get: `id`, the title column and the
-            // soft-delete column are accounted for by the keys above, and everything else on
-            // the table is a decision somebody has to have made. `ignore: []` present-but-empty
-            // says "nothing else here", which is different from saying nothing.
-            if (($spec['map'] ?? []) === []
-                && !array_key_exists('ignore', $spec)
-                && !array_key_exists('unreviewed', $spec)
-            ) {
-                $errors[] = sprintf(
-                    'entity `%s`: neither maps nor ignores any column beyond its title',
-                    $name,
-                );
+        if (!$completeness) {
+            return;
+        }
+
+        foreach (['table', 'section', 'entryType', 'title'] as $required) {
+            if (($spec[$required] ?? '') === '') {
+                $errors[] = sprintf('entity `%s`: missing `%s:`', $name, $required);
             }
+        }
+
+        if (!array_key_exists('dedupe', $spec)) {
+            $errors[] = sprintf(
+                'entity `%s`: no `dedupe:` — say whether rows with the same id in different '
+                . 'environments are the same thing',
+                $name,
+            );
+        }
+
+        // Same map-or-ignore rule the other lanes get: `id`, the title column and the
+        // soft-delete column are accounted for by the keys above, and everything else on
+        // the table is a decision somebody has to have made. `ignore: []` present-but-empty
+        // says "nothing else here", which is different from saying nothing.
+        if (($spec['map'] ?? []) === []
+            && !array_key_exists('ignore', $spec)
+            && !array_key_exists('unreviewed', $spec)
+        ) {
+            $errors[] = sprintf(
+                'entity `%s`: neither maps nor ignores any column beyond its title',
+                $name,
+            );
         }
     }
 
@@ -366,78 +441,85 @@ final class Schema
     private function checkParts(Mapping $mapping, array &$errors): void
     {
         foreach ($mapping->parts() as $class => $spec) {
-            if (!is_array($spec)) {
-                $errors[] = sprintf('part `%s` is not a mapping', $class);
+            $this->checkPart((string) $class, $spec, $errors);
+        }
+    }
+
+    /** @param list<string> $errors */
+    private function checkPart(string $class, mixed $spec, array &$errors, bool $completeness = true): void
+    {
+        if (!is_array($spec)) {
+            $errors[] = sprintf('part `%s` is not a mapping', $class);
+
+            return;
+        }
+
+        foreach (array_diff(array_keys($spec), self::PART_KEYS) as $key) {
+            $errors[] = sprintf('part `%s`: unknown key `%s`', $class, $key);
+        }
+
+        // Every part must resolve to exactly one disposition. Having none yet
+        // is unfinished work, not damage — only completeness flags it.
+        $dispositions = array_filter([
+            isset($spec['block']) ? 'block' : null,
+            isset($spec['switch']) ? 'switch' : null,
+            isset($spec['drop']) ? 'drop' : null,
+            isset($spec['manual']) ? 'manual' : null,
+            isset($spec['consumedBy']) ? 'consumedBy' : null,
+        ]);
+
+        if ($dispositions === [] && $completeness) {
+            $errors[] = sprintf(
+                'part `%s`: no disposition — needs one of block, switch, consumedBy, drop or manual',
+                $class,
+            );
+        } elseif (count($dispositions) > 1) {
+            $errors[] = sprintf('part `%s`: conflicting dispositions (%s)', $class, implode(', ', $dispositions));
+        }
+
+        $this->checkChildren(sprintf('part `%s`', $class), $spec, $errors);
+
+        // A promoted collection becomes entries elsewhere plus a relation back, so it
+        // needs a destination and the field that points at it.
+        foreach ($spec['promote'] ?? [] as $childTable => $promo) {
+            if (!is_array($promo)) {
+                $errors[] = sprintf('part `%s`: promote `%s` is not a mapping', $class, $childTable);
 
                 continue;
             }
 
-            foreach (array_diff(array_keys($spec), self::PART_KEYS) as $key) {
-                $errors[] = sprintf('part `%s`: unknown key `%s`', $class, $key);
+            foreach (array_diff(array_keys($promo), self::PROMOTE_KEYS) as $key) {
+                $errors[] = sprintf('part `%s`, promote `%s`: unknown key `%s`', $class, $childTable, $key);
             }
 
-            // Every part must resolve to exactly one disposition.
-            $dispositions = array_filter([
-                isset($spec['block']) ? 'block' : null,
-                isset($spec['switch']) ? 'switch' : null,
-                isset($spec['drop']) ? 'drop' : null,
-                isset($spec['manual']) ? 'manual' : null,
-                isset($spec['consumedBy']) ? 'consumedBy' : null,
-            ]);
-
-            if ($dispositions === []) {
-                $errors[] = sprintf(
-                    'part `%s`: no disposition — needs one of block, switch, consumedBy, drop or manual',
-                    $class,
-                );
-            } elseif (count($dispositions) > 1) {
-                $errors[] = sprintf('part `%s`: conflicting dispositions (%s)', $class, implode(', ', $dispositions));
-            }
-
-            $this->checkChildren(sprintf('part `%s`', $class), $spec, $errors);
-
-            // A promoted collection becomes entries elsewhere plus a relation back, so it
-            // needs a destination and the field that points at it.
-            foreach ($spec['promote'] ?? [] as $childTable => $promo) {
-                if (!is_array($promo)) {
-                    $errors[] = sprintf('part `%s`: promote `%s` is not a mapping', $class, $childTable);
-
-                    continue;
-                }
-
-                foreach (array_diff(array_keys($promo), self::PROMOTE_KEYS) as $key) {
-                    $errors[] = sprintf('part `%s`, promote `%s`: unknown key `%s`', $class, $childTable, $key);
-                }
-
-                foreach (['section', 'entryType', 'relation'] as $required) {
-                    if (($promo[$required] ?? '') === '') {
-                        $errors[] = sprintf(
-                            'part `%s`, promote `%s`: missing `%s:`',
-                            $class,
-                            $childTable,
-                            $required,
-                        );
-                    }
-                }
-
-                if (isset($spec['children'][$childTable])) {
+            foreach (['section', 'entryType', 'relation'] as $required) {
+                if (($promo[$required] ?? '') === '') {
                     $errors[] = sprintf(
-                        'part `%s`: `%s` is both promoted and a Matrix child',
+                        'part `%s`, promote `%s`: missing `%s:`',
                         $class,
                         $childTable,
+                        $required,
                     );
                 }
             }
 
-            foreach (array_diff(array_keys($spec['conflict'] ?? []), self::CONFLICT_KEYS) as $key) {
-                $errors[] = sprintf('part `%s`, conflict: unknown key `%s`', $class, $key);
+            if (isset($spec['children'][$childTable])) {
+                $errors[] = sprintf(
+                    'part `%s`: `%s` is both promoted and a Matrix child',
+                    $class,
+                    $childTable,
+                );
             }
+        }
 
-            $status = $spec['conflict']['status'] ?? null;
+        foreach (array_diff(array_keys($spec['conflict'] ?? []), self::CONFLICT_KEYS) as $key) {
+            $errors[] = sprintf('part `%s`, conflict: unknown key `%s`', $class, $key);
+        }
 
-            if ($status !== null && !in_array($status, ['open', 'decided'], true)) {
-                $errors[] = sprintf('part `%s`: conflict.status must be `open` or `decided`, got `%s`', $class, $status);
-            }
+        $status = $spec['conflict']['status'] ?? null;
+
+        if ($status !== null && !in_array($status, ['open', 'decided'], true)) {
+            $errors[] = sprintf('part `%s`: conflict.status must be `open` or `decided`, got `%s`', $class, $status);
         }
     }
 
@@ -451,32 +533,42 @@ final class Schema
     private function checkSidecars(Mapping $mapping, array &$errors): void
     {
         foreach ($mapping->sidecars() as $name => $spec) {
-            if (!is_array($spec)) {
-                $errors[] = sprintf('sidecar `%s` is not a mapping', $name);
+            $this->checkSidecar((string) $name, $spec, $errors);
+        }
+    }
 
-                continue;
-            }
+    /** @param list<string> $errors */
+    private function checkSidecar(string $name, mixed $spec, array &$errors, bool $completeness = true): void
+    {
+        if (!is_array($spec)) {
+            $errors[] = sprintf('sidecar `%s` is not a mapping', $name);
 
-            foreach (array_diff(array_keys($spec), self::SIDECAR_KEYS) as $key) {
-                $errors[] = sprintf('sidecar `%s`: unknown key `%s`', $name, $key);
-            }
+            return;
+        }
 
-            if (isset($spec['drop']) || isset($spec['manual'])) {
-                continue;
-            }
+        foreach (array_diff(array_keys($spec), self::SIDECAR_KEYS) as $key) {
+            $errors[] = sprintf('sidecar `%s`: unknown key `%s`', $name, $key);
+        }
 
-            if (($spec['table'] ?? '') === '') {
-                $errors[] = sprintf('sidecar `%s`: missing `table:`', $name);
-            }
+        if (isset($spec['drop']) || isset($spec['manual'])) {
+            return;
+        }
 
-            if (($spec['map'] ?? []) === [] && ($spec['children'] ?? []) === []) {
-                $errors[] = sprintf(
-                    'sidecar `%s`: no `map:` and no `children:` — a sidecar that writes nothing is a decision, say it with drop: or manual:',
-                    $name,
-                );
-            }
+        $this->checkChildren(sprintf('sidecar `%s`', $name), $spec, $errors);
 
-            $this->checkChildren(sprintf('sidecar `%s`', $name), $spec, $errors);
+        if (!$completeness) {
+            return;
+        }
+
+        if (($spec['table'] ?? '') === '') {
+            $errors[] = sprintf('sidecar `%s`: missing `table:`', $name);
+        }
+
+        if (($spec['map'] ?? []) === [] && ($spec['children'] ?? []) === []) {
+            $errors[] = sprintf(
+                'sidecar `%s`: no `map:` and no `children:` — a sidecar that writes nothing is a decision, say it with drop: or manual:',
+                $name,
+            );
         }
     }
 

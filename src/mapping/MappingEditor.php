@@ -588,19 +588,13 @@ final class MappingEditor
      */
     public function patch(string $lane, string $key, array $changes): void
     {
-        // Only errors this edit introduces block the save. A fresh skeleton
-        // fails whole-document validation by design — every row still open —
-        // and this screen is the advertised way to close them one at a time.
-        // Holding one row's save hostage to sixty untouched rows made the
-        // editor unusable on exactly the file it exists for.
-        $schema = new Schema();
-        $before = $schema->validate($this->document()->mapping());
-
-        // The diff keys on exact message strings: an edit that merely rewords
-        // an existing error would read as introduced. Acceptable until Schema
-        // can validate a single row — the honest depth this stands in for.
+        // Row-scoped on purpose: a fresh skeleton fails whole-document
+        // validation by design — every row still open — and this screen is
+        // the advertised way to close them one at a time. Only damage to the
+        // edited row itself refuses the save; completeness stays a progress
+        // bar, and `validate()` stays the gate a run must pass in full.
         $document = $this->document()->patch($lane, $key, $changes);
-        $errors = array_values(array_diff($schema->validate($document->mapping()), $before));
+        $errors = (new Schema())->validateRow($document->mapping(), $lane, $key);
 
         if ($errors !== []) {
             // The memo is the instance patch() just mutated; a refused edit

@@ -143,6 +143,22 @@ final class MappingEditorTest extends TestCase
         self::assertStringContainsString('entryType: contentPage', (string) file_get_contents($path));
     }
 
+    /**
+     * Un-deciding is a decision too: clearing a chosen target puts the row
+     * back to open. The old whole-document diff refused exactly this — the
+     * cleared target raised a "new" completeness error and the save bounced.
+     */
+    public function testClearingATargetIsASaveNotAnError(): void
+    {
+        $path = $this->mappingFile();
+        $editor = $this->editor($path);
+
+        $editor->patch('pages', 'ContentPage', ['entryType' => 'contentPage']);
+        $editor->patch('pages', 'ContentPage', ['entryType' => null]);
+
+        self::assertStringNotContainsString('entryType: contentPage', (string) file_get_contents($path));
+    }
+
     public function testASaveThatBreaksItsOwnRowStillFails(): void
     {
         $path = $this->mappingFile();
