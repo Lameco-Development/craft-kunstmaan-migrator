@@ -4,7 +4,10 @@
 {% do view.registerAssetBundle('lameco\\kunstmaanmigrator\\web\\MigratorAsset') %}
 
 {% set title = row.key %}
-{% set crumbs = [{ label: "Mapping"|t('kunstmaan-migrator'), url: url('kunstmaan-migrator/mapping', { lane: lane }) }] %}
+{% set crumbs = [
+  { label: "Mapping"|t('kunstmaan-migrator'), url: url('kunstmaan-migrator/mapping', { lane: lane }) },
+  { label: lane, url: url('kunstmaan-migrator/mapping', { lane: lane }) },
+] %}
 
 {# Craft's own form, not one of ours nested inside it. The layout already wraps
    the page in a <form> when this is set, and a form inside a form is dropped by
@@ -60,6 +63,13 @@
         value: row.target,
       }) }}
   {% endif %}
+
+  <div class="field">
+    <label>
+      <input type="checkbox" id="kuma-attention">
+      {{ "Only what needs attention"|t('kunstmaan-migrator') }}
+    </label>
+  </div>
 
   <div id="kuma-field-map">
     {% include 'kunstmaan-migrator/_mapping-row-fields' %}
@@ -145,6 +155,39 @@
 
     var becomes = document.querySelector('select[name="target"]');
     var container = document.getElementById('kuma-field-map');
+    var attention = document.getElementById('kuma-attention');
+
+    var kumaApplyAttention = function () {
+      var on = attention && attention.checked;
+      if (container) {
+        container.querySelectorAll('tr[data-state]').forEach(function (tr) {
+          tr.style.display = (on && tr.dataset.state !== 'empty') ? 'none' : '';
+        });
+      }
+      document.querySelectorAll('select[name^="columns["][name$="[disposition]"]').forEach(function (sel) {
+        var tr = sel.closest('tr');
+        if (tr) {
+          tr.style.display = (on && sel.value === 'ignore') ? 'none' : '';
+        }
+      });
+    };
+
+    if (attention) {
+      attention.checked = new URLSearchParams(location.search).get('attention') === '1';
+      $(attention).on('change', function () {
+        var params = new URLSearchParams(location.search);
+        if (attention.checked) {
+          params.set('attention', '1');
+        } else {
+          params.delete('attention');
+        }
+        var query = params.toString();
+        history.replaceState(null, '', location.pathname + (query ? '?' + query : ''));
+        kumaApplyAttention();
+      });
+      $(document).on('change', 'select[name^="columns["][name$="[disposition]"]', kumaApplyAttention);
+      kumaApplyAttention();
+    }
 
     if (becomes && container) {
       $(becomes).on('change', function () {
@@ -153,7 +196,10 @@
           key: {{ row.key|json_encode|raw }},
           target: becomes.value,
         }, {
-          onDone: function () { kumaBindSamples(container); },
+          onDone: function () {
+            kumaBindSamples(container);
+            kumaApplyAttention();
+          },
         });
       });
     }

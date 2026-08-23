@@ -26,39 +26,46 @@
         {% for field in fields %}
           {% set expression = expressions[field] %}
           {% set fills = sidecarFills[field] ?? [] %}
-          <tr>
+          {% set filled = expression.isAdvanced() or expression.column %}
+          {% set state = filled ? 'filled' : (fills is not empty ? 'sidecar' : 'empty') %}
+          <tr data-state="{{ state }}">
             <th scope="row">
+              {% if state == 'filled' %}
+                <span class="status on" title="{{ "This field is filled."|t('kunstmaan-migrator') }}"></span>
+              {% elseif state == 'sidecar' %}
+                <span class="status on" title="{{ "A sidecar fills this field."|t('kunstmaan-migrator') }}"></span>
+              {% else %}
+                <span class="status" title="{{ "Nothing fills this field."|t('kunstmaan-migrator') }}"></span>
+              {% endif %}
               <code>{{ field }}</code>
-              {# The sidecar fills this field on every page it decorates, and a
-                 screen that shows it as "not filled" is lying. Named here, with
-                 the way out — the page's own map wins a collision, so a column
-                 chosen on this row is an override, not a conflict. #}
-              {% for fill in fills %}
-                <div class="light">
-                  {{ "filled by the {sidecar} sidecar"|t('kunstmaan-migrator', { sidecar: fill.sidecar }) }}
-                  (<code>{{ fill.expression }}</code>)
-                  · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'sidecars', key: fill.sidecar }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
-                </div>
-              {% endfor %}
               {# The compiler drops a field the page's type lacks and counts it —
                  hours later. The count belongs here, while it is cheap to act on. #}
               {% set fieldCarriage = carriage[field] ?? null %}
               {% if fieldCarriage %}
                 {% if fieldCarriage.missing is empty %}
-                  <div class="light">{{ "on every mapped entry type"|t('kunstmaan-migrator') }}</div>
+                  <span class="badge" title="{{ "on every mapped entry type"|t('kunstmaan-migrator') }}">{{ fieldCarriage.carried }}/{{ fieldCarriage.total }}</span>
                 {% else %}
-                  <div class="light warning-with-icon">
-                    {% set shown = fieldCarriage.missing|slice(0, 5) %}
-                    {{ "on {carried} of {total} mapped entry types — dropped on {missing}"|t('kunstmaan-migrator', {
-                      carried: fieldCarriage.carried,
-                      total: fieldCarriage.total,
-                      missing: shown|join(', ') ~ (fieldCarriage.missing|length > 5
-                        ? ' ' ~ "and {more} more"|t('kunstmaan-migrator', { more: fieldCarriage.missing|length - 5 })
-                        : ''),
-                    }) }}
-                  </div>
+                  <details class="light">
+                    <summary>
+                      <span class="badge">{{ fieldCarriage.carried }}/{{ fieldCarriage.total }}</span>
+                      {{ "{n, plural, =1{dropped on 1 type} other{dropped on # types}}"|t('kunstmaan-migrator', { n: fieldCarriage.missing|length }) }}
+                    </summary>
+                    <div class="light">
+                      {{ "dropped on {missing}"|t('kunstmaan-migrator', { missing: fieldCarriage.missing|join(', ') }) }}
+                    </div>
+                  </details>
                 {% endif %}
               {% endif %}
+              {# The sidecar fills this field on every page it decorates, and a
+                 screen that shows it as "not filled" is lying. Named here, with
+                 the way out — the page's own map wins a collision, so a column
+                 chosen on this row is an override, not a conflict. #}
+              {% for fill in fills %}
+                <div class="light" title="{{ fill.expression }}">
+                  {{ "filled by {sidecar}"|t('kunstmaan-migrator', { sidecar: fill.sidecar }) }}
+                  · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'sidecars', key: fill.sidecar }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
+                </div>
+              {% endfor %}
             </th>
 
             {% if expression.isAdvanced() %}
@@ -67,12 +74,18 @@
                  a column. Neither fits two dropdowns, and a form that
                  pretended otherwise would quietly drop the arguments. #}
               <td colspan="2">
-                {{ forms.text({
-                  name: 'map[' ~ field ~ '][advanced]',
-                  value: expression.advanced,
-                  class: 'code',
-                }) }}
-                <span class="light">{{ "Combines several columns. Edit only if you know the expression syntax."|t('kunstmaan-migrator') }}</span>
+                <details>
+                  <summary class="light">
+                    {{ "Combines several columns."|t('kunstmaan-migrator') }}
+                    <code>{{ expression.advanced|slice(0, 60) }}{{ expression.advanced|length > 60 ? '…' }}</code>
+                  </summary>
+                  {{ forms.text({
+                    name: 'map[' ~ field ~ '][advanced]',
+                    value: expression.advanced,
+                    class: 'code',
+                  }) }}
+                  <span class="light">{{ "Edit only if you know the expression syntax."|t('kunstmaan-migrator') }}</span>
+                </details>
               </td>
             {% else %}
               <td>
