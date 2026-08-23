@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\mapping;
 use craft\helpers\App;
 use Lameco\KumaCompile\Compile\Transforms;
 use Lameco\KumaCompile\Legacy\LegacyCatalogue;
+use Lameco\KumaCompile\Mapping\FieldProvenance;
 use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Mapping\Schema;
 use lameco\kunstmaanmigrator\compile\TargetModel;
@@ -32,6 +33,9 @@ final class MappingEditor
 {
     /** One parse per request: every screen asks document() several times over. */
     private ?MappingDocument $memo = null;
+
+    /** One inversion per request: every provenance question reads this snapshot. */
+    private ?FieldProvenance $provenance = null;
 
     public const LANES = ['parts', 'pages', 'entities', 'sidecars'];
 
@@ -70,6 +74,15 @@ final class MappingEditor
         }
 
         return $this->memo = MappingDocument::fromFile($path);
+    }
+
+    /**
+     * What feeds every field of every mapped entry type — one snapshot, so a
+     * screen can never disagree with another screen about the same mapping.
+     */
+    private function provenance(): FieldProvenance
+    {
+        return $this->provenance ??= FieldProvenance::of($this->document()->mapping(), $this->target);
     }
 
     /**
@@ -235,18 +248,7 @@ final class MappingEditor
      */
     public function pageFields(): array
     {
-        $fields = [];
-
-        foreach ($this->mappedEntryTypes() as $entryType) {
-            foreach (array_keys($this->target->slots($entryType)) as $handle) {
-                $fields[(string) $handle] = true;
-            }
-        }
-
-        $handles = array_keys($fields);
-        sort($handles);
-
-        return $handles;
+        return $this->provenance()->pageFields();
     }
 
     /**
@@ -263,156 +265,41 @@ final class MappingEditor
     /**
      * Which of an entry type's fields the sidecars already fill.
      *
-     * A page row that shows `heroTitle — not filled —` while the headerTab
-     * sidecar fills it on every decorated page is lying to the operator. The
-     * page screen shows these as covered, and by whom; the page's own map
-     * still wins a collision, so mapping a column on top is an override, not
-     * a conflict.
-     *
      * @return array<string, list<array{sidecar: string, expression: string}>>
      */
     public function sidecarFillsFor(string $entryType): array
     {
-        $fields = array_flip($this->fieldsFor($entryType));
-        $fills = [];
-
-        foreach ($this->document()->lane('sidecars') as $name => $spec) {
-            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
-                continue;
-            }
-
-            foreach ((array) ($spec['map'] ?? []) as $field => $expression) {
-                if (isset($fields[(string) $field])) {
-                    $fills[(string) $field][] = [
-                        'sidecar' => (string) $name,
-                        'expression' => (string) $expression,
-                    ];
-                }
-            }
-        }
-
-        return $fills;
+        return $this->provenance()->sidecarFills($entryType);
     }
 
     /**
      * For each field a sidecar maps, which of the mapped entry types carry it.
      *
-     * The compiler drops a field the page's type lacks and counts it — hours
-     * after the decision was made. The count belongs on the editing screen,
-     * where "heroImage misses vacancyPage" is still cheap to act on.
-     *
      * @return array<string, array{carried: int, total: int, missing: list<string>}>
      */
     public function sidecarCarriage(MappingRow $row): array
     {
-        $entryTypes = $this->mappedEntryTypes();
-        $fieldSets = [];
-
-        foreach ($entryTypes as $entryType) {
-            $fieldSets[$entryType] = array_flip($this->fieldsFor($entryType));
-        }
-
-        $carriage = [];
-
-        foreach (array_keys($row->map) as $field) {
-            $missing = array_values(array_filter(
-                $entryTypes,
-                static fn (string $entryType): bool => !isset($fieldSets[$entryType][(string) $field]),
-            ));
-
-            $carriage[(string) $field] = [
-                'carried' => count($entryTypes) - count($missing),
-                'total' => count($entryTypes),
-                'missing' => $missing,
-            ];
-        }
-
-        return $carriage;
+        return $this->provenance()->carriage($row->key);
     }
 
     /**
      * Where every field of an entry type gets its content from, across lanes.
      *
-     * The mapping answers "what does this legacy thing become", one row at a
-     * time; the question an operator actually verifies with is the inverse —
-     * "is every field of contentPage fed, and by what". Pages fill from their
-     * own table, sidecars decorate, the parts lane feeds the page-builder
-     * context fields; a field none of them touch is the hole this view exists
-     * to show.
-     *
      * @return array{pageTypes: list<string>, fields: array<string, array{required: bool, pages: list<array{page: string, expression: string}>, sidecars: list<array{sidecar: string, expression: string}>, parts: ?int}>}
      */
     public function coverageFor(string $entryType): array
     {
-        $document = $this->document();
-        $pageTypes = [];
-        $pageFills = [];
-
-        foreach ($document->lane('pages') as $name => $spec) {
-            if (!is_array($spec) || ($spec['entryType'] ?? null) !== $entryType) {
-                continue;
-            }
-
-            $pageTypes[] = (string) $name;
-
-            foreach ((array) ($spec['map'] ?? []) as $field => $expression) {
-                $pageFills[(string) $field][] = ['page' => (string) $name, 'expression' => (string) $expression];
-            }
-        }
-
-        $contextFields = [];
-
-        foreach ((array) ($document->all()['defaults']['contexts'] ?? []) as $context) {
-            $field = is_array($context) ? ($context['field'] ?? null) : null;
-
-            if (is_string($field) && $field !== '') {
-                $contextFields[$field] = true;
-            }
-        }
-
-        $partsBlocks = 0;
-
-        foreach ($document->lane('parts') as $spec) {
-            if (is_array($spec) && isset($spec['block'])) {
-                $partsBlocks++;
-            }
-        }
-
-        $sidecarFills = $this->sidecarFillsFor($entryType);
-        $required = array_flip($this->target->requiredFields($entryType));
-        $fields = [];
-
-        foreach ($this->fieldsFor($entryType) as $field) {
-            $fields[$field] = [
-                'required' => isset($required[$field]),
-                'pages' => $pageFills[$field] ?? [],
-                'sidecars' => $sidecarFills[$field] ?? [],
-                'parts' => isset($contextFields[$field]) ? $partsBlocks : null,
-            ];
-        }
-
-        return ['pageTypes' => $pageTypes, 'fields' => $fields];
+        return $this->provenance()->coverage($entryType);
     }
 
     /**
-     * The distinct entry types the pages lane targets.
+     * The distinct entry types the pages lane targets, live-volume first.
      *
      * @return list<string>
      */
     public function mappedEntryTypes(): array
     {
-        $entryTypes = [];
-
-        // Through rows() for its live-volume order: everything that lists
-        // entry types (the coverage picker, the gaps roll-up) should lead
-        // with where the content is, the same way the lanes do.
-        foreach ($this->rows('pages') as $row) {
-            if ($row->target !== null && $row->target !== '') {
-                $entryTypes[$row->target] = true;
-            }
-        }
-
-        return array_keys($entryTypes);
+        return $this->provenance()->entryTypes();
     }
 
     /**
@@ -523,40 +410,15 @@ final class MappingEditor
     }
 
     /**
-     * The entry types whose fields are not all fed, with how many and how many
-     * of those the layout requires.
-     *
-     * The roll-up that saves clicking through every entry type to find the
-     * three with holes. An empty return is the finished state.
+     * The entry types whose fields are not all fed — the roll-up that saves
+     * clicking through every entry type to find the three with holes. An
+     * empty return is the finished state.
      *
      * @return list<array{entryType: string, unfed: int, required: int}>
      */
     public function coverageGaps(): array
     {
-        $gaps = [];
-
-        foreach ($this->mappedEntryTypes() as $entryType) {
-            $unfed = 0;
-            $required = 0;
-
-            foreach ($this->coverageFor($entryType)['fields'] as $state) {
-                if ($state['pages'] !== [] || $state['sidecars'] !== [] || $state['parts'] !== null) {
-                    continue;
-                }
-
-                $unfed++;
-
-                if ($state['required']) {
-                    $required++;
-                }
-            }
-
-            if ($unfed > 0) {
-                $gaps[] = ['entryType' => $entryType, 'unfed' => $unfed, 'required' => $required];
-            }
-        }
-
-        return $gaps;
+        return $this->provenance()->gaps();
     }
 
     /**
@@ -600,6 +462,7 @@ final class MappingEditor
             // The memo is the instance patch() just mutated; a refused edit
             // must not stay visible to later reads.
             $this->memo = null;
+            $this->provenance = null;
 
             throw new MappingEditorException(sprintf(
                 "That edit would make the mapping invalid:\n  · %s",
@@ -608,5 +471,8 @@ final class MappingEditor
         }
 
         $document->save();
+
+        // The write went through: the provenance snapshot predates it.
+        $this->provenance = null;
     }
 }

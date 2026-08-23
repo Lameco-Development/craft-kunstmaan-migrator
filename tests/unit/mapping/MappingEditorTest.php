@@ -264,6 +264,10 @@ final class MappingEditorTest extends TestCase
             pages:
               ContentPage: { entryType: contentPage }
               NewsPage: { entryType: newsPage }
+            sidecars:
+              headerTab:
+                table: header_tabs
+                map: { heroTitle: title }
             YAML);
 
         $schema = $this->createStub(SchemaGateway::class);
