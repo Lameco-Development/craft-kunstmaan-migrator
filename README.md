@@ -343,7 +343,7 @@ Event::on(AdapterRegistry::class, AdapterRegistry::EVENT_REGISTER_ADAPTERS,
 
 ```bash
 composer install
-composer test              # 491 tests
+composer test              # 647 tests
 composer test-coverage     # per-module gate, needs pcov or xdebug
 ```
 
