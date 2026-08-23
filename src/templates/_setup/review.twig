@@ -76,6 +76,28 @@
     </li>
   </ul>
 
+  {% if existingMapping %}
+    <blockquote class="note warning">
+      <p>
+        {{ "A mapping already exists at {path}. Creating a new one moves it aside as a timestamped copy — nothing is deleted, but the migration follows the new file from then on."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
+      </p>
+      {{ forms.checkboxField({
+        label: "Replace it — keep the current mapping as a timestamped copy"|t('kunstmaan-migrator'),
+        id: 'kuma-replace',
+        name: 'replace',
+        value: 1,
+      }) }}
+    </blockquote>
+
+    {% js %}
+      var box = document.getElementById('kuma-replace');
+      var saves = [].slice.call(document.querySelectorAll('#main-form button[type=submit]'));
+      var sync = function () { saves.forEach(function (b) { b.disabled = !box.checked; }); };
+      box.addEventListener('change', sync);
+      sync();
+    {% endjs %}
+  {% endif %}
+
   <p class="light">
     {{ "Next, you decide what each piece of old content becomes — on the Mapping screen, row by row."|t('kunstmaan-migrator') }}
   </p>

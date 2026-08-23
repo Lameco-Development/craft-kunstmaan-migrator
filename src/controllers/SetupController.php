@@ -77,6 +77,7 @@ final class SetupController extends Controller
         return $this->step(SetupStep::Detect, 'detect', [
             'root' => $root,
             'checkouts' => (new CheckoutScanner())->scan($root),
+            'existingMapping' => $this->existingMapping(),
         ]);
     }
 
@@ -435,6 +436,7 @@ final class SetupController extends Controller
         }
 
         return $this->step(SetupStep::Review, 'review', [
+            'existingMapping' => $this->existingMapping(),
             'mediaRoot' => $this->mediaRoot(),
             'summary' => $summary,
             'totalPages' => $totalPages,
@@ -460,16 +462,34 @@ final class SetupController extends Controller
             return $this->redirect('kunstmaan-migrator/setup/sites');
         }
 
-        // Refusing rather than overwriting: the mapping is the migration, and a
-        // wizard that clobbers a finished one is hours of decisions gone.
-        if (is_file($path)) {
-            Craft::$app->getSession()->setError(Craft::t(
-                'kunstmaan-migrator',
-                'There is already a mapping at {path}. Move it aside first, or edit it instead.',
-                ['path' => $path],
-            ));
+        // The mapping is the migration, and a wizard that clobbers a finished
+        // one is hours of decisions gone. So an existing file is only replaced
+        // when the review screen asked and the operator said so — and even then
+        // it is moved aside with a timestamp, never destroyed.
+        $replaced = null;
 
-            return $this->redirect('kunstmaan-migrator/mapping');
+        if (is_file($path)) {
+            if (!$this->request->getBodyParam('replace')) {
+                Craft::$app->getSession()->setError(Craft::t(
+                    'kunstmaan-migrator',
+                    'There is already a mapping at {path}. Move it aside first, or edit it instead.',
+                    ['path' => $path],
+                ));
+
+                return $this->redirect('kunstmaan-migrator/mapping');
+            }
+
+            $replaced = $path . '.replaced-' . date('Ymd-His');
+
+            if (!rename($path, $replaced)) {
+                Craft::$app->getSession()->setError(Craft::t(
+                    'kunstmaan-migrator',
+                    'Could not move the existing mapping aside at {path}.',
+                    ['path' => $path],
+                ));
+
+                return $this->redirect('kunstmaan-migrator/setup/detect');
+            }
         }
 
         try {
@@ -480,10 +500,9 @@ final class SetupController extends Controller
             return $this->redirect('kunstmaan-migrator/setup/sites');
         }
 
-        Craft::$app->getSession()->setNotice(Craft::t(
-            'kunstmaan-migrator',
-            'Mapping created. Next: tell the migrator what each piece of old content becomes.',
-        ));
+        Craft::$app->getSession()->setNotice($replaced === null
+            ? Craft::t('kunstmaan-migrator', 'Mapping created. Next: tell the migrator what each piece of old content becomes.')
+            : Craft::t('kunstmaan-migrator', 'Mapping created. The previous one is kept at {path}.', ['path' => $replaced]));
 
         return $this->redirect('kunstmaan-migrator/mapping');
     }
@@ -501,6 +520,14 @@ final class SetupController extends Controller
         $site = trim((string) ($choice['site'] ?? ''));
 
         return $site === '-' ? '' : $site;
+    }
+
+    /** The mapping already on disk, or null — the fact the wizard must not discover last. */
+    private function existingMapping(): ?string
+    {
+        $path = $this->mappingPath();
+
+        return $path !== null && is_file($path) ? $path : null;
     }
 
     /**
