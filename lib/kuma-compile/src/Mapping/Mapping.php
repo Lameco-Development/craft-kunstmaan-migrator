@@ -344,7 +344,7 @@ final class Mapping
     {
         $subjects = [];
 
-        foreach (['pages' => 'page', 'parts' => 'part', 'entities' => 'entity'] as $lane => $noun) {
+        foreach (['pages' => 'page', 'parts' => 'part', 'entities' => 'entity', 'sidecars' => 'sidecar'] as $lane => $noun) {
             foreach ($this->data[$lane] ?? [] as $name => $spec) {
                 if (!is_array($spec)) {
                     continue;

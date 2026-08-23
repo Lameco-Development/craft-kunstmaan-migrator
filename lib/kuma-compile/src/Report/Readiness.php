@@ -75,7 +75,42 @@ final class Readiness
     /** @return list<Requirement> */
     public function all(): array
     {
-        return [...$this->fromPages(), ...$this->fromParts(), ...$this->fromSequence()];
+        return [...$this->fromPages(), ...$this->fromEntities(), ...$this->fromParts(), ...$this->fromSequence()];
+    }
+
+    /**
+     * The entities lane was never walked, so a required field on a taxonomy target was
+     * invisible — `country.flag` is a required Assets field with no legacy source, and
+     * nothing said so until the countries table was actually mapped.
+     *
+     * @return list<Requirement>
+     */
+    private function fromEntities(): array
+    {
+        $out = [];
+
+        foreach ($this->mapping->entities() as $entity => $spec) {
+            if (!is_array($spec) || isset($spec['manual']) || isset($spec['drop'])) {
+                continue;
+            }
+
+            $entryType = (string) ($spec['entryType'] ?? '');
+
+            if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
+                continue;
+            }
+
+            $out = [...$out, ...$this->against(
+                lane: 'entities',
+                subject: (string) $entity,
+                entryType: $entryType,
+                map: $spec['map'] ?? [],
+                extra: [],
+            live: null,
+            )];
+        }
+
+        return $out;
     }
 
     /** @return list<Requirement> */

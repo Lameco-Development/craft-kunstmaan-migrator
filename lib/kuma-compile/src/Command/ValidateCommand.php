@@ -6,6 +6,8 @@ namespace Lameco\KumaCompile\Command;
 
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\Schema;
+use Lameco\KumaCompile\Legacy\Introspection;
+use Lameco\KumaCompile\Report\IntrospectionCheck;
 use Lameco\KumaCompile\Report\SpecDivergence;
 use Lameco\KumaCompile\Target\CraftSchema;
 use Lameco\KumaCompile\Target\TargetSchema;
@@ -33,7 +35,11 @@ final class ValidateCommand extends Command
                 'Target Craft project root — also checks every handle the mapping names exists')
             ->addOption('specs', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY,
                 'Directory of content-model specs — fails on any field their migration notes '
-                . 'give a source for that the mapping does not fill (repeatable)');
+                . 'give a source for that the mapping does not fill (repeatable)')
+            ->addOption('introspection', null, InputOption::VALUE_REQUIRED,
+                'Introspection artifact from `introspect` — checks the mapping against the legacy '
+                . 'app\'s own wiring: unclaimed ManyToMany joins, editor-facing columns ignored '
+                . 'without a reason, mapped columns the entity does not have');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -59,6 +65,11 @@ final class ValidateCommand extends Command
             $io->error('--specs needs --craft: the built content model is what says which of the spec\'s fields exist.');
 
             return Command::INVALID;
+        }
+
+        if ($artifact = $input->getOption('introspection')) {
+            $check = new IntrospectionCheck($mapping, Introspection::fromFile((string) $artifact));
+            $warnings = [...$warnings, ...$check->warnings()];
         }
 
         $unreasoned = $mapping->unreasonedIgnores();

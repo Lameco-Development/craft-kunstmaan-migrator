@@ -212,19 +212,50 @@ final class BlockBuilder
 
         $parts = array_map('trim', explode('|', $expression));
         $column = array_shift($parts);
-        $value = $row[$column] ?? null;
+
+        // `m2m(join_table, owner_column, target_column)` reads the ids the owning row selects
+        // through a ManyToMany join table — a relation Doctrine keeps in a table of two foreign
+        // keys, which no column expression could reach. Pipes onward like any value; in practice
+        // always into `ref()`, which turns each id into the entry it became.
+        // `'band'` is a literal: a value the mapping decides because the legacy table has no
+        // column that carries it — ContentHighlight has no background_color, and its variant
+        // is a design fact, not data.
+        if (preg_match("/^'(.*)'$/", (string) $column, $m) === 1) {
+            $column = null;
+            $value = $m[1];
+        } elseif (preg_match('/^m2m\((.*)\)$/', (string) $column, $m) === 1) {
+            $args = array_map(trim(...), explode(',', $m[1]));
+
+            if (count($args) !== 3 || !isset($row['id'])) {
+                return null;
+            }
+
+            $value = $this->parts->m2m($args[0], $args[1], $args[2], (int) $row['id']);
+        } else {
+            $value = $row[(string) $column] ?? null;
+        }
 
         foreach ($parts as $transform) {
             // A legacy FK holds a row id; the loader resolves an element id from a sourceUid.
             // Building that uid needs the entity's table, which only the mapping knows — so it
             // happens here rather than inside a transform that has no access to it.
             if (preg_match('/^ref\((\w+)\)$/', $transform, $m) === 1) {
-                $uid = $this->entities?->uidFor($m[1], $value, $this->environment);
-
                 // A relation field takes a list of element ids. The loader replaces each
                 // `_ref` node in place, so the list has to be here already — handing it a
-                // bare node saved without complaint and related nothing.
-                return $uid === null ? null : [['_ref' => $uid]];
+                // bare node saved without complaint and related nothing. A list input (an
+                // m2m read) keeps its order; an id that resolves to nothing is dropped,
+                // because it points at content that did not migrate.
+                $refs = [];
+
+                foreach (is_array($value) ? $value : [$value] as $id) {
+                    $uid = $this->entities?->uidFor($m[1], $id, $this->environment);
+
+                    if ($uid !== null) {
+                        $refs[] = ['_ref' => $uid];
+                    }
+                }
+
+                return $refs === [] ? null : $refs;
             }
 
             // `lookup(Entity.column)` follows a foreign key to a column on the row it points

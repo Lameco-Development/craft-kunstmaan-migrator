@@ -8,6 +8,31 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`kuma-compile introspect`** — dumps the legacy application's own account of
+  itself as a committed artifact: booted Doctrine metadata when the checkout
+  runs on this machine's PHP (exact tables, columns, associations including
+  ManyToMany join tables, run as a child process so the two dependency trees
+  never mix), a static ORM-attribute scan when it does not, plus two scans that
+  are static either way — the sidecar entities a `NodeListener` wires into the
+  page UI, and which columns each form type actually draws. The compiler never
+  reads the artifact; the mapping stays the program.
+- **`validate --introspection=`** — the mapping checked against that wiring:
+  unclaimed ManyToMany selections (a join table is invisible to every column
+  list), editor-facing columns ignored without a written reason, and mapped
+  columns the entity does not have. First run on the reference corpus: 11
+  unclaimed relation selections, 118 silently dropped editor-facing columns,
+  and one mapped column that did not exist — an expression that had been
+  reading null for the entire life of the mapping.
+- **`m2m(join_table, owner_column, target_column)` expression** — reads the ids
+  an owning row selects through a ManyToMany join table; `ref()` now accepts
+  the resulting list and turns each id into the entry it became, keeping order
+  and dropping ids that resolve to nothing.
+- **Literal expressions** — `'band'` supplies a value no column carries, for a
+  required field whose answer is a design fact rather than data.
+- **`readiness` walks the entities lane** — a required field on a taxonomy
+  target was invisible before; `country.flag` (required Assets, no legacy
+  source) now reports as missing instead of not at all.
+
 - **A `sidecars:` lane** for the per-page entities Kunstmaan attaches outside
   the pagepart tree — header tabs, footer tabs, structured data. The lane keys
   on the polymorphic `(ref_entity_name, ref_id)` column pair, not on a table

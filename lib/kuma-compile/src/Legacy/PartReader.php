@@ -75,6 +75,25 @@ final class PartReader
         return $row === false ? null : $row;
     }
 
+    /**
+     * The target ids one owner selects through a ManyToMany join table.
+     *
+     * A join table is two foreign keys and nothing else — no id, no weight — so the only
+     * deterministic order it offers is the target id itself.
+     *
+     * @return list<int>
+     */
+    public function m2m(string $table, string $ownerColumn, string $targetColumn, int $ownerId): array
+    {
+        $key = sprintf('m2m:%s:%s:%s', $table, $ownerColumn, $targetColumn);
+        $this->statements[$key] ??= $this->pdo->prepare(
+            sprintf('SELECT `%s` FROM `%s` WHERE `%s` = ? ORDER BY `%s`', $targetColumn, $table, $ownerColumn, $targetColumn)
+        );
+        $this->statements[$key]->execute([$ownerId]);
+
+        return array_map(intval(...), $this->statements[$key]->fetchAll(PDO::FETCH_COLUMN));
+    }
+
     /** One pagepart's own row, or null when the row is missing (a legacy dangling ref). */
     public function row(string $table, int $id): ?array
     {
