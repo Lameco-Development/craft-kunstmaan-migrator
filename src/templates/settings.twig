@@ -8,7 +8,7 @@
 <h2>{{ "Legacy database"|t('kunstmaan-migrator') }}</h2>
 
 <p class="light">
-  {{ "These fields take an environment variable name, so the values stay in your .env and out of project config. Which database each environment reads comes from the mapping, not from here."|t('kunstmaan-migrator') }}
+  {{ "Takes environment variable names, so values stay in .env. Which database each environment reads comes from the mapping."|t('kunstmaan-migrator') }}
 </p>
 
 {{ forms.autosuggestField({
@@ -55,7 +55,7 @@
 
 {{ forms.autosuggestField({
   label: "Old site's uploads folder"|t('kunstmaan-migrator'),
-  instructions: "Usually left empty: every Kunstmaan site keeps uploads at public/uploads/media, and the wizard reads that from the detected checkout. Set this only when a site breaks the convention."|t('kunstmaan-migrator'),
+  instructions: "Leave empty — uploads are at public/uploads/media by convention. Set this only when a site differs."|t('kunstmaan-migrator'),
   id: 'legacyMediaRoot',
   name: 'legacyMediaRoot',
   value: settings.legacyMediaRoot,
@@ -65,7 +65,7 @@
 }) }}
 
 <p class="light">
-  {{ "Where migrated files land. These are read by the entry pass, not by an adapter, so they apply to every run."|t('kunstmaan-migrator') }}
+  {{ "Where migrated files land."|t('kunstmaan-migrator') }}
 </p>
 
 {# Rendered from Settings::coreSettings(), for the same reason the adapter
@@ -106,7 +106,7 @@
 <h2>{{ "Adapters"|t('kunstmaan-migrator') }}</h2>
 
 <p class="light">
-  {{ "Each adapter writes into a different plugin. Turning one off skips that pass; a plugin that is not installed skips it too, and the run says which."|t('kunstmaan-migrator') }}
+  {{ "Each pass writes into a different plugin. Turn one off to skip it; missing plugins are skipped automatically."|t('kunstmaan-migrator') }}
 </p>
 
 <table class="data fullwidth">
@@ -196,7 +196,7 @@
     ? "Set in config/kunstmaan-migrator.php, which wins over anything saved here."|t('kunstmaan-migrator')
     : null,
   label: "Mapping file"|t('kunstmaan-migrator'),
-  instructions: "The mapping owns which databases exist, where each one's uploads live, and which legacy locale writes to which Craft site. It is version-controlled next to the field mappings it travels with."|t('kunstmaan-migrator'),
+  instructions: "The mapping decides which databases exist, where uploads live, and which language writes to which Craft site."|t('kunstmaan-migrator'),
   id: 'mappingPath',
   name: 'mappingPath',
   value: settings.mappingPath,
@@ -206,7 +206,7 @@
 
 {{ forms.autosuggestField({
   label: "Content-model specs"|t('kunstmaan-migrator'),
-  instructions: "Directory of block spec markdown files whose migration notes drive the mapping prefill. Usually left empty — docs/content-model/page-builder under the project root is found on its own."|t('kunstmaan-migrator'),
+  instructions: "Where the block specs live. Leave empty to use docs/content-model/page-builder."|t('kunstmaan-migrator'),
   id: 'specsPath',
   name: 'specsPath',
   value: settings.specsPath,

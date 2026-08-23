@@ -14,7 +14,7 @@
   <div class="readable" style="text-align: center; padding: 30px 0;">
     <h2>{{ "Bring a Kunstmaan site into Craft"|t('kunstmaan-migrator') }}</h2>
     <p>
-      {{ "Four questions: where the old database is, which sites you are migrating, where each language and its files go — then it writes the plan and you review it."|t('kunstmaan-migrator') }}
+      {{ "Four questions: the old database, which sites migrate, and where each language and its files go. You review the result at the end."|t('kunstmaan-migrator') }}
     </p>
     <p style="margin-top: 18px;">
       <a class="btn submit big" href="{{ url('kunstmaan-migrator/setup') }}">{{ "Start"|t('kunstmaan-migrator') }}</a>
@@ -70,7 +70,7 @@
             {% endfor %}
             {% if check.localesNotMigrated %}
               <div class="light">
-                {{ "Not migrated by design:"|t('kunstmaan-migrator') }} {{ check.localesNotMigrated|join(', ') }}
+                {{ "Not migrating:"|t('kunstmaan-migrator') }} {{ check.localesNotMigrated|join(', ') }}
               </div>
             {% endif %}
           </td>
@@ -84,7 +84,7 @@
   <h2>{{ "Run"|t('kunstmaan-migrator') }}</h2>
 
   <p class="light">
-    {{ "A run reads the old site and writes into Craft. It takes hours on a real site, and it is safe to stop and start again — a page already migrated is skipped, not migrated twice."|t('kunstmaan-migrator') }}
+    {{ "Reads the old site and writes into Craft. Can take hours, and is safe to stop and restart: migrated pages are skipped."|t('kunstmaan-migrator') }}
   </p>
 
   {{ forms.selectField({
@@ -98,7 +98,7 @@
 
   {{ forms.lightswitchField({
     label: "Practice run"|t('kunstmaan-migrator'),
-    instructions: "Reads everything and reports what it would do, without writing anything to Craft. Worth doing once."|t('kunstmaan-migrator'),
+    instructions: "Reports what a run would do, without writing anything."|t('kunstmaan-migrator'),
     id: 'kuma-dry-run',
     name: 'dryRun',
   }) }}
@@ -108,8 +108,8 @@
      warning is the point of the field, not decoration. #}
   {{ forms.lightswitchField({
     label: "Re-run and overwrite"|t('kunstmaan-migrator'),
-    instructions: "Migrate pages that have already been migrated, instead of skipping them. This is how a corrected mapping reaches pages that came across before it was fixed."|t('kunstmaan-migrator'),
-    warning: "Overwrites what is in Craft. Page content is rewritten from the old site, and a page's blocks are replaced rather than updated — so anything an editor has changed in the control panel is lost. Safe while the migration is still the only thing writing this content; not once editors have started."|t('kunstmaan-migrator'),
+    instructions: "Migrates already-migrated pages again, so a corrected mapping reaches them."|t('kunstmaan-migrator'),
+    warning: "Re-migrates pages that are already in Craft and overwrites them, including anything editors changed. Only safe while nothing else edits this content."|t('kunstmaan-migrator'),
     id: 'kuma-force',
     name: 'force',
   }) }}
@@ -135,7 +135,7 @@
   <details style="margin-top: 22px;">
     <summary>{{ "If a run stopped part-way"|t('kunstmaan-migrator') }}</summary>
     <p class="light">
-      {{ "A full run does all of these in order. Run one on its own only to pick up where a run stopped — each is safe to repeat."|t('kunstmaan-migrator') }}
+      {{ "A full run does all of these in order. Each is safe to repeat on its own."|t('kunstmaan-migrator') }}
     </p>
     <div class="btngroup">
       <button type="button" class="btn" data-pass="entries">{{ "Pages and content only"|t('kunstmaan-migrator') }}</button>

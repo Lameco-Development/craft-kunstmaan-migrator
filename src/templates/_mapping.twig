@@ -80,7 +80,7 @@
       <div class="readable" style="margin: 16px 0;">
         <blockquote class="note tip">
           <p>
-            {{ "{n, plural, =1{1 part has no target yet} other{# parts have no target yet}} — and the content model at {path} already says where most legacy parts go. Prefill drafts each row from its spec: the block, the field map, the columns the spec drops. Every drafted row stays open until you review it."|t('kunstmaan-migrator', { n: prefill.undecided, path: '<code>' ~ prefill.specsPath ~ '</code>' })|raw }}
+            {{ "{n, plural, =1{1 part has no target yet} other{# parts have no target yet}} — the content model at {path} already says where most go. Prefill drafts each row from its spec; every draft stays open until you review it."|t('kunstmaan-migrator', { n: prefill.undecided, path: '<code>' ~ prefill.specsPath ~ '</code>' })|raw }}
           </p>
           <form method="post" accept-charset="UTF-8">
             {{ csrfInput() }}
@@ -166,7 +166,7 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="5" class="light">{{ "This lane has no rows."|t('kunstmaan-migrator') }}</td></tr>
+          <tr><td colspan="5" class="light">{{ "Nothing here."|t('kunstmaan-migrator') }}</td></tr>
         {% endfor %}
       </tbody>
     </table>

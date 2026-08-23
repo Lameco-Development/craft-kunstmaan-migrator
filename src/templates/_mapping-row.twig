@@ -41,14 +41,14 @@
          its (ref_entity_name, ref_id) row, and its map addresses page fields
          directly. The field list below is the union across the page entry types;
          a field a type does not carry is dropped and counted at compile time. #}
-      <p class="light">{{ "Writes onto the page it decorates — no target to choose. Fields a page entry type does not carry are dropped for that page and counted."|t('kunstmaan-migrator') }}</p>
+      <p class="light">{{ "Writes onto the pages it decorates. Fields a page type does not have are skipped for that page."|t('kunstmaan-migrator') }}</p>
   {% elseif targetOptions is not empty %}
       {# Read from this Craft install, not typed from memory: a handle typed into
          YAML is checked when a migration runs, hours later. Selectize, because
          sixty handles is a list you search, not scroll. #}
       {{ forms.selectizeField({
         label: "Becomes"|t('kunstmaan-migrator'),
-        instructions: "The Craft {noun} this legacy row becomes. Only what this install offers is listed; the field map below follows your choice, and Save records it."|t('kunstmaan-migrator', { noun: noun }),
+        instructions: "What this becomes in Craft. The field map below follows your choice; Save records it."|t('kunstmaan-migrator', { noun: noun }),
         name: 'target',
         value: row.target,
         options: [{ label: "— choose —"|t('kunstmaan-migrator'), value: '' }]|merge(targetOptions),
@@ -69,7 +69,7 @@
 
   <h2>{{ "Legacy columns"|t('kunstmaan-migrator') }}</h2>
   <p class="light">
-      {{ "Columns with no field of their own. One left unplaced keeps this row open — that is deliberate, so a mapping cannot look finished while content still has nowhere to go. A column you fill a field from above does not belong here."|t('kunstmaan-migrator') }}
+      {{ "Columns not used by any field above. The row stays open until each one is mapped or set to Not migrating."|t('kunstmaan-migrator') }}
   </p>
 
   <table class="data fullwidth">
@@ -94,13 +94,13 @@
                 value: state.ignored ? 'ignore' : 'unreviewed',
                 options: [
                   { label: "Not looked at"|t('kunstmaan-migrator'), value: 'unreviewed' },
-                  { label: "Deliberately not migrated"|t('kunstmaan-migrator'), value: 'ignore' },
+                  { label: "Not migrating"|t('kunstmaan-migrator'), value: 'ignore' },
                 ],
               }) }}
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="2" class="light">{{ "Every column of this table has a home."|t('kunstmaan-migrator') }}</td></tr>
+          <tr><td colspan="2" class="light">{{ "Every column is accounted for."|t('kunstmaan-migrator') }}</td></tr>
         {% endfor %}
       </tbody>
   </table>
@@ -109,7 +109,7 @@
 
   {{ forms.lightswitchField({
       label: "Drop it entirely"|t('kunstmaan-migrator'),
-      instructions: "This legacy row has no Craft equivalent and does not migrate. A run reports a deliberate omission differently from one nobody decided about."|t('kunstmaan-migrator'),
+      instructions: "This has no Craft equivalent and will not migrate."|t('kunstmaan-migrator'),
       name: 'drop',
       on: row.dropped is not null,
       value: row.dropped ?? 'not migrating',

@@ -9,18 +9,18 @@
   {% if targets is empty %}
     <div class="readable">
       <blockquote class="note">
-        <p>{{ "No page row targets an entry type yet. Decide the pages lane first — coverage is the view you verify those decisions with."|t('kunstmaan-migrator') }}</p>
+        <p>{{ "Nothing to check yet. Decide the pages tab first."|t('kunstmaan-migrator') }}</p>
       </blockquote>
     </div>
   {% else %}
     <p class="light">
-      {{ "The mapping answers what each legacy thing becomes; this answers the inverse — for one entry type, every field and what feeds it. A field nothing feeds arrives empty on every migrated page."|t('kunstmaan-migrator') }}
+      {{ "For each target: every field, and what fills it. A field nothing fills stays empty after migration."|t('kunstmaan-migrator') }}
     </p>
 
     {% if gaps is not empty %}
       <div class="readable" style="margin-bottom: 16px;">
         <blockquote class="note {{ gaps|filter(g => g.required > 0) is not empty ? 'warning' }}">
-          <p>{{ "Targets with unfed fields:"|t('kunstmaan-migrator') }}
+          <p>{{ "Not fully covered:"|t('kunstmaan-migrator') }}
             {% for gap in gaps %}
               <a href="{{ url('kunstmaan-migrator/coverage', { kind: gap.kind, handle: gap.handle }) }}">{{ gap.handle }}</a>{% if gap.kind != 'page' %} <span class="light">({{ gap.kind }})</span>{% endif %}
               ({{ gap.unfed }}{% if gap.required > 0 %}, <strong>{{ "{count} required"|t('kunstmaan-migrator', { count: gap.required }) }}</strong>{% endif %}){{ not loop.last ? ' · ' }}
@@ -29,7 +29,7 @@
         </blockquote>
       </div>
     {% else %}
-      <p class="light">{{ "✓ Every field of every mapped target is fed."|t('kunstmaan-migrator') }}</p>
+      <p class="light">{{ "✓ Every field is covered."|t('kunstmaan-migrator') }}</p>
     {% endif %}
 
     {% set kindLabels = { page: 'Pages'|t('kunstmaan-migrator'), entity: 'Entities'|t('kunstmaan-migrator'), block: 'Blocks'|t('kunstmaan-migrator') } %}
@@ -45,7 +45,7 @@
 
     {{ forms.selectizeField({
       label: "Target"|t('kunstmaan-migrator'),
-      instructions: "A page entry type, an entity entry type, or a block — everything migrated content lands in."|t('kunstmaan-migrator'),
+      instructions: "A page type, an entity, or a block."|t('kunstmaan-migrator'),
       id: 'kuma-coverage-type',
       name: 'target',
       value: kind ~ ':' ~ handle,

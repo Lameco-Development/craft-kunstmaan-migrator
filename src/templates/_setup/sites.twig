@@ -16,9 +16,9 @@
     <div class="readable">
       <p>
         {% if narrowed %}
-          {{ "The database the earlier steps named, and its sibling databases — a multi-country site often has one per country. All are ticked; untick anything that should stay behind."|t('kunstmaan-migrator') }}
+          {{ "The database named earlier, plus its siblings — multi-country sites often have one per country. Untick anything that should not migrate."|t('kunstmaan-migrator') }}
         {% else %}
-          {{ "These are the Kunstmaan sites on that server. One site is usually one database, and a multi-language site often has one per country. Anything the earlier steps named is already ticked."|t('kunstmaan-migrator') }}
+          {{ "One site is usually one database; multi-country sites often have one per country. Anything named earlier is already ticked."|t('kunstmaan-migrator') }}
         {% endif %}
       </p>
     </div>

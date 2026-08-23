@@ -24,7 +24,7 @@
       <tr>
         <th>{{ "Site"|t('kunstmaan-migrator') }}</th>
         <th>{{ "Coming across"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Staying behind"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Not migrating"|t('kunstmaan-migrator') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -61,15 +61,15 @@
   <div class="readable">
   <ul class="bullets">
     <li>
-      {{ "{path} — the mapping: the list of decisions the migration follows. Creating it migrates nothing, and nothing is ever written to the old site."|t('kunstmaan-migrator', { path: '<code>' ~ mappingPath ~ '</code>' })|raw }}
+      {{ "{path} — the list of decisions the migration follows. Creating it migrates nothing."|t('kunstmaan-migrator', { path: '<code>' ~ mappingPath ~ '</code>' })|raw }}
     </li>
     {% if sourcePath %}
       <li>
-        {{ "An introspection artifact, read from the old site's code at {path} — it gives the mapping exact table names and relations."|t('kunstmaan-migrator', { path: '<code>' ~ sourcePath ~ '</code>' })|raw }}
+        {{ "Read from the old site's code at {path}: exact table names and relations."|t('kunstmaan-migrator', { path: '<code>' ~ sourcePath ~ '</code>' })|raw }}
       </li>
     {% else %}
       <li class="light">
-        {{ "No old-site code was found on this machine, so table names are left as TODOs in the mapping — fill them in while deciding the rows."|t('kunstmaan-migrator') }}
+        {{ "No old-site code found on this machine. Table names are left as TODOs to fill in later."|t('kunstmaan-migrator') }}
       </li>
     {% endif %}
     <li>
@@ -97,11 +97,11 @@
           value: 'merge',
           options: [
             {
-              label: "Merge — add what this survey found as new open rows, refresh live counts, keep every decision"|t('kunstmaan-migrator'),
+              label: "Merge — add newly found rows, refresh counts, keep every decision"|t('kunstmaan-migrator'),
               value: 'merge',
             },
             {
-              label: "Start over — move the current mapping aside as a timestamped copy and begin from a blank skeleton"|t('kunstmaan-migrator'),
+              label: "Start over — keep the current mapping as a timestamped copy and begin blank"|t('kunstmaan-migrator'),
               value: 'replace',
             },
           ],
@@ -114,6 +114,6 @@
   {% endif %}
 
   <p class="light">
-    {{ "Next, you decide what each piece of old content becomes — on the Mapping screen, row by row."|t('kunstmaan-migrator') }}
+    {{ "Next: decide what each piece of old content becomes, on the Mapping screen."|t('kunstmaan-migrator') }}
   </p>
 {% endblock %}

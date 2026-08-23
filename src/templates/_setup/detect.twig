@@ -12,7 +12,7 @@
     <div class="readable" style="margin-bottom: 16px;">
       <blockquote class="note warning">
         <p>
-          {{ "A mapping already exists at {path} — the decisions this migration runs on. Finishing the wizard will offer to replace it (the current file is kept as a timestamped copy). To keep working on it instead, head to the Mapping screen."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
+          {{ "A mapping already exists at {path}. At the end the wizard merges into it by default; replacing is a separate, explicit choice. To keep working on it instead, go to the Mapping screen."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
         </p>
       </blockquote>
     </div>
@@ -20,7 +20,7 @@
 
   <div class="readable">
     <p>
-      {{ "If the old site's files are on this machine, its own folder already answers the next questions — the database is in its .env, the uploads folder is public/uploads/media. Pick it and everything is prefilled; every value stays editable."|t('kunstmaan-migrator') }}
+      {{ "If the old site's code is on this machine, pick its folder. The next steps are prefilled from it, and every value stays editable."|t('kunstmaan-migrator') }}
     </p>
   </div>
 

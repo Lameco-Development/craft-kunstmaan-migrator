@@ -2,7 +2,7 @@
    so the screen introduces itself: whose history, where it comes from, where
    the workflow lives. #}
 <p>
-  {{ "The observation side of the {section}: the doctor health checks, the state export, and the history every migrate, finalize and fixup run writes — started, finished or failed, with its counts. Runs are started from the {run}."|t('kunstmaan-migrator', {
+  {{ "Health checks, the state export, and the run history of the {section}. Runs are started from the {run}."|t('kunstmaan-migrator', {
     section: '<strong>' ~ 'Kunstmaan Migration'|t('kunstmaan-migrator') ~ '</strong>',
     run: '<a href="' ~ url('kunstmaan-migrator/run') ~ '">' ~ 'Run screen'|t('kunstmaan-migrator') ~ '</a>',
   })|raw }}
@@ -17,7 +17,7 @@
     <a class="btn" href="{{ actionUrl('kunstmaan-migrator/migration/export') }}">{{ "Export state"|t('kunstmaan-migrator') }}</a>
   </div>
   <div class="instructions">
-    <p>{{ "Doctor answers the same checks as the console command — the install, and every environment the mapping declares. Export writes the state table as NDJSON — the file to diff between runs."|t('kunstmaan-migrator') }}</p>
+    <p>{{ "Doctor checks the install and every environment in the mapping. Export downloads the migration state as a file you can diff between runs."|t('kunstmaan-migrator') }}</p>
   </div>
 </div>
 

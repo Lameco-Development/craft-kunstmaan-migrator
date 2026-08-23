@@ -5,7 +5,7 @@
   {{ actionInput('kunstmaan-migrator/setup/save-connection') }}
 
   <div class="readable">
-    <p>{{ "The old Kunstmaan site’s database. Nothing is written to it — the migration only reads."|t('kunstmaan-migrator') }}</p>
+    <p>{{ "The old site's database. The migration only reads from it."|t('kunstmaan-migrator') }}</p>
   </div>
 
   {{ forms.autosuggestField({
@@ -27,7 +27,7 @@
   {{ forms.autosuggestField({
     label: "Database"|t('kunstmaan-migrator'),
     instructions: settings.legacyDbDatabase
-      ? "Read out of the old site's .env by the detect step — the test below looks for exactly this database, and the next step pre-ticks it and its siblings. Leave it empty to just count what the server holds."|t('kunstmaan-migrator')
+      ? "Filled from the old site's .env by the detect step. Leave empty to just count what the server holds."|t('kunstmaan-migrator')
       : "Optional. With it, the test answers about this database instead of counting everything on the server."|t('kunstmaan-migrator'),
     name: 'legacyDbDatabase',
     value: settings.legacyDbDatabase,

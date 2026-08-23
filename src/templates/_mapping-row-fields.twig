@@ -8,9 +8,9 @@
     <h2>{{ "Field map"|t('kunstmaan-migrator') }}</h2>
     <p class="light">
       {% if columns is not empty %}
-        {{ "The fields of the chosen target, and which column of the old table fills each. Both lists are real — the fields from this Craft install, the columns from the old database."|t('kunstmaan-migrator') }}
+        {{ "Each Craft field, and the old column that fills it."|t('kunstmaan-migrator') }}
       {% else %}
-        {{ "The fields of the chosen target. The old database is not reachable right now, so type the column names."|t('kunstmaan-migrator') }}
+        {{ "The old database is not reachable, so type the column names by hand."|t('kunstmaan-migrator') }}
       {% endif %}
     </p>
 
@@ -72,7 +72,7 @@
                   value: expression.advanced,
                   class: 'code',
                 }) }}
-                <span class="light">{{ "Written by hand — leave as it is unless you know the grammar."|t('kunstmaan-migrator') }}</span>
+                <span class="light">{{ "Combines several columns. Edit only if you know the expression syntax."|t('kunstmaan-migrator') }}</span>
               </td>
             {% else %}
               <td>
@@ -114,7 +114,7 @@
         <p>
           {{ "The mapping fills fields this target does not have:"|t('kunstmaan-migrator') }}
           <code>{{ unknown|join('</code>, <code>')|raw }}</code>.
-          {{ "They are left untouched here; fix them in the file, or change the block."|t('kunstmaan-migrator') }}
+          {{ "Fix them in the mapping file, or pick a different target."|t('kunstmaan-migrator') }}
         </p>
       </blockquote>
     {% endif %}
