@@ -46,6 +46,11 @@
 
         $('#kuma-coverage-type').on('change', function () {
           var entryType = this.value;
+
+          // Selectize fires a change with an empty value while the picker is
+          // being cleared mid-choice; there is nothing to ask about yet.
+          if (!entryType) { return; }
+
           kumaSwap(container, 'kunstmaan-migrator/migration/coverage-table', { entryType: entryType }, {
             onDone: function () {
               // The address keeps meaning something: reloading or sharing the
