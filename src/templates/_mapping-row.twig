@@ -83,8 +83,22 @@
         <tbody>
           {% for field in fields %}
             {% set expression = expressions[field] %}
+            {% set fills = sidecarFills[field] ?? [] %}
             <tr>
-              <th scope="row"><code>{{ field }}</code></th>
+              <th scope="row">
+                <code>{{ field }}</code>
+                {# The sidecar fills this field on every page it decorates, and a
+                   screen that shows it as "not filled" is lying. Named here, with
+                   the way out — the page's own map wins a collision, so a column
+                   chosen on this row is an override, not a conflict. #}
+                {% for fill in fills %}
+                  <div class="light">
+                    {{ "filled by the {sidecar} sidecar"|t('kunstmaan-migrator', { sidecar: fill.sidecar }) }}
+                    (<code>{{ fill.expression }}</code>)
+                    · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'sidecars', key: fill.sidecar }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
+                  </div>
+                {% endfor %}
+              </th>
 
               {% if expression.isAdvanced() %}
                 {# `link(link_url, title, link_new_window)` composes several
@@ -105,7 +119,12 @@
                     {{ forms.selectize({
                       name: 'map[' ~ field ~ '][column]',
                       value: expression.column,
-                      options: [{ label: "— not filled —"|t('kunstmaan-migrator'), value: '' }]|merge(
+                      options: [{
+                        label: fills is not empty
+                          ? "— the sidecar fills this —"|t('kunstmaan-migrator')
+                          : "— not filled —"|t('kunstmaan-migrator'),
+                        value: '',
+                      }]|merge(
                         columns|map(c => { label: c, value: c })
                       ),
                     }) }}

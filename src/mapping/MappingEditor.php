@@ -258,6 +258,40 @@ final class MappingEditor
     }
 
     /**
+     * Which of an entry type's fields the sidecars already fill.
+     *
+     * A page row that shows `heroTitle — not filled —` while the headerTab
+     * sidecar fills it on every decorated page is lying to the operator. The
+     * page screen shows these as covered, and by whom; the page's own map
+     * still wins a collision, so mapping a column on top is an override, not
+     * a conflict.
+     *
+     * @return array<string, list<array{sidecar: string, expression: string}>>
+     */
+    public function sidecarFillsFor(string $entryType): array
+    {
+        $fields = array_flip($this->fieldsFor($entryType));
+        $fills = [];
+
+        foreach ($this->document()->lane('sidecars') as $name => $spec) {
+            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
+                continue;
+            }
+
+            foreach ((array) ($spec['map'] ?? []) as $field => $expression) {
+                if (isset($fields[(string) $field])) {
+                    $fills[(string) $field][] = [
+                        'sidecar' => (string) $name,
+                        'expression' => (string) $expression,
+                    ];
+                }
+            }
+        }
+
+        return $fills;
+    }
+
+    /**
      * The legacy columns a row's table actually has.
      *
      * Read from the first environment the mapping declares: a part's table has

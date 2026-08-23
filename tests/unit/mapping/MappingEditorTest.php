@@ -182,6 +182,54 @@ final class MappingEditorTest extends TestCase
         );
     }
 
+
+    /**
+     * A page row that shows `heroTitle — not filled —` while the headerTab
+     * sidecar fills it on every decorated page is lying to the operator: the
+     * page screen names the sidecar that covers each field. Dropped and manual
+     * sidecars cover nothing, and a field the entry type lacks is not covered.
+     */
+    public function testThePageRowKnowsWhichFieldsTheSidecarsFill(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'mapping') . '.yaml';
+
+        file_put_contents($path, <<<'YAML'
+            version: 1
+            environments:
+              COM:
+                database: legacy
+                locales: { en: siteEn }
+            pages:
+              ContentPage: { entryType: contentPage }
+            sidecars:
+              headerTab:
+                table: header_tabs
+                map:
+                  heroTitle: title | inlineHtml
+                  applyType: apply_type
+              footerTab:
+                table: footer_tabs
+                manual: decide later
+            YAML);
+
+        $schema = $this->createStub(SchemaGateway::class);
+        $schema->method('fieldSlotsFor')->willReturn([
+            'heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []],
+        ]);
+
+        $editor = new MappingEditor(
+            SettingsFactory::make(['mappingPath' => $path]),
+            $schema,
+            new TargetModel($schema),
+            new InMemoryTargetCatalogue(),
+        );
+
+        self::assertSame(
+            ['heroTitle' => [['sidecar' => 'headerTab', 'expression' => 'title | inlineHtml']]],
+            $editor->sidecarFillsFor('contentPage'),
+        );
+    }
+
     /** Two open pages, as `mapping/init` leaves them. */
     private function mappingFile(): string
     {

@@ -245,6 +245,14 @@ final class MigrationController extends Controller
             $row->target !== null  => $editor->fieldsFor($row->target),
             default                => [],
         };
+        // The union across thirty entry types is a long list of strangers; a
+        // sidecar's own mapped fields drown in it. They come first.
+        if ($lane === 'sidecars') {
+            $mapped = array_keys($row->map);
+            usort($fields, static fn (string $a, string $b): int =>
+                [!in_array($a, $mapped, true), $a] <=> [!in_array($b, $mapped, true), $b]);
+        }
+
         $expressions = [];
 
         foreach ($fields as $field) {
@@ -259,6 +267,9 @@ final class MigrationController extends Controller
             'expressions' => $expressions,
             'columns' => $editor->columnsFor($row),
             'transforms' => $editor->transforms(),
+            'sidecarFills' => $lane === 'pages' && $row->target !== null
+                ? $editor->sidecarFillsFor($row->target)
+                : [],
         ]);
     }
 
