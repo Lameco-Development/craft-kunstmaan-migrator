@@ -1,5 +1,6 @@
 {% extends "kunstmaan-migrator/_setup/_wizard" %}
 {% import "_includes/forms.twig" as forms %}
+{% do view.registerAssetBundle('lameco\\kunstmaanmigrator\\web\\MigratorAsset') %}
 {% set nextLabel = "Use this site"|t('kunstmaan-migrator') %}
 
 {% block step %}
@@ -58,16 +59,13 @@
     var rootField = document.getElementById('kuma-root');
 
     var rescan = function () {
-      rescanBtn.classList.add('loading');
-      Craft.sendActionRequest('POST', 'kunstmaan-migrator/setup/detect-results', {
-        data: { root: rootField.value },
-      }).then(function (response) {
-        results.innerHTML = response.data.html;
-        // The picked checkout is gone with the old list.
-        path.value = '';
-        saves().forEach(function (b) { b.disabled = true; });
-      }).finally(function () {
-        rescanBtn.classList.remove('loading');
+      kumaSwap(results, 'kunstmaan-migrator/setup/detect-results', { root: rootField.value }, {
+        busy: rescanBtn,
+        onDone: function () {
+          // The picked checkout is gone with the old list.
+          path.value = '';
+          saves().forEach(function (b) { b.disabled = true; });
+        },
       });
     };
 

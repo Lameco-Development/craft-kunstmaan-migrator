@@ -8,6 +8,70 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A Coverage screen — the inverse of the mapping.** Pick an entry type and
+  see every field and what feeds it: page maps, sidecars, the parts lane
+  through its context fields, with required-but-unfed fields flagged and a
+  roll-up naming only the entry types with holes. Backed by
+  `FieldProvenance`, one computed inversion every screen answers from, so a
+  screen can no longer disagree with another screen — or with the run.
+- **A permanent run log.** Every migrate, finalize and fixup run writes
+  started/finished/failed with its counts to
+  `storage/kunstmaan-migrator/runs.jsonl` (one shared `RunLog::track()`
+  envelope; counts survive into the failed event). A read-only **Kunstmaan
+  migration log** utility renders the history beside Craft's own logs.
+- **Re-running the wizard merges instead of clobbering.** Newly discovered
+  rows join the existing mapping as open, live counts refresh, every decision
+  and comment stays; "start over" remains as the explicit choice, with its
+  cost stated in decided rows. This retires the failure where a finished
+  mapping became a skeleton because replace was the only door.
+- **The mapping screens answer live.** Choosing a Becomes redraws the field
+  map without a save; the detect step rescans without a reload; the coverage
+  picker swaps in place and keeps the URL meaningful; `mapping/check` is a
+  button whose verdict renders inline. One shared `kumaSwap` helper owns the
+  loading and error paths.
+- **Rows show their context.** Page rows name the sidecar that fills each
+  hero field (with an edit link); sidecar rows say how many mapped entry
+  types carry each field and which drop it; every column dropdown shows three
+  real sample values from the legacy table; lane tabs carry their open
+  counts; the Becomes dropdown is searchable and grouped by section.
+
+### Changed
+
+- **The Run screen moved from Utilities into the plugin's own section** —
+  one workflow, one nav area. Its production guard and confirmations came
+  along unchanged; every screen and action now requires the plugin's section
+  permission (`accessPlugin-kunstmaan-migrator`) instead of the old utility
+  permission. The section also gained its nav icon (`icon-mask.svg`).
+- **A row save is refused only for damage, never for unfinished work.**
+  `Schema::validateRow()` distinguishes malformation (unknown keys,
+  conflicting dispositions, broken children) from completeness (no target
+  yet, columns unreviewed) — the progress bar's business. Saving a fresh
+  skeleton row by row, clearing a target, and keeping a column
+  not-looked-at all work now; `validate()` remains the gate a run must pass
+  in full.
+- **One check verdict for three renderers.** The CLI `mapping/check`, the
+  migrate preflight and the CP button all ask `MappingCheck` in kuma-compile;
+  the CP button gained the blocks-nothing-accepts stage it silently lacked.
+- **`state/export` returns an `ExportResult`** carrying rows, the exclusion
+  count and its warning — both exports report exclusions, by signature
+  rather than by convention.
+
+### Fixed
+
+- The mapping YAML is parsed once per request instead of per question (the
+  coverage screen alone cost ~2N+4 full parses for N mapped entry types).
+- `RunLog::entries()` reads a bounded tail instead of the whole append-only
+  file.
+- The unit suite runs clean: the export builder no longer needs a booted
+  Craft to count its exclusions, null-plugin property reads are guarded, and
+  the deprecated `setAccessible()` calls are gone.
+
+### Internal
+
+- A phpstan rule holds the kuma-compile boundary mechanically: nothing under
+  `lib/kuma-compile` may reference Craft, `craft\*`, `yii\*`, or the
+  plugin's own namespace.
+
 - **A fresh mapping opens with a prefill offer, not sixty empty rows.** The
   content model's block specs already say which legacy parts each block covers
   (`migrationSource:` and the notes-table headers) and which property becomes

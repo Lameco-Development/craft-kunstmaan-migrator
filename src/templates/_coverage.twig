@@ -1,6 +1,7 @@
 {% extends "_layouts/cp.twig" %}
 {% set selectedSubnavItem = 'coverage' %}
 {% import "_includes/forms.twig" as forms %}
+{% do view.registerAssetBundle('lameco\\kunstmaanmigrator\\web\\MigratorAsset') %}
 
 {% set title = "Coverage"|t('kunstmaan-migrator') %}
 
@@ -45,16 +46,12 @@
 
         $('#kuma-coverage-type').on('change', function () {
           var entryType = this.value;
-          container.style.opacity = '0.5';
-          Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/coverage-table', {
-            data: { entryType: entryType },
-          }).then(function (response) {
-            container.innerHTML = response.data.html;
-            // The address keeps meaning something: reloading or sharing the URL
-            // lands on the type being looked at.
-            history.replaceState(null, '', Craft.getCpUrl('kunstmaan-migrator/coverage', { entryType: entryType }));
-          }).finally(function () {
-            container.style.opacity = '';
+          kumaSwap(container, 'kunstmaan-migrator/migration/coverage-table', { entryType: entryType }, {
+            onDone: function () {
+              // The address keeps meaning something: reloading or sharing the
+              // URL lands on the type being looked at.
+              history.replaceState(null, '', Craft.getCpUrl('kunstmaan-migrator/coverage', { entryType: entryType }));
+            },
           });
         });
       })();

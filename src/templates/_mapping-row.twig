@@ -1,6 +1,7 @@
 {% extends "_layouts/cp.twig" %}
 {% set selectedSubnavItem = 'mapping' %}
 {% import "_includes/forms.twig" as forms %}
+{% do view.registerAssetBundle('lameco\\kunstmaanmigrator\\web\\MigratorAsset') %}
 
 {% set title = row.key %}
 {% set crumbs = [{ label: "Mapping"|t('kunstmaan-migrator'), url: url('kunstmaan-migrator/mapping', { lane: lane }) }] %}
@@ -156,15 +157,12 @@
 
     if (becomes && container) {
       $(becomes).on('change', function () {
-        container.style.opacity = '0.5';
-        Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/field-map', {
-          data: { lane: {{ lane|json_encode|raw }}, key: {{ row.key|json_encode|raw }}, target: becomes.value },
-        }).then(function (response) {
-          container.innerHTML = response.data.html;
-          if (response.data.js) { Craft.appendBodyHtml(response.data.js); }
-          kumaBindSamples(container);
-        }).finally(function () {
-          container.style.opacity = '';
+        kumaSwap(container, 'kunstmaan-migrator/migration/field-map', {
+          lane: {{ lane|json_encode|raw }},
+          key: {{ row.key|json_encode|raw }},
+          target: becomes.value,
+        }, {
+          onDone: function () { kumaBindSamples(container); },
         });
       });
     }

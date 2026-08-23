@@ -87,16 +87,33 @@ final class RunLog
      */
     public function entries(int $limit = 100): array
     {
-        if (!is_file($this->path)) {
+        // The file is append-only and never truncated, so reading it whole
+        // grows with every run forever. A quarter-megabyte tail holds far
+        // more than any screen shows.
+        $handle = @fopen($this->path, 'r');
+
+        if ($handle === false) {
             return [];
         }
 
-        $lines = @file($this->path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-
-        if ($lines === false) {
-            return [];
+        try {
+            fseek($handle, 0, SEEK_END);
+            $size = ftell($handle);
+            $window = 262144;
+            $offset = max(0, (int) $size - $window);
+            fseek($handle, $offset);
+            $tail = (string) stream_get_contents($handle);
+        } finally {
+            fclose($handle);
         }
 
+        if ($offset > 0) {
+            // The window almost certainly starts mid-line; the partial line is
+            // older than anything shown, so it is dropped, not repaired.
+            $tail = substr($tail, (int) (strpos($tail, "\n") ?: -1) + 1);
+        }
+
+        $lines = array_values(array_filter(explode("\n", $tail), static fn (string $line): bool => $line !== ''));
         $out = [];
 
         foreach (array_reverse(array_slice($lines, -$limit)) as $line) {

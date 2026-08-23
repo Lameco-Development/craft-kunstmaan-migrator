@@ -28,6 +28,21 @@ final class RunLogTest extends TestCase
         self::assertNotEmpty($entries[0]['time'], 'an unstamped log line answers nothing');
     }
 
+    public function testTheTailIsBoundedAndStillNewestFirst(): void
+    {
+        $log = new RunLog(tempnam(sys_get_temp_dir(), 'runlog') . '.jsonl');
+
+        for ($i = 1; $i <= 150; $i++) {
+            $log->append(['event' => 'finished', 'n' => $i]);
+        }
+
+        $entries = $log->entries(100);
+
+        self::assertCount(100, $entries);
+        self::assertSame(150, $entries[0]['n'], 'newest first');
+        self::assertSame(51, $entries[99]['n'], 'the oldest shown is the 51st-newest');
+    }
+
     public function testACorruptLineIsSkippedNotFatal(): void
     {
         $path = tempnam(sys_get_temp_dir(), 'runlog') . '.jsonl';
