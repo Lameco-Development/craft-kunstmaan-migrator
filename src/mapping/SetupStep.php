@@ -13,6 +13,7 @@ namespace lameco\kunstmaanmigrator\mapping;
  */
 enum SetupStep: string
 {
+    case Detect = 'detect';
     case Connect = 'connect';
     case Sites = 'sites';
     case Locales = 'locales';
@@ -21,7 +22,7 @@ enum SetupStep: string
     /** @return list<self> */
     public static function all(): array
     {
-        return [self::Connect, self::Sites, self::Locales, self::Review];
+        return [self::Detect, self::Connect, self::Sites, self::Locales, self::Review];
     }
 
     public function number(): int
@@ -32,6 +33,7 @@ enum SetupStep: string
     public function title(): string
     {
         return match ($this) {
+            self::Detect => 'Find the site',
             self::Connect => 'Connect',
             self::Sites => 'Choose sites',
             self::Locales => 'Match languages',
@@ -49,6 +51,7 @@ enum SetupStep: string
     public function question(): string
     {
         return match ($this) {
+            self::Detect => 'Which old site is this migration for?',
             self::Connect => 'Where is the old site’s database?',
             self::Sites => 'Which of these sites are you migrating?',
             self::Locales => 'Where should each language and its files go?',

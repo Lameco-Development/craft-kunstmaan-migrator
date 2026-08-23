@@ -8,6 +8,23 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The setup wizard starts by finding the site, not asking about it.** A new
+  first step scans a folder (default: the Craft project's parent, e.g.
+  `~/Sites`) for Kunstmaan checkouts — a checkout qualifies by its
+  `composer.lock` naming a `kunstmaan/*` package — and offers them as a list
+  with the Kunstmaan version, the database its own `.env` names (`.env.local`
+  winning), and whether `public/uploads/media` exists. Picking one prefills the
+  connection, the media root on the locales step, and the source path on the
+  review step; every value stays editable, and "enter it by hand" remains one
+  click. The password is never copied as a literal — the settings model
+  rightly refuses one — so the prefill references an env var that already
+  resolves to it, or tells the operator exactly what to add to `.env`.
+- **The wizard's write step produces the introspection artifact too.** With a
+  source path known (detected or typed), creating the mapping runs the same
+  introspection the CLI does — booted metadata with static fallback — writes
+  `introspection.json` next to the mapping, and generates the skeleton from
+  its exact table names and child-collection ownership.
+
 - **`kuma-compile bootstrap`** — starting a migration is one command: it runs
   `survey` (size the corpus), `introspect` (read the application's wiring) and
   `init` (generate the mapping skeleton) in order, writing

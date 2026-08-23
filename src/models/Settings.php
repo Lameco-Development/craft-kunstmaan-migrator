@@ -22,6 +22,13 @@ use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 class Settings extends Model
 {
     // Legacy DB connection (D-12). Defaults to CRAFT_LEGACY_DB_* env vars.
+    /**
+     * The legacy checkout this migration reads — filled by the wizard's detect step.
+     * Powers the media-root prefill and source introspection; the database
+     * credentials it carried were copied into the legacyDb* settings below.
+     */
+    public ?string $legacySourcePath     = null;
+
     public ?string $legacyDbServer       = null;
     public int     $legacyDbPort         = 3306;
     public ?string $legacyDbDatabase     = null;

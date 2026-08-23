@@ -8,8 +8,11 @@ use Craft;
 use craft\helpers\App;
 use craft\helpers\UrlHelper;
 use craft\web\Controller;
+use Lameco\KumaCompile\Legacy\CheckoutScanner;
 use Lameco\KumaCompile\Legacy\Dsn;
 use Lameco\KumaCompile\Legacy\EntityTableIndex;
+use Lameco\KumaCompile\Legacy\Introspection;
+use Lameco\KumaCompile\Legacy\Introspector;
 use Lameco\KumaCompile\Legacy\LegacyCatalogue;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\MappingDocument;
@@ -46,6 +49,93 @@ final class SetupController extends Controller
 {
     public function actionIndex(): Response
     {
+        return $this->redirect('kunstmaan-migrator/setup/detect');
+    }
+
+    // ── Step 0 ───────────────────────────────────────────────────────────────
+
+    /**
+     * If the assets are being migrated, a working copy of the legacy site is
+     * almost certainly sitting in a sibling folder — and that copy already
+     * knows what the next screens ask: its `.env` has the database, its
+     * `public/uploads/media` is the media root, and its `composer.lock` says
+     * it is a Kunstmaan site at all. So this scans and offers; every value it
+     * prefills stays editable on the screens that follow.
+     */
+    public function actionDetect(): Response
+    {
+        $this->guard();
+
+        $root = trim((string) $this->request->getQueryParam('root', ''));
+
+        if ($root === '') {
+            // The Craft project's parent is where sibling checkouts live —
+            // ~/Sites for a checkout at ~/Sites/<project>.
+            $root = dirname((string) Craft::getAlias('@root'));
+        }
+
+        return $this->step(SetupStep::Detect, 'detect', [
+            'root' => $root,
+            'checkouts' => (new CheckoutScanner())->scan($root),
+        ]);
+    }
+
+    public function actionChooseCheckout(): Response
+    {
+        $this->guard();
+        $this->requirePostRequest();
+
+        $path = trim((string) $this->request->getBodyParam('path', ''));
+        $checkout = $path !== '' ? (new CheckoutScanner())->inspect($path) : null;
+
+        if ($checkout === null) {
+            Craft::$app->getSession()->setError(Craft::t('kunstmaan-migrator', 'That folder is not a Kunstmaan checkout.'));
+
+            return $this->redirect('kunstmaan-migrator/setup/detect');
+        }
+
+        $plugin = Plugin::getInstance();
+        $settings = $plugin->getSettings();
+        $settings->legacySourcePath = $checkout['path'];
+
+        $passwordNote = null;
+
+        if ($checkout['database'] !== null) {
+            $settings->legacyDbServer = $checkout['database']['host'];
+            $settings->legacyDbPort = $checkout['database']['port'];
+            $settings->legacyDbUser = $checkout['database']['user'];
+
+            // A literal password is refused by the settings model — it would be
+            // written into project config and committed. So the prefill is a
+            // reference: when an env var of this project already resolves to the
+            // found password, its name goes in; otherwise the operator is told
+            // exactly what to add and where the password sits.
+            $password = $checkout['database']['password'];
+            $reference = $password !== '' ? self::envReferenceFor($password) : null;
+
+            if ($reference !== null) {
+                $settings->legacyDbPassword = '$' . $reference;
+            } elseif ($password !== '') {
+                $passwordNote = Craft::t(
+                    'kunstmaan-migrator',
+                    'The database password is in {env}. Add it to this project\'s .env (e.g. KUMA_DB_PASSWORD=…) and set the password field to $KUMA_DB_PASSWORD.',
+                    ['env' => $checkout['path'] . '/.env'],
+                );
+            }
+        }
+
+        if (!Craft::$app->getPlugins()->savePluginSettings($plugin, $settings->toArray())) {
+            Craft::$app->getSession()->setError(implode(' ', $settings->getErrorSummary(true)));
+
+            return $this->redirect('kunstmaan-migrator/setup/detect');
+        }
+
+        Craft::$app->getSession()->setNotice(trim(Craft::t(
+            'kunstmaan-migrator',
+            'Prefilled from {path} — check the connection and adjust anything that is off.',
+            ['path' => $checkout['path'] . '/.env'],
+        ) . ' ' . ($passwordNote ?? '')));
+
         return $this->redirect('kunstmaan-migrator/setup/connect');
     }
 
@@ -165,11 +255,18 @@ final class SetupController extends Controller
         $catalogue = $this->catalogue();
         $environments = [];
 
+        // The detect step found the checkout; its uploads folder is the media
+        // root for every environment until the operator says otherwise.
+        $sourcePath = (string) (Plugin::getInstance()->getSettings()->legacySourcePath ?? '');
+        $detectedMedia = $sourcePath !== '' && is_dir($sourcePath . '/public/uploads/media')
+            ? $sourcePath . '/public/uploads/media'
+            : '';
+
         foreach ($draft->environments as $label => $database) {
             $environments[$label] = [
                 'database' => $database,
                 'locales' => $catalogue->locales($database),
-                'mediaRoot' => '',
+                'mediaRoot' => $detectedMedia,
                 'chosen' => [],
             ];
         }
@@ -276,6 +373,7 @@ final class SetupController extends Controller
             'envs' => $draft->toString(),
             'choices' => (string) $this->request->getQueryParam('choices', ''),
             'mappingPath' => $this->mappingPath(),
+            'sourcePath' => (string) (Plugin::getInstance()->getSettings()->legacySourcePath ?? ''),
         ]);
     }
 
@@ -323,6 +421,23 @@ final class SetupController extends Controller
 
     // ── Plumbing ─────────────────────────────────────────────────────────────
 
+    /**
+     * The name of an environment variable this project already holds that
+     * resolves to the given secret — so the prefill can reference it instead
+     * of ever writing the secret itself.
+     */
+    private static function envReferenceFor(string $secret): ?string
+    {
+        foreach ([...$_ENV, ...$_SERVER] as $name => $value) {
+            if (is_string($value) && $value === $secret && preg_match('/^[A-Z][A-Z0-9_]*$/', (string) $name) === 1) {
+                return (string) $name;
+            }
+        }
+
+        return null;
+    }
+
+
     private function write(SetupDraft $draft, string $path): void
     {
         $dsn = EnvironmentPipeline::dsnFromSettings();
@@ -332,8 +447,20 @@ final class SetupController extends Controller
             $databases[$label] = LegacyDatabase::connect($label, $database, $dsn);
         }
 
-        $source = trim((string) $this->request->getBodyParam('source', ''));
-        $entities = $source !== '' ? EntityTableIndex::fromSource($source) : EntityTableIndex::empty();
+        $source = trim((string) $this->request->getBodyParam('source', ''))
+            ?: (string) (Plugin::getInstance()->getSettings()->legacySourcePath ?? '');
+
+        // The same artifact the CLI writes, next to the mapping: booted metadata
+        // when the checkout runs, the static scan when it does not — and the
+        // skeleton reads it, so child-collection ownership is exact.
+        $entities = EntityTableIndex::empty();
+
+        if ($source !== '' && is_dir($source)) {
+            $introspector = new Introspector();
+            $artifact = $introspector->introspect($source);
+            $introspector->write($artifact, dirname($path) . '/introspection.json');
+            $entities = EntityTableIndex::fromIntrospection(Introspection::fromArray($artifact));
+        }
 
         @mkdir(dirname($path), 0o775, true);
         file_put_contents($path, (new Skeleton($entities))->generate($databases));

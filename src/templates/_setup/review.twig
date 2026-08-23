@@ -55,8 +55,9 @@
 
   {{ forms.textField({
     label: "Old site’s code, if you have it"|t('kunstmaan-migrator'),
-    instructions: "Optional. With it, the migrator can name every database table for you. Without it, you fill those in yourself."|t('kunstmaan-migrator'),
+    instructions: "Optional. With it, the migrator reads the application itself — every table name, every relation, the header tabs — and writes an introspection artifact next to the mapping. The detect step filled this in when it found the site."|t('kunstmaan-migrator'),
     name: 'source',
+    value: sourcePath ?? '',
     placeholder: '/Users/you/Sites/old-site',
   }) }}
 

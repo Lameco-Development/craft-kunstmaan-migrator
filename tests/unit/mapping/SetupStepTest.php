@@ -18,18 +18,20 @@ final class SetupStepTest extends TestCase
     public function testTheStepsRunInOrderAndKnowTheirNumber(): void
     {
         self::assertSame(
-            ['connect', 'sites', 'locales', 'review'],
+            ['detect', 'connect', 'sites', 'locales', 'review'],
             array_map(static fn (SetupStep $s): string => $s->value, SetupStep::all()),
         );
 
-        self::assertSame(1, SetupStep::Connect->number());
-        self::assertSame(4, SetupStep::Review->number());
+        self::assertSame(1, SetupStep::Detect->number());
+        self::assertSame(2, SetupStep::Connect->number());
+        self::assertSame(5, SetupStep::Review->number());
     }
 
     public function testEachStepKnowsWhatComesBeforeAndAfter(): void
     {
         self::assertSame(SetupStep::Sites, SetupStep::Connect->next());
-        self::assertNull(SetupStep::Connect->previous());
+        self::assertSame(SetupStep::Detect, SetupStep::Connect->previous());
+        self::assertNull(SetupStep::Detect->previous());
         self::assertSame(SetupStep::Locales, SetupStep::Review->previous());
         self::assertNull(SetupStep::Review->next());
     }

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\KumaCompile\Command;
 
-use Lameco\KumaCompile\Legacy\SourceScanner;
+use Lameco\KumaCompile\Legacy\Introspector;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -37,48 +37,33 @@ final class IntrospectCommand extends Command
             return Command::INVALID;
         }
 
-        $scanner = new SourceScanner($source);
-        $entities = null;
-        $mode = 'static';
-
         // Booting the legacy kernel gives resolved metadata — inheritance, join tables,
         // exact column types — but requires a checkout that runs on this machine's PHP.
         // Runs as a child process so the legacy app's dependencies never mix with ours,
         // and a checkout that cannot boot fails that process, not this one.
-        if (!$input->getOption('static')) {
-            $probed = $this->probe($source, $io);
+        $note = null;
+        $introspector = new Introspector();
+        $artifact = $introspector->introspect($source, (bool) $input->getOption('static'), $note);
+        $entities = (array) $artifact['entities'];
+        $mode = (string) $artifact['mode'];
 
-            if ($probed !== null) {
-                $entities = (array) ($probed['entities'] ?? []);
-                $mode = 'boot';
-            }
+        if ($note !== null) {
+            $io->note(sprintf('Kernel boot failed (%s) — falling back to the static scan.', $note));
         }
 
-        if ($entities === null) {
+        if ($mode === 'static' && !$input->getOption('static')) {
             $io->warning('Reading ORM attributes statically — inheritance and associations are best-effort. A booted kernel gives the exact metadata.');
-            $entities = $scanner->staticEntities();
         }
-
-        $artifact = [
-            'mode' => $mode,
-            'source' => rtrim($source, '/'),
-            'entities' => $entities,
-            // The two scans no Doctrine metadata carries, static either way: what the
-            // NodeListener wires into the page UI, and which fields each form draws.
-            'sidecars' => $scanner->sidecarListeners(),
-            'formTypes' => $scanner->formTypes(),
-        ];
 
         $out = (string) $input->getOption('out');
-        $dir = dirname($out);
 
-        if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
-            $io->error(sprintf('Cannot create %s', $dir));
+        try {
+            $introspector->write($artifact, $out);
+        } catch (\RuntimeException $e) {
+            $io->error($e->getMessage());
 
             return Command::FAILURE;
         }
-
-        file_put_contents($out, json_encode($artifact, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
 
         $m2m = 0;
 
@@ -104,35 +89,4 @@ final class IntrospectCommand extends Command
         return Command::SUCCESS;
     }
 
-    /** @return array<string, mixed>|null the probe's JSON, or null when the checkout cannot boot */
-    private function probe(string $source, SymfonyStyle $io): ?array
-    {
-        $script = dirname(__DIR__, 2) . '/resources/introspect-probe.php';
-        $process = proc_open(
-            [PHP_BINARY, $script, $source],
-            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-            $pipes,
-            $source,
-        );
-
-        if (!is_resource($process)) {
-            return null;
-        }
-
-        $stdout = (string) stream_get_contents($pipes[1]);
-        $stderr = (string) stream_get_contents($pipes[2]);
-        fclose($pipes[1]);
-        fclose($pipes[2]);
-        $exit = proc_close($process);
-
-        if ($exit !== 0) {
-            $io->note(sprintf('Kernel boot failed (%s) — falling back to the static scan.', trim($stderr) !== '' ? trim(strtok($stderr, "\n") ?: '') : 'exit ' . $exit));
-
-            return null;
-        }
-
-        $data = json_decode($stdout, true);
-
-        return is_array($data) ? $data : null;
-    }
 }
