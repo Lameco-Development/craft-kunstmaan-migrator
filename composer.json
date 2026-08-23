@@ -1,6 +1,6 @@
 {
     "name": "lameco/craft-kunstmaan-migrator",
-    "description": "Thin payload loader for Kunstmaan\u2192Craft migrations",
+    "description": "Thin payload loader for Kunstmaan→Craft migrations",
     "type": "craft-plugin",
     "license": "MIT",
     "authors": [
@@ -39,7 +39,8 @@
     "autoload-dev": {
         "psr-4": {
             "lameco\\kunstmaanmigrator\\tests\\": "tests/",
-            "Lameco\\KumaCompile\\Tests\\": "lib/kuma-compile/tests/"
+            "Lameco\\KumaCompile\\Tests\\": "lib/kuma-compile/tests/",
+            "lameco\\kunstmaanmigrator\\phpstan\\": "phpstan/"
         }
     },
     "scripts": {
