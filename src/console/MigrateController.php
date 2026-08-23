@@ -10,6 +10,7 @@ use craft\helpers\Console;
 use Lameco\KumaCompile\Compile\PayloadWriter;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
+use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Report\BlockPlacement;
 use Lameco\KumaCompile\Report\Coverage;
@@ -197,29 +198,11 @@ final class MigrateController extends Controller
         $gateway = new CraftSchemaGateway();
         $target = new TargetModel($gateway);
 
-        // Shape first, then the target: a mapping that is not well-formed produces
-        // misleading target errors.
-        if ($errors = (new Schema())->validate($mapping)) {
-            return $this->refuse('Mapping is not well-formed', $errors);
-        }
-
-        $targetCheck = new TargetCheck($target);
-
-        if ($errors = $targetCheck->check($mapping)) {
-            return $this->refuse('Mapping does not match this Craft install', $errors);
-        }
-
-        // A block no hosting Matrix accepts is not a shape error and not a handle error — every
-        // name in it exists. It is a pairing the write side rejects, silently, on every placement.
-        if ($errors = $targetCheck->blocksNoPageAccepts($mapping)) {
-            return $this->refuse('Blocks this Craft install accepts nowhere', $errors);
-        }
-
-        if ($conflicts = $mapping->openConflicts()) {
-            return $this->refuse(
-                sprintf('%d unresolved conflicts — set conflict.status: decided', count($conflicts)),
-                array_map(static fn ($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
-            );
+        // The shared verdict: shape, install, blocks-nothing-accepts, open
+        // conflicts. Drift and the --only list stay here — they are facts
+        // about this run, not about the mapping.
+        if (($verdict = (new MappingCheck($target))->verdict($mapping)) !== null) {
+            return $this->refuse($verdict[0], $verdict[1]);
         }
 
         if ($drift = $this->refuseOnDrift($mapping, $target)) {

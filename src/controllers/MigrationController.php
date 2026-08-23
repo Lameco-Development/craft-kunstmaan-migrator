@@ -9,6 +9,7 @@ use craft\helpers\App;
 use craft\web\Controller;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Target\CraftSchema;
 use Lameco\KumaCompile\Target\SpecNotes;
@@ -16,8 +17,6 @@ use Lameco\KumaCompile\Target\Suggester;
 use lameco\kunstmaanmigrator\mapping\FieldExpression;
 use lameco\kunstmaanmigrator\mapping\MappingEditor;
 use lameco\kunstmaanmigrator\mapping\MappingRow;
-use Lameco\KumaCompile\Mapping\Schema;
-use Lameco\KumaCompile\Target\TargetCheck;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\Plugin;
@@ -437,18 +436,11 @@ final class MigrationController extends Controller
             return $this->asJson(['ok' => false, 'headline' => $message, 'errors' => [], 'total' => 0]);
         }
 
-        $verdict = match (true) {
-            ($errors = (new Schema())->validate($mapping)) !== []
-                => [Craft::t('kunstmaan-migrator', 'Mapping is not well-formed'), $errors],
-            ($errors = (new TargetCheck(new TargetModel(new CraftSchemaGateway())))->check($mapping)) !== []
-                => [Craft::t('kunstmaan-migrator', 'Mapping does not match this Craft install'), $errors],
-            ($conflicts = $mapping->openConflicts()) !== []
-                => [
-                    Craft::t('kunstmaan-migrator', 'Unresolved conflicts — set conflict.status: decided'),
-                    array_map(static fn ($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
-                ],
-            default => null,
-        };
+        $verdict = (new MappingCheck(new TargetModel(new CraftSchemaGateway())))->verdict($mapping);
+
+        if ($verdict !== null) {
+            $verdict[0] = Craft::t('kunstmaan-migrator', $verdict[0]);
+        }
 
         $summary = Craft::t('kunstmaan-migrator', 'Well-formed and matches this install: {pages} page types, {parts} parts, {entities} entities.', [
             'pages' => count($mapping->pages()),

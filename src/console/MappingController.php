@@ -9,6 +9,7 @@ use craft\helpers\Console;
 use Lameco\KumaCompile\Legacy\EntityTableIndex;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Mapping\Skeleton;
 use Lameco\KumaCompile\Target\TargetCheck;
@@ -182,19 +183,10 @@ final class MappingController extends Controller
             return ExitCode::UNSPECIFIED_ERROR;
         }
 
-        if ($errors = (new Schema())->validate($mapping)) {
-            return $this->report('Mapping is not well-formed', $errors);
-        }
+        $verdict = (new MappingCheck(new TargetModel(new CraftSchemaGateway())))->verdict($mapping);
 
-        if ($errors = (new TargetCheck(new TargetModel(new CraftSchemaGateway())))->check($mapping)) {
-            return $this->report('Mapping does not match this Craft install', $errors);
-        }
-
-        if ($conflicts = $mapping->openConflicts()) {
-            return $this->report(
-                sprintf('%d unresolved conflicts — set conflict.status: decided', count($conflicts)),
-                array_map(static fn ($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
-            );
+        if ($verdict !== null) {
+            return $this->report($verdict[0], $verdict[1]);
         }
 
         $this->stdout(sprintf(
