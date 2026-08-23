@@ -115,6 +115,15 @@
       </div>
     {% endif %}
 
+    <div class="flex" style="margin-top: 14px;">
+      {{ forms.text({ id: 'kuma-search', placeholder: "Filter by name"|t('kunstmaan-migrator') }) }}
+      <nav class="btngroup" id="kuma-status">
+        <button type="button" class="btn active" data-status="">{{ "All"|t('kunstmaan-migrator') }}</button>
+        <button type="button" class="btn" data-status="open">{{ "Open"|t('kunstmaan-migrator') }}</button>
+        <button type="button" class="btn" data-status="decided">{{ "Decided"|t('kunstmaan-migrator') }}</button>
+      </nav>
+    </div>
+
     {# Ordered by live volume rather than by name: that is where the content is,
        and an alphabetical list buries the ten rows that matter under sixty
        that do not. #}
@@ -130,7 +139,7 @@
       </thead>
       <tbody>
         {% for row in rows %}
-          <tr>
+          <tr data-name="{{ row.key }} {{ row.table }}" data-status="{{ row.status() }}">
             <th scope="row">
               {% if row.status() == 'decided' %}
                 <span data-icon="check" class="success"></span>
@@ -168,8 +177,56 @@
         {% else %}
           <tr><td colspan="5" class="light">{{ "Nothing here."|t('kunstmaan-migrator') }}</td></tr>
         {% endfor %}
+        <tr id="kuma-empty" style="display: none;"><td colspan="5" class="light">{{ "Nothing matches."|t('kunstmaan-migrator') }}</td></tr>
       </tbody>
     </table>
+
+    {% js %}
+      (function () {
+        var search = document.getElementById('kuma-search');
+        var buttons = [].slice.call(document.querySelectorAll('#kuma-status .btn'));
+        var empty = document.getElementById('kuma-empty');
+        if (!search) return;
+
+        var params = new URLSearchParams(location.search);
+        search.value = params.get('q') || '';
+        var status = params.get('status') || '';
+        if (status !== 'open' && status !== 'decided') status = '';
+
+        var apply = function () {
+          buttons.forEach(function (button) {
+            button.classList.toggle('active', button.getAttribute('data-status') === status);
+          });
+
+          var needle = search.value.toLowerCase();
+          var visible = 0;
+          [].slice.call(document.querySelectorAll('tbody tr[data-name]')).forEach(function (row) {
+            var rowStatus = row.getAttribute('data-status');
+            var shown = row.getAttribute('data-name').toLowerCase().indexOf(needle) !== -1
+              && (status === '' || (status === 'decided' ? rowStatus !== 'open' : rowStatus === 'open'));
+            row.style.display = shown ? '' : 'none';
+            if (shown) visible++;
+          });
+          if (empty) empty.style.display = visible === 0 ? '' : 'none';
+
+          var url = new URLSearchParams(location.search);
+          if (search.value) { url.set('q', search.value); } else { url.delete('q'); }
+          if (status) { url.set('status', status); } else { url.delete('status'); }
+          var query = url.toString();
+          history.replaceState(null, '', location.pathname + (query ? '?' + query : ''));
+        };
+
+        search.addEventListener('input', apply);
+        buttons.forEach(function (button) {
+          button.addEventListener('click', function () {
+            status = button.getAttribute('data-status');
+            apply();
+          });
+        });
+
+        apply();
+      })();
+    {% endjs %}
   {% endif %}
 {% css %}
     .kuma-progress { margin: 14px 0 4px; }
