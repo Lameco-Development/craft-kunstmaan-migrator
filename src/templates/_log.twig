@@ -1,5 +1,16 @@
+{# Rendered inside the Utilities chrome, which says nothing about this plugin —
+   so the screen introduces itself: whose history, where it comes from, where
+   the workflow lives. #}
+<p>
+  {{ "Every migrate, finalize and fixup run of the {section} writes itself here — started, finished or failed, with its counts. Runs are started from the {run}."|t('kunstmaan-migrator', {
+    section: '<strong>' ~ 'Kunstmaan Migration'|t('kunstmaan-migrator') ~ '</strong>',
+    run: '<a href="' ~ url('kunstmaan-migrator/run') ~ '">' ~ 'Run screen'|t('kunstmaan-migrator') ~ '</a>',
+  })|raw }}
+</p>
+<p class="light"><code>{{ logPath }}</code></p>
+
 {% if entries is empty %}
-  <p class="zilch">{{ "Nothing has run yet. Every migrate, finalize and fixup run writes itself here — started, finished or failed, with its counts."|t('kunstmaan-migrator') }}</p>
+  <p class="zilch">{{ "Nothing has run yet."|t('kunstmaan-migrator') }}</p>
 {% else %}
   <table class="data fullwidth">
     <thead>

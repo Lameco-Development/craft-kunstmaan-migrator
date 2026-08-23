@@ -20,7 +20,7 @@ final class LogUtility extends Utility
 {
     public static function displayName(): string
     {
-        return Craft::t('kunstmaan-migrator', 'Migration log');
+        return Craft::t('kunstmaan-migrator', 'Kunstmaan migration log');
     }
 
     public static function id(): string
@@ -37,6 +37,7 @@ final class LogUtility extends Utility
     {
         return Craft::$app->getView()->renderTemplate('kunstmaan-migrator/_log', [
             'entries' => RunLog::default()->entries(100),
+            'logPath' => Craft::getAlias('@storage') . '/kunstmaan-migrator/runs.jsonl',
         ]);
     }
 }

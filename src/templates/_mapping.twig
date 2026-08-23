@@ -12,18 +12,67 @@
   {% else %}
     <p class="light">
       <code>{{ path }}</code>
-      <form method="post" style="display: inline; margin-left: 8px;">
-        {{ csrfInput() }}
-        {{ actionInput('kunstmaan-migrator/migration/check') }}
-        {{ redirectInput('kunstmaan-migrator/mapping?lane=' ~ lane) }}
-        <button type="submit" class="btn small">{{ "Check mapping"|t('kunstmaan-migrator') }}</button>
-      </form>
+      <button type="button" class="btn small" id="kuma-check" style="margin-left: 8px;">{{ "Check mapping"|t('kunstmaan-migrator') }}</button>
     </p>
+    <div id="kuma-check-results" class="readable" style="display: none; margin-bottom: 16px;"></div>
+
+    {% js %}
+      (function () {
+        var button = document.getElementById('kuma-check');
+        var results = document.getElementById('kuma-check-results');
+
+        button.addEventListener('click', function () {
+          button.classList.add('loading');
+          Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/check').then(function (response) {
+            var data = response.data;
+            results.style.display = '';
+
+            if (data.ok) {
+              results.innerHTML = '<blockquote class="note tip"><p></p></blockquote>';
+              results.querySelector('p').textContent = data.summary;
+              return;
+            }
+
+            var box = document.createElement('blockquote');
+            box.className = 'note warning';
+            var head = document.createElement('p');
+            head.innerHTML = '<strong></strong>';
+            head.querySelector('strong').textContent = data.headline;
+            box.appendChild(head);
+
+            if (data.errors.length) {
+              var list = document.createElement('ul');
+              data.errors.forEach(function (error) {
+                var item = document.createElement('li');
+                item.textContent = error;
+                list.appendChild(item);
+              });
+              box.appendChild(list);
+
+              if (data.total > data.errors.length) {
+                var more = document.createElement('p');
+                more.className = 'light';
+                more.textContent = '{{ "… and {more} more"|t('kunstmaan-migrator', { more: '###' })|e('js') }}'.replace('###', String(data.total - data.errors.length));
+                box.appendChild(more);
+              }
+            }
+
+            results.innerHTML = '';
+            results.appendChild(box);
+          }).finally(function () {
+            button.classList.remove('loading');
+          });
+        });
+      })();
+    {% endjs %}
 
     <nav class="btngroup">
       {% for name in lanes %}
         <a class="btn{{ name == lane ? ' active' : '' }}"
-           href="{{ url('kunstmaan-migrator/mapping', { lane: name }) }}">{{ name }}</a>
+           href="{{ url('kunstmaan-migrator/mapping', { lane: name }) }}">
+          {{- name -}}
+          {%- if (open[name] ?? 0) > 0 %} <span class="badge">{{ open[name] }}</span>{% endif -%}
+        </a>
       {% endfor %}
     </nav>
 

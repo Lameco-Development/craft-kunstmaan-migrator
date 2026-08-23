@@ -130,9 +130,24 @@ final class MigrationController extends Controller
             : 0;
         $specsPath = self::specsPath();
 
+        // What each tab owes: the open count is the only number that makes
+        // "which lane next" answerable without clicking through all four.
+        $open = [];
+
+        if ($error === null) {
+            foreach (self::EDITABLE_LANES as $name) {
+                try {
+                    $open[$name] = $editor->progress($name)['open'];
+                } catch (Throwable) {
+                    $open[$name] = null;
+                }
+            }
+        }
+
         return $this->renderTemplate('kunstmaan-migrator/_mapping', [
             'lane' => $lane,
             'lanes' => self::EDITABLE_LANES,
+            'open' => $open,
             'rows' => $rows,
             'progress' => $error === null ? $editor->progress($lane) : null,
             'path' => $editor->path(),
@@ -316,6 +331,29 @@ final class MigrationController extends Controller
     }
 
     /**
+     * One entry type's coverage table, for the picker's live swap.
+     */
+    public function actionCoverageTable(): Response
+    {
+        $this->requirePostRequest();
+        $this->requireAcceptsJson();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $entryType = (string) $this->request->getRequiredBodyParam('entryType');
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+
+        if (!in_array($entryType, $editor->mappedEntryTypes(), true)) {
+            throw new BadRequestHttpException(sprintf('The pages lane does not target "%s".', $entryType));
+        }
+
+        return $this->asJson([
+            'html' => Craft::$app->getView()->renderTemplate('kunstmaan-migrator/_coverage-table', [
+                'coverage' => $editor->coverageFor($entryType),
+            ]),
+        ]);
+    }
+
+    /**
      * The field map for a hypothetical target, redrawn live.
      *
      * "Save to see its fields" made choosing a Becomes a two-step guess; the
@@ -393,44 +431,52 @@ final class MigrationController extends Controller
         try {
             $mapping = Mapping::fromFile($path);
         } catch (Throwable $e) {
-            Craft::$app->getSession()->setError(Craft::t(
-                'kunstmaan-migrator',
-                'Mapping is unreadable: {message}',
-                ['message' => $e->getMessage()],
-            ));
+            $message = Craft::t('kunstmaan-migrator', 'Mapping is unreadable: {message}', ['message' => $e->getMessage()]);
+
+            if ($this->request->getAcceptsJson()) {
+                return $this->asJson(['ok' => false, 'headline' => $message, 'errors' => [], 'total' => 0]);
+            }
+
+            Craft::$app->getSession()->setError($message);
 
             return $this->redirectToPostedUrl();
         }
 
         $verdict = match (true) {
             ($errors = (new Schema())->validate($mapping)) !== []
-                => ['Mapping is not well-formed', $errors],
+                => [Craft::t('kunstmaan-migrator', 'Mapping is not well-formed'), $errors],
             ($errors = (new TargetCheck(new TargetModel(new CraftSchemaGateway())))->check($mapping)) !== []
-                => ['Mapping does not match this Craft install', $errors],
+                => [Craft::t('kunstmaan-migrator', 'Mapping does not match this Craft install'), $errors],
             ($conflicts = $mapping->openConflicts()) !== []
                 => [
-                    'Unresolved conflicts — set conflict.status: decided',
+                    Craft::t('kunstmaan-migrator', 'Unresolved conflicts — set conflict.status: decided'),
                     array_map(static fn ($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
                 ],
             default => null,
         };
 
+        $summary = Craft::t('kunstmaan-migrator', 'Well-formed and matches this install: {pages} page types, {parts} parts, {entities} entities.', [
+            'pages' => count($mapping->pages()),
+            'parts' => count($mapping->parts()),
+            'entities' => count($mapping->entities()),
+        ]);
+
+        // The screen asks over Ajax and draws the verdict inline; the flash
+        // path stays for a plain form post with JavaScript unavailable.
+        if ($this->request->getAcceptsJson()) {
+            return $this->asJson($verdict === null
+                ? ['ok' => true, 'summary' => $summary]
+                : ['ok' => false, 'headline' => $verdict[0], 'errors' => array_slice($verdict[1], 0, 40), 'total' => count($verdict[1])]);
+        }
+
         if ($verdict === null) {
-            Craft::$app->getSession()->setNotice(Craft::t(
-                'kunstmaan-migrator',
-                'Well-formed and matches this install: {pages} page types, {parts} parts, {entities} entities.',
-                [
-                    'pages' => count($mapping->pages()),
-                    'parts' => count($mapping->parts()),
-                    'entities' => count($mapping->entities()),
-                ],
-            ));
+            Craft::$app->getSession()->setNotice($summary);
         } else {
             [$headline, $errors] = $verdict;
             $shown = array_slice($errors, 0, 8);
             $more = count($errors) - count($shown);
             Craft::$app->getSession()->setError(
-                Craft::t('kunstmaan-migrator', $headline) . ': ' . implode(' · ', $shown)
+                $headline . ': ' . implode(' · ', $shown)
                 . ($more > 0 ? ' ' . Craft::t('kunstmaan-migrator', '… and {more} more', ['more' => $more]) : ''),
             );
         }
