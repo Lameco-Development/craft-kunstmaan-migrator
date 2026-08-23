@@ -623,16 +623,18 @@ final class SetupController extends Controller
         // when the checkout runs, the static scan when it does not — and the
         // skeleton reads it, so child-collection ownership is exact.
         $entities = EntityTableIndex::empty();
+        $introspection = null;
 
         if ($source !== '' && is_dir($source)) {
             $introspector = new Introspector();
             $artifact = $introspector->introspect($source);
             $introspector->write($artifact, dirname($path) . '/introspection.json');
-            $entities = EntityTableIndex::fromIntrospection(Introspection::fromArray($artifact));
+            $introspection = Introspection::fromArray($artifact);
+            $entities = EntityTableIndex::fromIntrospection($introspection);
         }
 
         @mkdir(dirname($path), 0o775, true);
-        file_put_contents($path, (new Skeleton($entities))->generate($databases));
+        file_put_contents($path, (new Skeleton($entities, $introspection))->generate($databases));
 
         // The skeleton writes every locale and uploads folder as a TODO, because
         // a generator cannot know them. The wizard just asked, so it fills them

@@ -60,17 +60,18 @@ final class InitCommand extends Command
 
         $source = $input->getOption('source');
         $artifact = $input->getOption('introspection');
+        $introspection = $artifact !== null ? Introspection::fromFile((string) $artifact) : null;
         $entities = match (true) {
-            $artifact !== null => EntityTableIndex::fromIntrospection(Introspection::fromFile((string) $artifact)),
-            $source !== null   => EntityTableIndex::fromSource((string) $source),
-            default            => EntityTableIndex::empty(),
+            $introspection !== null => EntityTableIndex::fromIntrospection($introspection),
+            $source !== null        => EntityTableIndex::fromSource((string) $source),
+            default                 => EntityTableIndex::empty(),
         };
 
         if ($entities->isEmpty()) {
             $io->warning('No --introspection or --source given: table names are left as TODO. Pass the artifact or the Kunstmaan checkout to fill them in.');
         }
 
-        $yaml = (new Skeleton($entities))->generate($databases);
+        $yaml = (new Skeleton($entities, $introspection))->generate($databases);
         $out = $input->getOption('out');
 
         if ($out === null) {

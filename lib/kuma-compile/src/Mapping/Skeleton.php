@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Lameco\KumaCompile\Mapping;
 
+use Lameco\KumaCompile\Legacy\Introspection;
+
 use Lameco\KumaCompile\Legacy\EntityTableIndex;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 
@@ -29,6 +31,7 @@ final class Skeleton
 
     public function __construct(
         private readonly EntityTableIndex $entities,
+        private readonly ?Introspection $introspection = null,
     ) {
     }
 
@@ -60,12 +63,127 @@ final class Skeleton
         $out = $this->header($parts, $pages);
         $out .= $this->environments($databases, $locales);
         $out .= $this->pagesSection($pages);
+        $out .= $this->entitiesSection();
         $out .= $this->sequenceSection();
         $out .= $this->partsSection($parts, $probe, $childTables);
         $out .= $this->sidecarsSection($probe instanceof LegacyDatabase ? $probe : null);
         $out .= $this->tailSections();
 
         return $out;
+    }
+
+    /**
+     * Candidate entities — the non-node tables pages and parts relate to.
+     *
+     * A mapping whose entities lane starts empty stays empty: nothing else ever
+     * mentions the taxonomy tables, and every page FK into one is a relation with
+     * nowhere to point. The introspection artifact knows them exactly — they are
+     * the Doctrine association targets of the page and pagepart classes — so the
+     * skeleton lists each with its real table and a title guess, and fails
+     * validation until section, entry type and the dedupe decision are filled in.
+     */
+    private function entitiesSection(): string
+    {
+        $candidates = $this->entityCandidates();
+
+        $out = "\n# ─────────────────────────────────────────────────────────────────────────────\n";
+        $out .= "# Non-node tables that become entries of their own — every page FK into one is a\n";
+        $out .= "# relation with nowhere to point until the table migrates; a map reaches it with\n";
+        $out .= "# `ref(<Name>)`. dedupe: true when the same id means the same thing in every\n";
+        $out .= "# database; false when ids are reused for unrelated rows per database.\n";
+        $out .= "entities:";
+
+        if ($candidates === []) {
+            return $out . " {}\n";
+        }
+
+        foreach ($candidates as $name => $candidate) {
+            $out .= sprintf("\n  %s:\n", $name);
+            $out .= sprintf("    # related to by %s\n", implode(', ', $candidate['referencedBy']));
+            $out .= sprintf("    table: %s\n", $candidate['table']);
+            $out .= "    section: ~                          # TODO: Craft section handle\n";
+            $out .= "    entryType: ~                        # TODO: Craft entry type handle\n";
+            $out .= sprintf("    title: %s\n", $candidate['title'] ?? '~                            # TODO: the column that names the entry');
+            $out .= "    dedupe: ~                           # TODO: true or false — see above\n";
+
+            if ($candidate['columns'] !== []) {
+                $out .= sprintf("    unreviewed: [%s]\n", implode(', ', $candidate['columns']));
+            }
+        }
+
+        return $out . "\n";
+    }
+
+    /**
+     * @return array<string, array{table: string, title: ?string, columns: list<string>, referencedBy: list<string>}>
+     */
+    private function entityCandidates(): array
+    {
+        if ($this->introspection === null) {
+            return [];
+        }
+
+        $entities = $this->introspection->entities;
+        $out = [];
+
+        foreach ($entities as $class => $spec) {
+            $basename = self::basename((string) $class);
+
+            // Relations *from* the content tree are what make a table content.
+            if (!str_ends_with($basename, 'Page') && !str_ends_with($basename, 'PagePart')) {
+                continue;
+            }
+
+            foreach ((array) ($spec['associations'] ?? []) as $assoc) {
+                $target = (string) ($assoc['target'] ?? '');
+                $targetBase = self::basename($target);
+
+                if ($target === ''
+                    || str_starts_with($target, 'Kunstmaan\\')
+                    || str_starts_with($target, 'Gedmo\\')
+                    || str_ends_with($targetBase, 'Page')
+                    || str_ends_with($targetBase, 'PagePart')
+                    || !isset($entities[$target])
+                    || ($entities[$target]['mappedSuperclass'] ?? false)
+                    || !in_array($assoc['kind'] ?? '', ['ManyToOne', 'ManyToMany'], true)) {
+                    continue;
+                }
+
+                $columns = array_keys((array) ($entities[$target]['columns'] ?? []));
+                $columnNames = [];
+
+                foreach ((array) ($entities[$target]['columns'] ?? []) as $field => $column) {
+                    $columnNames[] = (string) (is_array($column) ? ($column['column'] ?? $field) : $field);
+                }
+
+                $title = in_array('name', $columnNames, true) ? 'name'
+                    : (in_array('title', $columnNames, true) ? 'title' : null);
+
+                $out[$targetBase] ??= [
+                    'table' => (string) ($entities[$target]['table'] ?? ''),
+                    'title' => $title,
+                    'columns' => array_values(array_diff($columnNames, ['id', $title ?? ''])),
+                    'referencedBy' => [],
+                ];
+                $out[$targetBase]['referencedBy'][] = $basename;
+            }
+        }
+
+        foreach ($out as &$candidate) {
+            $candidate['referencedBy'] = array_values(array_unique($candidate['referencedBy']));
+            sort($candidate['referencedBy']);
+        }
+
+        ksort($out);
+
+        return $out;
+    }
+
+    private static function basename(string $class): string
+    {
+        $parts = explode('\\', $class);
+
+        return (string) end($parts);
     }
 
     /**
