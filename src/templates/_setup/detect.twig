@@ -31,11 +31,10 @@
   <p><a class="btn" id="kuma-rescan">{{ "Look again"|t('kunstmaan-migrator') }}</a></p>
 
   {% if checkouts is empty %}
-    <blockquote class="note">
-      <p>{{ "No Kunstmaan sites found in {root} — a site is a folder whose composer.lock names a kunstmaan/* package."|t('kunstmaan-migrator', { root: root }) }}</p>
-    </blockquote>
+    <p class="zilch">{{ "No Kunstmaan sites found in {root} — a site is a folder whose composer.lock names a kunstmaan/* package."|t('kunstmaan-migrator', { root: root }) }}</p>
   {% else %}
-    <table class="data fullwidth" style="margin-top: 10px;">
+    <div class="tablepane" style="margin-top: 10px;">
+    <table class="data fullwidth">
       <thead>
         <tr>
           <th style="width: 40px;"></th>
@@ -54,16 +53,17 @@
             </td>
             <th scope="row"><label for="pick-{{ loop.index }}">{{ checkout.name }}</label><br><span class="light"><code>{{ checkout.path }}</code></span></th>
             <td>{{ checkout.kunstmaan }}</td>
-            <td>{% if checkout.database %}<code>{{ checkout.database.database }}</code>{% else %}<span class="light">{{ "not in .env"|t('kunstmaan-migrator') }}</span>{% endif %}</td>
-            <td>{% if checkout.mediaRoot %}{{ "found"|t('kunstmaan-migrator') }}{% else %}<span class="light">—</span>{% endif %}</td>
+            <td>{% if checkout.database %}<span class="status on"></span><code>{{ checkout.database.database }}</code>{% else %}<span class="status"></span><span class="light">{{ "not in .env"|t('kunstmaan-migrator') }}</span>{% endif %}</td>
+            <td>{% if checkout.mediaRoot %}<span class="status on"></span>{{ "found"|t('kunstmaan-migrator') }}{% else %}<span class="status"></span><span class="light">—</span>{% endif %}</td>
           </tr>
         {% endfor %}
       </tbody>
     </table>
+    </div>
   {% endif %}
 
   <p style="margin-top: 16px;">
-    <a href="{{ url('kunstmaan-migrator/setup/connect') }}">{{ "The old site is not on this machine — enter the connection by hand"|t('kunstmaan-migrator') }}</a>
+    <a class="go" href="{{ url('kunstmaan-migrator/setup/connect') }}">{{ "The old site is not on this machine — enter the connection by hand"|t('kunstmaan-migrator') }}</a>
   </p>
 
   {% js %}

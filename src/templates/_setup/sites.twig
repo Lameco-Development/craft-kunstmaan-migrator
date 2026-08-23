@@ -25,7 +25,8 @@
       {{ forms.text({ id: 'kuma-filter', placeholder: "Search"|t('kunstmaan-migrator'), class: 'fullwidth' }) }}
     {% endif %}
 
-    <table class="data fullwidth" style="margin-top: 10px;">
+    <div class="tablepane" style="margin-top: 10px;">
+    <table class="data fullwidth">
       <thead>
         <tr>
           <th style="width: 40px;"></th>
@@ -49,16 +50,17 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="4" class="light">{{ "No Kunstmaan sites found on that server."|t('kunstmaan-migrator') }}</td></tr>
+          <tr><td colspan="4"><p class="zilch small">{{ "No Kunstmaan sites found on that server."|t('kunstmaan-migrator') }}</p></td></tr>
         {% endfor %}
       </tbody>
     </table>
+    </div>
 
     <p class="light" id="kuma-count" style="margin-top: 10px;"></p>
 
     {% if narrowed %}
       <p>
-        <a href="{{ url('kunstmaan-migrator/setup/sites', { all: 1 }) }}">
+        <a class="go" href="{{ url('kunstmaan-migrator/setup/sites', { all: 1 }) }}">
           {{ "Missing one? Show all {n} Kunstmaan sites on this server."|t('kunstmaan-migrator', { n: hiddenCount + databases|length }) }}
         </a>
       </p>

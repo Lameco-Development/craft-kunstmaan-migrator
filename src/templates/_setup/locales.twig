@@ -15,6 +15,7 @@
     <div class="pane" style="margin-bottom: 18px;">
       <h2>{{ label }} <span class="light"><code>{{ environment.database }}</code></span></h2>
 
+      <div class="tablepane">
       <table class="data fullwidth">
         <thead>
           <tr>
@@ -43,10 +44,11 @@
               </td>
             </tr>
           {% else %}
-            <tr><td colspan="3" class="light">{{ "This site has no published pages."|t('kunstmaan-migrator') }}</td></tr>
+            <tr><td colspan="3"><p class="zilch small">{{ "This site has no published pages."|t('kunstmaan-migrator') }}</p></td></tr>
           {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   {% endfor %}
 
