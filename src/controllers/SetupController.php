@@ -249,10 +249,10 @@ final class SetupController extends Controller
             $error = self::readable($e);
         }
 
-        // The database the detect step read from the checkout's .env, and its
-        // siblings by naming convention (enreach_website -> enreach_website_de),
-        // arrive pre-checked. A pre-check is a suggestion, not a decision — the
-        // near-duplicate that should stay behind is unticked here, once.
+        // The database the earlier steps settled on, and its siblings by naming
+        // convention (enreach_website -> enreach_website_de), arrive pre-checked.
+        // A pre-check is a suggestion, not a decision — the near-duplicate that
+        // should stay behind is unticked here, once.
         $detected = trim((string) (Plugin::getInstance()->getSettings()->legacyDbDatabase ?? ''));
         $names = array_map(static fn (array $c): string => (string) $c['database'], $databases);
         $siblings = $detected !== '' ? self::siblingsOf($detected, $names) : [];
@@ -263,9 +263,26 @@ final class SetupController extends Controller
             $databases[$i]['preselected'] = $database === $detected || in_array($database, $siblings, true);
         }
 
+        // A dev machine's server holds every client's databases. Once the earlier
+        // steps named one site, listing the other eleven again is noise — and a
+        // mis-tick away from migrating someone else's content. So the list is the
+        // named site and its siblings, with the full server one click away.
+        $total = count($databases);
+        $showAll = (bool) $this->request->getQueryParam('all', false);
+
+        if (!$showAll && in_array($detected, $names, true)) {
+            $databases = array_values(array_filter(
+                $databases,
+                static fn (array $c): bool => (bool) $c['preselected'],
+            ));
+        }
+
         return $this->step(SetupStep::Sites, 'sites', [
             'databases' => $databases,
             'error' => $error,
+            'detected' => $detected,
+            'narrowed' => count($databases) < $total,
+            'hiddenCount' => $total - count($databases),
         ]);
     }
 
