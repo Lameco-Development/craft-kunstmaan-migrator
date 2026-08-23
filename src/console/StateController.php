@@ -8,6 +8,7 @@ use Craft;
 use craft\console\Controller;
 use craft\elements\Entry;
 use craft\helpers\App;
+use craft\helpers\Console;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use lameco\kunstmaanmigrator\load\EntryExplanation;
@@ -367,9 +368,14 @@ class StateController extends Controller
     public function actionExport(): int
     {
         $plugin = Plugin::getInstance();
+        $excluded = 0;
 
-        foreach (self::buildExportRows($plugin->migrationStateService) as $row) {
+        foreach (self::buildExportRows($plugin->migrationStateService, $excluded) as $row) {
             $this->stdout(json_encode($row, JSON_UNESCAPED_SLASHES) . PHP_EOL);
+        }
+
+        if ($excluded > 0) {
+            $this->stderr(self::excludedWarning($excluded) . PHP_EOL, Console::FG_YELLOW);
         }
 
         return ExitCode::OK;
@@ -512,7 +518,7 @@ class StateController extends Controller
     /**
      * @return list<array{sourceUid: string, entryId: ?int, targetType: string, alias_of: ?string}>
      */
-    public static function buildExportRows(MigrationStateService $stateService): array
+    public static function buildExportRows(MigrationStateService $stateService, int &$excluded = 0): array
     {
         $rows = [];
         $excluded = 0;
@@ -528,17 +534,21 @@ class StateController extends Controller
             $rows[] = self::exportRow($row);
         }
 
-        if ($excluded > 0) {
-            Craft::warning(
-                sprintf(
-                    'state/export: excluded %d state row(s) whose reconstructed sourceUid does not round-trip through RefResolver::parse() (composite-key bookkeeping rows, e.g. seo_meta).',
-                    $excluded,
-                ),
-                'kunstmaan-migrator',
-            );
-        }
-
+        // The builder stays pure — it runs in tests with no Craft booted — so
+        // saying something about the exclusions is the caller's job, through
+        // excludedWarning(). Both exports do; neither may stay silent.
         return $rows;
+    }
+
+    /**
+     * What the exclusion count means, worded once for both exports.
+     */
+    public static function excludedWarning(int $excluded): string
+    {
+        return sprintf(
+            'state/export: excluded %d state row(s) whose reconstructed sourceUid does not round-trip through RefResolver::parse() (composite-key bookkeeping rows, e.g. seo_meta).',
+            $excluded,
+        );
     }
 
     /**

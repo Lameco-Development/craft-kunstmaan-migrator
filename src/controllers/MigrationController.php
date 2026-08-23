@@ -81,9 +81,14 @@ final class MigrationController extends Controller
         $this->requirePermission(Plugin::PERMISSION);
 
         $lines = [];
+        $excluded = 0;
 
-        foreach (StateController::buildExportRows(Plugin::getInstance()->migrationStateService) as $row) {
+        foreach (StateController::buildExportRows(Plugin::getInstance()->migrationStateService, $excluded) as $row) {
             $lines[] = json_encode($row, JSON_UNESCAPED_SLASHES);
+        }
+
+        if ($excluded > 0) {
+            Craft::warning(StateController::excludedWarning($excluded), 'kunstmaan-migrator');
         }
 
         return Craft::$app->getResponse()->sendContentAsFile(

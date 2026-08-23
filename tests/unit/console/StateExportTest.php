@@ -260,9 +260,11 @@ final class StateExportTest extends TestCase
             ],
         ]);
 
-        $rows = StateController::buildExportRows($state);
+        $excluded = 0;
+        $rows = StateController::buildExportRows($state, $excluded);
 
         self::assertCount(1, $rows);
+        self::assertSame(1, $excluded, 'the exclusion is counted for the caller to report — the builder itself stays silent');
         self::assertSame('kuma:COM:nt_page:143', $rows[0]['sourceUid']);
 
         foreach ($rows as $row) {
