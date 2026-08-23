@@ -2,12 +2,62 @@
    so the screen introduces itself: whose history, where it comes from, where
    the workflow lives. #}
 <p>
-  {{ "Every migrate, finalize and fixup run of the {section} writes itself here — started, finished or failed, with its counts. Runs are started from the {run}."|t('kunstmaan-migrator', {
+  {{ "The observation side of the {section}: the doctor health checks, the state export, and the history every migrate, finalize and fixup run writes — started, finished or failed, with its counts. Runs are started from the {run}."|t('kunstmaan-migrator', {
     section: '<strong>' ~ 'Kunstmaan Migration'|t('kunstmaan-migrator') ~ '</strong>',
     run: '<a href="' ~ url('kunstmaan-migrator/run') ~ '">' ~ 'Run screen'|t('kunstmaan-migrator') ~ '</a>',
   })|raw }}
 </p>
 <p class="light"><code>{{ logPath }}</code></p>
+
+<h2>{{ "Diagnostics"|t('kunstmaan-migrator') }}</h2>
+
+<div class="field">
+  <div class="input">
+    <button type="button" class="btn" id="kuma-doctor">{{ "Run doctor"|t('kunstmaan-migrator') }}</button>
+    <a class="btn" href="{{ actionUrl('kunstmaan-migrator/migration/export') }}">{{ "Export state"|t('kunstmaan-migrator') }}</a>
+  </div>
+  <div class="instructions">
+    <p>{{ "Doctor answers the same checks as the console command — the install, and every environment the mapping declares. Export writes the state table as NDJSON — the file to diff between runs."|t('kunstmaan-migrator') }}</p>
+  </div>
+</div>
+
+<table class="data fullwidth hidden" id="kuma-doctor-results">
+  <tbody></tbody>
+</table>
+
+{% js %}
+  document.getElementById('kuma-doctor').addEventListener('click', function () {
+    var button = this;
+    var table = document.getElementById('kuma-doctor-results');
+    button.disabled = true;
+
+    Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/doctor')
+      .then(function (response) {
+        var body = table.querySelector('tbody');
+        body.innerHTML = '';
+
+        response.data.checks.forEach(function (check) {
+          var row = document.createElement('tr');
+          var name = document.createElement('th');
+          name.setAttribute('scope', 'row');
+          name.innerHTML = '<span data-icon="' + (check.ok ? 'check' : 'alert') + '"></span> ' + check.check;
+          var detail = document.createElement('td');
+          detail.textContent = check.detail;
+          if (!check.ok) { detail.className = 'error'; }
+          row.appendChild(name);
+          row.appendChild(detail);
+          body.appendChild(row);
+        });
+
+        table.classList.remove('hidden');
+      })
+      .finally(function () {
+        button.disabled = false;
+      });
+  });
+{% endjs %}
+
+<h2>{{ "History"|t('kunstmaan-migrator') }}</h2>
 
 {% if entries is empty %}
   <p class="zilch">{{ "Nothing has run yet."|t('kunstmaan-migrator') }}</p>

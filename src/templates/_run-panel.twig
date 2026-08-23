@@ -81,24 +81,6 @@
 
   <hr>
 
-  <h2>{{ "Diagnostics"|t('kunstmaan-migrator') }}</h2>
-
-  <div class="field">
-    <div class="input">
-      <button type="button" class="btn" id="kuma-doctor">{{ "Run doctor"|t('kunstmaan-migrator') }}</button>
-      <a class="btn" href="{{ actionUrl('kunstmaan-migrator/migration/export') }}">{{ "Export state"|t('kunstmaan-migrator') }}</a>
-    </div>
-    <div class="instructions">
-      <p>{{ "Doctor answers the same checks as the console command — the install, and every environment the mapping declares. Export writes the state table as NDJSON — the file to diff between runs."|t('kunstmaan-migrator') }}</p>
-    </div>
-  </div>
-
-  <table class="data fullwidth hidden" id="kuma-doctor-results">
-    <tbody></tbody>
-  </table>
-
-  <hr>
-
   <h2>{{ "Run"|t('kunstmaan-migrator') }}</h2>
 
   <p class="light">
@@ -163,36 +145,6 @@
   </details>
 
   {% js %}
-    document.getElementById('kuma-doctor').addEventListener('click', function () {
-      var button = this;
-      var table = document.getElementById('kuma-doctor-results');
-      button.disabled = true;
-
-      Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/doctor')
-        .then(function (response) {
-          var body = table.querySelector('tbody');
-          body.innerHTML = '';
-
-          response.data.checks.forEach(function (check) {
-            var row = document.createElement('tr');
-            var name = document.createElement('th');
-            name.setAttribute('scope', 'row');
-            name.innerHTML = '<span data-icon="' + (check.ok ? 'check' : 'alert') + '"></span> ' + check.check;
-            var detail = document.createElement('td');
-            detail.textContent = check.detail;
-            if (!check.ok) { detail.className = 'error'; }
-            row.appendChild(name);
-            row.appendChild(detail);
-            body.appendChild(row);
-          });
-
-          table.classList.remove('hidden');
-        })
-        .finally(function () {
-          button.disabled = false;
-        });
-    });
-
     var isOn = function (id) {
       return document.getElementById(id).getAttribute('aria-checked') === 'true' ? 1 : 0;
     };
