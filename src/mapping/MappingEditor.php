@@ -228,13 +228,7 @@ final class MappingEditor
     {
         $fields = [];
 
-        foreach ($this->document()->lane('pages') as $page) {
-            $entryType = is_array($page) ? ($page['entryType'] ?? null) : null;
-
-            if (!is_string($entryType) || $entryType === '') {
-                continue;
-            }
-
+        foreach ($this->mappedEntryTypes() as $entryType) {
             foreach (array_keys($this->target->slots($entryType)) as $handle) {
                 $fields[(string) $handle] = true;
             }
@@ -289,6 +283,120 @@ final class MappingEditor
         }
 
         return $fills;
+    }
+
+    /**
+     * For each field a sidecar maps, which of the mapped entry types carry it.
+     *
+     * The compiler drops a field the page's type lacks and counts it — hours
+     * after the decision was made. The count belongs on the editing screen,
+     * where "heroImage misses vacancyPage" is still cheap to act on.
+     *
+     * @return array<string, array{carried: int, total: int, missing: list<string>}>
+     */
+    public function sidecarCarriage(MappingRow $row): array
+    {
+        $entryTypes = $this->mappedEntryTypes();
+        $carriage = [];
+
+        foreach (array_keys($row->map) as $field) {
+            $missing = array_values(array_filter(
+                $entryTypes,
+                fn (string $entryType): bool => !in_array((string) $field, $this->fieldsFor($entryType), true),
+            ));
+
+            $carriage[(string) $field] = [
+                'carried' => count($entryTypes) - count($missing),
+                'total' => count($entryTypes),
+                'missing' => $missing,
+            ];
+        }
+
+        return $carriage;
+    }
+
+    /**
+     * Where every field of an entry type gets its content from, across lanes.
+     *
+     * The mapping answers "what does this legacy thing become", one row at a
+     * time; the question an operator actually verifies with is the inverse —
+     * "is every field of contentPage fed, and by what". Pages fill from their
+     * own table, sidecars decorate, the parts lane feeds the page-builder
+     * context fields; a field none of them touch is the hole this view exists
+     * to show.
+     *
+     * @return array{pageTypes: list<string>, fields: array<string, array{required: bool, pages: list<array{page: string, expression: string}>, sidecars: list<array{sidecar: string, expression: string}>, parts: ?int}>}
+     */
+    public function coverageFor(string $entryType): array
+    {
+        $document = $this->document();
+        $pageTypes = [];
+        $pageFills = [];
+
+        foreach ($document->lane('pages') as $name => $spec) {
+            if (!is_array($spec) || ($spec['entryType'] ?? null) !== $entryType) {
+                continue;
+            }
+
+            $pageTypes[] = (string) $name;
+
+            foreach ((array) ($spec['map'] ?? []) as $field => $expression) {
+                $pageFills[(string) $field][] = ['page' => (string) $name, 'expression' => (string) $expression];
+            }
+        }
+
+        $contextFields = [];
+
+        foreach ((array) ($document->all()['defaults']['contexts'] ?? []) as $context) {
+            $field = is_array($context) ? ($context['field'] ?? null) : null;
+
+            if (is_string($field) && $field !== '') {
+                $contextFields[$field] = true;
+            }
+        }
+
+        $partsBlocks = 0;
+
+        foreach ($document->lane('parts') as $spec) {
+            if (is_array($spec) && isset($spec['block'])) {
+                $partsBlocks++;
+            }
+        }
+
+        $sidecarFills = $this->sidecarFillsFor($entryType);
+        $required = array_flip($this->target->requiredFields($entryType));
+        $fields = [];
+
+        foreach ($this->fieldsFor($entryType) as $field) {
+            $fields[$field] = [
+                'required' => isset($required[$field]),
+                'pages' => $pageFills[$field] ?? [],
+                'sidecars' => $sidecarFills[$field] ?? [],
+                'parts' => isset($contextFields[$field]) ? $partsBlocks : null,
+            ];
+        }
+
+        return ['pageTypes' => $pageTypes, 'fields' => $fields];
+    }
+
+    /**
+     * The distinct entry types the pages lane targets.
+     *
+     * @return list<string>
+     */
+    public function mappedEntryTypes(): array
+    {
+        $entryTypes = [];
+
+        foreach ($this->document()->lane('pages') as $spec) {
+            $entryType = is_array($spec) ? ($spec['entryType'] ?? null) : null;
+
+            if (is_string($entryType) && $entryType !== '') {
+                $entryTypes[$entryType] = true;
+            }
+        }
+
+        return array_keys($entryTypes);
     }
 
     /**

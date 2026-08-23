@@ -88,6 +88,9 @@
       <blockquote class="note warning">
         <p>
           {{ "A mapping already exists at {path}. Creating a new one moves it aside as a timestamped copy — nothing is deleted, but the migration follows the new file from then on."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
+          {% if (existingDecided ?? 0) > 0 %}
+            <strong>{{ "It holds {count} decided rows — the new file starts with none of them."|t('kunstmaan-migrator', { count: existingDecided }) }}</strong>
+          {% endif %}
         </p>
         {{ forms.checkboxField({
           label: "Replace it — keep the current mapping as a timestamped copy"|t('kunstmaan-migrator'),

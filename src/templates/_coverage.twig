@@ -1,0 +1,91 @@
+{% extends "_layouts/cp.twig" %}
+{% set selectedSubnavItem = 'coverage' %}
+{% import "_includes/forms.twig" as forms %}
+
+{% set title = "Coverage"|t('kunstmaan-migrator') %}
+
+{% block content %}
+  {% if entryTypes is empty %}
+    <div class="readable">
+      <blockquote class="note">
+        <p>{{ "No page row targets an entry type yet. Decide the pages lane first — coverage is the view you verify those decisions with."|t('kunstmaan-migrator') }}</p>
+      </blockquote>
+    </div>
+  {% else %}
+    <p class="light">
+      {{ "The mapping answers what each legacy thing becomes; this answers the inverse — for one entry type, every field and what feeds it. A field nothing feeds arrives empty on every migrated page."|t('kunstmaan-migrator') }}
+    </p>
+
+    {{ forms.selectizeField({
+      label: "Entry type"|t('kunstmaan-migrator'),
+      id: 'kuma-coverage-type',
+      name: 'entryType',
+      value: entryType,
+      options: entryTypes|map(t => { label: t, value: t }),
+    }) }}
+
+    {% js %}
+      $('#kuma-coverage-type').on('change', function () {
+        window.location = Craft.getCpUrl('kunstmaan-migrator/coverage', { entryType: this.value });
+      });
+    {% endjs %}
+
+    {% if coverage.pageTypes is not empty %}
+      <p class="light">
+        {{ "Receives {count} legacy page types: {pages}."|t('kunstmaan-migrator', {
+          count: coverage.pageTypes|length,
+          pages: coverage.pageTypes|join(', '),
+        }) }}
+      </p>
+    {% endif %}
+
+    <table class="data fullwidth">
+      <thead>
+        <tr>
+          <th>{{ "Field"|t('kunstmaan-migrator') }}</th>
+          <th>{{ "Fed by"|t('kunstmaan-migrator') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for field, state in coverage.fields %}
+          {% set fed = state.pages is not empty or state.sidecars is not empty or state.parts is not null %}
+          <tr>
+            <th scope="row">
+              <code>{{ field }}</code>
+              {% if state.required %}<span class="required" aria-label="{{ 'Required'|t('app') }}"></span>{% endif %}
+            </th>
+            <td>
+              {% for fill in state.pages %}
+                <div>
+                  {{ fill.page }} — <code>{{ fill.expression }}</code>
+                  · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'pages', key: fill.page }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
+                </div>
+              {% endfor %}
+              {% for fill in state.sidecars %}
+                <div>
+                  {{ "{sidecar} sidecar"|t('kunstmaan-migrator', { sidecar: fill.sidecar }) }} — <code>{{ fill.expression }}</code>
+                  · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'sidecars', key: fill.sidecar }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
+                </div>
+              {% endfor %}
+              {% if state.parts is not null %}
+                <div>
+                  {{ "the parts lane — {count} pagepart types become blocks here"|t('kunstmaan-migrator', { count: state.parts }) }}
+                  · <a href="{{ url('kunstmaan-migrator/mapping', { lane: 'parts' }) }}">{{ "view"|t('kunstmaan-migrator') }}</a>
+                </div>
+              {% endif %}
+              {% if not fed %}
+                {# Empty-by-decision and empty-by-oversight look identical here; only
+                   a required field is provably a problem, so only it gets the alarm. #}
+                {% if state.required %}
+                  <span class="error">{{ "nothing feeds this, and the entry type requires it"|t('kunstmaan-migrator') }}</span>
+                {% else %}
+                  <span class="light">{{ "nothing feeds this — it arrives empty"|t('kunstmaan-migrator') }}</span>
+                {% endif %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}

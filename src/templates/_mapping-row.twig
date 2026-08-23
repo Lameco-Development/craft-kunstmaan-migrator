@@ -98,6 +98,25 @@
                     · <a href="{{ url('kunstmaan-migrator/mapping-row', { lane: 'sidecars', key: fill.sidecar }) }}">{{ "edit"|t('kunstmaan-migrator') }}</a>
                   </div>
                 {% endfor %}
+                {# The compiler drops a field the page's type lacks and counts it —
+                   hours later. The count belongs here, while it is cheap to act on. #}
+                {% set fieldCarriage = carriage[field] ?? null %}
+                {% if fieldCarriage %}
+                  {% if fieldCarriage.missing is empty %}
+                    <div class="light">{{ "on every mapped entry type"|t('kunstmaan-migrator') }}</div>
+                  {% else %}
+                    <div class="light warning-with-icon">
+                      {% set shown = fieldCarriage.missing|slice(0, 5) %}
+                      {{ "on {carried} of {total} mapped entry types — dropped on {missing}"|t('kunstmaan-migrator', {
+                        carried: fieldCarriage.carried,
+                        total: fieldCarriage.total,
+                        missing: shown|join(', ') ~ (fieldCarriage.missing|length > 5
+                          ? ' ' ~ "and {more} more"|t('kunstmaan-migrator', { more: fieldCarriage.missing|length - 5 })
+                          : ''),
+                      }) }}
+                    </div>
+                  {% endif %}
+                {% endif %}
               </th>
 
               {% if expression.isAdvanced() %}

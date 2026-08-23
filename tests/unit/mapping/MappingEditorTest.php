@@ -230,6 +230,114 @@ final class MappingEditorTest extends TestCase
         );
     }
 
+
+    /**
+     * The compiler drops a sidecar field the page's entry type lacks and
+     * counts it — hours later. The editing screen states the same fact up
+     * front: which mapped entry types carry each field, and which will drop it.
+     */
+    public function testSidecarCarriageNamesTheEntryTypesThatDropAField(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'mapping') . '.yaml';
+
+        file_put_contents($path, <<<'YAML'
+            version: 1
+            environments:
+              COM:
+                database: legacy
+                locales: { en: siteEn }
+            pages:
+              ContentPage: { entryType: contentPage }
+              NewsPage: { entryType: newsPage }
+            YAML);
+
+        $schema = $this->createStub(SchemaGateway::class);
+        $schema->method('fieldSlotsFor')->willReturnCallback(static fn (string $entryType): array => match ($entryType) {
+            'contentPage' => ['heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []]],
+            default => [],
+        });
+
+        $editor = new MappingEditor(
+            SettingsFactory::make(['mappingPath' => $path]),
+            $schema,
+            new TargetModel($schema),
+            new InMemoryTargetCatalogue(),
+        );
+
+        self::assertSame(
+            ['heroTitle' => ['carried' => 1, 'total' => 2, 'missing' => ['newsPage']]],
+            $editor->sidecarCarriage(MappingRow::fromSpec('headerTab', ['map' => ['heroTitle' => 'title']])),
+        );
+    }
+
+    /**
+     * The lanes answer "what does this legacy thing become"; the operator
+     * verifies with the inverse — every field of one entry type and what
+     * feeds it: page maps, sidecars, the parts lane through a context field.
+     * A required field nothing feeds is the hole the view exists to show.
+     */
+    public function testCoverageAnswersWhatFeedsEachFieldOfAnEntryType(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'mapping') . '.yaml';
+
+        file_put_contents($path, <<<'YAML'
+            version: 1
+            environments:
+              COM:
+                database: legacy
+                locales: { en: siteEn }
+            defaults:
+              contexts:
+                main: { field: pageBuilder }
+            pages:
+              ContentPage:
+                entryType: contentPage
+                map: { summary: 'summary | ckeditor' }
+              NewsPage: { entryType: newsPage }
+            parts:
+              Text: { block: contentBlock }
+              RowStart: { drop: layout bracket }
+            sidecars:
+              headerTab:
+                table: header_tabs
+                map: { heroTitle: 'title | inlineHtml' }
+            YAML);
+
+        $schema = $this->createStub(SchemaGateway::class);
+        $schema->method('fieldSlotsFor')->willReturn([
+            'pageBuilder' => ['type' => 'matrix', 'required' => false, 'nested' => ['contentBlock']],
+            'summary' => ['type' => 'ckeditor', 'required' => false, 'nested' => []],
+            'heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []],
+            'orphan' => ['type' => 'plaintext', 'required' => true, 'nested' => []],
+        ]);
+
+        $editor = new MappingEditor(
+            SettingsFactory::make(['mappingPath' => $path]),
+            $schema,
+            new TargetModel($schema),
+            new InMemoryTargetCatalogue(),
+        );
+
+        $coverage = $editor->coverageFor('contentPage');
+
+        self::assertSame(['ContentPage'], $coverage['pageTypes']);
+        self::assertSame(1, $coverage['fields']['pageBuilder']['parts'], 'one part becomes a block; a dropped part feeds nothing');
+        self::assertSame(
+            [['page' => 'ContentPage', 'expression' => 'summary | ckeditor']],
+            $coverage['fields']['summary']['pages'],
+        );
+        self::assertSame(
+            [['sidecar' => 'headerTab', 'expression' => 'title | inlineHtml']],
+            $coverage['fields']['heroTitle']['sidecars'],
+        );
+        self::assertTrue($coverage['fields']['orphan']['required']);
+        self::assertSame(
+            ['required' => true, 'pages' => [], 'sidecars' => [], 'parts' => null],
+            $coverage['fields']['orphan'],
+            'nothing feeds it, and the screen must say so',
+        );
+    }
+
     /** Two open pages, as `mapping/init` leaves them. */
     private function mappingFile(): string
     {

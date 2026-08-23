@@ -17,6 +17,7 @@ use Lameco\KumaCompile\Legacy\LegacyCatalogue;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Mapping\Skeleton;
+use lameco\kunstmaanmigrator\mapping\MappingEditor;
 use lameco\kunstmaanmigrator\mapping\SetupDraft;
 use lameco\kunstmaanmigrator\mapping\SetupStep;
 use lameco\kunstmaanmigrator\Plugin;
@@ -437,6 +438,7 @@ final class SetupController extends Controller
 
         return $this->step(SetupStep::Review, 'review', [
             'existingMapping' => $this->existingMapping(),
+            'existingDecided' => $this->existingDecided(),
             'mediaRoot' => $this->mediaRoot(),
             'summary' => $summary,
             'totalPages' => $totalPages,
@@ -528,6 +530,35 @@ final class SetupController extends Controller
         $path = $this->mappingPath();
 
         return $path !== null && is_file($path) ? $path : null;
+    }
+
+    /**
+     * How many decided rows a replace would set back to open.
+     *
+     * "A mapping already exists" and "a mapping with 98 decided rows exists"
+     * are different warnings, and only the second states what the checkbox
+     * costs. Null when the file cannot be read as a mapping — an unreadable
+     * file carries no decisions worth counting.
+     */
+    private function existingDecided(): ?int
+    {
+        if ($this->existingMapping() === null) {
+            return null;
+        }
+
+        try {
+            $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+            $decided = 0;
+
+            foreach (['parts', 'pages', 'entities', 'sidecars'] as $lane) {
+                $progress = $editor->progress($lane);
+                $decided += $progress['decided'] + $progress['dropped'];
+            }
+
+            return $decided;
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /**

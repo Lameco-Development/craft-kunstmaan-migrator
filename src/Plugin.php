@@ -95,6 +95,10 @@ class Plugin extends BasePlugin
                 'label' => Craft::t('kunstmaan-migrator', 'Mapping'),
                 'url' => 'kunstmaan-migrator/mapping',
             ],
+            'coverage' => [
+                'label' => Craft::t('kunstmaan-migrator', 'Coverage'),
+                'url' => 'kunstmaan-migrator/coverage',
+            ],
             'setup' => [
                 'label' => Craft::t('kunstmaan-migrator', 'Set up'),
                 'url' => 'kunstmaan-migrator/setup',
@@ -186,6 +190,7 @@ class Plugin extends BasePlugin
                 $event->rules['kunstmaan-migrator'] = 'kunstmaan-migrator/migration/home';
                 $event->rules['kunstmaan-migrator/mapping'] = 'kunstmaan-migrator/migration/mapping';
                 $event->rules['kunstmaan-migrator/mapping-row'] = 'kunstmaan-migrator/migration/mapping-row';
+                $event->rules['kunstmaan-migrator/coverage'] = 'kunstmaan-migrator/migration/coverage';
                 $event->rules['kunstmaan-migrator/setup'] = 'kunstmaan-migrator/setup/index';
 
                 foreach (SetupStep::all() as $step) {

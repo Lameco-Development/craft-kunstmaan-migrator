@@ -270,6 +270,42 @@ final class MigrationController extends Controller
             'sidecarFills' => $lane === 'pages' && $row->target !== null
                 ? $editor->sidecarFillsFor($row->target)
                 : [],
+            'carriage' => $lane === 'sidecars' ? $editor->sidecarCarriage($row) : [],
+        ]);
+    }
+
+    /**
+     * The inverse of the mapping: for one entry type, every field and what
+     * feeds it. The lanes answer "what does this legacy thing become"; the
+     * operator verifies with "is every field of contentPage fed" — this is
+     * the screen for the second question.
+     */
+    public function actionCoverage(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePermission('utility:' . MigrationUtility::id());
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+
+        // In live-volume order, like the lanes: rows() already sorts by where
+        // the content is, and the first entry type is the default answer.
+        $entryTypes = [];
+
+        foreach ($editor->rows('pages') as $row) {
+            if ($row->target !== null && $row->target !== '') {
+                $entryTypes[$row->target] = true;
+            }
+        }
+
+        $entryTypes = array_keys($entryTypes);
+        $entryType = (string) $this->request->getQueryParam('entryType', $entryTypes[0] ?? '');
+
+        return $this->renderTemplate('kunstmaan-migrator/_coverage', [
+            'entryTypes' => $entryTypes,
+            'entryType' => $entryType,
+            'coverage' => $entryType !== '' && in_array($entryType, $entryTypes, true)
+                ? $editor->coverageFor($entryType)
+                : ['pageTypes' => [], 'fields' => []],
         ]);
     }
 
