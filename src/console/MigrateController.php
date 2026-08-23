@@ -11,8 +11,10 @@ use Lameco\KumaCompile\Compile\PayloadWriter;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Schema;
+use Lameco\KumaCompile\Report\BlockPlacement;
 use Lameco\KumaCompile\Report\Coverage;
 use Lameco\KumaCompile\Target\TargetCheck;
+use Lameco\KumaCompile\Target\TargetSchema;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\finalize\FinalizePass;
 use lameco\kunstmaanmigrator\payload\FixupService;
@@ -220,7 +222,7 @@ final class MigrateController extends Controller
             );
         }
 
-        if ($drift = $this->refuseOnDrift($mapping)) {
+        if ($drift = $this->refuseOnDrift($mapping, $target)) {
             return $drift;
         }
 
@@ -531,22 +533,33 @@ final class MigrateController extends Controller
      *
      * @return int|null the exit code to return, or null to carry on
      */
-    private function refuseOnDrift(Mapping $mapping): ?int
+    private function refuseOnDrift(Mapping $mapping, TargetSchema $target): ?int
     {
         if ($this->allowDrift || $this->finalizeOnly) {
             return null;
         }
 
         $coverage = new Coverage($mapping);
+        $placement = new BlockPlacement($mapping, $target);
         $dsn = EnvironmentPipeline::dsnFromSettings();
+        $rejections = [];
 
         foreach ($mapping->environments() as $env => $spec) {
             if (!isset($spec['database']) || ($this->legacyEnv !== null && $env !== $this->legacyEnv)) {
                 continue;
             }
 
-            $coverage->ingest(LegacyDatabase::connect((string) $env, (string) $spec['database'], $dsn)->snapshot());
+            $db = LegacyDatabase::connect((string) $env, (string) $spec['database'], $dsn);
+            $coverage->ingest($db->snapshot());
+
+            foreach ($placement->rejections($db->livePlacementsByPageType()) as $rejection) {
+                $rejections[] = ['env' => (string) $env] + $rejection;
+            }
         }
+
+        // Warned about before the coverage verdict, because a mapping with no holes can still
+        // be dropping content — and a clean coverage result is exactly when nobody looks further.
+        $this->warnAboutRejectedPlacements($rejections);
 
         if (!$coverage->hasHoles()) {
             return null;
@@ -578,6 +591,50 @@ final class MigrateController extends Controller
         }
 
         return $this->refuse('The corpus has grown past the mapping', $holes);
+    }
+
+    /**
+     * Parts whose block the page they actually sit on will not accept.
+     *
+     * A warning rather than a refusal, and the reason is the same one that made
+     * `pagesWithNoBlockField()` a warning: the fix is usually a Craft-side change — adding the
+     * block type to that Matrix's allow-list — which is not always the migrator's call, and
+     * refusing would block a run that is otherwise correct. What it must not do is stay silent
+     * until a run report two hours later, which is how 41 placements on `blogPage` came to be
+     * found by sweeping migrated entries afterwards instead.
+     *
+     * @param list<array<string, mixed>> $rejections
+     */
+    private function warnAboutRejectedPlacements(array $rejections): void
+    {
+        if ($rejections === []) {
+            return;
+        }
+
+        $total = array_sum(array_map(static fn (array $r): int => (int) $r['placements'], $rejections));
+
+        $this->stderr(sprintf(
+            "%s live placements will be dropped: the block is not on the target Matrix's allow-list.\n",
+            number_format($total),
+        ), Console::FG_YELLOW);
+
+        foreach (array_slice($rejections, 0, 20) as $r) {
+            $this->stderr(sprintf(
+                "  · %s  %s -> %s is not allowed on %s.%s — %s placements\n",
+                (string) $r['env'],
+                (string) $r['part'],
+                (string) $r['block'],
+                (string) $r['entryType'],
+                (string) $r['field'],
+                number_format((int) $r['placements']),
+            ));
+        }
+
+        if (count($rejections) > 20) {
+            $this->stderr(sprintf("  … and %d more pairings\n", count($rejections) - 20));
+        }
+
+        $this->stderr("  Add the block type to that field's allow-list in Craft, or map the part elsewhere.\n");
     }
 
     /**

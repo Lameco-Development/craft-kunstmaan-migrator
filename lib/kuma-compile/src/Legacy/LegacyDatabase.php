@@ -242,6 +242,82 @@ final class LegacyDatabase
     }
 
     /**
+     * Live placements grouped by the page type they sit on and the pagepart class they are.
+     *
+     * Whether a part's block is *permitted* on a page's Matrix is a schema question, and which
+     * parts actually land on which page types is a data question. Neither half alone can say
+     * whether an allow-list rejection costs anything, which is why the pairing has to be read
+     * from the corpus rather than guessed from the mapping.
+     *
+     * @return array<string, array<string, int>> short page entity => short pagepart class => live placements
+     */
+    public function livePlacementsByPageType(): array
+    {
+        $sql = sprintf(
+            'SELECT l.pageEntityname AS entity, r.page_part_entityname AS part, COUNT(*) AS n
+             FROM kuma_page_part_refs r
+             JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
+             GROUP BY l.pageEntityname, r.page_part_entityname',
+            self::LIVE_PAGES,
+        );
+
+        $out = [];
+
+        foreach ($this->pdo->query($sql) as $row) {
+            $page = self::shortName((string) $row['entity']);
+            $part = self::shortName((string) $row['part'], 'PagePart');
+            $out[$page][$part] = ($out[$page][$part] ?? 0) + (int) $row['n'];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The same, for every live node in the environment, in one query.
+     *
+     * A corpus sweep asking `livePartsOfNode()` two thousand times runs the live-pages subquery
+     * two thousand times over a table of 158,000 rows. This walks the join once and buckets the
+     * result by node — 7,279 rows on the largest reference environment, which is nothing to
+     * hold — so the sweep is one query rather than a query per entry.
+     *
+     * Written out rather than reusing `LIVE_PAGES`: that constant selects DISTINCT over
+     * (page, id, lang) and adding `node_id` to it would change what DISTINCT means for its
+     * other three callers.
+     *
+     * @return array<int, list<array{lang: string, context: string, part: string, entity: string, id: int, sequence: int}>>
+     */
+    public function livePartsByNode(): array
+    {
+        $sql = <<<'SQL'
+            SELECT t.node_id AS nodeId, t.lang AS lang, r.context AS context,
+                   r.page_part_entityname AS entity, r.page_part_id AS partId,
+                   r.sequencenumber AS sequence
+            FROM kuma_node_translations t
+            JOIN kuma_nodes n ON n.id = t.node_id AND n.deleted = 0
+            JOIN kuma_node_versions v ON v.id = t.public_node_version_id
+            JOIN kuma_page_part_refs r
+              ON r.pageEntityname = v.ref_entity_name AND r.pageId = v.ref_id
+            WHERE t.online = 1 AND v.ref_id IS NOT NULL
+            ORDER BY t.node_id, t.lang, r.context, r.sequencenumber
+            SQL;
+
+        $out = [];
+
+        foreach ($this->pdo->query($sql) as $row) {
+            $out[(int) $row['nodeId']][] = [
+                'lang' => (string) $row['lang'],
+                'context' => (string) $row['context'],
+                'part' => self::shortName((string) $row['entity'], 'PagePart'),
+                'entity' => (string) $row['entity'],
+                'id' => (int) $row['partId'],
+                'sequence' => (int) $row['sequence'],
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
      * `SELECT COUNT(*)` on a table that may not be there.
      *
      * The twelve surveyed installs share eighteen bundles but not every table: an install

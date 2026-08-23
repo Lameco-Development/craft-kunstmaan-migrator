@@ -11,6 +11,7 @@ use craft\helpers\App;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use lameco\kunstmaanmigrator\load\EntryExplanation;
+use lameco\kunstmaanmigrator\load\ExplainContext;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\payload\RefResolver;
@@ -62,11 +63,17 @@ class StateController extends Controller
     /** `COM:1285` — the legacy environment and node id behind one migrated entry. */
     public ?string $node = null;
 
+    /** Sweep a whole environment instead of one node. */
+    public ?string $legacyEnv = null;
+
+    /** How many worst-offending nodes to name in a sweep. */
+    public int $worst = 15;
+
     public function options($actionID): array
     {
         return array_merge(parent::options($actionID), match ($actionID) {
             'diff' => ['from', 'to'],
-            'explain' => ['node'],
+            'explain' => ['node', 'legacyEnv', 'worst'],
             default => [],
         });
     }
@@ -85,24 +92,20 @@ class StateController extends Controller
      */
     public function actionExplain(): int
     {
-        if (!is_string($this->node) || !str_contains($this->node, ':')) {
-            $this->stderr('state/explain needs --node=<ENV>:<legacy node id>, e.g. --node=COM:1285' . PHP_EOL);
+        $single = is_string($this->node) && str_contains($this->node, ':');
+
+        if (!$single && !is_string($this->legacyEnv)) {
+            $this->stderr(
+                'state/explain needs --node=<ENV>:<legacy node id> for one entry,'
+                . ' or --legacy-env=COM to sweep an environment.' . PHP_EOL,
+            );
 
             return ExitCode::USAGE;
         }
 
-        [$environment, $nodeId] = explode(':', $this->node, 2);
+        $environment = $single ? explode(':', (string) $this->node, 2)[0] : (string) $this->legacyEnv;
         $plugin = Plugin::getInstance();
-        $row = $plugin->migrationStateService->get($environment . ':kuma_nodes', $nodeId);
-
-        if ($row === null) {
-            $this->stderr(sprintf('No state row for %s — this node was never migrated.%s', $this->node, PHP_EOL));
-
-            return ExitCode::NOINPUT;
-        }
-
-        $mappingPath = App::parseEnv($plugin->getSettings()->mappingPath);
-        $mapping = Mapping::fromFile((string) $mappingPath);
+        $mapping = Mapping::fromFile((string) App::parseEnv($plugin->getSettings()->mappingPath));
         $spec = $mapping->environments()[$environment] ?? null;
 
         if (!is_array($spec) || !isset($spec['database'])) {
@@ -117,27 +120,35 @@ class StateController extends Controller
             EnvironmentPipeline::dsnFromSettings(),
         );
 
-        $tables = [];
+        $context = new ExplainContext(
+            environment: $environment,
+            lanes: $mapping->accountedParts(),
+            tables: self::partTablesOf($mapping),
+            contexts: array_map('strval', array_keys((array) ($mapping->all()['defaults']['contexts'] ?? []))),
+            locales: self::migratedLocalesOf($spec),
+        );
 
-        foreach ($mapping->parts() as $class => $part) {
-            if (is_array($part) && isset($part['table'])) {
-                $tables[(string) $class] = (string) $part['table'];
-            }
+        return $single
+            ? $this->explainOne((string) $this->node, $environment, $legacy, $context)
+            : $this->sweep($environment, $legacy, $context);
+    }
+
+    private function explainOne(string $node, string $environment, LegacyDatabase $legacy, ExplainContext $context): int
+    {
+        $nodeId = explode(':', $node, 2)[1];
+        $row = Plugin::getInstance()->migrationStateService->get($environment . ':kuma_nodes', $nodeId);
+
+        if ($row === null) {
+            $this->stderr(sprintf('No state row for %s — this node was never migrated.%s', $node, PHP_EOL));
+
+            return ExitCode::NOINPUT;
         }
 
         $meta = self::decodeMeta($row['meta'] ?? null);
-        $reconciled = EntryExplanation::reconcile(
-            $environment,
-            (array) ($meta['blockIds'] ?? []),
-            $legacy->livePartsOfNode((int) $nodeId),
-            $mapping->accountedParts(),
-            $tables,
-            array_map('strval', array_keys((array) ($mapping->all()['defaults']['contexts'] ?? []))),
-            self::migratedLocalesOf($spec),
-        );
+        $reconciled = $context->reconcile((array) ($meta['blockIds'] ?? []), $legacy->livePartsOfNode((int) $nodeId));
 
         $this->stdout(json_encode([
-            'node' => $this->node,
+            'node' => $node,
             'entryId' => isset($row['targetId']) ? (int) $row['targetId'] : null,
             'sites' => self::sitesOf(isset($row['targetId']) ? (int) $row['targetId'] : null),
             'blocksWritten' => $reconciled['written'],
@@ -146,6 +157,158 @@ class StateController extends Controller
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
 
         return $reconciled['unexplained'] === [] ? ExitCode::OK : ExitCode::DATAERR;
+    }
+
+    /**
+     * Every migrated node in one environment, reconciled against the legacy database.
+     *
+     * The per-node command answers "why is *this* entry empty". This answers the question that
+     * comes first and had no surface at all — "is anything empty, and is it a pattern". A sample
+     * of twenty-five nodes is what found the `casePage` class of loss; a sweep is what says how
+     * much of the corpus it is.
+     *
+     * One legacy query for the whole environment, one pass over the state table, and the
+     * breakdown grouped by target entry type — because a loss that concentrates in one entry
+     * type is a mapping or content-model problem, and a loss spread evenly is a loader problem.
+     */
+    private function sweep(string $environment, LegacyDatabase $legacy, ExplainContext $context): int
+    {
+        $partsByNode = $legacy->livePartsByNode();
+        $entryTypes = self::entryTypesByEntryId();
+
+        $nodes = 0;
+        $written = 0;
+        $decided = 0;
+        $unexplained = 0;
+        $byEntryType = [];
+        $byPart = [];
+        $worst = [];
+
+        foreach (Plugin::getInstance()->migrationStateService->all($environment . ':kuma_nodes') as $row) {
+            if (($row['targetType'] ?? null) !== 'entry') {
+                continue;
+            }
+
+            $nodeId = (int) ($row['sourceKey'] ?? 0);
+            $meta = self::decodeMeta($row['meta'] ?? null);
+            $result = $context->reconcile((array) ($meta['blockIds'] ?? []), $partsByNode[$nodeId] ?? []);
+
+            ++$nodes;
+            $written += $result['written'];
+            $decided += count($result['accountedFor']);
+            $unexplained += count($result['unexplained']);
+
+            $entryType = $entryTypes[(int) ($row['targetId'] ?? 0)] ?? '(unknown)';
+            $byEntryType[$entryType]['nodes'] = ($byEntryType[$entryType]['nodes'] ?? 0) + 1;
+            $byEntryType[$entryType]['unexplained'] = ($byEntryType[$entryType]['unexplained'] ?? 0) + count($result['unexplained']);
+            $byEntryType[$entryType]['lossyNodes'] = ($byEntryType[$entryType]['lossyNodes'] ?? 0)
+                + ($result['unexplained'] === [] ? 0 : 1);
+
+            foreach ($result['unexplained'] as $loss) {
+                $key = sprintf('%s in %s', (string) $loss['part'], (string) $loss['context']);
+                $byPart[$key] = ($byPart[$key] ?? 0) + 1;
+            }
+
+            if ($result['unexplained'] !== []) {
+                $worst[] = [
+                    'node' => sprintf('%s:%d', $environment, $nodeId),
+                    'entryType' => $entryType,
+                    'written' => $result['written'],
+                    'unexplained' => count($result['unexplained']),
+                ];
+            }
+        }
+
+        arsort($byPart);
+        usort($worst, static fn (array $a, array $b): int => $b['unexplained'] <=> $a['unexplained']);
+        uasort($byEntryType, static fn (array $a, array $b): int => $b['unexplained'] <=> $a['unexplained']);
+
+        $this->stdout(json_encode([
+            'environment' => $environment,
+            'nodes' => $nodes,
+            'nodesWithUnexplainedLoss' => count($worst),
+            'blocksWritten' => $written,
+            'missingByDecision' => $decided,
+            'unexplained' => $unexplained,
+            'byEntryType' => array_filter($byEntryType, static fn (array $r): bool => $r['unexplained'] > 0),
+            'byPart' => $byPart,
+            // Ranked by size, then sampled across entry types: the tail matters more than the
+            // head here. Fifty `casePage` nodes each losing ten placements will otherwise fill
+            // the list and hide the one `blogPage` that is losing content for a different reason.
+            'worst' => array_slice($worst, 0, max(0, $this->worst)),
+            'worstPerEntryType' => self::firstPerEntryType($worst),
+        ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
+
+        return $unexplained === 0 ? ExitCode::OK : ExitCode::DATAERR;
+    }
+
+    /**
+     * The largest offender of each entry type.
+     *
+     * A flat ranking is dominated by whichever class is worst, and that class is usually the one
+     * already known. What is worth surfacing is one example of *every* pattern, because a second
+     * entry type appearing at all is a second cause.
+     *
+     * @param list<array<string, mixed>> $worst
+     * @return list<array<string, mixed>>
+     */
+    private static function firstPerEntryType(array $worst): array
+    {
+        $seen = [];
+        $out = [];
+
+        foreach ($worst as $row) {
+            $type = (string) $row['entryType'];
+
+            if (!isset($seen[$type])) {
+                $seen[$type] = true;
+                $out[] = $row;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Target entry type per entry id, in one query.
+     *
+     * A loss that concentrates in one entry type is a mapping or content-model problem — that is
+     * how `casePage` was identified — and a loss spread evenly across all of them is a loader
+     * problem. Without this the sweep can only say how much, not where.
+     *
+     * @return array<int, string>
+     */
+    private static function entryTypesByEntryId(): array
+    {
+        $rows = (new \craft\db\Query())
+            ->select(['e.id', 'et.handle'])
+            ->from(['e' => '{{%entries}}'])
+            ->innerJoin(['et' => '{{%entrytypes}}'], '[[et.id]] = [[e.typeId]]')
+            ->all();
+
+        $out = [];
+
+        foreach ($rows as $row) {
+            $out[(int) $row['id']] = (string) $row['handle'];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return array<string, string> pagepart class => the legacy table the mapping names
+     */
+    private static function partTablesOf(Mapping $mapping): array
+    {
+        $tables = [];
+
+        foreach ($mapping->parts() as $class => $part) {
+            if (is_array($part) && isset($part['table'])) {
+                $tables[(string) $class] = (string) $part['table'];
+            }
+        }
+
+        return $tables;
     }
 
     /**

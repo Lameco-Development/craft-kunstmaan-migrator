@@ -213,6 +213,15 @@ finishes. Pass `--resave=0` to skip it, and run it yourself afterwards:
 ./craft resave/entries --section=pages
 ```
 
+**The run warns about blocks the target will reject.** A Matrix names the entry types
+it accepts, and a part whose block is not on that list is dropped at write time. Whether
+that costs anything is a fact about the data — `contactCardBlock` is fine on a
+`contentPage` and rejected by `blogPage`, whose page builder allows ten block types where
+the general one allows twenty-four — so the preflight reads the pairings that actually
+occur from the legacy database and reports each with its measured placement count. A
+warning rather than a refusal: the fix is usually a Craft-side allow-list change, which
+is not always the migrator's call.
+
 **The run checks its own coverage first.** The legacy site is still live while the
 migration is being built: editors add pages, and three weeks in someone adds a new
 pagepart class. `coverage` catches that only when somebody remembers to run it, and
@@ -266,6 +275,7 @@ ones you can afford to drop — see below.
 | `state/export` | stream the state table as NDJSON — the file to diff between runs |
 | `state/diff --from=<a> --to=<b>` | what changed between two exports: entries that stopped being written, entries whose element id moved |
 | `state/explain --node=COM:1285` | one entry, and what became of every pagepart the legacy node held |
+| `state/explain --legacy-env=COM` | the same question across every migrated node, grouped by target entry type |
 
 Every command prints machine-readable JSON or NDJSON to stdout and exits
 non-zero on failure.
@@ -278,6 +288,15 @@ files. It stays a warning because only the data says what it costs — on the re
 corpus it fires for five page types, and four of them hold no live pageparts at all
 (`PartnerPage` has 423 live pages and zero placements). The fifth is `casePage`: 618
 placements across 72 pages.
+
+**`state/explain --legacy-env=COM` sweeps the whole environment.** The per-node form
+answers "why is *this* entry empty"; the sweep answers the question that comes first —
+"is anything empty, and is it a pattern". One legacy query and one pass over the state
+table, so a 973-node environment takes about a second. The breakdown is grouped by
+target entry type, because a loss that concentrates in one type is a mapping or
+content-model problem and a loss spread evenly is a loader problem. `worstPerEntryType`
+exists because a flat ranking is filled by whichever class is worst — usually the one
+already known — and hides the second cause entirely.
 
 **`state/explain` is the one to reach for when something is empty.** It reconciles
 one migrated entry against the legacy node behind it: what was written comes from the
@@ -352,7 +371,7 @@ Event::on(AdapterRegistry::class, AdapterRegistry::EVENT_REGISTER_ADAPTERS,
 
 ```bash
 composer install
-composer test              # 647 tests
+composer test              # 658 tests
 composer test-coverage     # per-module gate, needs pcov or xdebug
 ```
 
