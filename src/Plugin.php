@@ -68,8 +68,45 @@ use yii\db\Connection;
  */
 class Plugin extends BasePlugin
 {
+    public bool $hasCpSection = true;
+
     // D-08: v2 starts below v1.x's 2.0.0.
     public string $schemaVersion = '1.1.0';
+
+    /**
+     * One place in the nav, three screens under it. The authoring half —
+     * the mapping and the wizard that creates one — lives in this section;
+     * the run itself stays a Utility, where a destructive, occasional
+     * operation belongs, and the subnav points across to it.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getCpNavItem(): ?array
+    {
+        $item = parent::getCpNavItem();
+
+        if ($item === null) {
+            return null;
+        }
+
+        $item['label'] = Craft::t('kunstmaan-migrator', 'Kunstmaan Migration');
+        $item['subnav'] = [
+            'mapping' => [
+                'label' => Craft::t('kunstmaan-migrator', 'Mapping'),
+                'url' => 'kunstmaan-migrator/mapping',
+            ],
+            'setup' => [
+                'label' => Craft::t('kunstmaan-migrator', 'Set up'),
+                'url' => 'kunstmaan-migrator/setup',
+            ],
+            'run' => [
+                'label' => Craft::t('kunstmaan-migrator', 'Run'),
+                'url' => 'utilities/' . MigrationUtility::id(),
+            ],
+        ];
+
+        return $item;
+    }
 
     /**
      * The connection and the adapter switches are settings; the topology is not.
@@ -146,6 +183,7 @@ class Plugin extends BasePlugin
             UrlManager::class,
             UrlManager::EVENT_REGISTER_CP_URL_RULES,
             static function (RegisterUrlRulesEvent $event): void {
+                $event->rules['kunstmaan-migrator'] = 'kunstmaan-migrator/migration/home';
                 $event->rules['kunstmaan-migrator/mapping'] = 'kunstmaan-migrator/migration/mapping';
                 $event->rules['kunstmaan-migrator/mapping-row'] = 'kunstmaan-migrator/migration/mapping-row';
                 $event->rules['kunstmaan-migrator/setup'] = 'kunstmaan-migrator/setup/index';
@@ -156,8 +194,10 @@ class Plugin extends BasePlugin
             },
         );
 
-        // A Utility, not a CP section: a tool used a handful of times per project
-        // has no business in the nav beside Entries.
+        // The run stays a Utility even though the section above exists: the
+        // authoring screens (mapping, wizard) are visited often while a
+        // migration is being decided; the run is occasional and destructive,
+        // and Utilities is where Craft keeps that kind of button.
         Event::on(
             Utilities::class,
             Utilities::EVENT_REGISTER_UTILITIES,

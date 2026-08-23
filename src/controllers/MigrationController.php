@@ -329,6 +329,20 @@ final class MigrationController extends Controller
         };
     }
 
+    /**
+     * The section's landing: the mapping when one exists, the wizard when
+     * none does — the screen you need is the screen you get.
+     */
+    public function actionHome(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePermission('utility:' . MigrationUtility::id());
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+
+        return $this->redirect($editor->path() !== null ? 'kunstmaan-migrator/mapping' : 'kunstmaan-migrator/setup');
+    }
+
     public function actionQueue(): Response
     {
         $this->requirePostRequest();

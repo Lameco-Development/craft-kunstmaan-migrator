@@ -8,6 +8,12 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A CP section: Kunstmaan Migration.** The authoring screens stop hiding
+  behind URLs nothing linked to — the nav item carries a subnav of Mapping,
+  Set up, and Run (which points across to the Utility, where a destructive,
+  occasional operation belongs). The section lands on the mapping when one
+  exists and on the wizard when none does.
+
 - **The setup wizard starts by finding the site, not asking about it.** A new
   first step scans a folder (default: the Craft project's parent, e.g.
   `~/Sites`) for Kunstmaan checkouts — a checkout qualifies by its
