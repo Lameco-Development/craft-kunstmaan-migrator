@@ -29,6 +29,13 @@ class Settings extends Model
      */
     public ?string $legacySourcePath     = null;
 
+    /**
+     * Where the old site's uploads live. Every Kunstmaan site here keeps them
+     * at `public/uploads/media`, so this is derived from the detected checkout
+     * and only needs a value when a site breaks that convention.
+     */
+    public ?string $legacyMediaRoot      = null;
+
     public ?string $legacyDbServer       = null;
     public int     $legacyDbPort         = 3306;
     public ?string $legacyDbDatabase     = null;
@@ -549,7 +556,7 @@ class Settings extends Model
     public function rules(): array
     {
         return [
-            [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser'], 'string'],
+            [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyMediaRoot'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['legacyDbPassword'], 'validateIsEnvReference'],

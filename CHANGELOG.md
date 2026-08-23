@@ -8,6 +8,16 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **The locales step asks one question.** The dropdowns now start on the Craft
+  site whose language matches the legacy locale, so the step is a check rather
+  than a form; the per-locale "why not" box is gone (a skipped locale is
+  written as `!unmapped "not selected during setup"`, still a declaration the
+  coverage report honours, and the mapping file is where a better reason
+  belongs); and the uploads textarea left the wizard entirely — every
+  Kunstmaan site keeps uploads at `public/uploads/media`, so the path is read
+  from the detected checkout, with a plugin setting to override the one site
+  that breaks the convention.
+
 - **A CP section: Kunstmaan Migration.** The authoring screens stop hiding
   behind URLs nothing linked to — the nav item carries a subnav of Mapping,
   Set up, and Run (which points across to the Utility, where a destructive,

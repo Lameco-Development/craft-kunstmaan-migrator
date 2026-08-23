@@ -19,7 +19,6 @@
         <th>{{ "Site"|t('kunstmaan-migrator') }}</th>
         <th>{{ "Languages coming across"|t('kunstmaan-migrator') }}</th>
         <th>{{ "Not migrating"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Files"|t('kunstmaan-migrator') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -40,17 +39,18 @@
               <span class="light">—</span>
             {% endfor %}
           </td>
-          <td>
-            {% for path in row.mediaRoot %}
-              <div><code>{{ path }}</code></div>
-            {% else %}
-              <span class="light">{{ "not set"|t('kunstmaan-migrator') }}</span>
-            {% endfor %}
-          </td>
         </tr>
       {% endfor %}
     </tbody>
   </table>
+
+  <p class="light" style="margin-top: 8px;">
+    {% if mediaRoot %}
+      {{ "Files come from {path} — the Kunstmaan convention, read from the detected checkout. Override it in the plugin settings if this site breaks the convention."|t('kunstmaan-migrator', { path: '<code>' ~ mediaRoot ~ '</code>' })|raw }}
+    {% else %}
+      {{ "No uploads folder was detected — set one in the plugin settings, or add mediaRoot lines to the mapping afterwards."|t('kunstmaan-migrator') }}
+    {% endif %}
+  </p>
 
   <hr>
 

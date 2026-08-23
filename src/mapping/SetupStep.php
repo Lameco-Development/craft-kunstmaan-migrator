@@ -54,7 +54,7 @@ enum SetupStep: string
             self::Detect => 'Which old site is this migration for?',
             self::Connect => 'Where is the old site’s database?',
             self::Sites => 'Which of these sites are you migrating?',
-            self::Locales => 'Where should each language and its files go?',
+            self::Locales => 'Where should each language go?',
             self::Review => 'Ready to create the mapping?',
         };
     }

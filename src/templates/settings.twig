@@ -53,6 +53,17 @@
 
 <h2>{{ "Assets"|t('kunstmaan-migrator') }}</h2>
 
+{{ forms.autosuggestField({
+  label: "Old site's uploads folder"|t('kunstmaan-migrator'),
+  instructions: "Usually left empty: every Kunstmaan site keeps uploads at public/uploads/media, and the wizard reads that from the detected checkout. Set this only when a site breaks the convention."|t('kunstmaan-migrator'),
+  id: 'legacyMediaRoot',
+  name: 'legacyMediaRoot',
+  value: settings.legacyMediaRoot,
+  suggestEnvVars: true,
+  placeholder: '/Users/you/Sites/old-site/public/uploads/media',
+  errors: settings.getErrors('legacyMediaRoot'),
+}) }}
+
 <p class="light">
   {{ "Where migrated files land. These are read by the entry pass, not by an adapter, so they apply to every run."|t('kunstmaan-migrator') }}
 </p>

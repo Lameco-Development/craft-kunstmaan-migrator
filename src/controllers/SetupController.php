@@ -312,25 +312,27 @@ final class SetupController extends Controller
         $catalogue = $this->catalogue();
         $environments = [];
 
-        // The detect step found the checkout; its uploads folder is the media
-        // root for every environment until the operator says otherwise.
-        $sourcePath = (string) (Plugin::getInstance()->getSettings()->legacySourcePath ?? '');
-        $detectedMedia = $sourcePath !== '' && is_dir($sourcePath . '/public/uploads/media')
-            ? $sourcePath . '/public/uploads/media'
-            : '';
+        $sites = Craft::$app->getSites()->getAllSites();
 
         foreach ($draft->environments as $label => $database) {
+            $locales = $catalogue->locales($database);
+            $suggested = [];
+
+            foreach (array_keys($locales) as $locale) {
+                $suggested[$locale] = self::suggestSite((string) $locale, $sites);
+            }
+
             $environments[$label] = [
                 'database' => $database,
-                'locales' => $catalogue->locales($database),
-                'mediaRoot' => $detectedMedia,
+                'locales' => $locales,
+                'suggested' => $suggested,
                 'chosen' => [],
             ];
         }
 
         return $this->step(SetupStep::Locales, 'locales', [
             'environments' => $environments,
-            'sites' => Craft::$app->getSites()->getAllSites(),
+            'sites' => $sites,
             'envs' => $draft->toString(),
         ]);
     }
@@ -346,7 +348,6 @@ final class SetupController extends Controller
         // screen: the review is there to show what was decided, not to collect it.
         $choices = [
             'locales' => (array) $this->request->getBodyParam('locales', []),
-            'mediaRoot' => (array) $this->request->getBodyParam('mediaRoot', []),
         ];
 
         return $this->redirect(sprintf(
@@ -421,11 +422,11 @@ final class SetupController extends Controller
                 'database' => $database,
                 'migrating' => $migrating,
                 'skipping' => $skipping,
-                'mediaRoot' => self::lines((string) ($choices['mediaRoot'][$label] ?? '')),
             ];
         }
 
         return $this->step(SetupStep::Review, 'review', [
+            'mediaRoot' => $this->mediaRoot(),
             'summary' => $summary,
             'envs' => $draft->toString(),
             'choices' => (string) $this->request->getQueryParam('choices', ''),
@@ -477,6 +478,50 @@ final class SetupController extends Controller
     }
 
     // ── Plumbing ─────────────────────────────────────────────────────────────
+
+    /**
+     * Where the old site's uploads live: the override from the plugin settings
+     * when one is set, otherwise the detected checkout's `public/uploads/media`
+     * — the path every Kunstmaan site here uses, which is why the wizard stopped
+     * asking for it.
+     */
+    private function mediaRoot(): string
+    {
+        $settings = Plugin::getInstance()->getSettings();
+        $override = trim((string) App::parseEnv((string) ($settings->legacyMediaRoot ?? '')));
+
+        if ($override !== '') {
+            return $override;
+        }
+
+        $sourcePath = (string) ($settings->legacySourcePath ?? '');
+
+        return $sourcePath !== '' && is_dir($sourcePath . '/public/uploads/media')
+            ? $sourcePath . '/public/uploads/media'
+            : '';
+    }
+
+    /**
+     * The Craft site a legacy locale most likely lands on, by language: legacy
+     * `de` matches the site whose language is `de` or `de-*`. A suggestion the
+     * dropdown starts on, not a decision — the operator changes it in place.
+     *
+     * @param list<\craft\models\Site> $sites
+     */
+    private static function suggestSite(string $locale, array $sites): string
+    {
+        $locale = strtolower($locale);
+
+        foreach ($sites as $site) {
+            $language = strtolower((string) $site->language);
+
+            if ($language === $locale || str_starts_with($language, $locale . '-')) {
+                return (string) $site->handle;
+            }
+        }
+
+        return '';
+    }
 
     /**
      * Sibling databases of the detected one, by the naming convention every
@@ -545,10 +590,12 @@ final class SetupController extends Controller
         $document = MappingDocument::fromFile($path);
         $choices = $this->choices();
 
+        $mediaRoot = $this->mediaRoot();
+
         foreach ($draft->environments as $label => $database) {
             $document->patch('environments', $label, [
                 'database' => $database,
-                'mediaRoot' => self::lines((string) ($choices['mediaRoot'][$label] ?? '')),
+                'mediaRoot' => $mediaRoot !== '' ? [$mediaRoot] : [],
                 'locales' => self::localeMap((array) ($choices['locales'][$label] ?? [])),
             ]);
         }
@@ -580,7 +627,7 @@ final class SetupController extends Controller
             }
 
             $reason = trim((string) ($choice['reason'] ?? ''));
-            $out[(string) $locale] = new TaggedValue('unmapped', $reason !== '' ? $reason : 'not migrating');
+            $out[(string) $locale] = new TaggedValue('unmapped', $reason !== '' ? $reason : 'not selected during setup');
         }
 
         return $out;
