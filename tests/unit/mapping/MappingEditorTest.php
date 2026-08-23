@@ -338,6 +338,77 @@ final class MappingEditorTest extends TestCase
         );
     }
 
+
+    /**
+     * Samples exist to make `title` vs `page_title` a choice instead of a coin
+     * flip — so they must be displayable: markup stripped, whitespace
+     * collapsed, cut at 40 characters, three distinct values at most, and no
+     * `id` column (nobody maps the primary key by sample).
+     */
+    public function testSamplesAreDistinctDisplayableGlimpses(): void
+    {
+        $samples = MappingEditor::aggregateSamples([
+            ['id' => 1, 'title' => '<p>Over  ons</p>', 'body' => str_repeat('x', 60), 'empty' => '', 'blob' => null],
+            ['id' => 2, 'title' => 'Over ons', 'body' => 'short', 'empty' => '   ', 'blob' => null],
+            ['id' => 3, 'title' => 'Contact', 'body' => 'short', 'empty' => '', 'blob' => null],
+            ['id' => 4, 'title' => 'Vacatures', 'body' => 'b', 'empty' => '', 'blob' => null],
+            ['id' => 5, 'title' => 'Nieuws', 'body' => 'c', 'empty' => '', 'blob' => null],
+        ]);
+
+        self::assertSame(['Over ons', 'Contact', 'Vacatures'], $samples['title'], 'distinct, stripped, capped at three');
+        self::assertSame(str_repeat('x', 40) . '…', $samples['body'][0], 'long values are cut, and say so');
+        self::assertArrayNotHasKey('empty', $samples);
+        self::assertArrayNotHasKey('blob', $samples);
+        self::assertArrayNotHasKey('id', $samples);
+    }
+
+    /**
+     * The roll-up that saves clicking through every entry type: only the types
+     * with unfed fields appear, and an empty list is the finished state.
+     */
+    public function testCoverageGapsListOnlyTheEntryTypesWithHoles(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'mapping') . '.yaml';
+
+        file_put_contents($path, <<<'YAML'
+            version: 1
+            environments:
+              COM:
+                database: legacy
+                locales: { en: siteEn }
+            pages:
+              ContentPage: { entryType: contentPage }
+              NewsPage: { entryType: newsPage }
+            sidecars:
+              headerTab:
+                table: header_tabs
+                map: { heroTitle: 'title | inlineHtml' }
+            YAML);
+
+        $schema = $this->createStub(SchemaGateway::class);
+        $schema->method('fieldSlotsFor')->willReturnCallback(static fn (string $entryType): array => match ($entryType) {
+            'contentPage' => ['heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []]],
+            'newsPage' => [
+                'heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []],
+                'intro' => ['type' => 'plaintext', 'required' => true, 'nested' => []],
+            ],
+            default => [],
+        });
+
+        $editor = new MappingEditor(
+            SettingsFactory::make(['mappingPath' => $path]),
+            $schema,
+            new TargetModel($schema),
+            new InMemoryTargetCatalogue(),
+        );
+
+        self::assertSame(
+            [['entryType' => 'newsPage', 'unfed' => 1, 'required' => 1]],
+            $editor->coverageGaps(),
+            'contentPage is fully fed by the sidecar and stays out of the list',
+        );
+    }
+
     /** Two open pages, as `mapping/init` leaves them. */
     private function mappingFile(): string
     {

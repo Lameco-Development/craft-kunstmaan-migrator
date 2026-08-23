@@ -10,9 +10,7 @@ use Lameco\KumaCompile\Mapping\Mapping;
 use Throwable;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
-use craft\events\RegisterComponentTypesEvent;
 use craft\events\RegisterUrlRulesEvent;
-use craft\services\Utilities;
 use craft\web\UrlManager;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
@@ -35,7 +33,6 @@ use lameco\kunstmaanmigrator\load\SeoMigrationService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
 use lameco\kunstmaanmigrator\mapping\SetupStep;
 use lameco\kunstmaanmigrator\models\Settings;
-use lameco\kunstmaanmigrator\utilities\MigrationUtility;
 use PDO;
 use yii\base\Event;
 use yii\db\Connection;
@@ -68,6 +65,14 @@ use yii\db\Connection;
  */
 class Plugin extends BasePlugin
 {
+    /**
+     * The one permission every migrator screen and action requires — the
+     * access permission Craft grants for this plugin's CP section. One
+     * permission, because the screens are one workflow: someone who may
+     * author the mapping may also run it against this non-production install.
+     */
+    public const PERMISSION = 'accessPlugin-kunstmaan-migrator';
+
     public bool $hasCpSection = true;
 
     // D-08: v2 starts below v1.x's 2.0.0.
@@ -99,13 +104,13 @@ class Plugin extends BasePlugin
                 'label' => Craft::t('kunstmaan-migrator', 'Coverage'),
                 'url' => 'kunstmaan-migrator/coverage',
             ],
+            'run' => [
+                'label' => Craft::t('kunstmaan-migrator', 'Run'),
+                'url' => 'kunstmaan-migrator/run',
+            ],
             'setup' => [
                 'label' => Craft::t('kunstmaan-migrator', 'Set up'),
                 'url' => 'kunstmaan-migrator/setup',
-            ],
-            'run' => [
-                'label' => Craft::t('kunstmaan-migrator', 'Run'),
-                'url' => 'utilities/' . MigrationUtility::id(),
             ],
         ];
 
@@ -191,6 +196,7 @@ class Plugin extends BasePlugin
                 $event->rules['kunstmaan-migrator/mapping'] = 'kunstmaan-migrator/migration/mapping';
                 $event->rules['kunstmaan-migrator/mapping-row'] = 'kunstmaan-migrator/migration/mapping-row';
                 $event->rules['kunstmaan-migrator/coverage'] = 'kunstmaan-migrator/migration/coverage';
+                $event->rules['kunstmaan-migrator/run'] = 'kunstmaan-migrator/migration/run';
                 $event->rules['kunstmaan-migrator/setup'] = 'kunstmaan-migrator/setup/index';
 
                 foreach (SetupStep::all() as $step) {
@@ -199,17 +205,6 @@ class Plugin extends BasePlugin
             },
         );
 
-        // The run stays a Utility even though the section above exists: the
-        // authoring screens (mapping, wizard) are visited often while a
-        // migration is being decided; the run is occasional and destructive,
-        // and Utilities is where Craft keeps that kind of button.
-        Event::on(
-            Utilities::class,
-            Utilities::EVENT_REGISTER_UTILITIES,
-            static function (RegisterComponentTypesEvent $event): void {
-                $event->types[] = MigrationUtility::class;
-            },
-        );
 
         // Deferred: none of this is needed to answer a request that never reaches
         // the migrator, and until now all twelve components were built and ~25

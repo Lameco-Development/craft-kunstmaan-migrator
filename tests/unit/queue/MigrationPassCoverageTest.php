@@ -33,7 +33,7 @@ final class MigrationPassCoverageTest extends TestCase
     public function testEveryConsoleActionHasAControlPanelRoute(): void
     {
         $controller = $this->source('src/controllers/MigrationController.php');
-        $template = $this->source('src/templates/_utility.twig');
+        $template = $this->source('src/templates/_run-panel.twig');
 
         $coverage = [
             'doctor' => 'actionDoctor',

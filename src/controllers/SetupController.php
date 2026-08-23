@@ -23,7 +23,6 @@ use lameco\kunstmaanmigrator\mapping\SetupStep;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
-use lameco\kunstmaanmigrator\utilities\MigrationUtility;
 use PDO;
 use Symfony\Component\Yaml\Tag\TaggedValue;
 use Throwable;
@@ -465,22 +464,31 @@ final class SetupController extends Controller
         }
 
         // The mapping is the migration, and a wizard that clobbers a finished
-        // one is hours of decisions gone. So an existing file is only replaced
-        // when the review screen asked and the operator said so — and even then
-        // it is moved aside with a timestamp, never destroyed.
+        // one is hours of decisions gone. So when a file exists the default is
+        // to merge — newly discovered rows join it as open, every decision and
+        // comment stays — and replacing is the explicit choice, moved aside
+        // with a timestamp, never destroyed.
         $replaced = null;
 
-        if (is_file($path)) {
-            if (!$this->request->getBodyParam('replace')) {
-                Craft::$app->getSession()->setError(Craft::t(
-                    'kunstmaan-migrator',
-                    'There is already a mapping at {path}. Move it aside first, or edit it instead.',
-                    ['path' => $path],
-                ));
+        if (is_file($path) && $this->request->getBodyParam('existing', 'merge') !== 'replace') {
+            try {
+                $stats = $this->merge($draft, $path);
+            } catch (Throwable $e) {
+                Craft::$app->getSession()->setError(self::readable($e));
 
-                return $this->redirect('kunstmaan-migrator/mapping');
+                return $this->redirect('kunstmaan-migrator/setup/sites');
             }
 
+            Craft::$app->getSession()->setNotice(Craft::t(
+                'kunstmaan-migrator',
+                'Mapping merged: {added} new rows to decide, {refreshed} live counts refreshed, every decision kept.',
+                ['added' => $stats['added'], 'refreshed' => $stats['refreshed']],
+            ));
+
+            return $this->redirect('kunstmaan-migrator/mapping');
+        }
+
+        if (is_file($path)) {
             $replaced = $path . '.replaced-' . date('Ymd-His');
 
             if (!rename($path, $replaced)) {
@@ -704,8 +712,86 @@ final class SetupController extends Controller
         // in — through MappingDocument, so they land the same way every later
         // edit does.
         $document = MappingDocument::fromFile($path);
-        $choices = $this->choices();
+        $this->applyDraft($document, $draft);
+        $document->save();
+    }
 
+    /**
+     * Fold a fresh survey into an existing mapping without losing a decision.
+     *
+     * A re-run of the wizard used to mean replace-or-refuse, and replace is
+     * how a finished mapping became a skeleton this August. Merging keeps the
+     * old file as the base — every decision, every comment — and patches in
+     * only what the new survey found: rows that did not exist yet, refreshed
+     * live counts on ones that did, and the environment answers the wizard
+     * just collected. Rows the survey no longer sees are kept, not deleted;
+     * `coverage` is the place that reports a table gone missing.
+     *
+     * @return array{added: int, refreshed: int}
+     */
+    private function merge(SetupDraft $draft, string $path): array
+    {
+        $dsn = EnvironmentPipeline::dsnFromSettings();
+        $databases = [];
+
+        foreach ($draft->environments as $label => $database) {
+            $databases[$label] = LegacyDatabase::connect($label, $database, $dsn);
+        }
+
+        $source = trim((string) $this->request->getBodyParam('source', ''))
+            ?: (string) (Plugin::getInstance()->getSettings()->legacySourcePath ?? '');
+
+        $entities = EntityTableIndex::empty();
+        $introspection = null;
+
+        if ($source !== '' && is_dir($source)) {
+            $introspector = new Introspector();
+            $artifact = $introspector->introspect($source);
+            $introspector->write($artifact, dirname($path) . '/introspection.json');
+            $introspection = Introspection::fromArray($artifact);
+            $entities = EntityTableIndex::fromIntrospection($introspection);
+        }
+
+        $skeletonPath = tempnam(sys_get_temp_dir(), 'kuma-skeleton') . '.yaml';
+        file_put_contents($skeletonPath, (new Skeleton($entities, $introspection))->generate($databases));
+
+        try {
+            $skeleton = MappingDocument::fromFile($skeletonPath);
+            $document = MappingDocument::fromFile($path);
+            $added = 0;
+            $refreshed = 0;
+
+            foreach (['parts', 'pages', 'entities', 'sidecars'] as $lane) {
+                foreach ($skeleton->lane($lane) as $key => $spec) {
+                    if (!is_array($spec)) {
+                        continue;
+                    }
+
+                    $existing = $document->row($lane, (string) $key);
+
+                    if ($existing === null) {
+                        $document->patch($lane, (string) $key, $spec);
+                        $added++;
+                    } elseif (array_key_exists('live', $spec) && ($existing['live'] ?? null) !== $spec['live']) {
+                        $document->patch($lane, (string) $key, ['live' => $spec['live']]);
+                        $refreshed++;
+                    }
+                }
+            }
+
+            $this->applyDraft($document, $draft);
+            $document->save();
+        } finally {
+            @unlink($skeletonPath);
+        }
+
+        return ['added' => $added, 'refreshed' => $refreshed];
+    }
+
+    /** The wizard's answers — environments, locales, media root — always win: they were just given. */
+    private function applyDraft(MappingDocument $document, SetupDraft $draft): void
+    {
+        $choices = $this->choices();
         $mediaRoot = $this->mediaRoot();
 
         foreach ($draft->environments as $label => $database) {
@@ -715,8 +801,6 @@ final class SetupController extends Controller
                 'locales' => self::localeMap((array) ($choices['locales'][$label] ?? [])),
             ]);
         }
-
-        $document->save();
     }
 
     /**
@@ -800,7 +884,7 @@ final class SetupController extends Controller
     private function guard(): void
     {
         $this->requireCpRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         if (ProductionGuard::isProduction()) {
             throw new BadRequestHttpException('The migrator does not read a legacy database on production.');

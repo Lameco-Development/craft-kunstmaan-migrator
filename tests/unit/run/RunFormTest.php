@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\utilities;
+namespace lameco\kunstmaanmigrator\tests\unit\run;
 
 use PHPUnit\Framework\TestCase;
 
 /**
  * The run form's switches, and what a queued run actually covers.
  */
-final class UtilityRunFormTest extends TestCase
+final class RunFormTest extends TestCase
 {
     private function source(string $relative): string
     {
@@ -24,7 +24,7 @@ final class UtilityRunFormTest extends TestCase
      */
     public function testTheRunFormReadsLightswitchesAsSwitchesNotCheckboxes(): void
     {
-        $template = $this->source('src/templates/_utility.twig');
+        $template = $this->source('src/templates/_run-panel.twig');
 
         self::assertStringNotContainsString('.checked', $template);
         self::assertStringContainsString("getAttribute('aria-checked')", $template);

@@ -1,0 +1,8 @@
+{% extends "_layouts/cp.twig" %}
+{% set selectedSubnavItem = 'run' %}
+
+{% set title = "Run"|t('kunstmaan-migrator') %}
+
+{% block content %}
+  {% include 'kunstmaan-migrator/_run-panel' %}
+{% endblock %}

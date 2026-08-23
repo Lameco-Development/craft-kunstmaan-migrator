@@ -15,14 +15,18 @@ use Lameco\KumaCompile\Target\SpecNotes;
 use Lameco\KumaCompile\Target\Suggester;
 use lameco\kunstmaanmigrator\mapping\FieldExpression;
 use lameco\kunstmaanmigrator\mapping\MappingEditor;
+use Lameco\KumaCompile\Mapping\Schema;
+use Lameco\KumaCompile\Target\TargetCheck;
+use lameco\kunstmaanmigrator\compile\TargetModel;
+use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\run\RunPanel;
 use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\console\StateController;
 use lameco\kunstmaanmigrator\queue\FinalizeJob;
 use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
 use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use lameco\kunstmaanmigrator\run\Diagnostics;
-use lameco\kunstmaanmigrator\utilities\MigrationUtility;
 use Throwable;
 use yii\web\BadRequestHttpException;
 use yii\web\Response;
@@ -55,7 +59,7 @@ final class MigrationController extends Controller
     {
         $this->requirePostRequest();
         $this->requireAcceptsJson();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $checks = (new Diagnostics())->run();
 
@@ -74,7 +78,7 @@ final class MigrationController extends Controller
      */
     public function actionExport(): Response
     {
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $lines = [];
 
@@ -100,7 +104,7 @@ final class MigrationController extends Controller
     public function actionMapping(): Response
     {
         $this->requireCpRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $lane = (string) ($this->request->getQueryParam('lane') ?: 'parts');
 
@@ -150,7 +154,7 @@ final class MigrationController extends Controller
     public function actionPrefill(): Response
     {
         $this->requirePostRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
         $path = $editor->path();
@@ -220,7 +224,7 @@ final class MigrationController extends Controller
     public function actionMappingRow(): Response
     {
         $this->requireCpRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $lane = (string) $this->request->getRequiredQueryParam('lane');
         $key = (string) $this->request->getRequiredQueryParam('key');
@@ -271,6 +275,7 @@ final class MigrationController extends Controller
                 ? $editor->sidecarFillsFor($row->target)
                 : [],
             'carriage' => $lane === 'sidecars' ? $editor->sidecarCarriage($row) : [],
+            'samples' => $editor->samplesFor($row),
         ]);
     }
 
@@ -283,7 +288,7 @@ final class MigrationController extends Controller
     public function actionCoverage(): Response
     {
         $this->requireCpRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
 
@@ -301,12 +306,96 @@ final class MigrationController extends Controller
         $entryType = (string) $this->request->getQueryParam('entryType', $entryTypes[0] ?? '');
 
         return $this->renderTemplate('kunstmaan-migrator/_coverage', [
+            'gaps' => $editor->coverageGaps(),
             'entryTypes' => $entryTypes,
             'entryType' => $entryType,
             'coverage' => $entryType !== '' && in_array($entryType, $entryTypes, true)
                 ? $editor->coverageFor($entryType)
                 : ['pageTypes' => [], 'fields' => []],
         ]);
+    }
+
+    /**
+     * `mapping/check`, as a button: is the file well-formed, does it match
+     * this install, are the conflicts decided. The same three questions in the
+     * same order the CLI and `migrate` ask them — a mapping that is not
+     * well-formed produces misleading target errors, so shape goes first.
+     */
+    public function actionCheck(): Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $path = $editor->path();
+
+        if ($path === null) {
+            Craft::$app->getSession()->setError(Craft::t('kunstmaan-migrator', 'No mapping file is configured.'));
+
+            return $this->redirectToPostedUrl();
+        }
+
+        try {
+            $mapping = Mapping::fromFile($path);
+        } catch (Throwable $e) {
+            Craft::$app->getSession()->setError(Craft::t(
+                'kunstmaan-migrator',
+                'Mapping is unreadable: {message}',
+                ['message' => $e->getMessage()],
+            ));
+
+            return $this->redirectToPostedUrl();
+        }
+
+        $verdict = match (true) {
+            ($errors = (new Schema())->validate($mapping)) !== []
+                => ['Mapping is not well-formed', $errors],
+            ($errors = (new TargetCheck(new TargetModel(new CraftSchemaGateway())))->check($mapping)) !== []
+                => ['Mapping does not match this Craft install', $errors],
+            ($conflicts = $mapping->openConflicts()) !== []
+                => [
+                    'Unresolved conflicts — set conflict.status: decided',
+                    array_map(static fn ($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
+                ],
+            default => null,
+        };
+
+        if ($verdict === null) {
+            Craft::$app->getSession()->setNotice(Craft::t(
+                'kunstmaan-migrator',
+                'Well-formed and matches this install: {pages} page types, {parts} parts, {entities} entities.',
+                [
+                    'pages' => count($mapping->pages()),
+                    'parts' => count($mapping->parts()),
+                    'entities' => count($mapping->entities()),
+                ],
+            ));
+        } else {
+            [$headline, $errors] = $verdict;
+            $shown = array_slice($errors, 0, 8);
+            $more = count($errors) - count($shown);
+            Craft::$app->getSession()->setError(
+                Craft::t('kunstmaan-migrator', $headline) . ': ' . implode(' · ', $shown)
+                . ($more > 0 ? ' ' . Craft::t('kunstmaan-migrator', '… and {more} more', ['more' => $more]) : ''),
+            );
+        }
+
+        return $this->redirectToPostedUrl();
+    }
+
+    /**
+     * The run screen: the mapping's environments, whether each is reachable,
+     * and the button. Formerly a Utility; now a page of the section, because
+     * one workflow split across two nav areas cost more than the convention
+     * bought. The safety never lived in the location — it lives in
+     * ProductionGuard and the confirmation dialogs, which came along.
+     */
+    public function actionRun(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        return $this->renderTemplate('kunstmaan-migrator/_run', RunPanel::data());
     }
 
     /**
@@ -318,7 +407,7 @@ final class MigrationController extends Controller
     public function actionSaveMappingRow(): Response
     {
         $this->requirePostRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $lane = (string) $this->request->getRequiredBodyParam('lane');
         $key = (string) $this->request->getRequiredBodyParam('key');
@@ -474,7 +563,7 @@ final class MigrationController extends Controller
     public function actionHome(): Response
     {
         $this->requireCpRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
 
@@ -485,7 +574,7 @@ final class MigrationController extends Controller
     {
         $this->requirePostRequest();
         $this->requireAcceptsJson();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         // Refused here as well as in the job. This is the button, so this is
         // where an operator should be told, rather than watching a job fail.

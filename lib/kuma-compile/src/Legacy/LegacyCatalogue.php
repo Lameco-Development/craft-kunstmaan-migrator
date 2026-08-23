@@ -136,6 +136,34 @@ final class LegacyCatalogue
         }
     }
 
+    /**
+     * A handful of rows from a table, for showing an operator what a column
+     * actually holds. A sample, never the basis of a migration read.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function sampleRows(string $database, string $table, int $limit = 8): array
+    {
+        // Identifiers cannot be bound; refusing anything but a plain name is
+        // the whole injection surface.
+        if (!preg_match('/^\w+$/', $database) || !preg_match('/^\w+$/', $table)) {
+            return [];
+        }
+
+        try {
+            $statement = $this->connect($database)->query(sprintf(
+                'SELECT * FROM `%s`.`%s` LIMIT %d',
+                $database,
+                $table,
+                max(1, $limit),
+            ));
+
+            return $statement === false ? [] : $statement->fetchAll(PDO::FETCH_ASSOC);
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     private function connect(string $database): PDO
     {
         return new PDO(

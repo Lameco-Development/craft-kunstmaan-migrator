@@ -2,43 +2,28 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\utilities;
+namespace lameco\kunstmaanmigrator\run;
 
 use Craft;
-use craft\base\Utility;
 use craft\helpers\App;
 use Lameco\KumaCompile\Mapping\Mapping;
 use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
-use lameco\kunstmaanmigrator\run\MappingPreflight;
-use lameco\kunstmaanmigrator\run\PdoPreflightProbe;
+use lameco\kunstmaanmigrator\ProductionGuard;
 use Throwable;
 
 /**
- * Where a migration is started and watched.
+ * What the run screen needs to know before offering the button: the mapping,
+ * its environments, and whether each one's database and media root are
+ * actually reachable from here.
  *
- * A Utility rather than a top-level section: this is a developer tool used a
- * handful of times per project, and it has no business in the nav beside
- * Entries. Utilities is exactly the drawer Craft keeps such things in.
+ * Its own class rather than controller code because a migration is hours and
+ * a web request is seconds — the controller stays a dispatcher, and the test
+ * that keeps EnvironmentPipeline out of it keeps meaning something.
  */
-final class MigrationUtility extends Utility
+final class RunPanel
 {
-    public static function displayName(): string
-    {
-        return Craft::t('kunstmaan-migrator', 'Kunstmaan Migration');
-    }
-
-    public static function id(): string
-    {
-        return 'kunstmaan-migration';
-    }
-
-    public static function icon(): ?string
-    {
-        return 'right-left';
-    }
-
-    public static function contentHtml(): string
+    /** @return array<string, mixed> */
+    public static function data(): array
     {
         $settings = Plugin::getInstance()->getSettings();
         $path = App::parseEnv($settings->mappingPath);
@@ -65,12 +50,12 @@ final class MigrationUtility extends Utility
             }
         }
 
-        return Craft::$app->getView()->renderTemplate('kunstmaan-migrator/_utility', [
+        return [
             'mappingPath' => $path,
             'checks' => $checks,
             'error' => $error,
             'notSetUp' => $notSetUp,
-            'isProduction' => App::env('CRAFT_ENVIRONMENT') === 'production',
-        ]);
+            'isProduction' => ProductionGuard::isProduction(),
+        ];
     }
 }

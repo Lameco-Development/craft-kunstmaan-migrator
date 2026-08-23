@@ -10,7 +10,15 @@
       <blockquote class="note warning"><p>{{ error }}</p></blockquote>
     </div>
   {% else %}
-    <p class="light"><code>{{ path }}</code></p>
+    <p class="light">
+      <code>{{ path }}</code>
+      <form method="post" style="display: inline; margin-left: 8px;">
+        {{ csrfInput() }}
+        {{ actionInput('kunstmaan-migrator/migration/check') }}
+        {{ redirectInput('kunstmaan-migrator/mapping?lane=' ~ lane) }}
+        <button type="submit" class="btn small">{{ "Check mapping"|t('kunstmaan-migrator') }}</button>
+      </form>
+    </p>
 
     <nav class="btngroup">
       {% for name in lanes %}

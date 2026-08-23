@@ -432,6 +432,118 @@ final class MappingEditor
     }
 
     /**
+     * Up to three real values per column of a row's table.
+     *
+     * `title` next to `page_title` is a coin flip until you see what each one
+     * holds; three samples turn the guess into a choice. Read from the first
+     * environment like `columnsFor`, and empty when the database is not
+     * reachable — a hint, never a requirement.
+     *
+     * @return array<string, list<string>>
+     */
+    public function samplesFor(MappingRow $row): array
+    {
+        if ($row->table === null) {
+            return [];
+        }
+
+        $environments = $this->document()->lane('environments');
+        $first = is_array(reset($environments)) ? reset($environments) : [];
+        $database = (string) ($first['database'] ?? '');
+
+        if ($database === '') {
+            return [];
+        }
+
+        try {
+            $rows = (new LegacyCatalogue(EnvironmentPipeline::dsnFromSettings()))->sampleRows($database, $row->table);
+        } catch (Throwable) {
+            return [];
+        }
+
+        return self::aggregateSamples($rows);
+    }
+
+    /**
+     * Distinct, displayable values per column: markup stripped, whitespace
+     * collapsed, cut at 40 characters — a glimpse of the content, not the
+     * content.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return array<string, list<string>>
+     */
+    public static function aggregateSamples(array $rows): array
+    {
+        $out = [];
+
+        foreach ($rows as $row) {
+            foreach ($row as $column => $value) {
+                if (!is_scalar($value)) {
+                    continue;
+                }
+
+                $value = trim((string) preg_replace('/\s+/', ' ', strip_tags((string) $value)));
+
+                if ($value === '') {
+                    continue;
+                }
+
+                if (mb_strlen($value) > 40) {
+                    $value = mb_substr($value, 0, 40) . '…';
+                }
+
+                $column = (string) $column;
+                $seen = $out[$column] ?? [];
+
+                if (count($seen) < 3 && !in_array($value, $seen, true)) {
+                    $out[$column][] = $value;
+                }
+            }
+        }
+
+        unset($out['id']);
+
+        return $out;
+    }
+
+    /**
+     * The entry types whose fields are not all fed, with how many and how many
+     * of those the layout requires.
+     *
+     * The roll-up that saves clicking through every entry type to find the
+     * three with holes. An empty return is the finished state.
+     *
+     * @return list<array{entryType: string, unfed: int, required: int}>
+     */
+    public function coverageGaps(): array
+    {
+        $gaps = [];
+
+        foreach ($this->mappedEntryTypes() as $entryType) {
+            $unfed = 0;
+            $required = 0;
+
+            foreach ($this->coverageFor($entryType)['fields'] as $state) {
+                if ($state['pages'] !== [] || $state['sidecars'] !== [] || $state['parts'] !== null) {
+                    continue;
+                }
+
+                $unfed++;
+
+                if ($state['required']) {
+                    $required++;
+                }
+            }
+
+            if ($unfed > 0) {
+                $gaps[] = ['entryType' => $entryType, 'unfed' => $unfed, 'required' => $required];
+            }
+        }
+
+        return $gaps;
+    }
+
+    /**
      * The legacy connection the plugin settings describe — for the fast
      * metadata reads the editor's screens make (columns, prefill drafting).
      * A migration run never comes through here; it belongs to the queue.

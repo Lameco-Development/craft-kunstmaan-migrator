@@ -85,29 +85,32 @@
   {% if existingMapping %}
     {# Craft only styles note blockquotes inside a .readable wrapper. #}
     <div class="readable" style="margin-bottom: 16px;">
-      <blockquote class="note warning">
+      <blockquote class="note">
         <p>
-          {{ "A mapping already exists at {path}. Creating a new one moves it aside as a timestamped copy — nothing is deleted, but the migration follows the new file from then on."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
+          {{ "A mapping already exists at {path}."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
           {% if (existingDecided ?? 0) > 0 %}
-            <strong>{{ "It holds {count} decided rows — the new file starts with none of them."|t('kunstmaan-migrator', { count: existingDecided }) }}</strong>
+            {{ "It holds {count} decided rows."|t('kunstmaan-migrator', { count: existingDecided }) }}
           {% endif %}
         </p>
-        {{ forms.checkboxField({
-          label: "Replace it — keep the current mapping as a timestamped copy"|t('kunstmaan-migrator'),
-          id: 'kuma-replace',
-          name: 'replace',
-          value: 1,
+        {{ forms.radioGroupField({
+          name: 'existing',
+          value: 'merge',
+          options: [
+            {
+              label: "Merge — add what this survey found as new open rows, refresh live counts, keep every decision"|t('kunstmaan-migrator'),
+              value: 'merge',
+            },
+            {
+              label: "Start over — move the current mapping aside as a timestamped copy and begin from a blank skeleton"|t('kunstmaan-migrator'),
+              value: 'replace',
+            },
+          ],
         }) }}
+        {% if (existingDecided ?? 0) > 0 %}
+          <p class="light">{{ "Starting over sets all {count} decided rows back to open. Merging loses nothing."|t('kunstmaan-migrator', { count: existingDecided }) }}</p>
+        {% endif %}
       </blockquote>
     </div>
-
-    {% js %}
-      var box = document.getElementById('kuma-replace');
-      var saves = [].slice.call(document.querySelectorAll('#main-form button[type=submit]'));
-      var sync = function () { saves.forEach(function (b) { b.disabled = !box.checked; }); };
-      box.addEventListener('change', sync);
-      sync();
-    {% endjs %}
   {% endif %}
 
   <p class="light">

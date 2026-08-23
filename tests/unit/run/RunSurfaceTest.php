@@ -2,24 +2,23 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\utilities;
+namespace lameco\kunstmaanmigrator\tests\unit\run;
 
-use craft\services\Utilities;
 use lameco\kunstmaanmigrator\controllers\MigrationController;
 use lameco\kunstmaanmigrator\ProductionGuard;
-use lameco\kunstmaanmigrator\utilities\MigrationUtility;
+use lameco\kunstmaanmigrator\Plugin;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
 /**
- * The couplings between the utility, its template and the action behind the
- * button — all of which fail silently.
+ * The couplings between the run screen, its template and the action behind
+ * the button — all of which fail silently.
  *
  * The template needs a booted control panel to render, so none of it runs
  * here. A button posting to an action that does not exist looks fine until
  * someone presses it.
  */
-final class MigrationUtilitySurfaceTest extends TestCase
+final class RunSurfaceTest extends TestCase
 {
     private function root(): string
     {
@@ -28,7 +27,7 @@ final class MigrationUtilitySurfaceTest extends TestCase
 
     private function template(): string
     {
-        $path = $this->root() . '/src/templates/_utility.twig';
+        $path = $this->root() . '/src/templates/_run-panel.twig';
         self::assertFileExists($path);
 
         return (string) file_get_contents($path);
@@ -47,7 +46,7 @@ final class MigrationUtilitySurfaceTest extends TestCase
         preg_match_all("~actionUrl\('([^']+)'\)~", $template, $links);
 
         $routes = array_merge($posts[1], $links[1]);
-        self::assertNotEmpty($routes, 'the utility is useless without actions');
+        self::assertNotEmpty($routes, 'the run screen is useless without actions');
 
         $reflection = new ReflectionClass(MigrationController::class);
 
@@ -86,38 +85,29 @@ final class MigrationUtilitySurfaceTest extends TestCase
     }
 
     /**
-     * The first version of this test asserted the event constant's NAME appeared
-     * in Plugin.php, which is the "test the string, not the thing" mistake this
-     * codebase has been removing all week: it passed happily against
-     * EVENT_REGISTER_UTILITY_TYPES, which is Craft 4's name and does not exist
-     * in Craft 5. The plugin-load smoke job caught it by booting a real Craft.
-     *
-     * Asserting the constant resolves is the check that would have failed.
+     * The run used to be a Utility, and its screens lived in two nav areas.
+     * Now it is a page of the section: the route, the subnav item and the
+     * action all have to agree, and no Utilities registration may creep back —
+     * that would put the workflow in two places again.
      */
-    public function testTheUtilityIsRegisteredAsAUtilityAndNotAsACpSection(): void
+    public function testTheRunIsAPageOfTheSectionAndNotAUtility(): void
     {
         $plugin = (string) file_get_contents($this->root() . '/src/Plugin.php');
 
-        preg_match('~Utilities::(EVENT_\\w+)~', $plugin, $matches);
-        self::assertNotEmpty($matches, 'the utility must be registered through a Utilities event');
+        self::assertStringContainsString("'kunstmaan-migrator/run'", $plugin);
+        self::assertStringContainsString("'kunstmaan-migrator/migration/run'", $plugin);
+        self::assertStringNotContainsString('Utilities::', $plugin);
         self::assertTrue(
-            defined(Utilities::class . '::' . $matches[1]),
-            sprintf('craft\\services\\Utilities::%s does not exist in this Craft version', $matches[1]),
-        );
-
-        self::assertStringContainsString('MigrationUtility::class', $plugin);
-        self::assertStringNotContainsString(
-            'EVENT_REGISTER_CP_NAV_ITEMS',
-            $plugin,
-            'a tool used a handful of times per project does not belong in the nav beside Entries',
+            (new ReflectionClass(MigrationController::class))->hasMethod('actionRun'),
+            'the run route resolves to MigrationController::actionRun(), which does not exist',
         );
     }
 
     /**
-     * The permission the controller requires has to be the one Craft grants
-     * for this utility, or the button 403s for everyone but an admin.
+     * The permission the controllers require has to be the one Craft grants
+     * for this plugin's CP section, or every screen 403s for non-admins.
      */
-    public function testTheActionRequiresThePermissionThisUtilityGrants(): void
+    public function testEveryActionRequiresTheSectionPermission(): void
     {
         $controller = (string) file_get_contents($this->root() . '/src/controllers/MigrationController.php');
 
@@ -128,9 +118,11 @@ final class MigrationUtilitySurfaceTest extends TestCase
 
         self::assertSame(
             count($actions[1]),
-            substr_count($controller, "requirePermission('utility:' . MigrationUtility::id())"),
-            'every action must require the permission Craft grants for this utility',
+            substr_count($controller, 'requirePermission(Plugin::PERMISSION)'),
+            'every action must require the permission Craft grants for this section',
         );
+
+        self::assertSame('accessPlugin-kunstmaan-migrator', Plugin::PERMISSION);
     }
 
     /**
@@ -169,10 +161,5 @@ final class MigrationUtilitySurfaceTest extends TestCase
             $controller,
             'a migration is hours and a web request is seconds',
         );
-    }
-
-    public function testTheUtilityIdIsStable(): void
-    {
-        self::assertSame('kunstmaan-migration', MigrationUtility::id());
     }
 }

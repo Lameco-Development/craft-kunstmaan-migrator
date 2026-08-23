@@ -196,7 +196,12 @@
       <tbody>
         {% for column, state in row.columns() %}
           <tr>
-            <th scope="row"><code>{{ column }}</code></th>
+            <th scope="row">
+              <code>{{ column }}</code>
+              {% if samples[column] ?? [] is not empty %}
+                <div class="light">{{ samples[column]|join(' · ') }}</div>
+              {% endif %}
+            </th>
             <td>
               {{ forms.select({
                 name: 'columns[' ~ column ~ '][disposition]',
@@ -231,5 +236,28 @@
       name: 'drop',
       value: row.dropped,
   }) }}
+
+
+{% if samples is not empty %}
+  {# `title` next to `page_title` is a coin flip until you see what each holds.
+     The hint follows the dropdown's current choice; selectize forwards its
+     change events to the original select. #}
+  {% js %}
+    (function () {
+      var samples = {{ samples|json_encode|raw }};
+      document.querySelectorAll('select[name^="map["][name$="][column]"]').forEach(function (sel) {
+        var hint = document.createElement('div');
+        hint.className = 'light';
+        sel.closest('td').appendChild(hint);
+        var sync = function () {
+          var values = samples[sel.value] || [];
+          hint.textContent = values.length ? values.join(' · ') : '';
+        };
+        $(sel).on('change', sync);
+        sync();
+      });
+    })();
+  {% endjs %}
+{% endif %}
 
 {% endblock %}

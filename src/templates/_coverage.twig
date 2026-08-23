@@ -16,6 +16,21 @@
       {{ "The mapping answers what each legacy thing becomes; this answers the inverse — for one entry type, every field and what feeds it. A field nothing feeds arrives empty on every migrated page."|t('kunstmaan-migrator') }}
     </p>
 
+    {% if gaps is not empty %}
+      <div class="readable" style="margin-bottom: 16px;">
+        <blockquote class="note {{ gaps|filter(g => g.required > 0) is not empty ? 'warning' }}">
+          <p>{{ "Entry types with unfed fields:"|t('kunstmaan-migrator') }}
+            {% for gap in gaps %}
+              <a href="{{ url('kunstmaan-migrator/coverage', { entryType: gap.entryType }) }}">{{ gap.entryType }}</a>
+              ({{ gap.unfed }}{% if gap.required > 0 %}, <strong>{{ "{count} required"|t('kunstmaan-migrator', { count: gap.required }) }}</strong>{% endif %}){{ not loop.last ? ' · ' }}
+            {% endfor %}
+          </p>
+        </blockquote>
+      </div>
+    {% else %}
+      <p class="light">{{ "✓ Every field of every mapped entry type is fed."|t('kunstmaan-migrator') }}</p>
+    {% endif %}
+
     {{ forms.selectizeField({
       label: "Entry type"|t('kunstmaan-migrator'),
       id: 'kuma-coverage-type',
