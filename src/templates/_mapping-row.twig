@@ -134,7 +134,7 @@
   (function () {
     var samples = {{ samples|json_encode|raw }};
 
-    window.kumaBindSamples = function (root) {
+    var kumaBindSamples = function (root) {
       root.querySelectorAll('select[name^="map["][name$="][column]"]').forEach(function (sel) {
         if (sel.dataset.kumaSamples) { return; }
         sel.dataset.kumaSamples = '1';

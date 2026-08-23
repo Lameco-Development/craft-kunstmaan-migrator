@@ -74,17 +74,6 @@ final class MigrateEnvironmentJob extends BaseJob
             only: $this->only,
         );
 
-        $log = RunLog::default();
-        $log->append([
-            'event' => 'started',
-            'job' => 'migrate',
-            'environment' => $this->environment,
-            'dryRun' => $this->dryRun,
-            'force' => $this->force,
-            'limit' => $this->limit,
-            'only' => $this->only,
-        ]);
-
         $tally = new RunTally();
 
         // The label moves, the bar does not: reporting a problem as progress 0.0
@@ -94,49 +83,32 @@ final class MigrateEnvironmentJob extends BaseJob
             $this->setProgress($queue, $progress, $problem);
         };
 
-        try {
-            EnvironmentPipeline::build($mapping, $settings)
-                ->run($mapping, $this->environment, $spec, $settings, $tally);
-        } catch (\Throwable $e) {
-            $log->append([
-                'event' => 'failed',
-                'job' => 'migrate',
-                'environment' => $this->environment,
-                'counts' => $tally->counts,
-                'message' => $e->getMessage(),
-            ]);
-
-            throw $e;
-        }
-
-        $this->counts = $tally->counts;
-
-        if ($tally->hasFailures()) {
-            $message = sprintf(
-                '%s: %d payloads failed — %s',
-                $this->environment,
-                $tally->counts['failed'],
-                $tally->problems[0] ?? 'no detail recorded',
-            );
-            $log->append([
-                'event' => 'failed',
-                'job' => 'migrate',
-                'environment' => $this->environment,
-                'counts' => $tally->counts,
-                'message' => $message,
-            ]);
-
-            throw new RuntimeException($message);
-        }
-
-        $log->append([
-            'event' => 'finished',
-            'job' => 'migrate',
+        RunLog::default()->track('migrate', [
             'environment' => $this->environment,
             'dryRun' => $this->dryRun,
-            'counts' => $tally->counts,
-            'problems' => count($tally->problems),
-        ]);
+            'force' => $this->force,
+            'limit' => $this->limit,
+            'only' => $this->only,
+        ], function (array &$extra) use ($mapping, $spec, $settings, $tally): void {
+            try {
+                EnvironmentPipeline::build($mapping, $settings)
+                    ->run($mapping, $this->environment, $spec, $settings, $tally);
+            } finally {
+                $extra['counts'] = $tally->counts;
+                $extra['problems'] = count($tally->problems);
+            }
+
+            $this->counts = $tally->counts;
+
+            if ($tally->hasFailures()) {
+                throw new RuntimeException(sprintf(
+                    '%s: %d payloads failed — %s',
+                    $this->environment,
+                    $tally->counts['failed'],
+                    $tally->problems[0] ?? 'no detail recorded',
+                ));
+            }
+        });
     }
 
     protected function defaultDescription(): string

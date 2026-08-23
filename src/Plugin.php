@@ -218,7 +218,6 @@ class Plugin extends BasePlugin
             },
         );
 
-
         // Deferred: none of this is needed to answer a request that never reaches
         // the migrator, and until now all twelve components were built and ~25
         // properties patched onto them on every front-end render and every

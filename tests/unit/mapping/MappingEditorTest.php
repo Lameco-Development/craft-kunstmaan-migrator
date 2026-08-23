@@ -98,11 +98,11 @@ final class MappingEditorTest extends TestCase
     /** The catalogue is a real seam: two adapters, one of them not Craft. */
     public function testTheCatalogueHasASecondAdapter(): void
     {
-        $catalogue = new InMemoryTargetCatalogue(['contentPage', 'newsPage'], ['pages']);
+        $catalogue = new InMemoryTargetCatalogue(['contentPage', 'newsPage'], ['Pages' => ['contentPage']]);
 
         self::assertInstanceOf(TargetCatalogue::class, $catalogue);
         self::assertSame(['contentPage', 'newsPage'], $catalogue->entryTypes());
-        self::assertSame(['pages'], $catalogue->sections());
+        self::assertSame(['Pages' => ['contentPage']], $catalogue->entryTypesBySection());
     }
 
     /**
@@ -165,7 +165,6 @@ final class MappingEditorTest extends TestCase
     {
         $editor = $this->editor($this->mappingFile(), new InMemoryTargetCatalogue(
             ['article', 'contentPage', 'quote'],
-            ['news', 'pages'],
             ['News' => ['article'], 'Pages' => ['contentPage']],
         ));
 

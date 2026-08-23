@@ -582,7 +582,7 @@ final class SetupController extends Controller
             $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
             $decided = 0;
 
-            foreach (['parts', 'pages', 'entities', 'sidecars'] as $lane) {
+            foreach (MappingEditor::LANES as $lane) {
                 $progress = $editor->progress($lane);
                 $decided += $progress['decided'] + $progress['dropped'];
             }
@@ -704,6 +704,26 @@ final class SetupController extends Controller
 
     private function write(SetupDraft $draft, string $path): void
     {
+        @mkdir(dirname($path), 0o775, true);
+        file_put_contents($path, $this->survey($draft, $path));
+
+        // The skeleton writes every locale and uploads folder as a TODO, because
+        // a generator cannot know them. The wizard just asked, so it fills them
+        // in — through MappingDocument, so they land the same way every later
+        // edit does.
+        $document = MappingDocument::fromFile($path);
+        $this->applyDraft($document, $draft);
+        $document->save();
+    }
+
+    /**
+     * The survey both paths run: connect every chosen database, introspect the
+     * checkout when one is known, and generate the skeleton. One definition,
+     * because this is the plugin's most load-bearing sequence — a merge that
+     * surveyed differently from a create would fold in a different world.
+     */
+    private function survey(SetupDraft $draft, string $path): string
+    {
         $dsn = EnvironmentPipeline::dsnFromSettings();
         $databases = [];
 
@@ -728,16 +748,7 @@ final class SetupController extends Controller
             $entities = EntityTableIndex::fromIntrospection($introspection);
         }
 
-        @mkdir(dirname($path), 0o775, true);
-        file_put_contents($path, (new Skeleton($entities, $introspection))->generate($databases));
-
-        // The skeleton writes every locale and uploads folder as a TODO, because
-        // a generator cannot know them. The wizard just asked, so it fills them
-        // in — through MappingDocument, so they land the same way every later
-        // edit does.
-        $document = MappingDocument::fromFile($path);
-        $this->applyDraft($document, $draft);
-        $document->save();
+        return (new Skeleton($entities, $introspection))->generate($databases);
     }
 
     /**
@@ -755,29 +766,8 @@ final class SetupController extends Controller
      */
     private function merge(SetupDraft $draft, string $path): array
     {
-        $dsn = EnvironmentPipeline::dsnFromSettings();
-        $databases = [];
-
-        foreach ($draft->environments as $label => $database) {
-            $databases[$label] = LegacyDatabase::connect($label, $database, $dsn);
-        }
-
-        $source = trim((string) $this->request->getBodyParam('source', ''))
-            ?: (string) (Plugin::getInstance()->getSettings()->legacySourcePath ?? '');
-
-        $entities = EntityTableIndex::empty();
-        $introspection = null;
-
-        if ($source !== '' && is_dir($source)) {
-            $introspector = new Introspector();
-            $artifact = $introspector->introspect($source);
-            $introspector->write($artifact, dirname($path) . '/introspection.json');
-            $introspection = Introspection::fromArray($artifact);
-            $entities = EntityTableIndex::fromIntrospection($introspection);
-        }
-
         $skeletonPath = tempnam(sys_get_temp_dir(), 'kuma-skeleton') . '.yaml';
-        file_put_contents($skeletonPath, (new Skeleton($entities, $introspection))->generate($databases));
+        file_put_contents($skeletonPath, $this->survey($draft, $path));
 
         try {
             $skeleton = MappingDocument::fromFile($skeletonPath);
@@ -785,7 +775,7 @@ final class SetupController extends Controller
             $added = 0;
             $refreshed = 0;
 
-            foreach (['parts', 'pages', 'entities', 'sidecars'] as $lane) {
+            foreach (MappingEditor::LANES as $lane) {
                 foreach ($skeleton->lane($lane) as $key => $spec) {
                     if (!is_array($spec)) {
                         continue;

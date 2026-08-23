@@ -15,6 +15,7 @@ use Lameco\KumaCompile\Target\SpecNotes;
 use Lameco\KumaCompile\Target\Suggester;
 use lameco\kunstmaanmigrator\mapping\FieldExpression;
 use lameco\kunstmaanmigrator\mapping\MappingEditor;
+use lameco\kunstmaanmigrator\mapping\MappingRow;
 use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Target\TargetCheck;
 use lameco\kunstmaanmigrator\compile\TargetModel;
@@ -46,7 +47,7 @@ final class MigrationController extends Controller
      * media-root fallback chain and a locale marked "not migrated, and here is
      * why" are things a YAML file states better than a form.
      */
-    private const EDITABLE_LANES = ['parts', 'pages', 'entities', 'sidecars'];
+    private const EDITABLE_LANES = MappingEditor::LANES;
 
     /**
      * The `doctor` checks, in the browser.
@@ -137,14 +138,15 @@ final class MigrationController extends Controller
 
         // What each tab owes: the open count is the only number that makes
         // "which lane next" answerable without clicking through all four.
-        $open = [];
+        // One progress walk per lane feeds both the tab badges and the bar.
+        $progress = [];
 
         if ($error === null) {
             foreach (self::EDITABLE_LANES as $name) {
                 try {
-                    $open[$name] = $editor->progress($name)['open'];
+                    $progress[$name] = $editor->progress($name);
                 } catch (Throwable) {
-                    $open[$name] = null;
+                    $progress[$name] = null;
                 }
             }
         }
@@ -152,9 +154,9 @@ final class MigrationController extends Controller
         return $this->renderTemplate('kunstmaan-migrator/_mapping', [
             'lane' => $lane,
             'lanes' => self::EDITABLE_LANES,
-            'open' => $open,
+            'open' => array_map(static fn (?array $p): ?int => $p['open'] ?? null, $progress),
             'rows' => $rows,
-            'progress' => $error === null ? $editor->progress($lane) : null,
+            'progress' => $progress[$lane] ?? null,
             'path' => $editor->path(),
             'error' => $error,
             'prefill' => $error === null && $undecided > 0 && $specsPath !== null
@@ -260,17 +262,34 @@ final class MigrationController extends Controller
             throw new BadRequestHttpException(sprintf('The %s lane does not name "%s".', $lane, $key));
         }
 
-        // Each Craft field's current expression, split into the parts somebody
-        // can choose from — which column, and what to do to it. A sidecar has no
-        // target of its own — it decorates whichever page carries a row — so its
-        // field list is the union of what the page entry types offer.
+        return $this->renderTemplate('kunstmaan-migrator/_mapping-row', [
+            ...self::fieldMapVariables($editor, $lane, $row, $row->target),
+            'targetOptions' => $editor->targetOptions($lane),
+            'samples' => $editor->samplesFor($row),
+        ]);
+    }
+
+    /**
+     * The `_mapping-row-fields` variable set for one row and one (possibly
+     * hypothetical) target — shared by the saved row screen and the live
+     * field-map swap, because the preview must render exactly what a save
+     * would show.
+     *
+     * A sidecar has no target of its own — it decorates whichever page carries
+     * a row — so its field list is the union of what the page entry types
+     * offer, its own mapped fields first: the union across thirty entry types
+     * is a long list of strangers to drown in.
+     *
+     * @return array<string, mixed>
+     */
+    private static function fieldMapVariables(MappingEditor $editor, string $lane, MappingRow $row, ?string $target): array
+    {
         $fields = match (true) {
-            $lane === 'sidecars'   => $editor->pageFields(),
-            $row->target !== null  => $editor->fieldsFor($row->target),
-            default                => [],
+            $lane === 'sidecars' => $editor->pageFields(),
+            $target !== null && $target !== '' => $editor->fieldsFor($target),
+            default => [],
         };
-        // The union across thirty entry types is a long list of strangers; a
-        // sidecar's own mapped fields drown in it. They come first.
+
         if ($lane === 'sidecars') {
             $mapped = array_keys($row->map);
             usort($fields, static fn (string $a, string $b): int =>
@@ -283,20 +302,18 @@ final class MigrationController extends Controller
             $expressions[$field] = FieldExpression::parse((string) ($row->map[$field] ?? ''));
         }
 
-        return $this->renderTemplate('kunstmaan-migrator/_mapping-row', [
+        return [
             'lane' => $lane,
             'row' => $row,
-            'targetOptions' => $editor->targetOptions($lane),
             'fields' => $fields,
             'expressions' => $expressions,
             'columns' => $editor->columnsFor($row),
             'transforms' => $editor->transforms(),
-            'sidecarFills' => $lane === 'pages' && $row->target !== null
-                ? $editor->sidecarFillsFor($row->target)
+            'sidecarFills' => $lane === 'pages' && $target !== null && $target !== ''
+                ? $editor->sidecarFillsFor($target)
                 : [],
             'carriage' => $lane === 'sidecars' ? $editor->sidecarCarriage($row) : [],
-            'samples' => $editor->samplesFor($row),
-        ]);
+        ];
     }
 
     /**
@@ -311,18 +328,7 @@ final class MigrationController extends Controller
         $this->requirePermission(Plugin::PERMISSION);
 
         $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
-
-        // In live-volume order, like the lanes: rows() already sorts by where
-        // the content is, and the first entry type is the default answer.
-        $entryTypes = [];
-
-        foreach ($editor->rows('pages') as $row) {
-            if ($row->target !== null && $row->target !== '') {
-                $entryTypes[$row->target] = true;
-            }
-        }
-
-        $entryTypes = array_keys($entryTypes);
+        $entryTypes = $editor->mappedEntryTypes();
         $entryType = (string) $this->request->getQueryParam('entryType', $entryTypes[0] ?? '');
 
         return $this->renderTemplate('kunstmaan-migrator/_coverage', [
@@ -387,27 +393,14 @@ final class MigrationController extends Controller
             throw new BadRequestHttpException(sprintf('The %s lane does not name "%s".', $lane, $key));
         }
 
-        $fields = $target !== '' ? $editor->fieldsFor($target) : [];
-        $expressions = [];
-
-        foreach ($fields as $field) {
-            $expressions[$field] = FieldExpression::parse((string) ($row->map[$field] ?? ''));
-        }
-
         // The partial's own {% js %} (selectize init) lands in a buffer and
         // travels with the HTML — swapped-in markup is otherwise dead.
         $view = Craft::$app->getView();
         $view->startJsBuffer();
-        $html = $view->renderTemplate('kunstmaan-migrator/_mapping-row-fields', [
-            'lane' => $lane,
-            'row' => $row,
-            'fields' => $fields,
-            'expressions' => $expressions,
-            'columns' => $editor->columnsFor($row),
-            'transforms' => $editor->transforms(),
-            'sidecarFills' => $lane === 'pages' && $target !== '' ? $editor->sidecarFillsFor($target) : [],
-            'carriage' => [],
-        ]);
+        $html = $view->renderTemplate(
+            'kunstmaan-migrator/_mapping-row-fields',
+            self::fieldMapVariables($editor, $lane, $row, $target),
+        );
         $js = $view->clearJsBuffer();
 
         return $this->asJson(['html' => $html, 'js' => is_string($js) ? $js : '']);
@@ -422,15 +415,19 @@ final class MigrationController extends Controller
     public function actionCheck(): Response
     {
         $this->requirePostRequest();
+        $this->requireAcceptsJson();
         $this->requirePermission(Plugin::PERMISSION);
 
         $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
         $path = $editor->path();
 
         if ($path === null) {
-            Craft::$app->getSession()->setError(Craft::t('kunstmaan-migrator', 'No mapping file is configured.'));
-
-            return $this->redirectToPostedUrl();
+            return $this->asJson([
+                'ok' => false,
+                'headline' => Craft::t('kunstmaan-migrator', 'No mapping file is configured.'),
+                'errors' => [],
+                'total' => 0,
+            ]);
         }
 
         try {
@@ -438,13 +435,7 @@ final class MigrationController extends Controller
         } catch (Throwable $e) {
             $message = Craft::t('kunstmaan-migrator', 'Mapping is unreadable: {message}', ['message' => $e->getMessage()]);
 
-            if ($this->request->getAcceptsJson()) {
-                return $this->asJson(['ok' => false, 'headline' => $message, 'errors' => [], 'total' => 0]);
-            }
-
-            Craft::$app->getSession()->setError($message);
-
-            return $this->redirectToPostedUrl();
+            return $this->asJson(['ok' => false, 'headline' => $message, 'errors' => [], 'total' => 0]);
         }
 
         $verdict = match (true) {
@@ -466,27 +457,9 @@ final class MigrationController extends Controller
             'entities' => count($mapping->entities()),
         ]);
 
-        // The screen asks over Ajax and draws the verdict inline; the flash
-        // path stays for a plain form post with JavaScript unavailable.
-        if ($this->request->getAcceptsJson()) {
-            return $this->asJson($verdict === null
-                ? ['ok' => true, 'summary' => $summary]
-                : ['ok' => false, 'headline' => $verdict[0], 'errors' => array_slice($verdict[1], 0, 40), 'total' => count($verdict[1])]);
-        }
-
-        if ($verdict === null) {
-            Craft::$app->getSession()->setNotice($summary);
-        } else {
-            [$headline, $errors] = $verdict;
-            $shown = array_slice($errors, 0, 8);
-            $more = count($errors) - count($shown);
-            Craft::$app->getSession()->setError(
-                $headline . ': ' . implode(' · ', $shown)
-                . ($more > 0 ? ' ' . Craft::t('kunstmaan-migrator', '… and {more} more', ['more' => $more]) : ''),
-            );
-        }
-
-        return $this->redirectToPostedUrl();
+        return $this->asJson($verdict === null
+            ? ['ok' => true, 'summary' => $summary]
+            : ['ok' => false, 'headline' => $verdict[0], 'errors' => array_slice($verdict[1], 0, 40), 'total' => count($verdict[1])]);
     }
 
     /**

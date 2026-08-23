@@ -35,9 +35,11 @@ final class LogUtility extends Utility
 
     public static function contentHtml(): string
     {
+        $log = RunLog::default();
+
         return Craft::$app->getView()->renderTemplate('kunstmaan-migrator/_log', [
-            'entries' => RunLog::default()->entries(100),
-            'logPath' => Craft::getAlias('@storage') . '/kunstmaan-migrator/runs.jsonl',
+            'entries' => $log->entries(100),
+            'logPath' => $log->path(),
         ]);
     }
 }

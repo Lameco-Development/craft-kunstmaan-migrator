@@ -31,21 +31,15 @@ final class ResolveDeferredRefsJob extends BaseJob
         }
 
         $plugin = Plugin::getInstance();
-        $log = RunLog::default();
-        $log->append(['event' => 'started', 'job' => 'fixup']);
 
-        try {
+        RunLog::default()->track('fixup', [], function (array &$extra) use ($plugin): void {
             $this->report = (new FixupService(
                 $plugin->migrationStateService,
                 $plugin->entryMigrationService,
             ))->run();
-        } catch (\Throwable $e) {
-            $log->append(['event' => 'failed', 'job' => 'fixup', 'message' => $e->getMessage()]);
 
-            throw $e;
-        }
-
-        $log->append(['event' => 'finished', 'job' => 'fixup', 'counts' => $this->report]);
+            $extra['counts'] = $this->report;
+        });
     }
 
     protected function defaultDescription(): string

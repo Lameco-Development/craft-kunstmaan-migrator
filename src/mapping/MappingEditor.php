@@ -30,6 +30,11 @@ use Throwable;
  */
 final class MappingEditor
 {
+    /** One parse per request: every screen asks document() several times over. */
+    private ?MappingDocument $memo = null;
+
+    public const LANES = ['parts', 'pages', 'entities', 'sidecars'];
+
     public function __construct(
         private readonly Settings $settings,
         private readonly SchemaGateway $schema,
@@ -54,13 +59,17 @@ final class MappingEditor
 
     public function document(): MappingDocument
     {
+        if ($this->memo !== null) {
+            return $this->memo;
+        }
+
         $path = $this->path();
 
         if ($path === null) {
             throw new MappingEditorException('No mapping file is configured. Set one in the plugin settings.');
         }
 
-        return MappingDocument::fromFile($path);
+        return $this->memo = MappingDocument::fromFile($path);
     }
 
     /**
@@ -297,12 +306,18 @@ final class MappingEditor
     public function sidecarCarriage(MappingRow $row): array
     {
         $entryTypes = $this->mappedEntryTypes();
+        $fieldSets = [];
+
+        foreach ($entryTypes as $entryType) {
+            $fieldSets[$entryType] = array_flip($this->fieldsFor($entryType));
+        }
+
         $carriage = [];
 
         foreach (array_keys($row->map) as $field) {
             $missing = array_values(array_filter(
                 $entryTypes,
-                fn (string $entryType): bool => !in_array((string) $field, $this->fieldsFor($entryType), true),
+                static fn (string $entryType): bool => !isset($fieldSets[$entryType][(string) $field]),
             ));
 
             $carriage[(string) $field] = [
@@ -388,11 +403,12 @@ final class MappingEditor
     {
         $entryTypes = [];
 
-        foreach ($this->document()->lane('pages') as $spec) {
-            $entryType = is_array($spec) ? ($spec['entryType'] ?? null) : null;
-
-            if (is_string($entryType) && $entryType !== '') {
-                $entryTypes[$entryType] = true;
+        // Through rows() for its live-volume order: everything that lists
+        // entry types (the coverage picker, the gaps roll-up) should lead
+        // with where the content is, the same way the lanes do.
+        foreach ($this->rows('pages') as $row) {
+            if ($row->target !== null && $row->target !== '') {
+                $entryTypes[$row->target] = true;
             }
         }
 
@@ -410,15 +426,7 @@ final class MappingEditor
      */
     public function columnsFor(MappingRow $row): array
     {
-        if ($row->table === null) {
-            return [];
-        }
-
-        $environments = $this->document()->lane('environments');
-        $first = is_array(reset($environments)) ? reset($environments) : [];
-        $database = (string) ($first['database'] ?? '');
-
-        if ($database === '') {
+        if ($row->table === null || ($database = $this->firstDatabase()) === null) {
             return [];
         }
 
@@ -429,6 +437,20 @@ final class MappingEditor
             // fall back to a text box, not to fail opening the row.
             return [];
         }
+    }
+
+    /**
+     * The first environment's database — where columnsFor and samplesFor read,
+     * because a table has the same shape in every environment and connecting
+     * to all three to answer a metadata question would triple the cost.
+     */
+    private function firstDatabase(): ?string
+    {
+        $environments = $this->document()->lane('environments');
+        $first = reset($environments);
+        $database = (string) ((is_array($first) ? $first : [])['database'] ?? '');
+
+        return $database !== '' ? $database : null;
     }
 
     /**
@@ -443,21 +465,15 @@ final class MappingEditor
      */
     public function samplesFor(MappingRow $row): array
     {
-        if ($row->table === null) {
-            return [];
-        }
-
-        $environments = $this->document()->lane('environments');
-        $first = is_array(reset($environments)) ? reset($environments) : [];
-        $database = (string) ($first['database'] ?? '');
-
-        if ($database === '') {
+        if ($row->table === null || ($database = $this->firstDatabase()) === null) {
             return [];
         }
 
         try {
             $rows = (new LegacyCatalogue(EnvironmentPipeline::dsnFromSettings()))->sampleRows($database, $row->table);
         } catch (Throwable) {
+            // sampleRows() swallows query failures itself; this guards the DSN
+            // construction, which throws on unconfigured settings.
             return [];
         }
 
@@ -580,10 +596,17 @@ final class MappingEditor
         $schema = new Schema();
         $before = $schema->validate($this->document()->mapping());
 
+        // The diff keys on exact message strings: an edit that merely rewords
+        // an existing error would read as introduced. Acceptable until Schema
+        // can validate a single row — the honest depth this stands in for.
         $document = $this->document()->patch($lane, $key, $changes);
         $errors = array_values(array_diff($schema->validate($document->mapping()), $before));
 
         if ($errors !== []) {
+            // The memo is the instance patch() just mutated; a refused edit
+            // must not stay visible to later reads.
+            $this->memo = null;
+
             throw new MappingEditorException(sprintf(
                 "That edit would make the mapping invalid:\n  · %s",
                 implode("\n  · ", array_slice($errors, 0, 5)),

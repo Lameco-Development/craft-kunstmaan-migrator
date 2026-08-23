@@ -30,6 +30,37 @@ final class RunLog
         return new self(Craft::getAlias('@storage') . '/kunstmaan-migrator/runs.jsonl');
     }
 
+    public function path(): string
+    {
+        return $this->path;
+    }
+
+    /**
+     * The started/failed/finished envelope every job shares.
+     *
+     * The work receives `$extra` by reference and fills it as facts become
+     * known (counts, problem totals); both outcome events carry it, so a run
+     * that fails after counting still reports what it counted.
+     *
+     * @param array<string, mixed> $context
+     * @param callable(array<string, mixed> &$extra): void $work
+     */
+    public function track(string $job, array $context, callable $work): void
+    {
+        $this->append(['event' => 'started', 'job' => $job, ...$context]);
+        $extra = [];
+
+        try {
+            $work($extra);
+        } catch (Throwable $e) {
+            $this->append(['event' => 'failed', 'job' => $job, ...$context, ...$extra, 'message' => $e->getMessage()]);
+
+            throw $e;
+        }
+
+        $this->append(['event' => 'finished', 'job' => $job, ...$context, ...$extra]);
+    }
+
     /** @param array<string, mixed> $entry */
     public function append(array $entry): void
     {

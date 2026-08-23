@@ -38,10 +38,7 @@ final class FinalizeJob extends BaseJob
             throw new RuntimeException(sprintf('Mapping file is gone: %s', $this->mappingPath));
         }
 
-        $log = RunLog::default();
-        $log->append(['event' => 'started', 'job' => 'finalize', 'dryRun' => $this->dryRun]);
-
-        try {
+        RunLog::default()->track('finalize', ['dryRun' => $this->dryRun], function (array &$extra) use ($queue): void {
             $report = (new FinalizePass())->run(
                 Mapping::fromFile($this->mappingPath),
                 $this->dryRun,
@@ -50,14 +47,10 @@ final class FinalizeJob extends BaseJob
                     $this->setProgress($queue, $done / $total, $environment);
                 },
             );
-        } catch (\Throwable $e) {
-            $log->append(['event' => 'failed', 'job' => 'finalize', 'message' => $e->getMessage()]);
 
-            throw $e;
-        }
-
-        $this->counts = $report->counts;
-        $log->append(['event' => 'finished', 'job' => 'finalize', 'dryRun' => $this->dryRun, 'counts' => $report->counts]);
+            $this->counts = $report->counts;
+            $extra['counts'] = $report->counts;
+        });
     }
 
     protected function defaultDescription(): string
