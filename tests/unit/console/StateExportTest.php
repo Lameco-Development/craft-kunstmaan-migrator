@@ -91,7 +91,7 @@ final class StateExportTest extends TestCase
         $state = new ExportFakeStateService();
         $state->seedRows($this->rowsForOnePrimaryEntry());
 
-        $rows = StateController::buildExportRows($state);
+        $rows = StateController::buildExportRows($state)->rows;
 
         self::assertSame([
             [
@@ -108,7 +108,7 @@ final class StateExportTest extends TestCase
         $state = new ExportFakeStateService();
         $state->seedRows($this->rowsForOnePrimaryEntry());
 
-        $rows = StateController::buildExportRows($state);
+        $rows = StateController::buildExportRows($state)->rows;
 
         self::assertSame(['sourceUid', 'entryId', 'targetType', 'alias_of'], array_keys($rows[0]));
     }
@@ -129,7 +129,7 @@ final class StateExportTest extends TestCase
             ],
         ]);
 
-        $rows = StateController::buildExportRows($state);
+        $rows = StateController::buildExportRows($state)->rows;
 
         self::assertSame([
             [
@@ -168,7 +168,7 @@ final class StateExportTest extends TestCase
             ],
         ]);
 
-        $rows = StateController::buildExportRows($state);
+        $rows = StateController::buildExportRows($state)->rows;
 
         self::assertSame('kuma:COM:nt_page:143', $rows[0]['alias_of']);
     }
@@ -197,7 +197,7 @@ final class StateExportTest extends TestCase
             ],
         ]);
 
-        $rows = StateController::buildExportRows($state);
+        $rows = StateController::buildExportRows($state)->rows;
 
         self::assertSame(['kuma:DE:nt_page:87', 'kuma:COM:nt_page:143'], array_column($rows, 'sourceUid'));
     }
@@ -215,7 +215,7 @@ final class StateExportTest extends TestCase
         $state = new ExportFakeStateService();
         $state->seedRows($this->rowsForOnePrimaryEntry());
 
-        $rows = StateController::buildExportRows($state);
+        $rows = StateController::buildExportRows($state)->rows;
         $exportedSourceUid = $rows[0]['sourceUid'];
         $exportedEntryId = $rows[0]['entryId'];
 
@@ -229,7 +229,7 @@ final class StateExportTest extends TestCase
         $state = new ExportFakeStateService();
         $state->seedRows([]);
 
-        self::assertSame([], StateController::buildExportRows($state));
+        self::assertSame([], StateController::buildExportRows($state)->rows);
     }
 
     /**
@@ -260,11 +260,12 @@ final class StateExportTest extends TestCase
             ],
         ]);
 
-        $excluded = 0;
-        $rows = StateController::buildExportRows($state, $excluded);
+        $export = StateController::buildExportRows($state);
+        $rows = $export->rows;
 
         self::assertCount(1, $rows);
-        self::assertSame(1, $excluded, 'the exclusion is counted for the caller to report — the builder itself stays silent');
+        self::assertSame(1, $export->excluded, 'the exclusion is counted for the caller to report — the builder itself stays silent');
+        self::assertStringContainsString('excluded 1 state row', (string) $export->warning());
         self::assertSame('kuma:COM:nt_page:143', $rows[0]['sourceUid']);
 
         foreach ($rows as $row) {

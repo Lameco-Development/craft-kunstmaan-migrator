@@ -14,7 +14,6 @@ final class SourceRefStripTest extends TestCase
     private function strip(array $fieldValues): array
     {
         $m = new ReflectionMethod(EntryMigrationService::class, 'stripSourcePartRefs');
-        $m->setAccessible(true);
 
         return $m->invoke(new EntryMigrationService(), $fieldValues);
     }

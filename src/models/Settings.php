@@ -445,7 +445,8 @@ class Settings extends Model
      */
     protected function getEnvReader(): KunstmaanEnvReader
     {
-        return Plugin::getInstance()->kunstmaanEnvReader;
+        return Plugin::getInstance()?->kunstmaanEnvReader
+            ?? throw new \RuntimeException('No plugin instance — tests override getEnvReader().');
     }
 
     /**

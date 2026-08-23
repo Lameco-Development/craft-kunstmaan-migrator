@@ -81,15 +81,14 @@ final class MigrationController extends Controller
     {
         $this->requirePermission(Plugin::PERMISSION);
 
-        $lines = [];
-        $excluded = 0;
+        $export = StateController::buildExportRows(Plugin::getInstance()->migrationStateService);
+        $lines = array_map(
+            static fn (array $row): string => (string) json_encode($row, JSON_UNESCAPED_SLASHES),
+            $export->rows,
+        );
 
-        foreach (StateController::buildExportRows(Plugin::getInstance()->migrationStateService, $excluded) as $row) {
-            $lines[] = json_encode($row, JSON_UNESCAPED_SLASHES);
-        }
-
-        if ($excluded > 0) {
-            Craft::warning(StateController::excludedWarning($excluded), 'kunstmaan-migrator');
+        if (($warning = $export->warning()) !== null) {
+            Craft::warning($warning, 'kunstmaan-migrator');
         }
 
         return Craft::$app->getResponse()->sendContentAsFile(

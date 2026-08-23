@@ -27,7 +27,6 @@ final class BlockHeadingLiftTest extends TestCase
         );
 
         $m = new ReflectionMethod(EntryMigrationService::class, 'stripSourcePartRefs');
-        $m->setAccessible(true);
 
         return $m->invoke($service, $fieldValues);
     }

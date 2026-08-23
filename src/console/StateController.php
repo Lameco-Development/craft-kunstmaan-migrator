@@ -367,15 +367,14 @@ class StateController extends Controller
 
     public function actionExport(): int
     {
-        $plugin = Plugin::getInstance();
-        $excluded = 0;
+        $export = self::buildExportRows(Plugin::getInstance()->migrationStateService);
 
-        foreach (self::buildExportRows($plugin->migrationStateService, $excluded) as $row) {
+        foreach ($export->rows as $row) {
             $this->stdout(json_encode($row, JSON_UNESCAPED_SLASHES) . PHP_EOL);
         }
 
-        if ($excluded > 0) {
-            $this->stderr(self::excludedWarning($excluded) . PHP_EOL, Console::FG_YELLOW);
+        if (($warning = $export->warning()) !== null) {
+            $this->stderr($warning . PHP_EOL, Console::FG_YELLOW);
         }
 
         return ExitCode::OK;
@@ -515,10 +514,7 @@ class StateController extends Controller
         return $rows;
     }
 
-    /**
-     * @return list<array{sourceUid: string, entryId: ?int, targetType: string, alias_of: ?string}>
-     */
-    public static function buildExportRows(MigrationStateService $stateService, int &$excluded = 0): array
+    public static function buildExportRows(MigrationStateService $stateService): ExportResult
     {
         $rows = [];
         $excluded = 0;
@@ -535,20 +531,8 @@ class StateController extends Controller
         }
 
         // The builder stays pure — it runs in tests with no Craft booted — so
-        // saying something about the exclusions is the caller's job, through
-        // excludedWarning(). Both exports do; neither may stay silent.
-        return $rows;
-    }
-
-    /**
-     * What the exclusion count means, worded once for both exports.
-     */
-    public static function excludedWarning(int $excluded): string
-    {
-        return sprintf(
-            'state/export: excluded %d state row(s) whose reconstructed sourceUid does not round-trip through RefResolver::parse() (composite-key bookkeeping rows, e.g. seo_meta).',
-            $excluded,
-        );
+        // the result carries the warning and each caller renders it its way.
+        return new ExportResult($rows, $excluded);
     }
 
     /**

@@ -202,7 +202,9 @@ final class KunstmaanEnvReader extends Component
             return;
         }
         try {
-            $sourcePath = Plugin::getInstance()->kunstmaanSourcePathResolver->resolve();
+            // Nullsafe: in the unit tier no plugin instance exists, and "no
+            // plugin" means the same as "no source path" — nothing to read.
+            $sourcePath = Plugin::getInstance()?->kunstmaanSourcePathResolver?->resolve();
         } catch (Throwable $e) {
             $this->loaded = true;
             $this->safeWarn('KunstmaanEnvReader: source-path resolver failed: ' . $e->getMessage());
