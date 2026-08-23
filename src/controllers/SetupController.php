@@ -398,23 +398,32 @@ final class SetupController extends Controller
 
         $draft = $this->draft();
         $choices = $this->choices();
+        $catalogue = $this->catalogue();
         $summary = [];
+        $totalPages = 0;
+        $totalSkipped = 0;
 
         foreach ($draft->environments as $label => $database) {
+            // The page counts are what make a wrong binding jump out — a locale
+            // with four pages bound to the main site, or 335 pages headed for
+            // "not migrating", reads very differently from its name alone.
+            $counts = $catalogue->locales($database);
             $migrating = [];
             $skipping = [];
 
             foreach ((array) ($choices['locales'][$label] ?? []) as $locale => $choice) {
-                $site = self::chosenSite($choice);
+                $site = self::chosenSite((array) $choice);
+                $pages = (int) ($counts[$locale] ?? 0);
 
                 if ($site !== '') {
-                    $migrating[(string) $locale] = $site;
+                    $migrating[(string) $locale] = ['site' => $site, 'pages' => $pages];
+                    $totalPages += $pages;
 
                     continue;
                 }
 
-                $skipping[(string) $locale] = trim((string) ($choice['reason'] ?? ''))
-                    ?: Craft::t('kunstmaan-migrator', 'no reason given');
+                $skipping[(string) $locale] = $pages;
+                $totalSkipped += $pages;
             }
 
             $summary[] = [
@@ -428,6 +437,8 @@ final class SetupController extends Controller
         return $this->step(SetupStep::Review, 'review', [
             'mediaRoot' => $this->mediaRoot(),
             'summary' => $summary,
+            'totalPages' => $totalPages,
+            'totalSkipped' => $totalSkipped,
             'envs' => $draft->toString(),
             'choices' => (string) $this->request->getQueryParam('choices', ''),
             'mappingPath' => $this->mappingPath(),

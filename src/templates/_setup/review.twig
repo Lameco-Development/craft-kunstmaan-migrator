@@ -7,9 +7,12 @@
   {{ hiddenInput('envs', envs) }}
   {{ hiddenInput('choices', choices) }}
 
+  {# A review screen reviews. Every fact below is stated, not asked — anything
+     that still needs deciding belongs on the step that asks it. #}
+
   <div class="readable">
     <p>
-      {{ "This creates the mapping file — the list of decisions the migration follows. Nothing is migrated yet, and nothing is written to the old site."|t('kunstmaan-migrator') }}
+      {{ "{pages, number} pages across the languages below will migrate{skipped, plural, =0{.} other{; {skipped, number} pages stay behind.}}"|t('kunstmaan-migrator', { pages: totalPages, skipped: totalSkipped }) }}
     </p>
   </div>
 
@@ -17,8 +20,8 @@
     <thead>
       <tr>
         <th>{{ "Site"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Languages coming across"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Not migrating"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Coming across"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Staying behind"|t('kunstmaan-migrator') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -26,15 +29,18 @@
         <tr>
           <th scope="row">{{ row.label }} <span class="light"><code>{{ row.database }}</code></span></th>
           <td>
-            {% for locale, site in row.migrating %}
-              <div><code>{{ locale }}</code> → <code>{{ site }}</code></div>
+            {% for locale, choice in row.migrating %}
+              <div>
+                <code>{{ locale }}</code> → <code>{{ choice.site }}</code>
+                <span class="light">· {{ "{n, plural, =1{1 page} other{# pages}}"|t('kunstmaan-migrator', { n: choice.pages }) }}</span>
+              </div>
             {% else %}
               <span class="error">{{ "Nothing — this site would migrate no pages."|t('kunstmaan-migrator') }}</span>
             {% endfor %}
           </td>
           <td>
-            {% for locale, reason in row.skipping %}
-              <div class="light"><code>{{ locale }}</code> — {{ reason }}</div>
+            {% for locale, pages in row.skipping %}
+              <div class="light"><code>{{ locale }}</code> · {{ "{n, plural, =1{1 page} other{# pages}}"|t('kunstmaan-migrator', { n: pages }) }}</div>
             {% else %}
               <span class="light">—</span>
             {% endfor %}
@@ -44,25 +50,33 @@
     </tbody>
   </table>
 
-  <p class="light" style="margin-top: 8px;">
-    {% if mediaRoot %}
-      {{ "Files come from {path} — the Kunstmaan convention, read from the detected checkout. Override it in the plugin settings if this site breaks the convention."|t('kunstmaan-migrator', { path: '<code>' ~ mediaRoot ~ '</code>' })|raw }}
-    {% else %}
-      {{ "No uploads folder was detected — set one in the plugin settings, or add mediaRoot lines to the mapping afterwards."|t('kunstmaan-migrator') }}
-    {% endif %}
-  </p>
-
   <hr>
 
-  {{ forms.textField({
-    label: "Old site’s code, if you have it"|t('kunstmaan-migrator'),
-    instructions: "Optional. With it, the migrator reads the application itself — every table name, every relation, the header tabs — and writes an introspection artifact next to the mapping. The detect step filled this in when it found the site."|t('kunstmaan-migrator'),
-    name: 'source',
-    value: sourcePath ?? '',
-    placeholder: '/Users/you/Sites/old-site',
-  }) }}
+  <h2>{{ "What gets created"|t('kunstmaan-migrator') }}</h2>
+
+  <ul class="bullets">
+    <li>
+      {{ "{path} — the mapping: the list of decisions the migration follows. Creating it migrates nothing, and nothing is ever written to the old site."|t('kunstmaan-migrator', { path: '<code>' ~ mappingPath ~ '</code>' })|raw }}
+    </li>
+    {% if sourcePath %}
+      <li>
+        {{ "An introspection artifact, read from the old site's code at {path} — it gives the mapping exact table names and relations."|t('kunstmaan-migrator', { path: '<code>' ~ sourcePath ~ '</code>' })|raw }}
+      </li>
+    {% else %}
+      <li class="light">
+        {{ "No old-site code was found on this machine, so table names are left as TODOs in the mapping — fill them in while deciding the rows."|t('kunstmaan-migrator') }}
+      </li>
+    {% endif %}
+    <li>
+      {% if mediaRoot %}
+        {{ "Files will be read from {path} — the Kunstmaan convention, taken from the detected checkout. The plugin settings can override it."|t('kunstmaan-migrator', { path: '<code>' ~ mediaRoot ~ '</code>' })|raw }}
+      {% else %}
+        {{ "No uploads folder was detected — set one in the plugin settings, or add mediaRoot lines to the mapping afterwards."|t('kunstmaan-migrator') }}
+      {% endif %}
+    </li>
+  </ul>
 
   <p class="light">
-    {{ "Writing to"|t('kunstmaan-migrator') }} <code>{{ mappingPath }}</code>
+    {{ "Next, you decide what each piece of old content becomes — on the Mapping screen, row by row."|t('kunstmaan-migrator') }}
   </p>
 {% endblock %}
