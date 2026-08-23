@@ -22,9 +22,14 @@ final class SpecNotes
     public const STRUCTURAL = 'structural';
     public const ORDER = 'order';
 
-    /** @param array<string, list<Note>> $byBlock block handle => notes */
-    private function __construct(private readonly array $byBlock)
-    {
+    /**
+     * @param array<string, list<Note>>   $byBlock  block handle => notes
+     * @param array<string, list<string>> $byPart   part short name => block handles naming it
+     */
+    private function __construct(
+        private readonly array $byBlock,
+        private readonly array $byPart = [],
+    ) {
     }
 
     public static function fromDirectory(string $dir): self
@@ -36,17 +41,63 @@ final class SpecNotes
         }
 
         $byBlock = [];
+        $byPart = [];
 
         foreach (glob($dir . '/*.md') ?: [] as $file) {
             $block = basename($file, '.md');
-            $notes = self::parse((string) file_get_contents($file));
+            $markdown = (string) file_get_contents($file);
+            $notes = self::parse($markdown);
 
             if ($notes !== []) {
                 $byBlock[$block] = $notes;
             }
+
+            foreach (self::coveredParts($markdown) as $part) {
+                $byPart[$part][] = $block;
+            }
         }
 
-        return new self($byBlock);
+        foreach ($byPart as &$blocks) {
+            $blocks = array_values(array_unique($blocks));
+        }
+
+        return new self($byBlock, $byPart);
+    }
+
+    /**
+     * The legacy pagepart classes a spec claims, read from the `migrationSource:`
+     * frontmatter and the migration-notes table header — both name them as
+     * `<Short>PagePart`. This is the index that lets a fresh mapping be prefilled:
+     * the spec already says which parts it covers, so nobody should be retyping
+     * that into sixty dropdowns.
+     *
+     * @return list<string> part short names, `PagePart` suffix stripped
+     */
+    private static function coveredParts(string $markdown): array
+    {
+        $sources = [];
+
+        if (preg_match('/^migrationSource:\s*["\']?(.+?)["\']?$/m', $markdown, $m) === 1) {
+            $sources[] = $m[1];
+        }
+
+        if (preg_match('/\|\s*Kunstmaan\s*\(([^|]*)\)\s*\|/', $markdown, $m) === 1) {
+            $sources[] = $m[1];
+        }
+
+        preg_match_all('/(\w+)PagePart/', implode(' ', $sources), $found);
+
+        return array_values(array_unique($found[1]));
+    }
+
+    /**
+     * The blocks whose specs name this legacy part as a source.
+     *
+     * @return list<string>
+     */
+    public function blocksForPart(string $part): array
+    {
+        return $this->byPart[str_ends_with($part, 'PagePart') ? substr($part, 0, -8) : $part] ?? [];
     }
 
     /** @return list<Note> */

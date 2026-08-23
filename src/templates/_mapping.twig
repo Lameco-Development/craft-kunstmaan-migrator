@@ -19,6 +19,21 @@
       {% endfor %}
     </nav>
 
+    {% if prefill %}
+      <div class="readable" style="margin: 16px 0;">
+        <blockquote class="note tip">
+          <p>
+            {{ "{n, plural, =1{1 part has no target yet} other{# parts have no target yet}} — and the content model at {path} already says where most legacy parts go. Prefill drafts each row from its spec: the block, the field map, the columns the spec drops. Every drafted row stays open until you review it."|t('kunstmaan-migrator', { n: prefill.undecided, path: '<code>' ~ prefill.specsPath ~ '</code>' })|raw }}
+          </p>
+          <form method="post" accept-charset="UTF-8">
+            {{ csrfInput() }}
+            {{ actionInput('kunstmaan-migrator/migration/prefill') }}
+            <button type="submit" class="btn">{{ "Prefill from the content model"|t('kunstmaan-migrator') }}</button>
+          </form>
+        </blockquote>
+      </div>
+    {% endif %}
+
     {# Sixty rows with no sense of how many are done is a long list; the same
        sixty with a count is eleven to go. #}
     {% if progress and progress.total %}

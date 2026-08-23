@@ -36,6 +36,13 @@ class Settings extends Model
      */
     public ?string $legacyMediaRoot      = null;
 
+    /**
+     * Directory of content-model block specs whose migration notes drive the
+     * mapping prefill. Empty means auto-detect `docs/content-model/page-builder`
+     * under the project root.
+     */
+    public ?string $specsPath            = null;
+
     public ?string $legacyDbServer       = null;
     public int     $legacyDbPort         = 3306;
     public ?string $legacyDbDatabase     = null;
@@ -556,7 +563,7 @@ class Settings extends Model
     public function rules(): array
     {
         return [
-            [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyMediaRoot'], 'string'],
+            [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyMediaRoot', 'specsPath'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['legacyDbPassword'], 'validateIsEnvReference'],

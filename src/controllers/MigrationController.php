@@ -7,7 +7,12 @@ namespace lameco\kunstmaanmigrator\controllers;
 use Craft;
 use craft\helpers\App;
 use craft\web\Controller;
+use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Mapping\MappingDocument;
+use Lameco\KumaCompile\Target\CraftSchema;
+use Lameco\KumaCompile\Target\SpecNotes;
+use Lameco\KumaCompile\Target\Suggester;
 use lameco\kunstmaanmigrator\mapping\FieldExpression;
 use lameco\kunstmaanmigrator\mapping\MappingEditor;
 use lameco\kunstmaanmigrator\Plugin;
@@ -113,6 +118,14 @@ final class MigrationController extends Controller
             $error = $e->getMessage();
         }
 
+        // The prefill offer: only on the parts lane, only while rows still lack
+        // a target, and only when a content-model spec directory is there to
+        // draft from — a fresh mapping is exactly when all three hold.
+        $undecided = $lane === 'parts'
+            ? count(array_filter($rows, static fn ($row): bool => $row->target === null && $row->dropped === null))
+            : 0;
+        $specsPath = self::specsPath();
+
         return $this->renderTemplate('kunstmaan-migrator/_mapping', [
             'lane' => $lane,
             'lanes' => self::EDITABLE_LANES,
@@ -120,7 +133,85 @@ final class MigrationController extends Controller
             'progress' => $error === null ? $editor->progress($lane) : null,
             'path' => $editor->path(),
             'error' => $error,
+            'prefill' => $error === null && $undecided > 0 && $specsPath !== null
+                ? ['undecided' => $undecided, 'specsPath' => $specsPath]
+                : null,
         ]);
+    }
+
+    /**
+     * Draft every undecided part from the content model's own migration notes.
+     *
+     * The specs already say which parts each block covers and which property
+     * becomes which field; this writes those drafts into the mapping. A draft
+     * is not a decision — every drafted row keeps its leftover columns as
+     * `unreviewed`, so it stays open until somebody reviews it.
+     */
+    public function actionPrefill(): Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission('utility:' . MigrationUtility::id());
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $path = $editor->path();
+        $specsPath = self::specsPath();
+
+        if ($path === null || $specsPath === null) {
+            Craft::$app->getSession()->setError(Craft::t('kunstmaan-migrator', 'No mapping or no content-model specs to draft from.'));
+
+            return $this->redirect('kunstmaan-migrator/mapping');
+        }
+
+        try {
+            $mapping = Mapping::fromFile($path);
+            $envName = (string) array_key_first($mapping->environments());
+            $database = (string) ($mapping->environments()[$envName]['database'] ?? '');
+            $db = LegacyDatabase::connect($envName, $database, $editor->legacyDsn());
+
+            $suggester = new Suggester(
+                SpecNotes::fromDirectory($specsPath),
+                CraftSchema::fromProjectConfig((string) Craft::getAlias('@root')),
+            );
+            $result = $suggester->prefill($mapping, $db);
+
+            $document = MappingDocument::fromFile($path);
+
+            foreach ($result['drafted'] as $part => $patch) {
+                $document = $document->patch('parts', (string) $part, $patch);
+            }
+
+            $document->save();
+        } catch (Throwable $e) {
+            Craft::$app->getSession()->setError($e->getMessage());
+
+            return $this->redirect('kunstmaan-migrator/mapping');
+        }
+
+        Craft::$app->getSession()->setNotice(Craft::t(
+            'kunstmaan-migrator',
+            '{n, plural, =0{Nothing to draft — no spec names the open parts.} =1{1 part drafted from the content model.} other{# parts drafted from the content model.}} {skipped, plural, =0{} other{# stayed open with no draft.}} Every drafted row stays open until you review it.',
+            ['n' => count($result['drafted']), 'skipped' => count($result['skipped'])],
+        ));
+
+        return $this->redirect('kunstmaan-migrator/mapping');
+    }
+
+    /**
+     * The content-model spec directory: the plugin setting when set, otherwise
+     * `docs/content-model/page-builder` under the project root — where the
+     * scaffolded content model keeps its block specs.
+     */
+    private static function specsPath(): ?string
+    {
+        $configured = trim((string) App::parseEnv((string) (Plugin::getInstance()->getSettings()->specsPath ?? '')));
+
+        if ($configured !== '') {
+            return is_dir($configured) ? $configured : null;
+        }
+
+        $default = Craft::getAlias('@root') . '/docs/content-model/page-builder';
+
+        return is_dir($default) ? $default : null;
     }
 
     /**

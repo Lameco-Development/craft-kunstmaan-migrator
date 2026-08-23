@@ -259,6 +259,16 @@ final class MappingEditor
         }
     }
 
+    /**
+     * The legacy connection the plugin settings describe — for the fast
+     * metadata reads the editor's screens make (columns, prefill drafting).
+     * A migration run never comes through here; it belongs to the queue.
+     */
+    public function legacyDsn(): \Lameco\KumaCompile\Legacy\Dsn
+    {
+        return EnvironmentPipeline::dsnFromSettings();
+    }
+
     /** @return array<string, string> transform => what it does */
     public function transforms(): array
     {

@@ -73,6 +73,15 @@ final class LegacyDatabase
 
     public function hasTable(string $table): bool
     {
+        // The sqlite branch exists for the test fixtures every sqlite-backed
+        // suite runs on; production corpora are MySQL.
+        if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?');
+            $stmt->execute(['table', $table]);
+
+            return (bool) $stmt->fetchColumn();
+        }
+
         $stmt = $this->pdo->prepare(
             'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
         );
@@ -84,6 +93,12 @@ final class LegacyDatabase
     /** @return list<string> */
     public function columns(string $table): array
     {
+        if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            $stmt = $this->pdo->query(sprintf('PRAGMA table_info(`%s`)', $table));
+
+            return array_map(static fn (array $row): string => (string) $row['name'], $stmt->fetchAll(PDO::FETCH_ASSOC));
+        }
+
         $stmt = $this->pdo->prepare(
             'SELECT COLUMN_NAME FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION'

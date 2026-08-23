@@ -11,7 +11,9 @@ use Lameco\KumaCompile\Target\CraftSchema;
 use Lameco\KumaCompile\Target\TargetSchema;
 use Lameco\KumaCompile\Target\Note;
 use Lameco\KumaCompile\Target\Slot;
+use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Target\SpecNotes;
+use Lameco\KumaCompile\Target\Suggester;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -36,7 +38,10 @@ final class SuggestCommand extends Command
             ->addOption('specs', null, InputOption::VALUE_REQUIRED, 'Directory of block spec markdown files')
             ->addOption('craft', null, InputOption::VALUE_REQUIRED, 'Target Craft project root')
             ->addOption('env', null, InputOption::VALUE_REQUIRED, 'Legacy environment to resolve columns against')
-            ->addOption('all', null, InputOption::VALUE_NONE, 'Include parts that already have a field map');
+            ->addOption('all', null, InputOption::VALUE_NONE, 'Include parts that already have a field map')
+            ->addOption('apply', null, InputOption::VALUE_NONE,
+                'Write the drafts into the mapping: every undecided part whose spec names it gets its '
+                . 'block and field maps, leftover columns stay unreviewed — rows remain open until reviewed');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -58,6 +63,28 @@ final class SuggestCommand extends Command
         $envName = (string) ($input->getOption('env') ?? array_key_first($mapping->environments()));
         $database = (string) ($mapping->environments()[$envName]['database'] ?? '');
         $db = LegacyDatabase::connect($envName, $database, Dsn::fromEnvironment());
+
+        if ($input->getOption('apply')) {
+            $result = (new Suggester($notes, $schema))->prefill($mapping, $db);
+            $document = MappingDocument::fromFile($mapping->path);
+
+            foreach ($result['drafted'] as $part => $patch) {
+                $document = $document->patch('parts', (string) $part, $patch);
+            }
+
+            $document->save();
+            $io->success(sprintf(
+                '%d parts drafted from the specs into %s — each stays open until its unreviewed columns are cleared.',
+                count($result['drafted']),
+                $mapping->path,
+            ));
+
+            foreach ($result['skipped'] as $part => $reason) {
+                $io->writeln(sprintf('  <comment>·</comment> %s: %s', $part, $reason));
+            }
+
+            return Command::SUCCESS;
+        }
 
         $unresolved = [];
         $emitted = 0;
