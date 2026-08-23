@@ -56,6 +56,7 @@
 
   <h2>{{ "What gets created"|t('kunstmaan-migrator') }}</h2>
 
+  <div class="readable">
   <ul class="bullets">
     <li>
       {{ "{path} — the mapping: the list of decisions the migration follows. Creating it migrates nothing, and nothing is ever written to the old site."|t('kunstmaan-migrator', { path: '<code>' ~ mappingPath ~ '</code>' })|raw }}
