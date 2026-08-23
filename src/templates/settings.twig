@@ -204,6 +204,17 @@
   errors: settings.getErrors('mappingPath'),
 }) }}
 
+{{ forms.autosuggestField({
+  label: "Content-model specs"|t('kunstmaan-migrator'),
+  instructions: "Directory of block spec markdown files whose migration notes drive the mapping prefill. Usually left empty — docs/content-model/page-builder under the project root is found on its own."|t('kunstmaan-migrator'),
+  id: 'specsPath',
+  name: 'specsPath',
+  value: settings.specsPath,
+  suggestEnvVars: true,
+  placeholder: 'docs/content-model/page-builder',
+  errors: settings.getErrors('specsPath'),
+}) }}
+
 {% if environments is empty %}
   <p class="light">
     {{ "Point at a mapping file and save to see the environments it declares."|t('kunstmaan-migrator') }}

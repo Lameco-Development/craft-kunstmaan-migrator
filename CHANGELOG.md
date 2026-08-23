@@ -8,6 +8,19 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A fresh mapping opens with a prefill offer, not sixty empty rows.** The
+  content model's block specs already say which legacy parts each block covers
+  (`migrationSource:` and the notes-table headers) and which property becomes
+  which field. The Mapping screen offers "Prefill from the content model"
+  whenever parts lack a target and a specs directory exists
+  (`docs/content-model/page-builder` under the project root by default, a
+  plugin setting to override); `suggest --apply` is the same thing from the
+  CLI. A draft is not a decision: drafted rows get the block, the field maps
+  and the spec's own drops as reasoned ignores, while every leftover column
+  stays `unreviewed` — so each row remains open until somebody reviews it.
+  On the reference corpus a fresh skeleton prefills 22 of 61 parts in one
+  click, with the skipped ones each carrying their reason.
+
 - **The locales step asks one question.** The dropdowns now start on the Craft
   site whose language matches the legacy locale, so the step is a check rather
   than a form; the per-locale "why not" box is gone (a skipped locale is
