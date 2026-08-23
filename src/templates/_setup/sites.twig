@@ -6,10 +6,12 @@
   <input type="hidden" name="envs" id="envs">
 
   {% if error %}
-    <blockquote class="note warning">
-      <p>{{ error }}</p>
-      <p><a href="{{ url('kunstmaan-migrator/setup') }}">{{ "Check the connection"|t('kunstmaan-migrator') }}</a></p>
-    </blockquote>
+    <div class="readable">
+      <blockquote class="note warning">
+        <p>{{ error }}</p>
+        <p><a class="go" href="{{ url('kunstmaan-migrator/setup/connect') }}">{{ "Check the connection"|t('kunstmaan-migrator') }}</a></p>
+      </blockquote>
+    </div>
   {% else %}
     <div class="readable">
       <p>

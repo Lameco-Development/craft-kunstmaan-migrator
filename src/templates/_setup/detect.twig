@@ -7,12 +7,14 @@
   <input type="hidden" name="path" id="kuma-checkout-path">
 
   {% if existingMapping %}
-    <blockquote class="note warning">
-      <p>
-        {{ "A mapping already exists at {path} — the decisions this migration runs on. Finishing the wizard will offer to replace it (the current file is kept as a timestamped copy). To keep working on it instead, head to the Mapping screen."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
-      </p>
-    </blockquote>
-  {% endif %}
+    {# Craft only styles note blockquotes inside a .readable wrapper. #}
+    <div class="readable" style="margin-bottom: 16px;">
+      <blockquote class="note warning">
+        <p>
+          {{ "A mapping already exists at {path} — the decisions this migration runs on. Finishing the wizard will offer to replace it (the current file is kept as a timestamped copy). To keep working on it instead, head to the Mapping screen."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
+        </p>
+      </blockquote>
+    </div>
 
   <div class="readable">
     <p>

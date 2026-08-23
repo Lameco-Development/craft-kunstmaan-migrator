@@ -80,17 +80,20 @@
   </div>
 
   {% if existingMapping %}
-    <blockquote class="note warning">
-      <p>
-        {{ "A mapping already exists at {path}. Creating a new one moves it aside as a timestamped copy — nothing is deleted, but the migration follows the new file from then on."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
-      </p>
-      {{ forms.checkboxField({
-        label: "Replace it — keep the current mapping as a timestamped copy"|t('kunstmaan-migrator'),
-        id: 'kuma-replace',
-        name: 'replace',
-        value: 1,
-      }) }}
-    </blockquote>
+    {# Craft only styles note blockquotes inside a .readable wrapper. #}
+    <div class="readable" style="margin-bottom: 16px;">
+      <blockquote class="note warning">
+        <p>
+          {{ "A mapping already exists at {path}. Creating a new one moves it aside as a timestamped copy — nothing is deleted, but the migration follows the new file from then on."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
+        </p>
+        {{ forms.checkboxField({
+          label: "Replace it — keep the current mapping as a timestamped copy"|t('kunstmaan-migrator'),
+          id: 'kuma-replace',
+          name: 'replace',
+          value: 1,
+        }) }}
+      </blockquote>
+    </div>
 
     {% js %}
       var box = document.getElementById('kuma-replace');
