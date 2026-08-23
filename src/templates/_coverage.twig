@@ -17,22 +17,41 @@
       {{ "For each target: every field, and what fills it. A field nothing fills stays empty after migration."|t('kunstmaan-migrator') }}
     </p>
 
+    {% set kindLabels = { page: 'Pages'|t('kunstmaan-migrator'), entity: 'Entities'|t('kunstmaan-migrator'), block: 'Blocks'|t('kunstmaan-migrator') } %}
+
     {% if gaps is not empty %}
       <div class="readable" style="margin-bottom: 16px;">
         <blockquote class="note {{ gaps|filter(g => g.required > 0) is not empty ? 'warning' }}">
-          <p>{{ "Not fully covered:"|t('kunstmaan-migrator') }}
-            {% for gap in gaps %}
-              <a href="{{ url('kunstmaan-migrator/coverage', { kind: gap.kind, handle: gap.handle }) }}">{{ gap.handle }}</a>{% if gap.kind != 'page' %} <span class="light">({{ gap.kind }})</span>{% endif %}
-              ({{ gap.unfed }}{% if gap.required > 0 %}, <strong>{{ "{count} required"|t('kunstmaan-migrator', { count: gap.required }) }}</strong>{% endif %}){{ not loop.last ? ' · ' }}
+          <p>
+            {{ "Not fully covered:"|t('kunstmaan-migrator') }}
+            {% set summaryParts = [] %}
+            {% for kindKey, label in kindLabels %}
+              {% set kindGaps = gaps|filter(g => g.kind == kindKey) %}
+              {% if kindGaps is not empty %}
+                {% set summaryParts = summaryParts|merge([label ~ ' ' ~ kindGaps|length]) %}
+              {% endif %}
             {% endfor %}
+            {{ summaryParts|join(' · ') }}
+            {% set requiredTotal = gaps|reduce((carry, g) => carry + g.required, 0) %}
+            {% if requiredTotal > 0 %}
+              — <strong>{{ "{count} required in total"|t('kunstmaan-migrator', { count: requiredTotal }) }}</strong>
+            {% endif %}
           </p>
+          <details>
+            <summary>{{ "Show all"|t('kunstmaan-migrator') }}</summary>
+            <p>
+              {% for gap in gaps %}
+                <a href="{{ url('kunstmaan-migrator/coverage', { kind: gap.kind, handle: gap.handle, gaps: 1 }) }}">{{ gap.handle }}</a>{% if gap.kind != 'page' %} <span class="light">({{ gap.kind }})</span>{% endif %}
+                ({{ gap.unfed }}{% if gap.required > 0 %}, <strong>{{ "{count} required"|t('kunstmaan-migrator', { count: gap.required }) }}</strong>{% endif %}){{ not loop.last ? ' · ' }}
+              {% endfor %}
+            </p>
+          </details>
         </blockquote>
       </div>
     {% else %}
       <p class="light">{{ "✓ Every field is covered."|t('kunstmaan-migrator') }}</p>
     {% endif %}
 
-    {% set kindLabels = { page: 'Pages'|t('kunstmaan-migrator'), entity: 'Entities'|t('kunstmaan-migrator'), block: 'Blocks'|t('kunstmaan-migrator') } %}
     {% set options = [] %}
     {% for kindKey, label in kindLabels %}
       {% set ofKind = targets|filter(t => t.kind == kindKey) %}
@@ -52,9 +71,44 @@
       options: options,
     }) }}
 
+    {{ forms.checkboxField({
+      label: "Only unfed fields"|t('kunstmaan-migrator'),
+      id: 'kuma-only-unfed',
+      name: 'onlyUnfed',
+    }) }}
+
     {% js %}
       (function () {
         var container = document.getElementById('kuma-coverage-table');
+        var onlyUnfed = document.getElementById('kuma-only-unfed');
+
+        function kumaApplyUnfed() {
+          var on = onlyUnfed.checked;
+          var rows = container.querySelectorAll('tr[data-fed]');
+          var visible = 0;
+
+          rows.forEach(function (row) {
+            var hide = on && row.dataset.fed === '1';
+            row.style.display = hide ? 'none' : '';
+            if (!hide) { visible++; }
+          });
+
+          var covered = container.querySelector('#kuma-all-covered');
+          if (covered) {
+            covered.style.display = (on && visible === 0 && rows.length > 0) ? '' : 'none';
+          }
+        }
+
+        onlyUnfed.checked = new URLSearchParams(location.search).get('gaps') === '1';
+
+        onlyUnfed.addEventListener('change', function () {
+          var params = new URLSearchParams(location.search);
+          if (onlyUnfed.checked) { params.set('gaps', '1'); } else { params.delete('gaps'); }
+          history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params.toString() : ''));
+          kumaApplyUnfed();
+        });
+
+        kumaApplyUnfed();
 
         $('#kuma-coverage-type').on('change', function () {
           var value = this.value;
@@ -70,7 +124,10 @@
             onDone: function () {
               // The address keeps meaning something: reloading or sharing the
               // URL lands on the target being looked at.
-              history.replaceState(null, '', Craft.getCpUrl('kunstmaan-migrator/coverage', { kind: kind, handle: handle }));
+              var params = { kind: kind, handle: handle };
+              if (onlyUnfed.checked) { params.gaps = 1; }
+              history.replaceState(null, '', Craft.getCpUrl('kunstmaan-migrator/coverage', params));
+              kumaApplyUnfed();
             },
           });
         });

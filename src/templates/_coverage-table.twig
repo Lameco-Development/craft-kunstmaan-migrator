@@ -4,7 +4,7 @@
 
 {% if coverage.kind == 'page' and coverage.receives is not empty %}
   <p class="light">
-    {{ "Receives {count} legacy page types: {pages}."|t('kunstmaan-migrator', {
+    {{ "{count, plural, =1{Receives 1 legacy page type: {pages}.} other{Receives # legacy page types: {pages}.}}"|t('kunstmaan-migrator', {
       count: coverage.receives|length,
       pages: coverage.receives|join(', '),
     }) }}
@@ -16,7 +16,7 @@
 {% elseif coverage.kind == 'block' %}
   {% if coverage.receives is not empty %}
     <p class="light">
-      {{ "Created from {count} legacy pageparts: {parts}."|t('kunstmaan-migrator', {
+      {{ "{count, plural, =1{Created from 1 legacy pagepart: {parts}.} other{Created from # legacy pageparts: {parts}.}}"|t('kunstmaan-migrator', {
         count: coverage.receives|length,
         parts: coverage.receives|join(', '),
       }) }}
@@ -46,7 +46,7 @@
   <tbody>
     {% for field, state in coverage.fields %}
       {% set fed = state.feeders is not empty or state.partsCount is not null %}
-      <tr>
+      <tr data-fed="{{ fed ? '1' : '0' }}">
         <th scope="row">
           <code>{{ field }}</code>
           {% if state.required %}<span class="required" aria-label="{{ 'Required'|t('app') }}"></span>{% endif %}
@@ -83,5 +83,9 @@
         </td>
       </tr>
     {% endfor %}
+    {# Shown by the "Only unfed fields" toggle when it hides every row. #}
+    <tr id="kuma-all-covered" style="display: none;">
+      <td colspan="2" class="light">{{ "✓ Every field is covered."|t('kunstmaan-migrator') }}</td>
+    </tr>
   </tbody>
 </table>
