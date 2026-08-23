@@ -64,6 +64,16 @@
       }) }}
   {% endif %}
 
+  {% if lane != 'sidecars' %}
+    {{ forms.lightswitchField({
+        label: "Not migrating"|t('kunstmaan-migrator'),
+        instructions: "This has no Craft equivalent. Everything below is ignored while this is on."|t('kunstmaan-migrator'),
+        name: 'drop',
+        on: row.dropped is not null,
+        value: row.dropped ?? 'not migrating',
+    }) }}
+  {% endif %}
+
   <div class="field">
     <label>
       <input type="checkbox" id="kuma-attention">
@@ -75,55 +85,26 @@
     {% include 'kunstmaan-migrator/_mapping-row-fields' %}
   </div>
 
-  <hr>
+  {% set unused = row.columns() %}
+  {% if unused is not empty %}
+    <hr>
 
-  <h2>{{ "Legacy columns"|t('kunstmaan-migrator') }}</h2>
-  <p class="light">
-      {{ "Columns not used by any field above. The row stays open until each one is mapped or set to Not migrating."|t('kunstmaan-migrator') }}
-  </p>
-
-  <table class="data fullwidth">
-      <thead>
-        <tr>
-          <th>{{ "Column"|t('kunstmaan-migrator') }}</th>
-          <th>{{ "Decision"|t('kunstmaan-migrator') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for column, state in row.columns() %}
-          <tr>
-            <th scope="row">
-              <code>{{ column }}</code>
-              {% if samples[column] ?? [] is not empty %}
-                <div class="light">{{ samples[column]|join(' · ') }}</div>
-              {% endif %}
-            </th>
-            <td>
-              {{ forms.select({
-                name: 'columns[' ~ column ~ '][disposition]',
-                value: state.ignored ? 'ignore' : 'unreviewed',
-                options: [
-                  { label: "Not looked at"|t('kunstmaan-migrator'), value: 'unreviewed' },
-                  { label: "Not migrating"|t('kunstmaan-migrator'), value: 'ignore' },
-                ],
-              }) }}
-            </td>
-          </tr>
-        {% else %}
-          <tr><td colspan="2" class="light">{{ "Every column is accounted for."|t('kunstmaan-migrator') }}</td></tr>
-        {% endfor %}
-      </tbody>
-  </table>
-
-  <hr>
-
-  {{ forms.lightswitchField({
-      label: "Drop it entirely"|t('kunstmaan-migrator'),
-      instructions: "This has no Craft equivalent and will not migrate."|t('kunstmaan-migrator'),
-      name: 'drop',
-      on: row.dropped is not null,
-      value: row.dropped ?? 'not migrating',
-  }) }}
+    {# Read-only: anything not mapped above simply does not migrate. The list
+       stays for discovery — old data you might still want, with samples. #}
+    <details class="readable" style="margin-top: 8px;">
+      <summary class="light">{{ "{n, plural, =1{1 unused column — it does not migrate} other{# unused columns — they do not migrate}}"|t('kunstmaan-migrator', { n: unused|length }) }}</summary>
+      <table class="data fullwidth" style="margin-top: 8px;">
+        <tbody>
+          {% for column, state in unused %}
+            <tr>
+              <th scope="row"><code>{{ column }}</code></th>
+              <td class="light">{{ (samples[column] ?? [])|join(' · ') }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  {% endif %}
 
 
 {# Two live behaviours share this block. Sample hints: `title` next to
@@ -164,12 +145,6 @@
           tr.style.display = (on && tr.dataset.state !== 'empty') ? 'none' : '';
         });
       }
-      document.querySelectorAll('select[name^="columns["][name$="[disposition]"]').forEach(function (sel) {
-        var tr = sel.closest('tr');
-        if (tr) {
-          tr.style.display = (on && sel.value === 'ignore') ? 'none' : '';
-        }
-      });
     };
 
     if (attention) {
@@ -185,7 +160,6 @@
         history.replaceState(null, '', location.pathname + (query ? '?' + query : ''));
         kumaApplyAttention();
       });
-      $(document).on('change', 'select[name^="columns["][name$="[disposition]"]', kumaApplyAttention);
       kumaApplyAttention();
     }
 

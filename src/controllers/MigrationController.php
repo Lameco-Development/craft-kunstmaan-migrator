@@ -559,24 +559,33 @@ final class MigrationController extends Controller
             }
         }
 
-        $ignore = [];
-        $unreviewed = [];
+        // Anything not mapped simply does not migrate: the form no longer
+        // asks per-column questions, so the unused-column bookkeeping is
+        // written automatically — every previously listed column moves to
+        // `ignore:`, minus the ones the posted map now consumes.
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $row = $editor->row($lane, (string) $this->request->getRequiredBodyParam('key'));
+        $consumed = [];
 
-        foreach ((array) $this->request->getBodyParam('columns', []) as $column => $decision) {
-            $column = (string) $column;
+        foreach ($map as $expression) {
+            $parsed = FieldExpression::parse($expression);
 
-            if ((string) ($decision['disposition'] ?? 'unreviewed') !== 'ignore') {
-                $unreviewed[] = $column;
-
-                continue;
+            if ($parsed->column !== '') {
+                $consumed[$parsed->column] = true;
             }
+        }
 
-            $ignore[] = $column;
+        $ignore = [];
+
+        foreach (array_keys($row?->columns() ?? []) as $column) {
+            if (!isset($consumed[(string) $column])) {
+                $ignore[] = (string) $column;
+            }
         }
 
         $changes = [
             'ignore' => $ignore !== [] ? $ignore : null,
-            'unreviewed' => $unreviewed !== [] ? $unreviewed : null,
+            'unreviewed' => null,
             'drop' => null,
         ];
 
