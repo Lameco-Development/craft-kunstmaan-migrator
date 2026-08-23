@@ -105,6 +105,22 @@ final class Mapping
     }
 
     /**
+     * Per-page sidecar entities, read by the polymorphic ref every Kunstmaan tab uses.
+     *
+     * Kunstmaan attaches page-level extras — a header tab, a footer tab, structured data —
+     * as separate entities keyed by `(ref_entity_name, ref_id)`, outside the pagepart tree.
+     * The name differs per site; the column signature does not, which is what makes this a
+     * lane rather than a special case: any table carrying that pair can be named here and
+     * joined to every page it decorates.
+     *
+     * @return array<string, array<string, mixed>> sidecar name => spec
+     */
+    public function sidecars(): array
+    {
+        return $this->data['sidecars'] ?? [];
+    }
+
+    /**
      * Non-node legacy tables that become entries of their own.
      *
      * A Kunstmaan corpus keeps its taxonomies outside the node tree — categories, countries,

@@ -102,6 +102,18 @@ final class SurveyCommand extends Command
             ], $surveys),
         );
 
+        $withSidecars = array_filter($surveys, static fn (Survey $s): bool => $s->sidecarTables !== []);
+
+        if ($withSidecars !== []) {
+            $io->section('Sidecar tables');
+            $io->text('Per-page entities keyed by (ref_entity_name, ref_id) — header/footer tabs, structured');
+            $io->text('data. Raw rows: like pageparts they are cloned per version, so live is far lower.');
+
+            foreach ($withSidecars as $survey) {
+                $io->writeln(sprintf('  <comment>%s</comment>  %s', $survey->environment, $this->inline($survey->sidecarTables)));
+            }
+        }
+
         foreach ($surveys as $survey) {
             $io->section(sprintf('%s — where the work is', $survey->environment));
             $io->writeln('  <comment>contexts</comment>  ' . $this->inline($survey->contexts));

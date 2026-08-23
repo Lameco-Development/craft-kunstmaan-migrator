@@ -99,7 +99,7 @@ final class Readiness
                 subject: (string) $page,
                 entryType: $entryType,
                 map: $spec['map'] ?? [],
-                extra: $this->contextFields($spec),
+                extra: $this->contextFields($spec) + $this->sidecarFields(),
                 live: isset($spec['live']) ? (int) $spec['live'] : null,
             )];
         }
@@ -362,6 +362,36 @@ final class Readiness
         foreach ($contexts as $target) {
             if (is_array($target) && isset($target['field'])) {
                 $fields[(string) $target['field']] = 'blocks';
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Page fields the sidecars lane fills — the hero set, on every page a sidecar decorates.
+     *
+     * Credited the same way `contexts:` is: without this, `heroTitle` reads as a hole on
+     * every page entry type on the very corpus whose header tabs supply it.
+     *
+     * @return array<string, string> target field => 'sidecars'
+     */
+    private function sidecarFields(): array
+    {
+        $fields = [];
+
+        foreach ($this->mapping->sidecars() as $spec) {
+            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
+                continue;
+            }
+
+            foreach (array_keys($spec['map'] ?? []) as $key) {
+                $root = (string) preg_split('/[\[.]/', (string) $key)[0];
+                $fields[$root] ??= 'sidecars';
+            }
+
+            foreach (array_keys($spec['children'] ?? []) as $field) {
+                $fields[(string) $field] ??= 'sidecars';
             }
         }
 

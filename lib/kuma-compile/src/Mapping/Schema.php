@@ -31,7 +31,11 @@ final class Schema
 
     private const TOP_LEVEL = [
         'version', 'environments', 'merge', 'pages', 'defaults', 'entities',
-        'sequence', 'parts', 'forms', 'globals', 'redirects', 'transforms', 'unmapped',
+        'sequence', 'parts', 'sidecars', 'forms', 'globals', 'redirects', 'transforms', 'unmapped',
+    ];
+
+    private const SIDECAR_KEYS = [
+        'live', 'table', 'map', 'children', 'ignore', 'unreviewed', 'drop', 'manual', 'todo', 'note',
     ];
 
     private const PART_KEYS = [
@@ -68,6 +72,7 @@ final class Schema
         $this->checkEntities($mapping, $errors);
         $this->checkRedirects($mapping, $errors);
         $this->checkParts($mapping, $errors);
+        $this->checkSidecars($mapping, $errors);
         $this->checkUnreviewed($mapping, $errors);
         $this->checkRefs($mapping, $errors);
         $this->checkSequence($mapping, $errors);
@@ -433,6 +438,45 @@ final class Schema
             if ($status !== null && !in_array($status, ['open', 'decided'], true)) {
                 $errors[] = sprintf('part `%s`: conflict.status must be `open` or `decided`, got `%s`', $class, $status);
             }
+        }
+    }
+
+    /**
+     * A sidecar is a per-page entity keyed by the polymorphic `(ref_entity_name, ref_id)`
+     * pair — a header tab, a footer tab, structured data. The table is the only thing a
+     * mapping has to know; which pages it decorates is answered by the data, per page.
+     *
+     * @param list<string> $errors
+     */
+    private function checkSidecars(Mapping $mapping, array &$errors): void
+    {
+        foreach ($mapping->sidecars() as $name => $spec) {
+            if (!is_array($spec)) {
+                $errors[] = sprintf('sidecar `%s` is not a mapping', $name);
+
+                continue;
+            }
+
+            foreach (array_diff(array_keys($spec), self::SIDECAR_KEYS) as $key) {
+                $errors[] = sprintf('sidecar `%s`: unknown key `%s`', $name, $key);
+            }
+
+            if (isset($spec['drop']) || isset($spec['manual'])) {
+                continue;
+            }
+
+            if (($spec['table'] ?? '') === '') {
+                $errors[] = sprintf('sidecar `%s`: missing `table:`', $name);
+            }
+
+            if (($spec['map'] ?? []) === [] && ($spec['children'] ?? []) === []) {
+                $errors[] = sprintf(
+                    'sidecar `%s`: no `map:` and no `children:` — a sidecar that writes nothing is a decision, say it with drop: or manual:',
+                    $name,
+                );
+            }
+
+            $this->checkChildren(sprintf('sidecar `%s`', $name), $spec, $errors);
         }
     }
 

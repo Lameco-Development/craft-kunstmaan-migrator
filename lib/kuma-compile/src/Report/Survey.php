@@ -40,6 +40,8 @@ final readonly class Survey
         public int $livePages,
         public int $livePlacements,
         public int $allPartRefs,
+        /** @var array<string, int> non-core tables carrying the (ref_entity_name, ref_id) sidecar pair => rows */
+        public array $sidecarTables = [],
     ) {
     }
 
@@ -67,7 +69,36 @@ final readonly class Survey
             livePages: array_sum($snapshot->pageTypes),
             livePlacements: array_sum($snapshot->partPlacements),
             allPartRefs: $snapshot->allPartRefs,
+            sidecarTables: self::sidecarTables($db),
         );
+    }
+
+    /**
+     * Tables decorating pages through Kunstmaan's polymorphic ref, found by column
+     * signature. The name differs per site — header tab here, something else elsewhere —
+     * which is exactly why a scoping survey looks for the pair and not a name.
+     *
+     * @return array<string, int> table => rows
+     */
+    private static function sidecarTables(LegacyDatabase $db): array
+    {
+        $out = [];
+
+        foreach ($db->tables() as $table) {
+            if (str_starts_with($table, 'kuma_')) {
+                continue;
+            }
+
+            $columns = $db->columns($table);
+
+            if (in_array('ref_entity_name', $columns, true) && in_array('ref_id', $columns, true)) {
+                $out[$table] = (int) ($db->countOrNull($table) ?? 0);
+            }
+        }
+
+        arsort($out);
+
+        return $out;
     }
 
     /**
@@ -96,6 +127,7 @@ final readonly class Survey
             'locales' => $this->locales,
             'contexts' => $this->contexts,
             'volumes' => $this->volumes,
+            'sidecarTables' => $this->sidecarTables,
             'partClasses' => $this->partClasses,
             'pageTypes' => $this->pageTypes,
         ];

@@ -186,6 +186,37 @@ final class MappingEditor
     }
 
     /**
+     * The union of fields across the page entry types the mapping targets.
+     *
+     * A sidecar decorates every page carrying its ref, and the hero fields are
+     * placed on some entry types and not others — the compiler drops and counts
+     * a field the type lacks, so offering the union here is honest.
+     *
+     * @return list<string>
+     */
+    public function pageFields(): array
+    {
+        $fields = [];
+
+        foreach ($this->document()->lane('pages') as $page) {
+            $entryType = is_array($page) ? ($page['entryType'] ?? null) : null;
+
+            if (!is_string($entryType) || $entryType === '') {
+                continue;
+            }
+
+            foreach (array_keys($this->target->slots($entryType)) as $handle) {
+                $fields[(string) $handle] = true;
+            }
+        }
+
+        $handles = array_keys($fields);
+        sort($handles);
+
+        return $handles;
+    }
+
+    /**
      * The fields a chosen block or entry type offers, so a column can be
      * pointed at one rather than spelled.
      *

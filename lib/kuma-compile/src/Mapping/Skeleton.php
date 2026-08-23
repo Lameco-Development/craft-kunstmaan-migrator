@@ -62,9 +62,64 @@ final class Skeleton
         $out .= $this->pagesSection($pages);
         $out .= $this->sequenceSection();
         $out .= $this->partsSection($parts, $probe, $childTables);
+        $out .= $this->sidecarsSection($probe instanceof LegacyDatabase ? $probe : null);
         $out .= $this->tailSections();
 
         return $out;
+    }
+
+    /**
+     * Candidate sidecar tables, discovered by column signature rather than by name.
+     *
+     * A per-page tab entity — Enreach's header tab, another site's whatever-it-calls-it —
+     * always carries Kunstmaan's polymorphic ref pair, `ref_entity_name` + `ref_id`. That
+     * pair is the whole convention, so any non-core table holding both is offered here with
+     * its columns as map candidates. What a human supplies is the half a machine cannot
+     * know: which Craft page fields each column becomes.
+     */
+    private function sidecarsSection(?LegacyDatabase $db): string
+    {
+        $out = "\n# ─────────────────────────────────────────────────────────────────────────────\n";
+        $out .= "# Per-page sidecar entities, keyed by the polymorphic (ref_entity_name, ref_id)\n";
+        $out .= "# pair — header/footer tabs, structured data. Discovered by column signature;\n";
+        $out .= "# map each table's columns onto page fields, or declare drop:/manual: with a reason.\n";
+        $out .= "sidecars:";
+
+        $found = 0;
+
+        foreach ($db?->tables() ?? [] as $table) {
+            if (str_starts_with($table, 'kuma_')) {
+                continue;
+            }
+
+            $columns = $db->columns($table);
+
+            if (!in_array('ref_entity_name', $columns, true) || !in_array('ref_id', $columns, true)) {
+                continue;
+            }
+
+            $found++;
+            $rest = array_values(array_diff($columns, ['id', 'ref_id', 'ref_entity_name']));
+            $out .= sprintf("\n  %s:\n", $this->sidecarName($table));
+            $out .= sprintf("    table: %s\n", $table);
+            $out .= "    map: {}\n";
+            $out .= sprintf("    ignore: [%s]\n", implode(', ', $rest));
+        }
+
+        if ($found === 0) {
+            $out .= " {}\n";
+        }
+
+        return $out . "\n";
+    }
+
+    /** `lameco_websitebundle_header_tabs` → `headerTab`; the mapping key is free to differ. */
+    private function sidecarName(string $table): string
+    {
+        $token = (string) preg_replace('/^[a-z0-9]+_[a-z0-9]+bundle_/', '', $table);
+        $token = rtrim($token, 's');
+
+        return lcfirst(str_replace('_', '', ucwords($token, '_')));
     }
 
     /** @param array<string, int> $parts @param array<string, int> $pages */

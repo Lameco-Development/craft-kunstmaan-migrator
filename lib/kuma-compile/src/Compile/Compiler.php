@@ -414,6 +414,12 @@ final class Compiler
             );
         }
 
+        // Sidecar entities — the header tab, structured data — decorate a page through the
+        // polymorphic ref, outside both the page's own table and the pagepart tree. Which
+        // pages carry one is a per-page fact the data answers, not a mapping declaration; a
+        // page without a row simply gets nothing. The page's own map wins a target collision.
+        $pageFields += $this->sidecarFields($parts, $builder, $translation, $entryType);
+
         // The node's `created` is when the page was made, not when it was published. Editorial
         // types carry their own date, and on the first real corpus the two disagreed on 279 of
         // 434 blog posts — several by months.
@@ -803,6 +809,63 @@ final class Compiler
         $this->structuralEntries++;
 
         return true;
+    }
+
+    /**
+     * Every sidecar's contribution to one page entry.
+     *
+     * A sidecar names targets for every page it decorates, but the hero fields are placed on
+     * some entry types and not others — `heroImage` exists on eight. A field the type does not
+     * carry is dropped here and counted, per type, so widening a field layout is what turns
+     * the counter into content rather than a mapping edit.
+     *
+     * @param array<string, mixed> $translation
+     * @return array<string, mixed>
+     */
+    private function sidecarFields(
+        PartReader $parts,
+        BlockBuilder $builder,
+        array $translation,
+        string $entryType,
+    ): array {
+        $fields = [];
+
+        foreach ($this->mapping->sidecars() as $name => $spec) {
+            // No `wanted()` gate: a sidecar rides the page it decorates, so a run narrowed
+            // to one page entity still carries that page's hero. Excluding one is `drop:`.
+            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
+                continue;
+            }
+
+            $row = $parts->sidecarRow(
+                (string) $spec['table'],
+                (string) $translation['entity'],
+                (int) $translation['entityId'],
+            );
+
+            if ($row === null) {
+                continue;
+            }
+
+            $context = 'sidecar:' . $name;
+            $mapped = $builder->fieldsFrom($spec['map'] ?? [], $row, $context, $entryType);
+
+            if (isset($row['id'])) {
+                $mapped += $builder->childrenOf($spec['children'] ?? [], $entryType, (int) $row['id'], $context, true);
+            }
+
+            foreach ($mapped as $target => $value) {
+                if ($this->schema !== null && $this->schema->slot($entryType, (string) $target) === null) {
+                    $this->skip(sprintf('sidecar %s: %s not on %s', $name, $target, $entryType));
+
+                    continue;
+                }
+
+                $fields[(string) $target] ??= $value;
+            }
+        }
+
+        return $fields;
     }
 
     /** The Craft section an entry of this page entity lands in, per the mapping. */

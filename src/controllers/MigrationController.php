@@ -37,7 +37,7 @@ final class MigrationController extends Controller
      * media-root fallback chain and a locale marked "not migrated, and here is
      * why" are things a YAML file states better than a form.
      */
-    private const EDITABLE_LANES = ['parts', 'pages', 'entities'];
+    private const EDITABLE_LANES = ['parts', 'pages', 'entities', 'sidecars'];
 
     /**
      * The `doctor` checks, in the browser.
@@ -146,8 +146,14 @@ final class MigrationController extends Controller
         }
 
         // Each Craft field's current expression, split into the parts somebody
-        // can choose from — which column, and what to do to it.
-        $fields = $row->target !== null ? $editor->fieldsFor($row->target) : [];
+        // can choose from — which column, and what to do to it. A sidecar has no
+        // target of its own — it decorates whichever page carries a row — so its
+        // field list is the union of what the page entry types offer.
+        $fields = match (true) {
+            $lane === 'sidecars'   => $editor->pageFields(),
+            $row->target !== null  => $editor->fieldsFor($row->target),
+            default                => [],
+        };
         $expressions = [];
 
         foreach ($fields as $field) {
@@ -215,7 +221,13 @@ final class MigrationController extends Controller
             // A dropped row keeps its columns: the decision is "this does not
             // migrate", not "we never knew what was in it", and someone
             // revisiting it should still see what they were giving up.
-            return ['drop' => $drop, $this->targetKey($lane) => null];
+            $changes = ['drop' => $drop];
+
+            if (($key = $this->targetKey($lane)) !== null) {
+                $changes[$key] = null;
+            }
+
+            return $changes;
         }
 
         $target = trim((string) $this->request->getBodyParam('target', ''));
@@ -260,11 +272,14 @@ final class MigrationController extends Controller
         }
 
         $changes = [
-            $this->targetKey($lane) => $target !== '' ? $target : null,
             'ignore' => self::ignoreValue($ignore),
             'unreviewed' => $unreviewed !== [] ? $unreviewed : null,
             'drop' => null,
         ];
+
+        if (($targetKey = $this->targetKey($lane)) !== null) {
+            $changes[$targetKey] = $target !== '' ? $target : null;
+        }
 
         // The field map is only drawn once a block is chosen, so a save from
         // the screen that has not drawn it must not wipe what is there.
@@ -303,10 +318,13 @@ final class MigrationController extends Controller
     }
 
     /** Each lane names its target differently; the row does not have to know. */
-    private function targetKey(string $lane): string
+    private function targetKey(string $lane): ?string
     {
         return match ($lane) {
             'pages' => 'entryType',
+            // A sidecar has no target handle: its map addresses page fields
+            // directly, on whichever page the polymorphic ref decorates.
+            'sidecars' => null,
             default => 'block',
         };
     }

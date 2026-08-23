@@ -162,7 +162,9 @@ data loss; an unfilled required Craft field is an entry an editor cannot save.
 Craft field that is *optional* and that no lane writes to is not a load blocker,
 so it never appeared in `readiness` — and on the reference corpus that was 37
 hero field instances across 20 entry types, empty on every one of 972 migrated
-pages, with nothing reporting it. It groups by field handle, because
+pages, with nothing reporting it. (That finding is what led to the `sidecars:`
+lane — the hero data was sitting in a per-page tab table no lane read.) It
+groups by field handle, because
 `heroTitle` unfilled on twenty entry types is one decision rather than twenty
 findings. Read the `Craft writes` column: a field with a dropdown default is
 populated on every migrated entry with no legacy data behind it, which is how

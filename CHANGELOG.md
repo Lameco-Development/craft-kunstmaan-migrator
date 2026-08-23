@@ -8,6 +8,21 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A `sidecars:` lane** for the per-page entities Kunstmaan attaches outside
+  the pagepart tree — header tabs, footer tabs, structured data. The lane keys
+  on the polymorphic `(ref_entity_name, ref_id)` column pair, not on a table
+  name, so any corpus's variant of the concept maps the same way. Resolution is
+  per locale through the published node version, the same path `kuma_seo`
+  already follows, so two locales with different tab rows each get their own.
+  A mapped field the target entry type does not carry is dropped and counted
+  per type, which turns a field-layout gap into a measured fact. `readiness`
+  credits the lane; `survey` and `init` discover candidate tables by the column
+  signature; the control panel mapping editor gains the lane, offering the
+  union of page fields since a sidecar decorates whichever page carries a row.
+- **`links()` accepts nested `link(...)` groups** — a table holding several
+  whole links (primary/secondary/tertiary) becomes several buttons in one
+  Matrix, the fourth column of a group still mapping to the button style.
+
 - **`links(column=Label, …)` field expression** — N sibling single-URL columns
   become one button each in a Matrix of buttons, with the label carried by the
   mapping because the legacy table never stored one. Built for SocialMedia's

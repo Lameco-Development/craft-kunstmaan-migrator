@@ -415,6 +415,33 @@ final class BlockBuilder
         $blocks = [];
 
         foreach ($this->splitArguments($arguments) as $argument) {
+            // A nested `link(...)` argument is one four-column group — how a table holding
+            // several whole links (primary/secondary/tertiary) becomes several buttons.
+            if (preg_match('/^link\((.*)\)$/', $argument, $lm) === 1) {
+                $columns = array_map('trim', explode(',', $lm[1]));
+                $link = $this->oneLink(
+                    (string) ($row[$columns[0] ?? ''] ?? ''),
+                    isset($columns[1]) ? (string) ($row[$columns[1]] ?? '') : '',
+                    isset($columns[2]) && (int) ($row[$columns[2]] ?? 0) === 1,
+                );
+
+                if ($link === null) {
+                    continue;
+                }
+
+                $fields = [$linkHandle => $link];
+                $style = isset($columns[3]) ? trim((string) ($row[$columns[3]] ?? '')) : '';
+                $styleHandle = $style !== '' ? $this->soleSlotOfType($nested, 'Dropdown') : null;
+
+                if ($styleHandle !== null) {
+                    $fields[$styleHandle] = $style;
+                }
+
+                $blocks[] = ['type' => $nested, 'fields' => $fields];
+
+                continue;
+            }
+
             [$column, $label] = str_contains($argument, '=')
                 ? array_map(trim(...), explode('=', $argument, 2))
                 : [$argument, ''];

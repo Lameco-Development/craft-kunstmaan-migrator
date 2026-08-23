@@ -26,7 +26,13 @@
      operator distrust the rest of the screen. #}
   {% set noun = lane == 'parts' ? "block"|t('kunstmaan-migrator') : "entry type"|t('kunstmaan-migrator') %}
 
-  {% if blocks is not empty %}
+  {% if lane == 'sidecars' %}
+      {# A sidecar has no target of its own: it decorates whichever page carries
+         its (ref_entity_name, ref_id) row, and its map addresses page fields
+         directly. The field list below is the union across the page entry types;
+         a field a type does not carry is dropped and counted at compile time. #}
+      <p class="light">{{ "Writes onto the page it decorates — no target to choose. Fields a page entry type does not carry are dropped for that page and counted."|t('kunstmaan-migrator') }}</p>
+  {% elseif blocks is not empty %}
       {# Read from this Craft install, not typed from memory: a handle typed into
          YAML is checked when a migration runs, hours later. #}
       {{ forms.selectField({
