@@ -68,6 +68,6 @@ class CaptureBaselineHtmlService extends Component
 
     private function urlToSlug(string $url): string
     {
-        return preg_replace('/[^a-zA-Z0-9_-]+/', '_', $url) ?? 'baseline';
+        return BaselineSlug::of($url);
     }
 }

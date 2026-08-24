@@ -96,10 +96,8 @@ final class CountGateServiceFiltersTest extends TestCase
     {
         $source = (string) file_get_contents(__DIR__ . '/../../../src/workflow/VerifyWorkflow.php');
 
-        self::assertStringContainsString('MappingFilterTranslator', $source);
+        self::assertStringContainsString('CompiledScope::forFilters', $source);
         self::assertStringContainsString('loadTranslatedScopeForEntityFilters', $source);
-        self::assertStringContainsString('mappingFile->load', $source);
-        self::assertStringContainsString('unmappedSourceEntities', $source);
         self::assertStringContainsString('sourceParityExpectedCounts', $source);
         self::assertStringContainsString('countGateService->run($sourceExpectedCounts, (float) $tolerance, $filters, $translatedScope)', $source);
         self::assertStringContainsString('DOMAIN_CRAFT_BASELINE_CURRENT_DRIFT', $source);
@@ -111,11 +109,14 @@ final class CountGateServiceFiltersTest extends TestCase
     {
         $source = (string) file_get_contents(__DIR__ . '/../../../src/finalize/FinalizeWalker.php');
 
-        self::assertStringContainsString('MappingFilterTranslator', $source);
-        self::assertStringContainsString('loadTranslatedScopeForEntityFilters', $source);
+        self::assertStringContainsString('CompiledScope::forFilters', $source);
         self::assertStringContainsString('section($translatedScope[\'sectionHandles\'])', $source);
         self::assertStringContainsString('type($translatedScope[\'entryTypeHandles\'])', $source);
-        self::assertStringContainsString('unmappedSourceEntities', $source);
+
+        // The unmapped-entity preflight moved into the shared CompiledScope
+        // module; assert it there instead of in each consumer.
+        $scopeSource = (string) file_get_contents(__DIR__ . '/../../../src/filter/CompiledScope.php');
+        self::assertStringContainsString('unmappedSourceEntities', $scopeSource);
     }
 
     public function testFinalizeWalkerResetsRewriterLookupCachesBeforeWalking(): void

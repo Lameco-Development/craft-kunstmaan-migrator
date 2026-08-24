@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\finalize;
 
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
-use lameco\kunstmaanmigrator\filter\MappingFilterTranslator;
+use lameco\kunstmaanmigrator\filter\CompiledScope;
 use lameco\kunstmaanmigrator\Plugin;
 use Craft;
 use craft\db\Query;
@@ -76,7 +76,7 @@ final class FinalizeWalker extends Component
         // Optional Craft scope from source-domain entity filters. D-17/09-02B:
         // translate Kunstmaan FQCN/basename filters through compiled mapping
         // before touching Craft query surfaces.
-        $translatedScope = $this->loadTranslatedScopeForEntityFilters($filters);
+        $translatedScope = CompiledScope::forFilters($filters, 'finalize');
         if ($translatedScope['sectionHandles'] !== []) {
             $query->section($translatedScope['sectionHandles']);
         }
@@ -446,47 +446,4 @@ final class FinalizeWalker extends Component
         );
     }
 
-    /**
-     * @return array{
-     *   sectionHandles: list<string>,
-     *   entryTypeHandles: list<string>,
-     *   unmappedSourceEntities: list<string>
-     * }
-     */
-    private function loadTranslatedScopeForEntityFilters(MigrationFilters $filters): array
-    {
-        if ($filters->entities === []) {
-            return [
-                'sectionHandles' => [],
-                'entryTypeHandles' => [],
-                'unmappedSourceEntities' => [],
-            ];
-        }
-
-        $plugin = Plugin::getInstance();
-        $mappingPath = $plugin->mappingFile->resolvePath();
-        if (!is_file($mappingPath)) {
-            throw new \RuntimeException(
-                'Entity filters require compiled mapping for finalize. Run `./craft kunstmaan-migrator/compile` first.',
-            );
-        }
-
-        $compiledMapping = $plugin->mappingFile->load($mappingPath);
-        if ((array) ($compiledMapping['nodeClasses'] ?? []) === [] || (array) ($compiledMapping['sections'] ?? []) === []) {
-            throw new \RuntimeException(
-                'Entity filters require compiled mapping nodeClasses/sections for finalize. Run `./craft kunstmaan-migrator/compile` first.',
-            );
-        }
-
-        $translatedScope = (new MappingFilterTranslator())->translate($compiledMapping, $filters);
-        if ($translatedScope['unmappedSourceEntities'] !== []) {
-            throw new \RuntimeException(
-                'Entity filters are not present in compiled mapping: '
-                . implode(', ', $translatedScope['unmappedSourceEntities'])
-                . '. Run `./craft kunstmaan-migrator/analyze` and `./craft kunstmaan-migrator/compile`, or adjust --entities.',
-            );
-        }
-
-        return $translatedScope;
-    }
 }

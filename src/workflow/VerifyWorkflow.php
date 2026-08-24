@@ -8,7 +8,8 @@ use Craft;
 use yii\base\Component;
 use craft\helpers\Console;
 use lameco\kunstmaanmigrator\filter\FilterFactory;
-use lameco\kunstmaanmigrator\filter\MappingFilterTranslator;
+use lameco\kunstmaanmigrator\filter\CompiledScope;
+use lameco\kunstmaanmigrator\verify\BaselineSlug;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\Plugin;
@@ -433,38 +434,7 @@ class VerifyWorkflow extends Component
      */
     private function loadTranslatedScopeForEntityFilters(MigrationFilters $filters, Plugin $plugin): array
     {
-        if ($filters->entities === []) {
-            return [
-                'sectionHandles' => [],
-                'entryTypeHandles' => [],
-                'unmappedSourceEntities' => [],
-            ];
-        }
-
-        $mappingPath = $plugin->mappingFile->resolvePath();
-        if (!is_file($mappingPath)) {
-            throw new \RuntimeException(
-                'Entity filters require compiled mapping for verify. Run `./craft kunstmaan-migrator/compile` first.',
-            );
-        }
-
-        $compiledMapping = $plugin->mappingFile->load($mappingPath);
-        if ((array) ($compiledMapping['nodeClasses'] ?? []) === [] || (array) ($compiledMapping['sections'] ?? []) === []) {
-            throw new \RuntimeException(
-                'Entity filters require compiled mapping nodeClasses/sections for verify. Run `./craft kunstmaan-migrator/compile` first.',
-            );
-        }
-
-        $translatedScope = (new MappingFilterTranslator())->translate($compiledMapping, $filters);
-        if ($translatedScope['unmappedSourceEntities'] !== []) {
-            throw new \RuntimeException(
-                'Entity filters are not present in compiled mapping: '
-                . implode(', ', $translatedScope['unmappedSourceEntities'])
-                . '. Run `./craft kunstmaan-migrator/analyze` and `./craft kunstmaan-migrator/compile`, or adjust --entities.',
-            );
-        }
-
-        return $translatedScope;
+        return CompiledScope::forFilters($filters, 'verify');
     }
 
     private function buildRuntimeFilters(Plugin $plugin): MigrationFilters
@@ -568,12 +538,9 @@ class VerifyWorkflow extends Component
         return ExitCode::OK;
     }
 
-    /**
-     * URL → safe filename slug. Ported byte-for-byte from v1 lines 294-297.
-     */
     private function urlToSlug(string $url): string
     {
-        return preg_replace('/[^a-zA-Z0-9_-]+/', '_', $url) ?? 'baseline';
+        return BaselineSlug::of($url);
     }
 
     /**
