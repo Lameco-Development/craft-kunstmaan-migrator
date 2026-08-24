@@ -92,6 +92,22 @@ final class ElementWriterContractTest extends TestCase
     }
 
     /**
+     * The production adapter cannot run without a booted Craft, so what is
+     * checkable is its source: a save is a pass-through with no retry around
+     * it. The retry it once had ran inside the entry's transaction, which a
+     * deadlock has already rolled back whole — the retried element then
+     * committed on top of nothing. `run\WriteConflictRetry` retries the
+     * payload instead; a `catch` reappearing here is that defect coming back.
+     */
+    public function testTheProductionAdapterRetriesNothing(): void
+    {
+        $source = (string) file_get_contents(dirname(__DIR__, 3) . '/src/craft/CraftElementWriter.php');
+        $code = preg_replace('~^\s*(?:/\*\*|\*|//).*$~m', '', $source) ?? $source;
+
+        self::assertDoesNotMatchRegularExpression('~\b(?:catch|usleep|sleep)\b~', $code);
+    }
+
+    /**
      * The production adapter is a pass-through and cannot run without a booted
      * Craft, so what is checkable here is that it has not drifted from the
      * interface the fake also implements.

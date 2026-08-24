@@ -24,6 +24,9 @@ final class RunTally
         'skipped' => 0,
         'invalid' => 0,
         'failed' => 0,
+        // A payload save that lost a write race and ran again from the top. Not a
+        // failure by itself, but a run that shows many of them had a CP tab open.
+        'writeConflictRetries' => 0,
     ];
 
     /** @var list<string> */

@@ -10,30 +10,21 @@ use craft\db\Query;
 use craft\db\Table;
 use craft\elements\Entry;
 use craft\models\Section;
-use Throwable;
-use yii\db\Exception as DbException;
 
 /**
  * The production adapter: a thin pass-through to `Craft::$app->elements`.
  *
  * Deliberately thin. Every line of behaviour that lives here is a line no test
  * can reach, so the adapter does translation and nothing else — the decisions
- * stay in the modules, where a fake can drive them. The one exception is the
- * write-conflict retry below, which is translation of a database dialect, not
- * a decision.
+ * stay in the modules, where a fake can drive them.
+ *
+ * In particular it does not retry. A save runs inside the entry's transaction,
+ * and a deadlock rolls that whole transaction back; a retry here would commit
+ * one element on top of an entry that is already gone. `run\WriteConflictRetry`
+ * retries the payload instead, where the unit of work is idempotent.
  */
 final class CraftElementWriter implements ElementWriter
 {
-    /**
-     * A structure insert shifts nested-set boundaries, and the moment a CP tab
-     * is open Craft's web runner processes slug/search jobs against the same
-     * rows — MariaDB answers the loser with 1020 "record has changed since
-     * last read" (or a 1213 deadlock). Both are retry-after-backoff conditions,
-     * not errors: the migration is correct, it just lost a race a normal
-     * operator's open browser tab creates.
-     */
-    private const RETRYABLE = ['1020', '1213', '40001'];
-
     public function createEntry(int $sectionId, int $typeId, int $siteId): Entry
     {
         $entry = new Entry();
@@ -70,35 +61,7 @@ final class CraftElementWriter implements ElementWriter
 
     public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
     {
-        $attempts = 0;
-
-        while (true) {
-            try {
-                return Craft::$app->elements->saveElement($element, $runValidation, $propagate);
-            } catch (Throwable $e) {
-                if (++$attempts >= 4 || !self::isWriteConflict($e)) {
-                    throw $e;
-                }
-
-                usleep($attempts * 200_000);
-            }
-        }
-    }
-
-    private static function isWriteConflict(Throwable $e): bool
-    {
-        for ($cursor = $e; $cursor !== null; $cursor = $cursor->getPrevious()) {
-            if ($cursor instanceof DbException) {
-                $code = (string) ($cursor->errorInfo[1] ?? '');
-                $state = (string) ($cursor->errorInfo[0] ?? '');
-
-                if (in_array($code, self::RETRYABLE, true) || in_array($state, self::RETRYABLE, true)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        return Craft::$app->elements->saveElement($element, $runValidation, $propagate);
     }
 
     public function delete(ElementInterface $element, bool $hardDelete = false): void
