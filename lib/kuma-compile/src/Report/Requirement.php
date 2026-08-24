@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Lameco\KumaCompile\Report;
 
 /**
- * One required Craft field, and what the mapping does about it.
+ * One Craft field on a target the mapping writes to, and what the mapping does about it.
  *
  * A required field the mapping never fills is not a validation error — the field may carry a
  * default — but it is the thing that decides whether a load survives. The compiler drops empty
@@ -32,6 +32,8 @@ final class Requirement
         public ?int $empty = null,
         public readonly bool $totalTransform = false,
         public readonly ?string $craftDefault = null,
+        /** Whether the entry type marks the field required. An optional field is never a blocker, only a hole. */
+        public readonly bool $required = true,
     ) {
     }
 
@@ -91,20 +93,20 @@ final class Requirement
     public function action(): string
     {
         return match ($this->verdict()) {
-            self::MISSING   => 'set a default in the mapping, or relax the field in Craft',
-            self::PARTIAL   => 'add a fallback for the empty rows, or relax the field in Craft',
+            self::MISSING => 'set a default in the mapping, or relax the field in Craft',
+            self::PARTIAL => 'add a fallback for the empty rows, or relax the field in Craft',
             self::DEFAULTED => sprintf('none — Craft writes `%s`; override in the mapping to choose otherwise', (string) $this->craftDefault),
-            default         => '',
+            default => '',
         };
     }
 
     public function affected(): int
     {
         return match ($this->verdict()) {
-            self::MISSING             => $this->live ?? 0,
-            self::PARTIAL             => $this->empty ?? 0,
-            self::DEFAULTED           => $this->empty ?? $this->live ?? 0,
-            default                   => 0,
+            self::MISSING => $this->live ?? 0,
+            self::PARTIAL => $this->empty ?? 0,
+            self::DEFAULTED => $this->empty ?? $this->live ?? 0,
+            default => 0,
         };
     }
 }

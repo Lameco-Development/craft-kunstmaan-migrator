@@ -58,8 +58,8 @@ final class AdapterSetting
         return match ($this->type) {
             self::TYPE_BOOLEAN => (bool) $value,
             self::TYPE_LIST => is_array($value)
-                ? array_values(array_filter(array_map(trim(...), array_map(strval(...), $value)), static fn (string $v): bool => $v !== ''))
-                : array_values(array_filter(array_map(trim(...), explode(',', (string) $value)), static fn (string $v): bool => $v !== '')),
+                ? array_values(array_filter(array_map(trim(...), array_map(strval(...), $value)), static fn(string $v): bool => $v !== ''))
+                : array_values(array_filter(array_map(trim(...), explode(',', (string) $value)), static fn(string $v): bool => $v !== '')),
             default => (string) $value,
         };
     }

@@ -48,6 +48,13 @@ final class WriteBoundaryTest extends TestCase
             'seam' => 'FormGateway',
             'instead' => 'isAvailable/formIdByHandle/saveForm',
         ],
+        [
+            'pattern' => '~\\\\spicyweb\\\\embeddedassets\\\\Plugin::\$plugin(?:->(\w+))?~',
+            'adapter' => 'src/craft/SpicywebEmbedGateway.php',
+            'fake' => 'tests/support/InMemoryEmbedGateway.php',
+            'seam' => 'EmbedGateway',
+            'instead' => 'available/createFromUrl',
+        ],
     ];
 
     /**

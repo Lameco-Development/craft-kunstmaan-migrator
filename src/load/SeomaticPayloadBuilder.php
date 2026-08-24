@@ -2,7 +2,6 @@
 
 namespace lameco\kunstmaanmigrator\load;
 
-use lameco\kunstmaanmigrator\load\MigrationStateService;
 use Closure;
 use yii\base\Component;
 

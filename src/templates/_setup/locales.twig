@@ -7,7 +7,7 @@
 
   <div class="readable">
     <p>
-      {{ "Each language below has real pages in the old site. Point it at a Craft site, or say why it is not coming across — a run tells those two apart."|t('kunstmaan-migrator') }}
+      {{ "The dropdowns start on the Craft site whose language matches. Check them, and set anything that should not migrate to Not migrating."|t('kunstmaan-migrator') }}
     </p>
   </div>
 
@@ -15,25 +15,13 @@
     <div class="pane" style="margin-bottom: 18px;">
       <h2>{{ label }} <span class="light"><code>{{ environment.database }}</code></span></h2>
 
-      {{ forms.textareaField({
-        label: "Where its files live"|t('kunstmaan-migrator'),
-        instructions: "The old site’s uploads folder. Add a second line if some files live in another site’s folder."|t('kunstmaan-migrator'),
-        name: 'mediaRoot[' ~ label ~ ']',
-        value: environment.mediaRoot,
-        rows: 2,
-        class: 'kuma-root',
-        placeholder: '$KUMA_MEDIA_ROOT_' ~ label|upper,
-      }) }}
-
-      <p class="kuma-check" data-root-for="{{ label }}"></p>
-
+      <div class="tablepane" style="margin-top: 14px;">
       <table class="data fullwidth">
         <thead>
           <tr>
             <th>{{ "Language"|t('kunstmaan-migrator') }}</th>
             <th class="rightalign">{{ "Pages"|t('kunstmaan-migrator') }}</th>
             <th>{{ "Craft site"|t('kunstmaan-migrator') }}</th>
-            <th>{{ "If not migrating, why"|t('kunstmaan-migrator') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -43,55 +31,25 @@
               <th scope="row"><code>{{ locale }}</code></th>
               <td class="rightalign">{{ pages|number_format }}</td>
               <td>
+                {# "Not migrating" carries a real value: selectize cannot select an
+                   empty-valued option back once a site has been picked. #}
                 {{ forms.selectize({
                   name: 'locales[' ~ label ~ '][' ~ locale ~ '][site]',
-                  value: chosen.site ?? '',
-                  options: [{ label: "Not migrating"|t('kunstmaan-migrator'), value: '' }]|merge(
+                  value: chosen.site|default('') ?: environment.suggested[locale]|default('') ?: '-',
+                  options: [{ label: "Not migrating"|t('kunstmaan-migrator'), value: '-' }]|merge(
                     sites|map(s => { label: s.name, value: s.handle })
                   ),
                   class: 'kuma-site',
                 }) }}
               </td>
-              <td>
-                {{ forms.text({
-                  name: 'locales[' ~ label ~ '][' ~ locale ~ '][reason]',
-                  value: chosen.reason ?? '',
-                  placeholder: "e.g. no Spanish site planned"|t('kunstmaan-migrator'),
-                }) }}
-              </td>
             </tr>
           {% else %}
-            <tr><td colspan="4" class="light">{{ "This site has no published pages."|t('kunstmaan-migrator') }}</td></tr>
+            <tr><td colspan="3"><p class="zilch small">{{ "This site has no published pages."|t('kunstmaan-migrator') }}</p></td></tr>
           {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   {% endfor %}
 
-  {% js %}
-    // Answered while you type, rather than by a run failing on it in an hour.
-    var checkRoot = function (field) {
-      var label = field.name.replace(/^mediaRoot\[|\]$/g, '');
-      var out = document.querySelector('[data-root-for="' + label + '"]');
-      if (!out) { return; }
-
-      if (field.value.trim() === '') { out.className = 'kuma-check'; out.textContent = ''; return; }
-
-      Craft.sendActionRequest('POST', 'kunstmaan-migrator/setup/check-paths', { data: { paths: field.value } })
-        .then(function (response) {
-          out.className = 'kuma-check kuma-check--' + (response.data.ok ? 'ok' : 'bad');
-          out.innerHTML = '<span data-icon="' + (response.data.ok ? 'check' : 'alert') + '"></span> ' + response.data.message;
-        })
-        .catch(function () { out.className = 'kuma-check'; out.textContent = ''; });
-    };
-
-    var timer = null;
-    document.addEventListener('input', function (e) {
-      if (!e.target.classList.contains('kuma-root')) { return; }
-      clearTimeout(timer);
-      timer = setTimeout(function () { checkRoot(e.target); }, 400);
-    });
-
-    document.querySelectorAll('.kuma-root').forEach(checkRoot);
-  {% endjs %}
 {% endblock %}

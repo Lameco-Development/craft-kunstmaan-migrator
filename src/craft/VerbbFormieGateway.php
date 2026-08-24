@@ -137,7 +137,7 @@ final class VerbbFormieGateway implements FormGateway
         // is worse than a single column an editor can rearrange in a minute.
         $page = new FieldLayoutPage();
         $page->label = (string) ($settings['pageLabel'] ?? 'Page 1');
-        $page->setRows(array_map(static function ($field): FieldLayoutRow {
+        $page->setRows(array_map(static function($field): FieldLayoutRow {
             $row = new FieldLayoutRow();
             $row->setFields([$field]);
 

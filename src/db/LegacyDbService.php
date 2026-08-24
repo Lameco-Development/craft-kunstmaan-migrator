@@ -175,8 +175,8 @@ class LegacyDbService extends Component
             ->queryAll();
         $result = [];
         foreach ($rows as $row) {
-            $locale  = (string) $row['locale'];
-            $field   = (string) $row['field'];
+            $locale = (string) $row['locale'];
+            $field = (string) $row['field'];
             $content = (string) ($row['content'] ?? '');
             $result[$locale][$field] = $content;
         }

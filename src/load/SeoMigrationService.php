@@ -2,21 +2,17 @@
 
 namespace lameco\kunstmaanmigrator\load;
 
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
-use lameco\kunstmaanmigrator\sites\SiteMap;
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
-use lameco\kunstmaanmigrator\adapters\GatedAdapter;
-use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\load\MigrationStateService;
-use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use yii\db\Query;
 use Craft;
 use craft\elements\Entry;
+use lameco\kunstmaanmigrator\adapters\GatedAdapter;
+use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
+use lameco\kunstmaanmigrator\db\LegacyDbService;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use lameco\kunstmaanmigrator\sites\SiteMap;
 use yii\base\Component;
+use yii\db\Query;
 
 /**
  * SeoMigrationService — writes the SEOmatic `seo` field on every migrated
@@ -103,7 +99,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
         }
 
         return array_map(
-            static fn ($binding): array => [
+            static fn($binding): array => [
                 'siteId' => $binding->siteId,
                 'siteHandle' => $binding->handle,
                 'locale' => $binding->locale,

@@ -9,23 +9,19 @@ use craft\elements\Entry;
 use craft\helpers\App;
 use Lameco\KumaCompile\Compile\Compiler;
 use Lameco\KumaCompile\Compile\PayloadWriter;
-use Lameco\KumaCompile\Compile\RedirectCompiler;
 use Lameco\KumaCompile\Compile\Transforms;
 use Lameco\KumaCompile\Legacy\Dsn;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\payload\Payload;
-use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
 use lameco\kunstmaanmigrator\compile\TargetModel;
+use lameco\kunstmaanmigrator\load\MigrationOptions;
+use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
+use lameco\kunstmaanmigrator\payload\Payload;
+use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
 use lameco\kunstmaanmigrator\payload\PayloadValidator;
 use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\console\LoadController;
-use lameco\kunstmaanmigrator\load\RedirectMigrationService;
-use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\sites\SiteMap;
 use yii\db\Connection;
 
@@ -130,31 +126,12 @@ final class EnvironmentPipeline
         RunTally $tally,
         ?PayloadWriter $writer = null,
     ): void {
-        $dsn = self::dsnFromSettings();
-        $db = LegacyDatabase::connect($env, (string) $spec['database'], $dsn);
-
-        // The adapters and the media-token rewriter read the legacy database through
-        // Craft's `legacyDb` component, which is one connection from one setting. Three
-        // environments are three databases, so it is repointed per environment — without
-        // this a DE run reads COM's tables and reports them as migrated.
-        self::pointLegacyDbAt($dsn, (string) $spec['database']);
-
-        // Locale → site is per environment, not global. COM's `en` is comEnUs while LV's is
-        // comLvEn, and one global map cannot hold both. The mapping states it per
-        // environment, so it is the only source.
-        $siteMap = SiteMap::bind(
-            (array) ($spec['locales'] ?? []),
-            Craft::$app->sites->getAllSites(),
-        );
-
-        $this->plugin->entryMigrationService->sites = $siteMap->configured();
-
-        self::applyMediaRoots($spec);
+        [$db, $siteMap] = $this->prepare($mapping, $env, $spec, $settings);
 
         $this->compiler->compile(
             $db,
             $env,
-            function (array $raw) use ($settings, $tally, $writer): void {
+            function(array $raw) use ($settings, $tally, $writer): void {
                 $this->handlePayload($raw, $settings, $tally, $writer);
             },
             $settings->limit,
@@ -174,6 +151,68 @@ final class EnvironmentPipeline
                 $settings,
             );
         }
+    }
+
+    /**
+     * Point every shared component at one environment — connection, site map,
+     * media roots, asset flags — and open the legacy database.
+     *
+     * Extracted from `run()` for the batched queue path (#48): a batch job
+     * rebuilds this in every process, compiles a window, and lets the process
+     * end. Both callers prepare identically or the halves drift again.
+     *
+     * @param array<string, mixed> $spec the mapping's block for this environment
+     * @return array{0: LegacyDatabase, 1: SiteMap}
+     */
+    public function prepare(Mapping $mapping, string $env, array $spec, RunSettings $settings): array
+    {
+        $dsn = self::dsnFromSettings();
+        $db = LegacyDatabase::connect($env, (string) $spec['database'], $dsn);
+
+        // The adapters and the media-token rewriter read the legacy database through
+        // Craft's `legacyDb` component, which is one connection from one setting. Three
+        // environments are three databases, so it is repointed per environment — without
+        // this a DE run reads COM's tables and reports them as migrated.
+        self::pointLegacyDbAt($dsn, (string) $spec['database']);
+
+        // Locale → site is per environment, not global. COM's `en` is comEnUs while LV's is
+        // comLvEn, and one global map cannot hold both. The mapping states it per
+        // environment, so it is the only source.
+        $siteMap = SiteMap::bind(
+            (array) ($spec['locales'] ?? []),
+            Craft::$app->sites->getAllSites(),
+        );
+
+        $this->plugin->entryMigrationService->sites = $siteMap->configured();
+
+        self::applyMediaRoots($spec, $env, count($mapping->environments()) > 1);
+
+        // The JIT entry points build their own MigrationOptions, so the flag has to live on
+        // the service to reach them.
+        $this->plugin->assetMigrationService->skipAssets = $settings->skipAssets;
+
+        return [$db, $siteMap];
+    }
+
+    /**
+     * One payload, validated and saved — the public face of `handlePayload`,
+     * for the batched job whose processItem() is exactly this.
+     *
+     * @param array<string, mixed> $raw
+     */
+    public function processOne(array $raw, RunSettings $settings, RunTally $tally, ?PayloadWriter $writer = null): void
+    {
+        $this->handlePayload($raw, $settings, $tally, $writer);
+    }
+
+    /**
+     * The adapter passes for one prepared environment, as `run()` executes them.
+     *
+     * @return array<string, mixed>
+     */
+    public function runAdaptersFor(EnvironmentContext $context, RunSettings $settings): array
+    {
+        return $this->runAdapters($context, $settings);
     }
 
     /** @param array<string, mixed> $raw */
@@ -224,7 +263,11 @@ final class EnvironmentPipeline
      */
     private function runAdapters(EnvironmentContext $context, RunSettings $settings): array
     {
-        $opts = new MigrationOptions(dryRun: $settings->dryRun, force: $settings->force);
+        $opts = new MigrationOptions(
+            dryRun: $settings->dryRun,
+            force: $settings->force,
+            skipAssets: $settings->skipAssets,
+        );
         $out = [];
 
         // The registry, not a hard-coded four. A project that registers its own
@@ -236,7 +279,7 @@ final class EnvironmentPipeline
 
             if ($service !== null) {
                 $out[$adapter->handle] = self::summarise(
-                    static fn (): MigrationReport => $service->migrateAll($opts, $context),
+                    static fn(): MigrationReport => $service->migrateAll($opts, $context),
                 );
 
                 continue;
@@ -290,8 +333,10 @@ final class EnvironmentPipeline
      * and rewrote 24 of 177 image references.
      *
      * @param array<string, mixed> $spec the mapping's block for this environment
+     * @param ?string $env  the environment's name, which `legacy-tree` roots its folders under
+     * @param bool $prefixEnvironment whether the corpus has more than one source
      */
-    public static function applyMediaRoots(array $spec): void
+    public static function applyMediaRoots(array $spec, ?string $env = null, bool $prefixEnvironment = false): void
     {
         $roots = self::mediaRootsFrom($spec);
 
@@ -303,6 +348,8 @@ final class EnvironmentPipeline
 
         $assets->legacyMediaRoot = $roots[0] ?? null;
         $assets->legacyMediaFallbackRoots = array_slice($roots, 1);
+        $assets->environmentName = $env;
+        $assets->prefixEnvironment = $prefixEnvironment;
     }
 
     /**
@@ -321,9 +368,9 @@ final class EnvironmentPipeline
         $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [$roots]);
 
         return array_values(array_filter(array_map(
-            static fn ($path): string => (string) App::parseEnv((string) $path),
+            static fn($path): string => (string) App::parseEnv((string) $path),
             $roots,
-        ), static fn (string $path): bool => $path !== ''));
+        ), static fn(string $path): bool => $path !== ''));
     }
 
     /**
@@ -356,5 +403,4 @@ final class EnvironmentPipeline
 
         Plugin::getInstance()?->ckeditorRewriterService->resetLookupCaches();
     }
-
 }

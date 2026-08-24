@@ -51,6 +51,13 @@ final class EntryMigrationServiceTest extends TestCase
     {
         $service = new EntryMigrationService();
 
+        // A `heading` in a block's fields is only lifted onto the native title when the block's
+        // entry type has no `heading` field of its own — on most types it has one, and lifting
+        // there would move editorial copy onto a native title Craft then drops. Describing the
+        // shape through the probe is what lets the rule be asserted without booting Craft; without
+        // it the lookup reaches Craft::$app and the test errors rather than failing.
+        $service->setEntryTypeFieldProbe(static fn(string $entryType, string $field): bool => false);
+
         $normalized = $service->normalizeMatrixPayload([
             'contentBuilder' => [
                 'new1' => [

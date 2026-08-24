@@ -6,18 +6,28 @@ namespace lameco\kunstmaanmigrator\controllers;
 
 use Craft;
 use craft\helpers\App;
+use craft\helpers\Queue as QueueHelper;
 use craft\web\Controller;
+use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Mapping\MappingCheck;
+use Lameco\KumaCompile\Mapping\MappingDocument;
+use Lameco\KumaCompile\Target\CraftSchema;
+use Lameco\KumaCompile\Target\SpecNotes;
+use Lameco\KumaCompile\Target\Suggester;
+use lameco\kunstmaanmigrator\compile\TargetModel;
+use lameco\kunstmaanmigrator\console\StateController;
 use lameco\kunstmaanmigrator\mapping\FieldExpression;
 use lameco\kunstmaanmigrator\mapping\MappingEditor;
+use lameco\kunstmaanmigrator\mapping\MappingRow;
+use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\ProductionGuard;
-use lameco\kunstmaanmigrator\console\StateController;
 use lameco\kunstmaanmigrator\queue\FinalizeJob;
 use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
 use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use lameco\kunstmaanmigrator\run\Diagnostics;
-use lameco\kunstmaanmigrator\utilities\MigrationUtility;
+use lameco\kunstmaanmigrator\run\RunPanel;
 use Throwable;
 use yii\web\BadRequestHttpException;
 use yii\web\Response;
@@ -37,7 +47,7 @@ final class MigrationController extends Controller
      * media-root fallback chain and a locale marked "not migrated, and here is
      * why" are things a YAML file states better than a form.
      */
-    private const EDITABLE_LANES = ['parts', 'pages', 'entities'];
+    private const EDITABLE_LANES = MappingEditor::LANES;
 
     /**
      * The `doctor` checks, in the browser.
@@ -50,7 +60,7 @@ final class MigrationController extends Controller
     {
         $this->requirePostRequest();
         $this->requireAcceptsJson();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $checks = (new Diagnostics())->run();
 
@@ -69,12 +79,16 @@ final class MigrationController extends Controller
      */
     public function actionExport(): Response
     {
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
-        $lines = [];
+        $export = StateController::buildExportRows(Plugin::getInstance()->migrationStateService);
+        $lines = array_map(
+            static fn(array $row): string => (string) json_encode($row, JSON_UNESCAPED_SLASHES),
+            $export->rows,
+        );
 
-        foreach (StateController::buildExportRows(Plugin::getInstance()->migrationStateService) as $row) {
-            $lines[] = json_encode($row, JSON_UNESCAPED_SLASHES);
+        if (($warning = $export->warning()) !== null) {
+            Craft::warning($warning, 'kunstmaan-migrator');
         }
 
         return Craft::$app->getResponse()->sendContentAsFile(
@@ -95,7 +109,7 @@ final class MigrationController extends Controller
     public function actionMapping(): Response
     {
         $this->requireCpRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $lane = (string) ($this->request->getQueryParam('lane') ?: 'parts');
 
@@ -113,14 +127,116 @@ final class MigrationController extends Controller
             $error = $e->getMessage();
         }
 
+        // The prefill offer: only on the parts lane, only while rows still lack
+        // a target, and only when a content-model spec directory is there to
+        // draft from — a fresh mapping is exactly when all three hold.
+        $undecided = $lane === 'parts'
+            ? count(array_filter($rows, static fn($row): bool => $row->target === null && $row->dropped === null))
+            : 0;
+        $specsPath = self::specsPath();
+
+        // What each tab owes: the open count is the only number that makes
+        // "which lane next" answerable without clicking through all four.
+        // One progress walk per lane feeds both the tab badges and the bar.
+        $progress = [];
+
+        if ($error === null) {
+            foreach (self::EDITABLE_LANES as $name) {
+                try {
+                    $progress[$name] = $editor->progress($name);
+                } catch (Throwable) {
+                    $progress[$name] = null;
+                }
+            }
+        }
+
         return $this->renderTemplate('kunstmaan-migrator/_mapping', [
             'lane' => $lane,
             'lanes' => self::EDITABLE_LANES,
+            'open' => array_map(static fn(?array $p): ?int => $p['open'] ?? null, $progress),
             'rows' => $rows,
-            'progress' => $error === null ? $editor->progress($lane) : null,
+            'progress' => $progress[$lane] ?? null,
             'path' => $editor->path(),
             'error' => $error,
+            'prefill' => $error === null && $undecided > 0 && $specsPath !== null
+                ? ['undecided' => $undecided, 'specsPath' => $specsPath]
+                : null,
         ]);
+    }
+
+    /**
+     * Draft every undecided part from the content model's own migration notes.
+     *
+     * The specs already say which parts each block covers and which property
+     * becomes which field; this writes those drafts into the mapping. A draft
+     * is not a decision — every drafted row keeps its leftover columns as
+     * `unreviewed`, so it stays open until somebody reviews it.
+     */
+    public function actionPrefill(): Response
+    {
+        $this->requirePostRequest();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $path = $editor->path();
+        $specsPath = self::specsPath();
+
+        if ($path === null || $specsPath === null) {
+            Craft::$app->getSession()->setError(Craft::t('kunstmaan-migrator', 'No mapping or no content-model specs to draft from.'));
+
+            return $this->redirect('kunstmaan-migrator/mapping');
+        }
+
+        try {
+            $mapping = Mapping::fromFile($path);
+            $envName = (string) array_key_first($mapping->environments());
+            $database = (string) ($mapping->environments()[$envName]['database'] ?? '');
+            $db = LegacyDatabase::connect($envName, $database, $editor->legacyDsn());
+
+            $suggester = new Suggester(
+                SpecNotes::fromDirectory($specsPath),
+                CraftSchema::fromProjectConfig((string) Craft::getAlias('@root')),
+            );
+            $result = $suggester->prefill($mapping, $db);
+
+            $document = MappingDocument::fromFile($path);
+
+            foreach ($result['drafted'] as $part => $patch) {
+                $document = $document->patch('parts', (string) $part, $patch);
+            }
+
+            $document->save();
+        } catch (Throwable $e) {
+            Craft::$app->getSession()->setError($e->getMessage());
+
+            return $this->redirect('kunstmaan-migrator/mapping');
+        }
+
+        Craft::$app->getSession()->setNotice(Craft::t(
+            'kunstmaan-migrator',
+            '{n, plural, =0{Nothing to draft — no spec names the open parts.} =1{1 part drafted from the content model.} other{# parts drafted from the content model.}} {skipped, plural, =0{} other{# stayed open with no draft.}} Every drafted row stays open until you review it.',
+            ['n' => count($result['drafted']), 'skipped' => count($result['skipped'])],
+        ));
+
+        return $this->redirect('kunstmaan-migrator/mapping');
+    }
+
+    /**
+     * The content-model spec directory: the plugin setting when set, otherwise
+     * `docs/content-model/page-builder` under the project root — where the
+     * scaffolded content model keeps its block specs.
+     */
+    private static function specsPath(): ?string
+    {
+        $configured = trim((string) App::parseEnv((string) (Plugin::getInstance()->getSettings()->specsPath ?? '')));
+
+        if ($configured !== '') {
+            return is_dir($configured) ? $configured : null;
+        }
+
+        $default = Craft::getAlias('@root') . '/docs/content-model/page-builder';
+
+        return is_dir($default) ? $default : null;
     }
 
     /**
@@ -129,7 +245,7 @@ final class MigrationController extends Controller
     public function actionMappingRow(): Response
     {
         $this->requireCpRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $lane = (string) $this->request->getRequiredQueryParam('lane');
         $key = (string) $this->request->getRequiredQueryParam('key');
@@ -145,24 +261,222 @@ final class MigrationController extends Controller
             throw new BadRequestHttpException(sprintf('The %s lane does not name "%s".', $lane, $key));
         }
 
-        // Each Craft field's current expression, split into the parts somebody
-        // can choose from — which column, and what to do to it.
-        $fields = $row->target !== null ? $editor->fieldsFor($row->target) : [];
+        return $this->renderTemplate('kunstmaan-migrator/_mapping-row', [
+            ...self::fieldMapVariables($editor, $lane, $row, $row->target),
+            'targetOptions' => $editor->targetOptions($lane),
+            'samples' => $editor->samplesFor($row),
+        ]);
+    }
+
+    /**
+     * The `_mapping-row-fields` variable set for one row and one (possibly
+     * hypothetical) target — shared by the saved row screen and the live
+     * field-map swap, because the preview must render exactly what a save
+     * would show.
+     *
+     * A sidecar has no target of its own — it decorates whichever page carries
+     * a row — so its field list is the union of what the page entry types
+     * offer, its own mapped fields first: the union across thirty entry types
+     * is a long list of strangers to drown in.
+     *
+     * @return array<string, mixed>
+     */
+    private static function fieldMapVariables(MappingEditor $editor, string $lane, MappingRow $row, ?string $target): array
+    {
+        $fields = match (true) {
+            $lane === 'sidecars' => $editor->pageFields(),
+            $target !== null && $target !== '' => $editor->fieldsFor($target),
+            default => [],
+        };
+
+        if ($lane === 'sidecars') {
+            $mapped = array_keys($row->map);
+            usort($fields, static fn(string $a, string $b): int =>
+                [!in_array($a, $mapped, true), $a] <=> [!in_array($b, $mapped, true), $b]);
+        }
+
         $expressions = [];
 
         foreach ($fields as $field) {
             $expressions[$field] = FieldExpression::parse((string) ($row->map[$field] ?? ''));
         }
 
-        return $this->renderTemplate('kunstmaan-migrator/_mapping-row', [
+        return [
             'lane' => $lane,
             'row' => $row,
-            'blocks' => $editor->targetsFor($lane),
             'fields' => $fields,
             'expressions' => $expressions,
             'columns' => $editor->columnsFor($row),
             'transforms' => $editor->transforms(),
+            'sidecarFills' => $lane === 'pages' && $target !== null && $target !== ''
+                ? $editor->sidecarFillsFor($target)
+                : [],
+            'carriage' => $lane === 'sidecars' ? $editor->sidecarCarriage($row) : [],
+        ];
+    }
+
+    /**
+     * The inverse of the mapping: for one entry type, every field and what
+     * feeds it. The lanes answer "what does this legacy thing become"; the
+     * operator verifies with "is every field of contentPage fed" — this is
+     * the screen for the second question.
+     */
+    public function actionCoverage(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $targets = $editor->coverageTargets();
+
+        // Old links said only ?entryType= — they keep meaning the page kind.
+        $kind = (string) $this->request->getQueryParam('kind', 'page');
+        $handle = (string) ($this->request->getQueryParam('handle')
+            ?? $this->request->getQueryParam('entryType', $targets[0]['handle'] ?? ''));
+
+        if (!in_array(['handle' => $handle, 'kind' => $kind], $targets, true)) {
+            [$handle, $kind] = [$targets[0]['handle'] ?? '', $targets[0]['kind'] ?? 'page'];
+        }
+
+        return $this->renderTemplate('kunstmaan-migrator/_coverage', [
+            'gaps' => $editor->coverageGaps(),
+            'targets' => $targets,
+            'kind' => $kind,
+            'handle' => $handle,
+            'coverage' => $handle !== ''
+                ? $editor->coverageFor($kind, $handle)
+                : ['kind' => $kind, 'receives' => [], 'fields' => []],
         ]);
+    }
+
+    /**
+     * One entry type's coverage table, for the picker's live swap.
+     */
+    public function actionCoverageTable(): Response
+    {
+        $this->requirePostRequest();
+        $this->requireAcceptsJson();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $kind = (string) $this->request->getRequiredBodyParam('kind');
+        $handle = (string) $this->request->getRequiredBodyParam('handle');
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+
+        if (!in_array(['handle' => $handle, 'kind' => $kind], $editor->coverageTargets(), true)) {
+            throw new BadRequestHttpException(sprintf('The mapping has no %s target "%s".', $kind, $handle));
+        }
+
+        return $this->asJson([
+            'html' => Craft::$app->getView()->renderTemplate('kunstmaan-migrator/_coverage-table', [
+                'coverage' => $editor->coverageFor($kind, $handle),
+            ]),
+        ]);
+    }
+
+    /**
+     * The field map for a hypothetical target, redrawn live.
+     *
+     * "Save to see its fields" made choosing a Becomes a two-step guess; the
+     * dropdown now asks this action and swaps the map in place. Nothing is
+     * written — the row is read from the file as it is, only the target is
+     * taken from the request — so browsing targets costs nothing.
+     */
+    public function actionFieldMap(): Response
+    {
+        $this->requirePostRequest();
+        $this->requireAcceptsJson();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $lane = (string) $this->request->getRequiredBodyParam('lane');
+        $key = (string) $this->request->getRequiredBodyParam('key');
+        $target = trim((string) $this->request->getBodyParam('target', ''));
+
+        if (!in_array($lane, self::EDITABLE_LANES, true)) {
+            throw new BadRequestHttpException(sprintf('There is no "%s" lane to edit.', $lane));
+        }
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $row = $editor->row($lane, $key);
+
+        if ($row === null) {
+            throw new BadRequestHttpException(sprintf('The %s lane does not name "%s".', $lane, $key));
+        }
+
+        // The partial's own {% js %} (selectize init) lands in a buffer and
+        // travels with the HTML — swapped-in markup is otherwise dead.
+        $view = Craft::$app->getView();
+        $view->startJsBuffer();
+        $html = $view->renderTemplate(
+            'kunstmaan-migrator/_mapping-row-fields',
+            self::fieldMapVariables($editor, $lane, $row, $target),
+        );
+        $js = $view->clearJsBuffer();
+
+        return $this->asJson(['html' => $html, 'js' => is_string($js) ? $js : '']);
+    }
+
+    /**
+     * `mapping/check`, as a button: is the file well-formed, does it match
+     * this install, are the conflicts decided. The same three questions in the
+     * same order the CLI and `migrate` ask them — a mapping that is not
+     * well-formed produces misleading target errors, so shape goes first.
+     */
+    public function actionCheck(): Response
+    {
+        $this->requirePostRequest();
+        $this->requireAcceptsJson();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $path = $editor->path();
+
+        if ($path === null) {
+            return $this->asJson([
+                'ok' => false,
+                'headline' => Craft::t('kunstmaan-migrator', 'No mapping file is configured.'),
+                'errors' => [],
+                'total' => 0,
+            ]);
+        }
+
+        try {
+            $mapping = Mapping::fromFile($path);
+        } catch (Throwable $e) {
+            $message = Craft::t('kunstmaan-migrator', 'Mapping is unreadable: {message}', ['message' => $e->getMessage()]);
+
+            return $this->asJson(['ok' => false, 'headline' => $message, 'errors' => [], 'total' => 0]);
+        }
+
+        $verdict = (new MappingCheck(new TargetModel(new CraftSchemaGateway())))->verdict($mapping);
+
+        if ($verdict !== null) {
+            $verdict[0] = Craft::t('kunstmaan-migrator', $verdict[0]);
+        }
+
+        $summary = Craft::t('kunstmaan-migrator', 'Well-formed and matches this install: {pages} page types, {parts} parts, {entities} entities.', [
+            'pages' => count($mapping->pages()),
+            'parts' => count($mapping->parts()),
+            'entities' => count($mapping->entities()),
+        ]);
+
+        return $this->asJson($verdict === null
+            ? ['ok' => true, 'summary' => $summary]
+            : ['ok' => false, 'headline' => $verdict[0], 'errors' => array_slice($verdict[1], 0, 40), 'total' => count($verdict[1])]);
+    }
+
+    /**
+     * The run screen: the mapping's environments, whether each is reachable,
+     * and the button. Formerly a Utility; now a page of the section, because
+     * one workflow split across two nav areas cost more than the convention
+     * bought. The safety never lived in the location — it lives in
+     * ProductionGuard and the confirmation dialogs, which came along.
+     */
+    public function actionRun(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        return $this->renderTemplate('kunstmaan-migrator/_run', RunPanel::data());
     }
 
     /**
@@ -174,7 +488,7 @@ final class MigrationController extends Controller
     public function actionSaveMappingRow(): Response
     {
         $this->requirePostRequest();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         $lane = (string) $this->request->getRequiredBodyParam('lane');
         $key = (string) $this->request->getRequiredBodyParam('key');
@@ -215,7 +529,13 @@ final class MigrationController extends Controller
             // A dropped row keeps its columns: the decision is "this does not
             // migrate", not "we never knew what was in it", and someone
             // revisiting it should still see what they were giving up.
-            return ['drop' => $drop, $this->targetKey($lane) => null];
+            $changes = ['drop' => $drop];
+
+            if (($key = $this->targetKey($lane)) !== null) {
+                $changes[$key] = null;
+            }
+
+            return $changes;
         }
 
         $target = trim((string) $this->request->getBodyParam('target', ''));
@@ -240,31 +560,39 @@ final class MigrationController extends Controller
             }
         }
 
-        $ignore = [];
-        $unreviewed = [];
+        // Anything not mapped simply does not migrate: the form no longer
+        // asks per-column questions, so the unused-column bookkeeping is
+        // written automatically — every previously listed column moves to
+        // `ignore:`, minus the ones the posted map now consumes.
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+        $row = $editor->row($lane, (string) $this->request->getRequiredBodyParam('key'));
+        $consumed = [];
 
-        foreach ((array) $this->request->getBodyParam('columns', []) as $column => $decision) {
-            $column = (string) $column;
+        foreach ($map as $expression) {
+            $parsed = FieldExpression::parse($expression);
 
-            if ((string) ($decision['disposition'] ?? 'unreviewed') !== 'ignore') {
-                $unreviewed[] = $column;
-
-                continue;
+            if ($parsed->column !== '') {
+                $consumed[$parsed->column] = true;
             }
+        }
 
-            // A reason left empty stays empty. Writing "not migrated" in its
-            // place would invent a rationale nobody gave, and the value of an
-            // `ignore:` entry is precisely that somebody wrote one.
-            $reason = trim((string) ($decision['reason'] ?? ''));
-            $ignore[$column] = $reason !== '' ? $reason : null;
+        $ignore = [];
+
+        foreach (array_keys($row?->columns() ?? []) as $column) {
+            if (!isset($consumed[(string) $column])) {
+                $ignore[] = (string) $column;
+            }
         }
 
         $changes = [
-            $this->targetKey($lane) => $target !== '' ? $target : null,
-            'ignore' => self::ignoreValue($ignore),
-            'unreviewed' => $unreviewed !== [] ? $unreviewed : null,
+            'ignore' => $ignore !== [] ? $ignore : null,
+            'unreviewed' => null,
             'drop' => null,
         ];
+
+        if (($targetKey = $this->targetKey($lane)) !== null) {
+            $changes[$targetKey] = $target !== '' ? $target : null;
+        }
 
         // The field map is only drawn once a block is chosen, so a save from
         // the screen that has not drawn it must not wipe what is there.
@@ -275,47 +603,37 @@ final class MigrationController extends Controller
         return $changes;
     }
 
-    /**
-     * `ignore:` in the shape the file already uses.
-     *
-     * The DSL takes both a list of columns and a map of column to reason. A row
-     * where nobody has given a reason stays a list rather than becoming a map
-     * of nulls — otherwise opening a screen and pressing Save rewrites parts of
-     * the mapping that nobody edited, and a diff full of those is a diff that
-     * hides the one line somebody meant.
-     *
-     * @param array<string, ?string> $ignore
-     * @return list<string>|array<string, string>|null
-     */
-    private static function ignoreValue(array $ignore): array|null
-    {
-        if ($ignore === []) {
-            return null;
-        }
-
-        $withReasons = array_filter($ignore, static fn (?string $reason): bool => $reason !== null);
-
-        if ($withReasons === []) {
-            return array_keys($ignore);
-        }
-
-        return array_map(static fn (?string $reason): string => $reason ?? '', $ignore);
-    }
-
     /** Each lane names its target differently; the row does not have to know. */
-    private function targetKey(string $lane): string
+    private function targetKey(string $lane): ?string
     {
         return match ($lane) {
             'pages' => 'entryType',
+            // A sidecar has no target handle: its map addresses page fields
+            // directly, on whichever page the polymorphic ref decorates.
+            'sidecars' => null,
             default => 'block',
         };
+    }
+
+    /**
+     * The section's landing: the mapping when one exists, the wizard when
+     * none does — the screen you need is the screen you get.
+     */
+    public function actionHome(): Response
+    {
+        $this->requireCpRequest();
+        $this->requirePermission(Plugin::PERMISSION);
+
+        $editor = MappingEditor::create(Plugin::getInstance()->getSettings());
+
+        return $this->redirect($editor->path() !== null ? 'kunstmaan-migrator/mapping' : 'kunstmaan-migrator/setup');
     }
 
     public function actionQueue(): Response
     {
         $this->requirePostRequest();
         $this->requireAcceptsJson();
-        $this->requirePermission('utility:' . MigrationUtility::id());
+        $this->requirePermission(Plugin::PERMISSION);
 
         // Refused here as well as in the job. This is the button, so this is
         // where an operator should be told, rather than watching a job fail.
@@ -363,41 +681,42 @@ final class MigrationController extends Controller
             return $this->asJson(['ok' => false, 'message' => $e->getMessage()]);
         }
 
-        $queued = [];
+        $selected = [];
 
         foreach (array_keys($environments) as $environment) {
             if (is_string($only) && $only !== '' && $only !== $environment) {
                 continue;
             }
 
-            Craft::$app->getQueue()->push(new MigrateEnvironmentJob([
-                'mappingPath' => $path,
-                'environment' => (string) $environment,
-                'dryRun' => $dryRun,
-                'force' => $force,
-                'entriesOnly' => $pass === 'entries',
-            ]));
-
-            $queued[] = (string) $environment;
+            $selected[] = (string) $environment;
         }
 
-        if ($queued === []) {
+        if ($selected === []) {
             return $this->asJson([
                 'ok' => false,
                 'message' => Craft::t('kunstmaan-migrator', 'The mapping declares no such environment.'),
             ]);
         }
 
-        // The two corpus-wide passes, chained onto the same queue rather than left
-        // for the operator to remember. `migrate` runs both at the end of an inline
-        // run, so a queued "full" that stopped after the environments was not the
-        // same migration under a different name — it left every deferred reference
-        // dangling and every `[NT<id>]` unrewritten, with nothing saying so. The
-        // queue is FIFO, which is the ordering both passes need: they resolve
-        // against entries that must already exist.
+        // One job starts the chain (#48): each environment's last batch pushes
+        // its adapter pass, each adapter pass pushes the next environment, and
+        // the corpus-wide fixup + finalize run only after the last one — an
+        // ordering the queue now enforces structurally, where FIFO used to
+        // merely suggest it (#47) and the web runner proved it a suggestion.
+        QueueHelper::push(job: new MigrateEnvironmentJob([
+            'mappingPath' => $path,
+            'environment' => $selected[0],
+            'remainingEnvironments' => array_values(array_slice($selected, 1)),
+            'dryRun' => $dryRun,
+            'force' => $force,
+            'entriesOnly' => $pass === 'entries',
+            'chainCorpusPasses' => $pass === 'full',
+            'mappingHash' => sha1((string) file_get_contents($path)),
+        ]), priority: 512);
+
+        $queued = $selected;
+
         if ($pass === 'full') {
-            Craft::$app->getQueue()->push(new ResolveDeferredRefsJob());
-            Craft::$app->getQueue()->push(new FinalizeJob(['mappingPath' => $path, 'dryRun' => $dryRun]));
             $queued[] = 'fixup';
             $queued[] = 'finalize';
         }
@@ -407,7 +726,7 @@ final class MigrationController extends Controller
         return $this->asJson([
             'ok' => true,
             'queued' => $queued,
-            'message' => Craft::t('kunstmaan-migrator', '{n, plural, =1{Started. 1 job queued.} other{Started. # jobs queued.}}', [
+            'message' => Craft::t('kunstmaan-migrator', '{n, plural, =1{Started. 1 stage queued.} other{Started. # stages, chained.}}', [
                 'n' => count($queued),
             ]),
         ]);

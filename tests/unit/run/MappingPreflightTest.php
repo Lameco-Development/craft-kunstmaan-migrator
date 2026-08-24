@@ -24,7 +24,7 @@ final class MappingPreflightTest extends TestCase
         $out = [];
 
         foreach ($sites as $handle => [$id, $language]) {
-            $out[] = new class ($id, (string) $handle, $language) {
+            $out[] = new class($id, (string) $handle, $language) {
                 public function __construct(
                     public readonly int $id,
                     public readonly string $handle,
@@ -201,8 +201,8 @@ final class MappingPreflightTest extends TestCase
             'LV' => ['database' => 'c', 'mediaRoot' => ['/x'], 'locales' => ['lv' => 'comLvLv']],
         ], $this->enreachSites());
 
-        self::assertSame(['COM', 'DE', 'LV'], array_map(static fn ($c): string => $c->name, $checks));
-        self::assertSame([true, true, true], array_map(static fn ($c): bool => $c->isReady(), $checks));
+        self::assertSame(['COM', 'DE', 'LV'], array_map(static fn($c): string => $c->name, $checks));
+        self::assertSame([true, true, true], array_map(static fn($c): bool => $c->isReady(), $checks));
     }
 
     public function testAnEnvironmentWithNoNodesIsWorthStopping(): void
@@ -232,7 +232,7 @@ final class MappingPreflightTest extends TestCase
 
         $preflight = new MappingPreflight(
             $probe,
-            static fn (string $path): string => str_replace('$MEDIA', '/resolved/media', $path),
+            static fn(string $path): string => str_replace('$MEDIA', '/resolved/media', $path),
         );
 
         $readiness = $preflight->inspect(

@@ -13,6 +13,9 @@ final class PayloadValidator
 {
     private const SOURCE_UID_PATTERN = '/^kuma:[A-Za-z0-9_-]+:[a-z0-9_]+:\d+$/D';
 
+    /** `FormCompiler`'s form identity — one segment more than the entry grammar. */
+    private const FORM_UID_PATTERN = '/^kuma:[A-Za-z0-9_-]+:form:[A-Za-z0-9_]+:\\d+$/D';
+
     public function __construct(private readonly SchemaGateway $gateway)
     {
     }
@@ -168,11 +171,44 @@ final class PayloadValidator
             }
         }
 
+        foreach ($this->findFormRefs($data['fieldValues']) as $ref) {
+            if (!is_string($ref) || preg_match(self::FORM_UID_PATTERN, $ref) !== 1) {
+                $violations[] = $this->violation(
+                    $p,
+                    'BAD_REF',
+                    sprintf('_form "%s" on site "%s" does not match the form sourceUid grammar.', $this->describe($ref), $siteHandle),
+                );
+            }
+        }
+
         return $violations;
     }
 
     /**
-     * Recursively collect every `_ref` value nested anywhere inside a
+     * Same collection walk as `findRefs`, for `_form` nodes — a form's sourceUid carries one
+     * segment more (`kuma:<ENV>:form:<Entity>:<id>`) and so needs its own grammar.
+     *
+     * @param array<mixed> $value
+     * @return list<mixed>
+     */
+    private function findFormRefs(array $value): array
+    {
+        $refs = [];
+        foreach ($value as $key => $item) {
+            if ($key === '_form') {
+                $refs[] = $item;
+                continue;
+            }
+            if (is_array($item)) {
+                array_push($refs, ...$this->findFormRefs($item));
+            }
+        }
+
+        return $refs;
+    }
+
+    /**
+     * Recursively collect every `_ref` and `_linkRef` value nested anywhere inside a
      * fieldValues hash (matrix blocks, relation lists, ...). Non-string
      * values are collected too (not skipped) so the caller can flag them
      * as BAD_REF instead of letting them silently escape validation.
@@ -184,7 +220,9 @@ final class PayloadValidator
     {
         $refs = [];
         foreach ($value as $key => $item) {
-            if ($key === '_ref') {
+            // `_linkRef` carries the same grammar and is resolved the same way, so it is held
+            // to the same check rather than escaping validation.
+            if ($key === '_ref' || $key === '_linkRef') {
                 $refs[] = $item;
                 continue;
             }

@@ -127,6 +127,60 @@ final class Coverage
         return $this->allPartRefs > 0 ? $this->totalPlacements() / $this->allPartRefs : 0.0;
     }
 
+    /**
+     * Deliberate omissions, with the reason each was declared under and what it costs.
+     *
+     * `unmapped:`, `drop:` and `manual:` already carry a written reason each — that is what
+     * makes them declarations rather than silence — and the placement counts are already
+     * measured. Putting the two together is the client-facing half of coverage: not "the
+     * mapping has no holes" but "this is what will not be on the new site, and why".
+     *
+     * @return list<array{subject: string, kind: string, reason: string, placements: int}>
+     */
+    public function declaredOmissions(): array
+    {
+        $out = [];
+
+        foreach ($this->mapping->unmappedParts() as $class => $reason) {
+            $out[] = [
+                'subject' => (string) $class,
+                'kind' => 'pagepart, not migrated',
+                'reason' => (string) $reason,
+                'placements' => $this->partPlacements[$class] ?? 0,
+            ];
+        }
+
+        foreach ($this->mapping->unmappedPageTypes() as $entity => $reason) {
+            $out[] = [
+                'subject' => (string) $entity,
+                'kind' => 'page type, not migrated',
+                'reason' => (string) $reason,
+                'placements' => $this->pageTypes[$entity] ?? 0,
+            ];
+        }
+
+        foreach ($this->mapping->parts() as $class => $spec) {
+            if (!is_array($spec)) {
+                continue;
+            }
+
+            foreach ([['drop', 'pagepart, dropped'], ['manual', 'pagepart, rebuilt by hand']] as [$key, $kind]) {
+                if (isset($spec[$key])) {
+                    $out[] = [
+                        'subject' => (string) $class,
+                        'kind' => $kind,
+                        'reason' => is_string($spec[$key]) ? $spec[$key] : 'no reason given',
+                        'placements' => $this->partPlacements[$class] ?? 0,
+                    ];
+                }
+            }
+        }
+
+        usort($out, static fn(array $a, array $b): int => $b['placements'] <=> $a['placements']);
+
+        return $out;
+    }
+
     public function hasHoles(): bool
     {
         return $this->unclaimedParts() !== [] || $this->unclaimedPageTypes() !== [];

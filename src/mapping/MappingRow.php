@@ -66,8 +66,10 @@ final class MappingRow
 
         // Unreviewed columns keep a row open even once it has a target: the
         // block is chosen and some of its content still has nowhere to go, and
-        // a list that called that finished would hide the remaining work.
-        if ($this->target !== null && $this->unreviewed === []) {
+        // a list that called that finished would hide the remaining work. A
+        // sidecar row has no target at all — its map addresses page fields
+        // directly — so a non-empty map is what marks it decided.
+        if (($this->target !== null || $this->map !== []) && $this->unreviewed === []) {
             return self::DECIDED;
         }
 

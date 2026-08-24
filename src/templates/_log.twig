@@ -1,0 +1,105 @@
+{# Rendered inside the Utilities chrome, which says nothing about this plugin —
+   so the screen introduces itself: whose history, where it comes from, where
+   the workflow lives. #}
+<p>
+  {{ "Health checks, the state export, and the run history of the {section}. Runs are started from the {run}."|t('kunstmaan-migrator', {
+    section: '<strong>' ~ 'Kunstmaan Migrator'|t('kunstmaan-migrator') ~ '</strong>',
+    run: '<a href="' ~ url('kunstmaan-migrator/run') ~ '">' ~ 'Run screen'|t('kunstmaan-migrator') ~ '</a>',
+  })|raw }}
+</p>
+<p class="light"><code>{{ logPath }}</code></p>
+
+<h2>{{ "Diagnostics"|t('kunstmaan-migrator') }}</h2>
+
+<div class="field">
+  <div class="input">
+    <button type="button" class="btn" id="kuma-doctor">{{ "Run doctor"|t('kunstmaan-migrator') }}</button>
+    <a class="btn" href="{{ actionUrl('kunstmaan-migrator/migration/export') }}">{{ "Export state"|t('kunstmaan-migrator') }}</a>
+  </div>
+  <div class="instructions">
+    <p>{{ "Doctor checks the install and every environment in the mapping. Export downloads the migration state as a file you can diff between runs."|t('kunstmaan-migrator') }}</p>
+  </div>
+</div>
+
+<table class="data fullwidth hidden" id="kuma-doctor-results">
+  <tbody></tbody>
+</table>
+
+{% js %}
+  document.getElementById('kuma-doctor').addEventListener('click', function () {
+    var button = this;
+    var table = document.getElementById('kuma-doctor-results');
+    button.disabled = true;
+
+    Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/doctor')
+      .then(function (response) {
+        var body = table.querySelector('tbody');
+        body.innerHTML = '';
+
+        response.data.checks.forEach(function (check) {
+          var row = document.createElement('tr');
+          var name = document.createElement('th');
+          name.setAttribute('scope', 'row');
+          name.innerHTML = '<span data-icon="' + (check.ok ? 'check' : 'alert') + '"></span> ' + check.check;
+          var detail = document.createElement('td');
+          detail.textContent = check.detail;
+          if (!check.ok) { detail.className = 'error'; }
+          row.appendChild(name);
+          row.appendChild(detail);
+          body.appendChild(row);
+        });
+
+        table.classList.remove('hidden');
+      })
+      .finally(function () {
+        button.disabled = false;
+      });
+  });
+{% endjs %}
+
+<h2>{{ "History"|t('kunstmaan-migrator') }}</h2>
+
+{% if entries is empty %}
+  <p class="zilch">{{ "Nothing has run yet."|t('kunstmaan-migrator') }}</p>
+{% else %}
+  <table class="data fullwidth">
+    <thead>
+      <tr>
+        <th>{{ "When"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "What"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Outcome"|t('kunstmaan-migrator') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in entries %}
+        <tr>
+          <td class="light" style="white-space: nowrap;">{{ entry.time is defined ? entry.time|date('Y-m-d H:i:s') : '—' }}</td>
+          <td>
+            <strong>{{ entry.job ?? '—' }}</strong>
+            {% if entry.environment is defined %} · {{ entry.environment }}{% endif %}
+            {% if entry.dryRun ?? false %} · <span class="light">{{ "dry run"|t('kunstmaan-migrator') }}</span>{% endif %}
+          </td>
+          <td>
+            {% if entry.event == 'failed' %}
+              <span class="error">{{ "failed"|t('kunstmaan-migrator') }}</span>
+              {% if entry.message is defined %}<span class="light"> — {{ entry.message }}</span>{% endif %}
+            {% elseif entry.event == 'finished' %}
+              <span class="status on"></span>{{ "finished"|t('kunstmaan-migrator') }}
+              {% if (entry.problems ?? 0) > 0 %}
+                · <span class="warning-with-icon">{{ "{count} problems"|t('kunstmaan-migrator', { count: entry.problems }) }}</span>
+              {% endif %}
+            {% else %}
+              <span class="light">{{ entry.event ?? '—' }}</span>
+            {% endif %}
+            {% set flat = (entry.counts ?? []) is iterable ? (entry.counts ?? [])|filter(c => c is not iterable) : [] %}
+            {% if flat is not empty %}
+              <div class="light" style="margin-top: 2px;">
+                {{ flat|slice(0, 8, true)|map((count, bucket) => "#{bucket} #{count}")|join(' · ') }}
+              </div>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}

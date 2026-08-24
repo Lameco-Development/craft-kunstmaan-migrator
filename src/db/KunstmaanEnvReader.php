@@ -156,7 +156,7 @@ final class KunstmaanEnvReader extends Component
         }
 
         $envExample = $sourcePath . '/.env.example';
-        $env        = $sourcePath . '/.env';
+        $env = $sourcePath . '/.env';
 
         $merged = [];
         foreach ([$envExample, $env] as $file) {
@@ -183,9 +183,9 @@ final class KunstmaanEnvReader extends Component
             }
         }
 
-        $this->databaseUrl   = $merged['DATABASE_URL']   ?? null;
+        $this->databaseUrl = $merged['DATABASE_URL'] ?? null;
         $this->defaultLocale = $merged['DEFAULT_LOCALE'] ?? null;
-        $this->foundKeys     = array_values(array_intersect(self::WHITELIST, array_keys($merged)));
+        $this->foundKeys = array_values(array_intersect(self::WHITELIST, array_keys($merged)));
 
         if ($this->databaseUrl !== null && $this->databaseUrl !== '') {
             $this->parseDsn($this->databaseUrl);
@@ -202,7 +202,9 @@ final class KunstmaanEnvReader extends Component
             return;
         }
         try {
-            $sourcePath = Plugin::getInstance()->kunstmaanSourcePathResolver->resolve();
+            // Nullsafe: in the unit tier no plugin instance exists, and "no
+            // plugin" means the same as "no source path" — nothing to read.
+            $sourcePath = Plugin::getInstance()?->kunstmaanSourcePathResolver?->resolve();
         } catch (Throwable $e) {
             $this->loaded = true;
             $this->safeWarn('KunstmaanEnvReader: source-path resolver failed: ' . $e->getMessage());
@@ -245,9 +247,9 @@ final class KunstmaanEnvReader extends Component
         }
 
         $this->parsedDsn = [
-            'host'     => isset($parts['host']) ? urldecode((string) $parts['host']) : null,
-            'port'     => isset($parts['port']) ? (int) $parts['port'] : null,
-            'user'     => isset($parts['user']) ? urldecode((string) $parts['user']) : null,
+            'host' => isset($parts['host']) ? urldecode((string) $parts['host']) : null,
+            'port' => isset($parts['port']) ? (int) $parts['port'] : null,
+            'user' => isset($parts['user']) ? urldecode((string) $parts['user']) : null,
             'password' => isset($parts['pass']) ? urldecode((string) $parts['pass']) : null,
             'database' => $database,
         ];

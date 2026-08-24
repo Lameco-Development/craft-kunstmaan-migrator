@@ -58,6 +58,22 @@ final class AssetMigrationServiceSizeBypassTest extends TestCase
         self::assertStringContainsString('catch (\\yii\\web\\HttpException $e)', $source);
     }
 
+    public function testBypassRetriesTheSaveWithTheCapListenerDetached(): void
+    {
+        // 2026-08-23 — the bypass used to *skip* the oversized asset, which left
+        // every reference to it unresolved (410 images on the Enreach corpus).
+        // Lock the new surface: a one-shot retry with the class-level
+        // EVENT_BEFORE_SAVE handlers snapshotted, detached, and restored.
+        $file = (string) (new ReflectionClass(AssetMigrationService::class))->getFileName();
+        $source = (string) file_get_contents($file);
+
+        self::assertStringContainsString('retrySaveWithoutSizeCap', $source);
+        self::assertStringContainsString('withClassEventDetached', $source);
+        self::assertStringContainsString('Asset::EVENT_BEFORE_SAVE', $source);
+        // The restore must be unconditional — a finally, not a happy-path line.
+        self::assertStringContainsString('} finally {', $source);
+    }
+
     public function testBypassFlagPropagatesViaPluginInit(): void
     {
         // Plugin::init wires Settings::$skipAssetSizeValidation onto the

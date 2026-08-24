@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Lameco\KumaCompile\Report;
 
 use Lameco\KumaCompile\Mapping\Mapping;
-use Lameco\KumaCompile\Target\TargetSchema;
 use Lameco\KumaCompile\Target\SpecNotes;
+use Lameco\KumaCompile\Target\TargetSchema;
 
 /**
  * Craft fields a spec's migration notes give a legacy source for, that the mapping never fills.

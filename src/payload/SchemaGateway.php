@@ -65,7 +65,10 @@ interface SchemaGateway
      * the answer cannot lag an unapplied project config, and there is one implementation
      * of "does this handle exist" instead of two.
      *
-     * @return array<string, array{type: string, required: bool, nested: list<string>}> field handle => placement
+     * Keyed by the *placement's* handle, which a layout may override — `commonPageBuilder`
+     * placed as `pageBuilder`. The mapping names the placement, so this must too.
+     *
+     * @return array<string, array{type: string, required: bool, nested: list<string>, propagationMethod?: ?string}> field handle => placement
      */
     public function fieldSlotsFor(string $entryTypeHandle): array;
 }

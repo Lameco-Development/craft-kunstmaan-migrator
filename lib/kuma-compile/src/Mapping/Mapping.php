@@ -61,8 +61,8 @@ final class Mapping
         foreach ($data as $key => $value) {
             $data[$key] = match (true) {
                 $value instanceof TaggedValue && $value->getTag() === 'unmapped' => null,
-                is_array($value)                                                 => self::resolveTags($value),
-                default                                                          => $value,
+                is_array($value) => self::resolveTags($value),
+                default => $value,
             };
         }
 
@@ -102,6 +102,22 @@ final class Mapping
     public function parts(): array
     {
         return $this->data['parts'] ?? [];
+    }
+
+    /**
+     * Per-page sidecar entities, read by the polymorphic ref every Kunstmaan tab uses.
+     *
+     * Kunstmaan attaches page-level extras — a header tab, a footer tab, structured data —
+     * as separate entities keyed by `(ref_entity_name, ref_id)`, outside the pagepart tree.
+     * The name differs per site; the column signature does not, which is what makes this a
+     * lane rather than a special case: any table carrying that pair can be named here and
+     * joined to every page it decorates.
+     *
+     * @return array<string, array<string, mixed>> sidecar name => spec
+     */
+    public function sidecars(): array
+    {
+        return $this->data['sidecars'] ?? [];
     }
 
     /**
@@ -188,9 +204,9 @@ final class Mapping
         foreach ($this->parts() as $class => $spec) {
             $accounted[$class] = match (true) {
                 ($spec['consumedBy'] ?? null) === 'sequence' => 'sequence',
-                isset($spec['drop'])                         => 'dropped',
-                isset($spec['manual'])                       => 'manual',
-                default                                      => 'blocks',
+                isset($spec['drop']) => 'dropped',
+                isset($spec['manual']) => 'manual',
+                default => 'blocks',
             };
         }
 
@@ -268,7 +284,7 @@ final class Mapping
             }
         }
 
-        usort($open, static fn (Conflict $a, Conflict $b) => ($b->live ?? 0) <=> ($a->live ?? 0));
+        usort($open, static fn(Conflict $a, Conflict $b) => ($b->live ?? 0) <=> ($a->live ?? 0));
 
         return $open;
     }
@@ -293,31 +309,6 @@ final class Mapping
         return $out;
     }
 
-    /**
-     * Ignored columns carrying no reason — the legacy list form, `ignore: [a, b, c]`.
-     *
-     * Not an error: the list form is how every mapping was written before reasons existed, and
-     * failing on it would brick a corpus rather than improve it. But it is the state where a
-     * decision and a generator default look identical, so it is counted and reported rather than
-     * left to look settled.
-     *
-     * @return array<string, list<string>> subject => column names
-     */
-    public function unreasonedIgnores(): array
-    {
-        $out = [];
-
-        foreach ($this->reviewableSubjects() as $subject => $spec) {
-            $ignore = $spec['ignore'] ?? null;
-
-            // A map is `column: reason`; a list is the unreasoned legacy form.
-            if (is_array($ignore) && $ignore !== [] && array_is_list($ignore)) {
-                $out[$subject] = array_values(array_map(strval(...), $ignore));
-            }
-        }
-
-        return $out;
-    }
 
     /**
      * Everything that can carry `ignore:` / `unreviewed:`, keyed by a human-readable path.
@@ -328,7 +319,7 @@ final class Mapping
     {
         $subjects = [];
 
-        foreach (['pages' => 'page', 'parts' => 'part', 'entities' => 'entity'] as $lane => $noun) {
+        foreach (['pages' => 'page', 'parts' => 'part', 'entities' => 'entity', 'sidecars' => 'sidecar'] as $lane => $noun) {
             foreach ($this->data[$lane] ?? [] as $name => $spec) {
                 if (!is_array($spec)) {
                     continue;
@@ -361,7 +352,7 @@ final class Mapping
 
         array_walk_recursive(
             $data,
-            static function (mixed $value, string|int $key) use (&$todos): void {
+            static function(mixed $value, string|int $key) use (&$todos): void {
                 if ($key === 'todo' && is_string($value)) {
                     $todos[] = trim($value);
                 }

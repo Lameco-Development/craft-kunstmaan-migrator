@@ -15,13 +15,24 @@ final class ReadinessTest extends TestCase
 {
     private function requirements(string $yaml): array
     {
+        return $this->readiness($yaml)->requirements();
+    }
+
+    /** @return list<Requirement> */
+    private function unfilled(string $yaml): array
+    {
+        return $this->readiness($yaml)->unfilled();
+    }
+
+    private function readiness(string $yaml): Readiness
+    {
         $path = tempnam(sys_get_temp_dir(), 'kuma') . '.yaml';
         file_put_contents($path, $yaml);
 
-        return (new Readiness(
+        return new Readiness(
             Mapping::fromFile($path),
             CraftSchema::fromProjectConfig(__DIR__ . '/fixtures/craft'),
-        ))->requirements();
+        );
     }
 
     /** @param list<Requirement> $requirements */
@@ -247,5 +258,82 @@ final class ReadinessTest extends TestCase
                 block: contentBlock
                 drop: "1 live placement"
             YAML));
+    }
+
+    #[Test]
+    public function an_optional_field_no_lane_fills_is_reported(): void
+    {
+        // The hero case: `heading` on the nested row is optional, so it never reached the required
+        // report, and nothing else asked. On the reference corpus that is 37 hero field instances
+        // empty on every migrated entry, with no report naming one of them.
+        $found = $this->find($this->unfilled(<<<'YAML'
+            version: 1
+            parts:
+              Text:
+                table: text_page_parts
+                block: contentBlock
+                map:
+                  contentColumns[0].content: content
+            YAML), 'contentBlock.contentColumns[]', 'heading');
+
+        self::assertNotNull($found);
+        self::assertFalse($found->required);
+    }
+
+    #[Test]
+    public function an_optional_field_the_mapping_does_fill_is_not_reported(): void
+    {
+        // The report is only worth reading if it stays quiet about what is handled. An optional
+        // field with a source is not a hole.
+        self::assertNull($this->find($this->unfilled(<<<'YAML'
+            version: 1
+            parts:
+              Text:
+                table: text_page_parts
+                block: contentBlock
+                map:
+                  contentColumns[0].heading: title
+                  contentColumns[0].content: content
+            YAML), 'contentBlock.contentColumns[]', 'heading'));
+    }
+
+    #[Test]
+    public function the_matrix_a_page_streams_its_blocks_into_is_not_a_hole(): void
+    {
+        // `contexts:` names the field the blocks lane fills. Read it off the page's `map:` alone
+        // and every page entry type reads as never filling its own page builder.
+        self::assertNull($this->find($this->unfilled(<<<'YAML'
+            version: 1
+            defaults:
+              contexts:
+                main: { field: contentColumns }
+            pages:
+              ContentPage:
+                table: content_pages
+                entryType: contentBlock
+                section: pages
+            YAML), 'contentBlock', 'contentColumns'));
+    }
+
+    #[Test]
+    public function the_required_report_is_unchanged_by_the_wider_walk(): void
+    {
+        // `requirements()` now filters a walk over every slot rather than over the required ones.
+        // Same set, or the widening broke the report it was built on.
+        $requirements = $this->requirements(<<<'YAML'
+            version: 1
+            parts:
+              Text:
+                table: text_page_parts
+                block: contentBlock
+                map:
+                  contentColumns[0].content: content
+            YAML);
+
+        foreach ($requirements as $requirement) {
+            self::assertTrue($requirement->required, $requirement->target . '.' . $requirement->field);
+        }
+
+        self::assertNotNull($this->find($requirements, 'contentBlock', 'contentColumns'));
     }
 }

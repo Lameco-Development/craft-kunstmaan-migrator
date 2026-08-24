@@ -52,7 +52,7 @@ final class RunTallyTest extends TestCase
     {
         $announced = [];
         $tally = new RunTally();
-        $tally->onProblem = static function (string $problem) use (&$announced): void {
+        $tally->onProblem = static function(string $problem) use (&$announced): void {
             $announced[] = $problem;
         };
 

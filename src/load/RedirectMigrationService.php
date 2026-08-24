@@ -4,20 +4,18 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
-use lameco\kunstmaanmigrator\sites\SiteMap;
+use Craft;
+use craft\base\Element;
+use craft\elements\Entry;
+use Lameco\KumaCompile\Compile\RedirectCompiler;
 use lameco\kunstmaanmigrator\adapters\GatedAdapter;
 use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\load\MigrationStateService;
-use Craft;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\console\LoadController;
-use Lameco\KumaCompile\Compile\RedirectCompiler;
-use craft\elements\Entry;
+use lameco\kunstmaanmigrator\db\LegacyDbService;
+use lameco\kunstmaanmigrator\payload\RefResolver;
+use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use lameco\kunstmaanmigrator\sites\SiteMap;
 use nystudio107\retour\Retour;
 use yii\base\Component;
 
@@ -37,11 +35,11 @@ use yii\base\Component;
  *      entry URI via state lookup so the redirect chain doesn't bounce
  *      through the now-defunct legacy URL.
  *
- *   2. **Section-move 301s (DEC-18)** — every migrated team / news / cases
- *      entry whose new URL differs from the legacy URL gets an additional
- *      301 redirect from old → new path. NL contentPages preserve their
- *      hierarchy per DEC-18 (no auto-redirect emission), but EN URLs may
- *      have been normalised — those get redirects too.
+ *   2. **Section-move 301s** — opt-in via the adapter's `sectionMoves`
+ *      setting (issue #46): every migrated entry whose Craft URI differs
+ *      from its legacy URL gets a 301 from old → new path, per site. Trees
+ *      the structural placeholders preserve emit nothing — the pass only
+ *      speaks on difference.
  *
  * Optional-plugin gate (D-56): If Retour is not installed, the entire
  * migration pass is skipped with a warning — never a hard error. Consuming
@@ -122,10 +120,30 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             return $report;
         }
 
+        // The admin-managed redirects table, imported verbatim. This pass has
+        // existed since v1 (migrateLegacyTables) and nothing in the v2 pipeline
+        // called it: 1,419 kuma_redirects rows on the Enreach corpus never
+        // reached Retour while the class docblock said they would. It runs
+        // before the RedirectPage lane so an environment with no redirect
+        // *pages* still imports its redirect *table*.
+        if (self::isRetourAvailable()) {
+            $this->importDirectRedirects($context->sites, $opts, $report);
+
+            // Opt-in until measured per corpus: a computed 301 for every page
+            // whose Craft URI differs from its legacy URL. Structural
+            // placeholders preserve most trees byte-for-byte, so the emit-only-
+            // on-difference rule below is what keeps this from flooding Retour.
+            if ((bool) ($this->config()['sectionMoves'] ?? false)) {
+                $this->emitSectionMoves($context, $opts, $report);
+            }
+        } else {
+            $report->warn('Retour not available; kuma_redirects import skipped.');
+        }
+
         $compiler = new RedirectCompiler($context->mapping, $context->only);
         $records = [];
 
-        $compiler->compile($context->legacy, $context->name, static function (array $record) use (&$records): void {
+        $compiler->compile($context->legacy, $context->name, static function(array $record) use (&$records): void {
             $records[] = $record;
         });
 
@@ -147,7 +165,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             $records,
             new RefResolver(Plugin::getInstance()->migrationStateService),
             self::isRetourAvailable(),
-            static function (int $entryId, string $siteHandle): ?string {
+            static function(int $entryId, string $siteHandle): ?string {
                 $site = Craft::$app->getSites()->getSiteByHandle($siteHandle);
 
                 if ($site === null) {
@@ -158,7 +176,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
                 return $entry === null || $entry->uri === null ? null : '/' . ltrim($entry->uri, '/');
             },
-            function (string $from, string $to, int $code, string $key, array $meta): array {
+            function(string $from, string $to, int $code, string $key, array $meta): array {
                 $result = $this->importOne($from, $to, $code, $key, $meta);
 
                 if (($result->counts['created'] ?? 0) > 0) {
@@ -201,35 +219,6 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         return $report;
     }
 
-    public function migrateLegacyTables(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
-    {
-        $report = new MigrationReport();
-
-        if (!$this->isGateOpen($report)) {
-            return $report;
-        }
-
-        $sites = $context->sites;
-
-        // Secondary defensive check — the class-exists / $plugin-null guard
-        // catches the rare case where the plugin is registered but Retour::$plugin
-        // was never populated (e.g. manual uninstall mid-request).
-        if (!class_exists(Retour::class) || Retour::$plugin === null) {
-            $report->incr('failed');
-            $report->warn(
-                'Retour plugin not loaded (class/plugin null); redirect migration aborted.',
-            );
-            return $report;
-        }
-
-        // ----- 1. Direct legacy redirects import (~205 rows expected on dev) ---
-        $this->importDirectRedirects($sites, $opts, $report);
-
-        // ----- 2. Section-move 301s for team/news/cases entries ----------------
-        $this->emitSectionMoveRedirects($sites, $opts, $report);
-
-        return $report;
-    }
 
     /**
      * Task 6 — canonical Retour-presence predicate, reused by
@@ -544,152 +533,111 @@ class RedirectMigrationService extends Component implements MigrationAdapter
     // Private — section-move 301s
     // --------------------------------------------------------------------------
 
-    private function emitSectionMoveRedirects(SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
-    {
-        foreach ($this->stateService->entryRows() as $stateRow) {
-            $entryId = (int) ($stateRow['targetId'] ?? 0);
-            $source = (string) ($stateRow['source'] ?? '');
-            $sourceKey = (string) ($stateRow['sourceKey'] ?? '');
-            if ($entryId === 0 || $source === '' || $sourceKey === '') {
-                continue;
-            }
 
-            // SEO writes also record targetType=entry state rows; redirects
-            // should only consider rows produced by the entry migration stage.
-            if ($source === 'seo_meta' || str_contains($sourceKey, ':')) {
-                continue;
-            }
 
-            // state.sourceKey carries the refId (page-entity row id), NOT
-            // the kuma_node_id. Recover the actual kumaNodeId from meta —
-            // the entry save path must persist it specifically so this path
-            // can pair the right source URLs to the right Craft entry.
-            // Without this, every state row whose
-            // sourceKey happens to equal some unrelated node's id pairs the
-            // unrelated node's legacy URL with this entry's URI — visible
-            // as `/nl/diensten` → `/personeels-dossier` after a clean
-            // rebuild (sourceKey=1 hits ~9 different source nodes).
-            $kumaNodeId = $this->kumaNodeIdFromStateMeta($stateRow);
-            if ($kumaNodeId === null) {
-                // Backwards compatibility: pre-meta state rows fell back to
-                // treating sourceKey as the node id. Keep that path so an
-                // operator with an old state table doesn't silently lose
-                // section-move 301s — but log a hint that re-running
-                // migrate will correct the pairings.
-                if (ctype_digit($sourceKey)) {
-                    $kumaNodeId = (int) $sourceKey;
-                } else {
-                    continue;
-                }
-            }
-            if ($kumaNodeId <= 0) {
-                continue;
-            }
-
-            try {
-                $this->emitSectionMoveForOne($source, $kumaNodeId, $entryId, $sites, $opts, $report);
-            } catch (\Throwable $e) {
-                $report->incr('failed');
-                $report->warn(
-                    sprintf(
-                        'section-move 301 failed for %s:%d entryId=%d — %s',
-                        $source,
-                        $kumaNodeId,
-                        $entryId,
-                        $e->getMessage(),
-                    ),
-                );
-            }
-        }
-    }
 
     /**
-     * @param array<string, mixed> $stateRow
+     * One 301 per (entry, site) whose legacy URL differs from its Craft URI.
+     *
+     * v2-native replacement for the v1 section-move pass (issue #46): entry
+     * state rows are `source = "<ENV>:kuma_nodes"`, `sourceKey = <node id>`,
+     * and the locale map comes from the environment's SiteMap rather than a
+     * hardcoded site pair. Kunstmaan prefixes every URL with its locale on a
+     * multilanguage install, which is what the corpus serves; a single-locale
+     * environment emits unprefixed sources.
+     *
+     * A redirect must land on a live page, so entries disabled for the site —
+     * structural placeholders included — emit nothing.
      */
-    private function kumaNodeIdFromStateMeta(array $stateRow): ?int
+    private function emitSectionMoves(EnvironmentContext $context, MigrationOptions $opts, MigrationReport $report): void
     {
-        $meta = $stateRow['meta'] ?? null;
-        if (is_string($meta) && $meta !== '') {
-            try {
-                $decoded = json_decode($meta, true, 16, JSON_THROW_ON_ERROR);
-                if (is_array($decoded) && isset($decoded['kumaNodeId'])) {
-                    return (int) $decoded['kumaNodeId'];
-                }
-            } catch (\Throwable) {
-                // fall through to null — caller handles legacy fallback.
+        $source = $context->name . ':kuma_nodes';
+        $locales = $context->sites->configured();
+        $prefixLocale = count($locales) > 1;
+
+        foreach ($this->stateService->entryRows() as $stateRow) {
+            if ((string) ($stateRow['source'] ?? '') !== $source) {
+                continue;
             }
-        } elseif (is_array($meta) && isset($meta['kumaNodeId'])) {
-            return (int) $meta['kumaNodeId'];
+
+            $sourceKey = (string) ($stateRow['sourceKey'] ?? '');
+            $entryId = (int) ($stateRow['targetId'] ?? 0);
+
+            if ($entryId <= 0 || !ctype_digit($sourceKey)) {
+                continue;
+            }
+
+            try {
+                $this->emitSectionMoveForNode((int) $sourceKey, $entryId, $locales, $prefixLocale, $context->name, $opts, $report);
+            } catch (\Throwable $e) {
+                $report->incr('failed');
+                $report->warn(sprintf('section move failed for %s:%s — %s', $source, $sourceKey, $e->getMessage()));
+            }
         }
-        return null;
     }
 
-    private function emitSectionMoveForOne(
-        string $source,
-        int $kumaNodeId,
+    /** @param array<string, string> $locales kuma locale => Craft site handle */
+    private function emitSectionMoveForNode(
+        int $nodeId,
         int $entryId,
-        SiteMap $sites,
+        array $locales,
+        bool $prefixLocale,
+        string $environment,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
-        if ($kumaNodeId <= 0) {
-            return;
-        }
+        $legacyUrls = $this->legacyUrlsForNode($nodeId);
 
-        $legacyUrls = $this->legacyUrlsForNode($kumaNodeId);
         if ($legacyUrls === []) {
             return;
         }
 
-        // v2 reshape: iterate $this->sites instead of hardcoded 'default'/'en' (PATTERNS flag #4).
-        // $this->sites is kuma-locale → Craft-handle; $legacyUrls is keyed by kuma-locale.
-        // Walk every configured kuma-locale and emit a redirect for each Craft site that
-        // has a corresponding legacy URL. Replaces v1's hardcoded $nlSite / $enSite pair
-        // so this works on any client whose Craft handles aren't literally 'default'+'en'.
-        $sites = Craft::$app->sites;
+        foreach ($locales as $lang => $handle) {
+            $legacyUrl = $legacyUrls[$lang] ?? null;
 
-        foreach ($sites->configured() as $kumaLang => $craftHandle) {
-            $legacyUrl = $legacyUrls[$kumaLang] ?? null;
             if ($legacyUrl === null) {
                 continue;
             }
-            $site = $sites->getSiteByHandle((string) $craftHandle);
+
+            $site = Craft::$app->getSites()->getSiteByHandle((string) $handle);
+
             if ($site === null) {
                 continue;
             }
+
             $entry = Entry::find()->id($entryId)->siteId((int) $site->id)->status(null)->one();
-            if ($entry === null || $entry->uri === null) {
+
+            if ($entry === null || $entry->uri === null || !$entry->enabled || !$entry->getEnabledForSite()) {
                 continue;
             }
 
-            $oldPath = '/' . $kumaLang . '/' . ltrim($legacyUrl, '/');
-            // Resolve the destination as a SITE-AWARE path: parse the
-            // entry's full URL through the site's baseUrl so a multi-site
-            // setup with a `/en/` URL prefix renders the redirect to
-            // `/en/services` instead of `/services`. Falls back to the
-            // bare URI for single-site installs (and tolerates installs
-            // where Site::baseUrl can't be resolved at this point).
+            $oldPath = $prefixLocale
+                ? '/' . $lang . '/' . ltrim($legacyUrl, '/')
+                : '/' . ltrim($legacyUrl, '/');
+
+            $uri = $entry->uri === Element::HOMEPAGE_URI ? '' : $entry->uri;
             $entryUrl = (string) ($entry->getUrl() ?? '');
             $newPath = $entryUrl !== ''
-                ? (parse_url($entryUrl, PHP_URL_PATH) ?: ('/' . ltrim($entry->uri, '/')))
-                : '/' . ltrim($entry->uri, '/');
-            if ($oldPath === $newPath) {
+                ? ((string) (parse_url($entryUrl, PHP_URL_PATH) ?: '/' . ltrim($uri, '/')))
+                : '/' . ltrim($uri, '/');
+            $newPath = '/' . ltrim($newPath, '/');
+
+            if (rtrim($oldPath, '/') === rtrim($newPath, '/')) {
                 continue;
             }
-
-            $stateKey = sprintf('section_move:%s:%d:%s', $source, $kumaNodeId, $kumaLang);
 
             $this->upsertRetourRedirect(
                 srcUrl: $oldPath,
                 destUrl: $newPath,
                 httpCode: 301,
-                stateKey: $stateKey,
+                stateKey: sprintf('section_move:%s:%d:%s', $environment, $nodeId, $lang),
                 opts: $opts,
                 report: $report,
                 extraMeta: [
-                    'sectionMoveSource' => $source,
-                    'kumaNodeId' => $kumaNodeId,
-                    'lang' => $kumaLang,
+                    'kind' => 'section-move',
+                    'environment' => $environment,
+                    'kumaNodeId' => $nodeId,
+                    'lang' => $lang,
                 ],
                 associatedElementId: $entryId,
             );
@@ -714,7 +662,8 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         foreach ($rows as $r) {
             $lang = (string) ($r['lang'] ?? '');
             $url = (string) ($r['url'] ?? '');
-            if ($lang !== '' && $url !== '') {
+            // An offline translation never served its URL; there is nothing to 301.
+            if ($lang !== '' && $url !== '' && (int) ($r['online'] ?? 0) === 1) {
                 $out[$lang] = $url;
             }
         }

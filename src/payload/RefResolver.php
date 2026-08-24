@@ -27,12 +27,24 @@ final class RefResolver
 {
     private const SOURCE_UID_PATTERN = '/^kuma:([A-Za-z0-9_-]+):([a-z0-9_]+):(\d+)$/D';
 
+    /**
+     * A form's sourceUid (`kuma:<ENV>:form:<Entity>:<id>`, minted by
+     * `FormCompiler`) carries one segment more than the entry grammar. Its
+     * state row is keyed differently too: `FormMigrationService` records
+     * `source = "form"`, `key = <the whole sourceUid>`.
+     */
+    private const FORM_UID_PATTERN = '/^kuma:[A-Za-z0-9_-]+:form:[A-Za-z0-9_]+:\d+$/D';
+
     public function __construct(private readonly MigrationStateReader $stateReader)
     {
     }
 
     public function resolve(string $sourceUid): ?int
     {
+        if (preg_match(self::FORM_UID_PATTERN, $sourceUid) === 1) {
+            return $this->stateReader->getTargetId('form', $sourceUid);
+        }
+
         $parsed = self::parse($sourceUid);
         if ($parsed === null) {
             return null;

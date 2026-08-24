@@ -62,7 +62,7 @@ final class SettingsEnvReferenceTest extends TestCase
 
         $rules = array_filter(
             $settings->rules(),
-            static fn (array $rule): bool => ($rule[1] ?? null) === 'validateIsEnvReference',
+            static fn(array $rule): bool => ($rule[1] ?? null) === 'validateIsEnvReference',
         );
 
         self::assertCount(1, $rules, 'exactly one attribute is guarded, and it is the secret one');

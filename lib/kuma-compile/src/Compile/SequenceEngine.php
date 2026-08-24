@@ -41,7 +41,7 @@ final class SequenceEngine
         $absorbRule = $this->rule('absorb');
 
         if ($absorbRule === null) {
-            return array_map(static fn (array $p): array => ['part' => $p['part'], 'id' => $p['id']], $sequence);
+            return array_map(static fn(array $p): array => ['part' => $p['part'], 'id' => $p['id']], $sequence);
         }
 
         $head = $this->matchHead((string) $absorbRule['match']);

@@ -42,7 +42,7 @@ final class NavigationNodeMenuPassTest extends TestCase
         InMemoryNavigationGateway $navigation,
         InMemoryMigrationState $state,
     ): NavigationMigrationService {
-        $svc = new class extends NavigationMigrationService {
+        $svc = new class() extends NavigationMigrationService {
             // Craft's element constructor boots the application. The object
             // itself is fine once built, so build it without running that.
             protected function newNavNode(): NavNode

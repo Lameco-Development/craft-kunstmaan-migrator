@@ -54,6 +54,46 @@ final class PartReader
         return $out;
     }
 
+    /**
+     * The sidecar row decorating one page entity, or null when the page has none.
+     *
+     * Sidecars use Kunstmaan's polymorphic ref — `ref_entity_name` holds the page's FQCN,
+     * `ref_id` its row id — the same pair `kuma_seo` uses. Matching on the short name keeps
+     * the mapping portable across bundles, exactly as `sequence()` does for pageparts.
+     * `findOrCreateFor` guarantees at most one row per page entity; ordering by id makes the
+     * read deterministic if a corpus ever violates that.
+     */
+    public function sidecarRow(string $table, string $pageEntity, int $pageId): ?array
+    {
+        $key = 'sidecar:' . $table;
+        $this->statements[$key] ??= $this->pdo->prepare(
+            sprintf('SELECT * FROM `%s` WHERE ref_entity_name LIKE ? AND ref_id = ? ORDER BY id LIMIT 1', $table)
+        );
+        $this->statements[$key]->execute(['%\\\\' . $pageEntity, $pageId]);
+        $row = $this->statements[$key]->fetch(PDO::FETCH_ASSOC);
+
+        return $row === false ? null : $row;
+    }
+
+    /**
+     * The target ids one owner selects through a ManyToMany join table.
+     *
+     * A join table is two foreign keys and nothing else — no id, no weight — so the only
+     * deterministic order it offers is the target id itself.
+     *
+     * @return list<int>
+     */
+    public function m2m(string $table, string $ownerColumn, string $targetColumn, int $ownerId): array
+    {
+        $key = sprintf('m2m:%s:%s:%s', $table, $ownerColumn, $targetColumn);
+        $this->statements[$key] ??= $this->pdo->prepare(
+            sprintf('SELECT `%s` FROM `%s` WHERE `%s` = ? ORDER BY `%s`', $targetColumn, $table, $ownerColumn, $targetColumn)
+        );
+        $this->statements[$key]->execute([$ownerId]);
+
+        return array_map(intval(...), $this->statements[$key]->fetchAll(PDO::FETCH_COLUMN));
+    }
+
     /** One pagepart's own row, or null when the row is missing (a legacy dangling ref). */
     public function row(string $table, int $id): ?array
     {

@@ -33,9 +33,12 @@ final class DryRunFakeSchemaGateway implements SchemaGateway
         return $handle === 'contentPage' ? ['id' => 1, 'handle' => 'contentPage', 'hasTitleFormat' => false] : null;
     }
 
-    public function primarySite(): array { return ['id' => 1, 'handle' => 'en']; }
+    public function primarySite(): array
+    {
+        return ['id' => 1, 'handle' => 'en'];
+    }
 
-            public function siteByHandle(string $handle): ?array
+    public function siteByHandle(string $handle): ?array
     {
         return $handle === 'en' ? ['id' => 1, 'handle' => 'en'] : null;
     }

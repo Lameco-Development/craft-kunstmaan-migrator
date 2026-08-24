@@ -63,7 +63,7 @@ final class RedirectCompilerTest extends TestCase
     private function compile(RedirectCompiler $compiler): array
     {
         $out = [];
-        $compiler->compile($this->db(), 'COM', static function (array $r) use (&$out): void {
+        $compiler->compile($this->db(), 'COM', static function(array $r) use (&$out): void {
             $out[] = $r;
         });
 

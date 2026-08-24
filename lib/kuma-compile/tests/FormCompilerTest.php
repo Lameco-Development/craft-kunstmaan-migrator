@@ -93,7 +93,7 @@ final class FormCompilerTest extends TestCase
         $compiler = new FormCompiler($this->mapping(self::MAPPING), new Transforms([]));
         $out = [];
 
-        $compiler->compile($this->db(), 'COM', static function (array $record) use (&$out): void {
+        $compiler->compile($this->db(), 'COM', static function(array $record) use (&$out): void {
             $out[] = $record;
         });
 
@@ -160,7 +160,7 @@ final class FormCompilerTest extends TestCase
         $compiler = new FormCompiler($this->mapping("version: 1\nenvironments: {}\n"), new Transforms([]));
         $seen = 0;
 
-        $compiler->compile($this->db(), 'COM', static function () use (&$seen): void {
+        $compiler->compile($this->db(), 'COM', static function() use (&$seen): void {
             $seen++;
         });
 

@@ -64,7 +64,7 @@ final class MigrateControllerProductionGuardTest extends TestCase
 
     public function testBeforeActionRefusesAndStashesANonZeroExitCodeInProduction(): void
     {
-        $this->withEnvironment('production', function (): void {
+        $this->withEnvironment('production', function(): void {
             $controller = $this->uninitializedController();
 
             self::assertFalse(
@@ -82,7 +82,7 @@ final class MigrateControllerProductionGuardTest extends TestCase
 
     public function testNothingIsStashedOutsideProduction(): void
     {
-        $this->withEnvironment('dev', function (): void {
+        $this->withEnvironment('dev', function(): void {
             $controller = $this->uninitializedController();
 
             $stashed = (new ReflectionProperty(MigrateController::class, 'neverProductionExitCode'))

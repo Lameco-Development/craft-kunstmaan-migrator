@@ -98,7 +98,7 @@ final class GlobalsCompilerTest extends TestCase
         $compiler = new GlobalsCompiler($this->mapping(self::MAPPING), new Transforms([]));
         $out = [];
 
-        $compiler->compile($this->db(), 'COM', static function (array $record) use (&$out): void {
+        $compiler->compile($this->db(), 'COM', static function(array $record) use (&$out): void {
             $out[] = $record;
         });
 
@@ -131,7 +131,7 @@ final class GlobalsCompilerTest extends TestCase
     #[Test]
     public function a_box_carries_its_items_as_children_in_order(): void
     {
-        $en = array_values(array_filter($this->compile(), static fn (array $r): bool => $r['locale'] === 'en'))[0];
+        $en = array_values(array_filter($this->compile(), static fn(array $r): bool => $r['locale'] === 'en'))[0];
 
         self::assertSame('Products', $en['title']);
         self::assertSame('[NT21]', $en['url']);

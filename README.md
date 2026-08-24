@@ -11,10 +11,16 @@ It is a **development tool**. It refuses to run when `CRAFT_ENVIRONMENT=producti
 - PHP 8.3+
 - Craft CMS 5 (`^5.0`)
 
-Optional, each enabling one adapter — detected at runtime, never required:
+Optional, each enabling one adapter (or one enhancement) — detected at runtime,
+never required:
 [SEOmatic](https://github.com/nystudio107/craft-seomatic),
 [Retour](https://github.com/nystudio107/craft-retour),
-[Navigation](https://github.com/verbb/navigation).
+[Navigation](https://github.com/verbb/navigation),
+[Formie](https://github.com/verbb/formie) — the forms lane compiles a form-owning
+page into a Formie form and wires a `formBlock` on the page to reference it.
+[Embedded Assets](https://github.com/spicyweb/craft-embedded-assets) turns a
+legacy remote-video reference into a real embedded-asset element instead of an
+id-only state row.
 
 ## Installation
 
@@ -44,25 +50,52 @@ so Matrix rows updated partially and neither side could see why. They now run in
 one process. Payloads are still available with `--dump` — they are just no
 longer the seam.
 
+See [`docs/verifying-a-migration.md`](docs/verifying-a-migration.md) before the
+first real run: the procedure, the four constraints that decide whether the numbers
+mean anything, and which of the shipped commands answer which question.
+
 See [`docs/loader-contract.md`](docs/loader-contract.md) for the payload schema,
 and read **Structural placeholders** there: it is what makes migrated URLs match
 the legacy ones.
+
+## Where migrated assets land
+
+By default, `{volume}/migrated/{year}/` — a bucket keyed on the file's own
+created date, which is a fact about the file no editor has gone looking for.
+
+Set `assetFolderStrategy` to `legacy-tree` and the Kunstmaan folder structure is
+mirrored instead: `kuma_folders` is a nested set and every `kuma_media` row
+carries `folder_id`, so the client's own organisation survives the move. A
+corpus with more than one legacy source roots each environment in its own
+segment first — `COM/Media/Afbeeldingen/Visuals/` beside `DE/…` — because three
+installs each ship a folder called `Media/Afbeeldingen` and merging them
+interleaves three sites' files under one name.
+
+Folder names travel as the client wrote them; a file whose folder cannot be
+resolved falls back to the year bucket rather than the volume root.
 
 ## Configuration
 
 Two things, and they live in different places on purpose.
 
-**The connection and the adapter switches** are plugin settings
-(Settings → Kunstmaan Migrator, or `config/kunstmaan-migrator.php`). The
-credential fields take the *name* of an environment variable, not its value —
-Craft writes plugin settings into project config, which is committed and
-deployed, and a password typed here would go with it. The settings screen
-refuses one.
+**The connection, the mapping path and asset placement** are machine-level
+values — an absolute path, a database credential's environment-variable name,
+a one-time operator decision about where files land — and live in
+`config/kunstmaan-migrator.php` plus `.env`, never in the control panel. Craft
+writes plugin settings into project config, which is committed and deployed;
+a form that wrote these there would ship one developer's local paths and
+credentials to everyone else. The Settings screen (Settings → Kunstmaan
+Migrator) states what is currently in force instead of offering to edit it,
+and holds only what genuinely varies per Kunstmaan install: which adapter
+passes run, and each adapter's own knobs (source-table overrides, translation
+domains, the target navigation handle, the redirects adapter's `sectionMoves`
+opt-in).
 
 **The topology** — which databases exist, where each one's uploads live, which
 legacy locale writes to which Craft site — comes from the mapping file, which
-is version-controlled next to the field mappings it travels with. The settings
-screen shows it read-only.
+is version-controlled next to the field mappings it travels with. The Mapping
+screen and the setup wizard show it where it is edited; Settings does not
+mirror it at all.
 
 You do not hand-write one. `kuma-compile init` discovers the inventory from the
 live legacy database — every pagepart class and page type ordered by volume,
@@ -77,15 +110,125 @@ php lib/kuma-compile/bin/kuma-compile init --help
 The grammar is validated by `lib/kuma-compile/src/Mapping/Schema.php`, which is
 the authority on what a mapping may contain.
 
+## Authoring the mapping
+
+The mapping is the program. `kuma-compile` is the tool that writes it, and it
+runs against the legacy database with no Craft anywhere — which is what lets a
+mapping be authored before the target site exists.
+
+```bash
+# one command starts a migration: survey the corpus, introspect the source,
+# generate the mapping skeleton
+vendor/bin/kuma-compile bootstrap --env=COM=enreach_website \
+                                  --source=~/Sites/enreach-website --dir=migration
+
+# then decide every row, and check the result three ways
+vendor/bin/kuma-compile validate migration/mapping.yaml --craft=. \
+                                 --introspection=migration/introspection.json
+vendor/bin/kuma-compile coverage migration/mapping.yaml
+vendor/bin/kuma-compile readiness migration/mapping.yaml --craft=.
+```
+
+| Command | |
+| --- | --- |
+| `bootstrap` | **start here** — runs `survey`, `introspect` and `init` in order, writes `<dir>/introspection.json` and `<dir>/mapping.yaml`, and never overwrites a mapping that exists. The three steps stay available individually for re-runs. |
+| `survey` | **is this corpus in range** — live pages, placements, pagepart classes, page types, locales, sidecar tables, and the media/redirect/submission volumes, per environment. Needs no mapping and no Craft. |
+| `introspect` | **what the application wired up** — booted Doctrine metadata (tables, columns, associations including ManyToMany join tables) with a static fallback, plus the NodeListener sidecar wirings and every form type's field list, as a committed artifact |
+| `init` | discover the inventory — every pagepart class and page type by volume, real table names, child collections with their foreign keys, every locale with its live page count. Reads the introspection artifact when given (`--introspection=`), the static source scan otherwise |
+| `validate` | the mapping's own shape, then every handle it names against the target's project config, then whether any Matrix in the target actually accepts each block — and warns about a page entry type with no block field at all. With `--introspection=`: unclaimed ManyToMany selections, editor-facing columns ignored without a reason, mapped columns the entity does not have |
+| `coverage` | **did I miss anything in the legacy site** — anything not named in the mapping is an error, not a silent skip |
+| `coverage --markdown` | the same thing addressed to the client: what moves, what does not, and the reason each omission was declared under |
+| `readiness --craft=.` | **will every required Craft field get a value** — the mirror of `coverage`, pointed at the target |
+| `readiness --craft=. --unfilled` | the *optional* Craft fields no lane fills at all |
+| `suggest` | draft rows for parts the mapping does not name yet |
+| `doctor` | can the legacy environments be reached, and do they hold what the mapping says |
+
+**Start with `survey`.** Scoping a quote used to mean installing the plugin into a
+Craft project that does not exist yet, wiring credentials and running `doctor`.
+`survey` reads a legacy database and nothing else, and reports the counts an estimate
+is actually made against. It resolves everything through the published node version,
+which matters more than it sounds: Kunstmaan clones the whole pagepart graph per node
+version, so a quote written off the raw `kuma_page_part_refs` count is roughly twenty
+times too big. It gives no verdict — how many of 61 pagepart classes collapse into one
+Craft block is the half a machine cannot know.
+
+To rank several sites, run it once per site and compare the JSON:
+
+```bash
+for site in a b c; do
+  vendor/bin/kuma-compile survey --env=X=${site}_db --json \
+    | jq -c "{site: \"$site\", parts: .[0].partClassCount, pages: .[0].pageTypeCount,
+              locales: .[0].localeCount, media: .[0].volumes.media}"
+done
+```
+
+**`coverage --markdown` is the deliverable, not the debug output.** A migration's
+result is not only what arrived; it is also an accounting of what did not. Both halves
+are already in hand — placements measured against the live databases, and the written
+reason every `unmapped:`, `drop:` and `manual:` carries — so the report writes itself,
+in lane names a client reads rather than the mapping's. It also states the live share
+up front, because Kunstmaan keeps a copy of a page's whole content graph per saved
+version and a figure quoted off the raw table is roughly twenty times the real one.
+
+`init` deliberately emits a skeleton that **fails `validate`**: every part lacks
+a disposition, so nothing runs until a human has resolved each one. It is a
+checklist, and finishing it is what makes it a program.
+
+`coverage` and `readiness` ask the same question in opposite directions, and a
+mapping can pass one and fail the other. An unmapped legacy column is silent
+data loss; an unfilled required Craft field is an entry an editor cannot save.
+
+**`--unfilled` is the third question**, and the one that went unasked longest: a
+Craft field that is *optional* and that no lane writes to is not a load blocker,
+so it never appeared in `readiness` — and on the reference corpus that was 37
+hero field instances across 20 entry types, empty on every one of 972 migrated
+pages, with nothing reporting it. (That finding is what led to the `sidecars:`
+lane — the hero data was sitting in a per-page tab table no lane read.) It
+groups by field handle, because
+`heroTitle` unfilled on twenty entry types is one decision rather than twenty
+findings. Read the `Craft writes` column: a field with a dropdown default is
+populated on every migrated entry with no legacy data behind it, which is how
+`heroColorScheme` reads as migrated on 6,173 rows and is not.
+
 ## Running it
 
-Point the plugin at a mapping, then either use the control panel utility
-(Utilities → Kunstmaan Migration) or the console:
+Point the plugin at a mapping, then either use its own control-panel section
+(**Kunstmaan Migrator** in the primary nav — Mapping, Coverage, Run, Wizard) or
+the console:
 
 ```bash
 ./craft kunstmaan-migrator/doctor        # is this install ready, and is every environment reachable
 ./craft kunstmaan-migrator/migrate --mapping=migration/mapping/site.yaml
 ```
+
+`doctor` sweeps every plugin-backed adapter from the registry — SEOmatic,
+Retour, Navigation, Formie, and the Embedded Assets enhancement — reporting
+each installed/disabled/missing rather than naming one and staying silent
+about the rest, plus per-environment database reachability, upload-directory
+readability, and whether the target's page-builder fields can hold per-locale
+blocks. The read-only history of every run — console or control panel — is at
+**Utilities → Kunstmaan Migrator Logs**.
+
+### Running from the control panel
+
+The Run screen's button chains the whole migration as one queue sequence
+instead of pushing independent jobs: `MigrateEnvironmentJob` is a
+`craft\queue\BaseBatchedJob` that compiles and saves ~50 legacy nodes per
+execution (an entity-lane window, a page with its due structural
+placeholders) and lets Craft spawn the continuation, so no single execution
+runs the whole environment inside one request or one TTR. A batch's last
+execution pushes that environment's adapter pass; the adapter pass pushes the
+next environment; the corpus-wide fixup and finalize passes are pushed only
+after the last environment's adapters — an ordering the queue enforces
+structurally rather than relying on FIFO. A mapping file hash travels with
+the chain and refuses a continuation batch if the mapping changed mid-run,
+since the head of the corpus would otherwise compile against different rules
+than the tail.
+
+This is what makes Craft's web runner (any open control-panel tab) capable of
+carrying a real migration end to end — the same one-hour-plus run that a
+monolithic per-environment job could not survive inside a web request's
+budget.
 
 `migrate` validates the mapping's shape, then every handle it names against the
 live Craft schema, then refuses to run while any `conflict:` is still open. Per
@@ -106,20 +249,73 @@ media in rich text.
 | `--force` | re-save entries that already exist |
 | `--entries-only` | skip the adapters, the fixup and the finalize pass |
 | `--finalize-only` | run the finalize pass alone (idempotent, safe to re-run) |
-| `--queue` | hand the run to Craft's queue, one job per environment |
+| `--queue` | hand the run to Craft's queue as one chained sequence: each environment runs in ~50-node batches, its last batch pushes that environment's adapters, which push the next environment, with the fixup and finalize passes chained after the last one — see **Running from the control panel** below |
+| `--skip-assets` | skip the asset stage entirely |
+| `--fail-on-loss` | exit non-zero when the run lost content, not only when it failed |
+| `--resave=0` | skip the closing re-save (on by default; see below) |
+| `--allow-drift` | run even though the legacy corpus has grown past the mapping |
 
-**After a full run, re-save the pages.** URIs are computed at save time from the
-parent's URI, so a subtree written before its ancestor's per-site slugs settle
-keeps a stale prefix. On the reference corpus this is the difference between
-76.6% and 97.7% URL fidelity:
+**The run re-saves for you.** URIs are computed at save time from the parent's
+URI, so a subtree written before its ancestor's per-site slugs settle keeps a
+stale prefix — on the reference corpus, the difference between 76.6% and 97.7%
+URL fidelity. Every section the mapping writes into is re-saved when the run
+finishes. Pass `--resave=0` to skip it, and run it yourself afterwards:
 
 ```bash
 ./craft resave/entries --section=pages
 ```
 
+**The run warns about blocks the target will reject.** A Matrix names the entry types
+it accepts, and a part whose block is not on that list is dropped at write time. Whether
+that costs anything is a fact about the data — `contactCardBlock` is fine on a
+`contentPage` and rejected by `blogPage`, whose page builder allows ten block types where
+the general one allows twenty-four — so the preflight reads the pairings that actually
+occur from the legacy database and reports each with its measured placement count. A
+warning rather than a refusal: the fix is usually a Craft-side allow-list change, which
+is not always the migrator's call.
+
+**The run checks its own coverage first.** The legacy site is still live while the
+migration is being built: editors add pages, and three weeks in someone adds a new
+pagepart class. `coverage` catches that only when somebody remembers to run it, and
+nobody remembers. `migrate` now takes the same snapshot at the top of the run and
+refuses while any live pagepart class or page type is claimed by no lane —
+`unmapped:` with a reason counts as claimed. A narrowed run (`--only`, `--limit`)
+warns instead, because the tight iteration loop is not claiming to be complete.
+`--allow-drift` runs anyway.
+
+**Losses do not fail a run by default.** A migration that drops content is
+counted and reported, and still exits 0. `--fail-on-loss` makes lossy
+conversions, unresolved assets and unresolved references non-zero, which is what
+you want in CI once a corpus has a known-good loss count.
+
+**`doctor` checks whether the target can hold per-locale blocks.** A page-builder
+Matrix with `propagationMethod: all` keeps *one* block set for the owner, shared by
+every site. While each locale's payload names the same legacy parts that collapses
+harmlessly; when they name different parts it cannot — each site's save replaces the
+other's blocks, every run, and one locale ends up serving the other's content. The
+loader cannot repair it, because the set is global by the field's own configuration,
+so it is reported as a precondition rather than discovered per entry two hours in.
+The fix is `propagationMethod: none`, or a per-site `propagationKeyFormat`, on the
+field.
+
 **Run one migration at a time.** Craft's mutex uses MySQL named locks, which are
 server-wide rather than database-scoped, so two concurrent migrations against
 the same server contend and the loser fails on the structure lock.
+
+**A slug collision is permanent, so a wrong placement cannot be re-run away.**
+Craft never reclaims a base slug once it has handed out `-2`. An entry that
+lands under the wrong parent and is later moved keeps the suffix forever — 204
+of the URL differences in the reference corpus's first verification run were
+this, and no amount of `--force` repairs one. Correct-and-re-run fixes field
+values, block content, slugs that were never taken. It does not fix a slug that
+was. The repair is an empty database and a fresh run, which is why the trial
+runs (`--dry-run`, `--only`, `--limit`) exist and why the first full run should
+go into a scratch database.
+
+**There is no undo.** No rollback, no purge, no "migrate --down". The recovery
+procedure is to drop the database and restore it. That is a survivable answer
+only because the production guard means the only databases this ever touches are
+ones you can afford to drop — see below.
 
 ### The other commands
 
@@ -129,9 +325,83 @@ the same server contend and the loser fails on the structure lock.
 | `load/fixup` | drain the deferred `_ref`s parked by the load pass |
 | `load/redirects --payload=<file>` | load a redirects payload produced by other means |
 | `state/export` | stream the state table as NDJSON — the file to diff between runs |
+| `state/diff --from=<a> --to=<b>` | what changed between two exports: entries that stopped being written, entries whose element id moved |
+| `state/explain --node=COM:1285` | one entry, and what became of every pagepart the legacy node held |
+| `state/explain --legacy-env=COM` | the same question across every migrated node, grouped by target entry type |
 
 Every command prints machine-readable JSON or NDJSON to stdout and exits
 non-zero on failure.
+
+**A page entry type with no block field is a warning, not an error.** `contexts:`
+names the Matrix a page's blocks stream into; when the target's entry type has no such
+field, every part on every node of that type is dropped, and the compiler currently
+says so once per node into a run report two hours in. `validate` says it from two YAML
+files. It stays a warning because only the data says what it costs — on the reference
+corpus it fires for five page types, and four of them hold no live pageparts at all
+(`PartnerPage` has 423 live pages and zero placements). The fifth is `casePage`: 618
+placements across 72 pages.
+
+**`state/explain --legacy-env=COM` sweeps the whole environment.** The per-node form
+answers "why is *this* entry empty"; the sweep answers the question that comes first —
+"is anything empty, and is it a pattern". One legacy query and one pass over the state
+table, so a 973-node environment takes about a second. The breakdown is grouped by
+target entry type, because a loss that concentrates in one type is a mapping or
+content-model problem and a loss spread evenly is a loader problem. `worstPerEntryType`
+exists because a flat ranking is filled by whichever class is worst — usually the one
+already known — and hides the second cause entirely.
+
+**`state/explain` is the one to reach for when something is empty.** It reconciles
+one migrated entry against the legacy node behind it: what was written comes from the
+state row's `meta.blockIds`, what was *there* to write is re-read from the legacy
+database — because nothing records it, and because that makes the answer correct long
+after the run report is gone. The difference is split in two. `missingByDecision` is
+what another lane owns, or what sits in a context the mapping does not stream;
+`unexplained` is a placement the blocks lane claimed and did not write, which is a
+defect. It exits non-zero when `unexplained` is not empty.
+
+## What it does not migrate
+
+Every one of the twelve Kunstmaan sites surveyed installs the same eighteen bundles,
+so a lane that does not exist is not a gap on one project — it is a gap on all of
+them. Recorded here for the same reason `unmapped:` exists in the mapping: a
+declared non-goal with a reason is worth more than an absence, and a client can
+only decide about something that has been written down.
+
+| | where it lives | why there is no lane |
+| --- | --- | --- |
+| **Form submissions** | `kuma_form_submissions` (+ `_fields`) | Formie holds submissions natively, so the target exists. Whether years of leads should move is a client decision with a data-retention answer attached, not a default. |
+| **Back-office users, roles, groups** | `kuma_users`, `kuma_roles`, `kuma_groups` | Password hashes do not port, so "migrated" users cannot log in without a reset anyway. Craft's own user model and permission set are not the Kunstmaan one; mapping them is a per-project decision every time. |
+| **Node version history** | `kuma_node_versions` | Craft has revisions and could hold these. A version is a serialised page in the *old* content model, so restoring one after cutover would restore a shape the new templates cannot render. |
+| **Scheduled publishing** | `kuma_node_queued_node_translation_actions` | Craft has `postDate`/`expiryDate` and a mapping can already fill them from a column. What has no lane is the *queue* — a page scheduled to go live after cutover silently does not. Small table, high consequence: check it before cutover. |
+| **The search index** | `kuma_nodes_search` | ⊘ by decision, not by omission. Craft rebuilds its own index from the migrated content, so carrying the old one across would be carrying a stale copy of something free. |
+
+On the reference corpus those are, across the three environments: 30 submissions, 64
+users in 11 groups, 32,272 node versions, 16 queued publishes.
+
+Three more that come up on every project, and are decisions rather than absences:
+
+**The AdminList itself.** `entities:` migrates a non-node table into a section and an
+entry type, which covers Kunstmaan's AdminList-driven data. What does not travel is the
+AdminList *around* it — the filters, the sortable columns, the export the client's
+back-office person runs every Monday. On a site where that screen is the client's actual
+job, "the data is in Craft" is not "done", and the Craft-side element index that replaces
+it is build work nobody has scoped. Say so while quoting, not after.
+
+**Article authors.** All twelve surveyed sites install `kunstmaan/article-bundle`, where
+an author is a first-class entity with a name, photo and bio related to every article. In
+Craft that is either an entry or a user, and the DSL does not decide for you: model it as
+an entry through `entities:` and relate it, or as a Craft user and accept that the bio and
+photo need a user field layout. Entry is the usual answer, because an author who never
+logs in is content, not an account.
+
+**A delta run after editors have started in Craft.** There is none, and it is the moment
+every project reaches. The state table records what was written and when, which is most of
+what a delta run needs — the part that is missing is not on the plugin's side. A
+page-builder Matrix with `propagationMethod: all` keeps one block set shared by every site
+(`doctor` checks this), so a re-run replaces block sets wholesale rather than updating
+them, editor changes included. Until that field configuration changes, a cutover needs a
+content freeze on the legacy side for the length of the build. Plan for the freeze; do not
+plan for the delta run.
 
 ## Extending it
 
@@ -153,7 +423,7 @@ Event::on(AdapterRegistry::class, AdapterRegistry::EVENT_REGISTER_ADAPTERS,
 
 ```bash
 composer install
-composer test              # 491 tests
+composer test              # 725 tests
 composer test-coverage     # per-module gate, needs pcov or xdebug
 ```
 

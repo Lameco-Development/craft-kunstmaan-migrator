@@ -8,10 +8,10 @@ use lameco\kunstmaanmigrator\console\DoctorController;
 use lameco\kunstmaanmigrator\console\LoadController;
 use lameco\kunstmaanmigrator\console\StateController;
 use lameco\kunstmaanmigrator\controllers\MigrationController;
+use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\queue\FinalizeJob;
 use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
 use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
-use lameco\kunstmaanmigrator\ProductionGuard;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use RuntimeException;
@@ -33,7 +33,7 @@ final class MigrationPassCoverageTest extends TestCase
     public function testEveryConsoleActionHasAControlPanelRoute(): void
     {
         $controller = $this->source('src/controllers/MigrationController.php');
-        $template = $this->source('src/templates/_utility.twig');
+        $template = $this->source('src/templates/_run-panel.twig');
 
         $coverage = [
             'doctor' => 'actionDoctor',

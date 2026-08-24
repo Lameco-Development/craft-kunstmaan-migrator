@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\console;
 
 use lameco\kunstmaanmigrator\console\DoctorController;
-use lameco\kunstmaanmigrator\run\Diagnostics;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
+use lameco\kunstmaanmigrator\run\Diagnostics;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
@@ -171,10 +171,16 @@ final class DoctorControllerTest extends TestCase
             $source,
             'ext_translations presence is analyze/taxonomy-stage machinery, removed from the loader-only doctor.',
         );
-        self::assertStringNotContainsString(
+        self::assertStringContainsString(
             'checkAdapterPlugins',
             $source,
-            'The SEOmatic informational check is removed — only Retour presence remains (Task 6 check set).',
+            'Every adapter plugin is reported from the registry — doctor named Retour and stayed '
+            . 'silent about SEOmatic, Formie and verbb/navigation (2026-08-24).',
+        );
+        self::assertStringNotContainsString(
+            'checkRetourPresence',
+            $source,
+            'The hardcoded single-plugin check is what the registry sweep replaced.',
         );
         self::assertStringNotContainsString(
             'migrate/install',

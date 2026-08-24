@@ -57,7 +57,7 @@ final class AdapterRegistry extends Component
                 'SEO',
                 'seoEnabled',
                 'seomatic',
-                static fn () => Plugin::getInstance()->seoMigrationService,
+                static fn() => Plugin::getInstance()->seoMigrationService,
                 [
                     new AdapterSetting(
                         'fieldHandle',
@@ -87,7 +87,7 @@ final class AdapterRegistry extends Component
                 'Redirects',
                 'retourEnabled',
                 'retour',
-                static fn () => Plugin::getInstance()->redirectMigrationService,
+                static fn() => Plugin::getInstance()->redirectMigrationService,
                 [
                     new AdapterSetting(
                         'sourceTable',
@@ -97,6 +97,15 @@ final class AdapterRegistry extends Component
                         'Only read by the legacy-table pass. The `redirects:` lane compiles from the '
                         . 'mapping and does not use it.',
                     ),
+                    new AdapterSetting(
+                        'sectionMoves',
+                        'Computed section-move 301s',
+                        AdapterSetting::TYPE_BOOLEAN,
+                        false,
+                        'One 301 per migrated page whose Craft URL differs from its legacy URL. '
+                        . 'Emits only on difference — trees the structural placeholders preserve '
+                        . 'produce nothing. Off until measured against the corpus.',
+                    ),
                 ],
             ),
 
@@ -105,7 +114,7 @@ final class AdapterRegistry extends Component
                 'Navigation',
                 'navigationEnabled',
                 'navigation',
-                static fn () => Plugin::getInstance()->navigationMigrationService,
+                static fn() => Plugin::getInstance()->navigationMigrationService,
                 [
                     new AdapterSetting(
                         'navHandle',
@@ -138,7 +147,7 @@ final class AdapterRegistry extends Component
                 'Forms',
                 'formsEnabled',
                 'formie',
-                static fn () => Plugin::getInstance()->formMigrationService,
+                static fn() => Plugin::getInstance()->formMigrationService,
                 [
                     new AdapterSetting(
                         'handlePrefix',
@@ -166,7 +175,7 @@ final class AdapterRegistry extends Component
                 'Globals',
                 'globalsEnabled',
                 'navigation',
-                static fn () => Plugin::getInstance()->globalsMigrationService,
+                static fn() => Plugin::getInstance()->globalsMigrationService,
             ),
 
             new Adapter(
@@ -174,7 +183,7 @@ final class AdapterRegistry extends Component
                 'Translations',
                 'translationsEnabled',
                 null,
-                static fn () => Plugin::getInstance()->translationMigrationService,
+                static fn() => Plugin::getInstance()->translationMigrationService,
                 [
                     new AdapterSetting(
                         'domains',

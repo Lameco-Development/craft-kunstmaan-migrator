@@ -11,11 +11,11 @@ final class InMemoryTargetCatalogue implements TargetCatalogue
 {
     /**
      * @param list<string> $entryTypes
-     * @param list<string> $sections
+     * @param array<string, list<string>> $entryTypesBySection
      */
     public function __construct(
         private readonly array $entryTypes = [],
-        private readonly array $sections = [],
+        private readonly array $entryTypesBySection = [],
     ) {
     }
 
@@ -24,8 +24,8 @@ final class InMemoryTargetCatalogue implements TargetCatalogue
         return $this->entryTypes;
     }
 
-    public function sections(): array
+    public function entryTypesBySection(): array
     {
-        return $this->sections;
+        return $this->entryTypesBySection;
     }
 }
