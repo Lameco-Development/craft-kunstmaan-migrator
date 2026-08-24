@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\verify;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use Craft;
 use craft\db\Query;
 use craft\elements\Category;
@@ -132,7 +133,7 @@ class CountGateService extends Component
         // ── Plugin counts (seomatic) — optional-plugin gate ──
         if (isset($expectedPlugins['seomatic'])) {
             $expected = (int) $expectedPlugins['seomatic'];
-            if (Craft::$app->getPlugins()->getPlugin('seomatic') === null) {
+            if (!OptionalPlugins::has(OptionalPlugins::SEOMATIC)) {
                 $gates['plugins:seomatic'] = ['skip' => true, 'note' => 'seomatic plugin not installed'];
             } elseif ($expected > 0) {
                 try {
@@ -157,7 +158,7 @@ class CountGateService extends Component
         // source='redirect' (RedirectMigrationService writes these in Plan 04-07).
         if (isset($expectedPlugins['retour'])) {
             $expected = (int) $expectedPlugins['retour'];
-            if (Craft::$app->getPlugins()->getPlugin('retour') === null) {
+            if (!OptionalPlugins::has(OptionalPlugins::RETOUR)) {
                 $gates['plugins:retour'] = ['skip' => true, 'note' => 'retour plugin not installed'];
             } elseif ($expected > 0) {
                 try {

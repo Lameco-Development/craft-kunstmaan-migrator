@@ -2,6 +2,7 @@
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
@@ -139,7 +140,7 @@ class SeoMigrationService extends Component
 
         // CONFIG-08: SEOmatic is optional. If the plugin is not installed,
         // skip the entire SEO migration pass with a warning.
-        if (Craft::$app->plugins->getPlugin('seomatic') === null) {
+        if (!OptionalPlugins::has(OptionalPlugins::SEOMATIC)) {
             Craft::warning(
                 'SEOmatic plugin not installed; skipping SEO migration pass.',
                 'kunstmaanmigrator',
@@ -284,7 +285,7 @@ class SeoMigrationService extends Component
     public function migrateForEntry(int $craftEntryId, MigrationOptions $opts, ?array $refIdsByLocale = null): int
     {
         // CONFIG-08 gate — no-op when SEOmatic absent.
-        if (Craft::$app->plugins->getPlugin('seomatic') === null) {
+        if (!OptionalPlugins::has(OptionalPlugins::SEOMATIC)) {
             Craft::warning(
                 'SEOmatic plugin not installed; migrateForEntry() returning 0.',
                 'kunstmaanmigrator',

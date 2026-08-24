@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use Craft;
 use Throwable;
 use yii\base\Component;
@@ -258,7 +259,7 @@ class TranslationMigrationService extends Component
         // operators edit translations through the CP after migrate
         // (the CP rewrites the file on save).
         if (!$opts->dryRun
-            && Craft::$app->plugins->getPlugin('enupal-translate') !== null
+            && OptionalPlugins::has(OptionalPlugins::ENUPAL_TRANSLATE)
         ) {
             $this->upsertEnupalRows($catalogs, $report);
         }

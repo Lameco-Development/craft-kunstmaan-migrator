@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
 use Craft;
@@ -792,11 +793,7 @@ class AssetMigrationService extends Component
      */
     private function createEmbeddedAssetForRemoteVideo(string $videoId, string $providerType, string $title, int $mediaId): ?Asset
     {
-        $pluginsService = Craft::$app->getPlugins();
-        // Plugin handle is `embeddedassets` (no hyphen) per the plugin's
-        // composer.json — easy to typo as `embedded-assets`.
-        $plugin = $pluginsService->getPlugin('embeddedassets');
-        if ($plugin === null) {
+        if (!OptionalPlugins::has(OptionalPlugins::EMBEDDED_ASSETS)) {
             Craft::warning(
                 "kuma_media:{$mediaId} remote video — spicyweb/craft-embedded-assets not installed; recording state-only.",
                 __METHOD__,

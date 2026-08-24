@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\source;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use Craft;
 use yii\base\Component;
 
@@ -64,8 +65,8 @@ final class CraftKnowledgeBase extends Component
             'genericContentBlocks' => $this->genericContentBlockCandidates($genericContentBlockOverrides),
             'volumes' => array_values(array_unique($volumes)),
             'plugins' => [
-                'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
-                'retour' => Craft::$app->plugins->getPlugin('retour') !== null,
+                'seomatic' => OptionalPlugins::has(OptionalPlugins::SEOMATIC),
+                'retour' => OptionalPlugins::has(OptionalPlugins::RETOUR),
             ],
         ];
     }

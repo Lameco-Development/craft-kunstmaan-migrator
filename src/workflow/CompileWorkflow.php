@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\workflow;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use Craft;
 use yii\base\Component;
 use InvalidArgumentException;
@@ -760,8 +761,8 @@ class CompileWorkflow extends Component
             'entryTypes' => $entryTypes,
             'volumes' => array_values(array_unique($volumes)),
             'plugins' => [
-                'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
-                'retour' => Craft::$app->plugins->getPlugin('retour') !== null,
+                'seomatic' => OptionalPlugins::has(OptionalPlugins::SEOMATIC),
+                'retour' => OptionalPlugins::has(OptionalPlugins::RETOUR),
             ],
         ];
     }

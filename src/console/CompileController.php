@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\console;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
@@ -279,8 +280,8 @@ class CompileController extends Controller
             'entryTypes' => $entryTypes,
             'volumes' => array_values(array_unique($volumes)),
             'plugins' => [
-                'seomatic' => Craft::$app->plugins->getPlugin('seomatic') !== null,
-                'retour' => Craft::$app->plugins->getPlugin('retour') !== null,
+                'seomatic' => OptionalPlugins::has(OptionalPlugins::SEOMATIC),
+                'retour' => OptionalPlugins::has(OptionalPlugins::RETOUR),
             ],
         ];
     }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\filter\MigrationFilters;
@@ -122,7 +123,7 @@ class RedirectMigrationService extends Component
 
         // D-56: Retour is optional. If the plugin is not installed,
         // skip the entire redirect migration pass with a warning.
-        if (Craft::$app->plugins->getPlugin('retour') === null) {
+        if (!OptionalPlugins::has(OptionalPlugins::RETOUR)) {
             Craft::warning(
                 'Retour plugin not installed; skipping redirect migration pass.',
                 'kunstmaanmigrator',
@@ -162,7 +163,7 @@ class RedirectMigrationService extends Component
      */
     public function truncate(): int
     {
-        if (Craft::$app->plugins->getPlugin('retour') === null
+        if (!OptionalPlugins::has(OptionalPlugins::RETOUR)
             || !class_exists(Retour::class)
             || Retour::$plugin === null
         ) {

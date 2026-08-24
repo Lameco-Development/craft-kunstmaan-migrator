@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\verify;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use Craft;
 use craft\db\Query;
 use craft\elements\Category;
@@ -240,7 +241,7 @@ class BaselineCounterService extends Component
      */
     private function captureRetour(): array
     {
-        if (Craft::$app->plugins->getPlugin('retour') === null) {
+        if (!OptionalPlugins::has(OptionalPlugins::RETOUR)) {
             return ['totalCount' => 0];
         }
 
@@ -262,7 +263,7 @@ class BaselineCounterService extends Component
      */
     private function captureSeomatic(): array
     {
-        if (Craft::$app->plugins->getPlugin('seomatic') === null) {
+        if (!OptionalPlugins::has(OptionalPlugins::SEOMATIC)) {
             return ['totalCount' => 0];
         }
 

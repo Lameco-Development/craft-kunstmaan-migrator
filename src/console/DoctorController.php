@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\console;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\App;
@@ -278,7 +279,7 @@ class DoctorController extends Controller
      */
     private function checkAdapterPlugins(): bool
     {
-        $seomatic = Craft::$app->plugins->getPlugin('seomatic');
+        $seomatic = OptionalPlugins::get(OptionalPlugins::SEOMATIC);
         if ($seomatic !== null) {
             $version = (string) $seomatic->getVersion();
             $this->stdout("  OK   seomatic v{$version} installed\n", Console::FG_GREEN);
@@ -286,7 +287,7 @@ class DoctorController extends Controller
             $this->stdout("  INFO seomatic not installed (adapter will skip)\n", Console::FG_YELLOW);
         }
 
-        $retour = Craft::$app->plugins->getPlugin('retour');
+        $retour = OptionalPlugins::get(OptionalPlugins::RETOUR);
         if ($retour !== null) {
             $version = (string) $retour->getVersion();
             $this->stdout("  OK   retour v{$version} installed\n", Console::FG_GREEN);

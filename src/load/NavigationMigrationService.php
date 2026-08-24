@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
+use lameco\kunstmaanmigrator\OptionalPlugins;
 use Craft;
 use Throwable;
 use yii\base\Component;
@@ -166,7 +167,7 @@ class NavigationMigrationService extends Component
             return $report;
         }
 
-        if (Craft::$app->plugins->getPlugin('navigation') === null) {
+        if (!OptionalPlugins::has(OptionalPlugins::NAVIGATION)) {
             Craft::warning(
                 'verbb/navigation plugin not installed; skipping nav migration pass.',
                 'kunstmaanmigrator',
@@ -320,7 +321,7 @@ class NavigationMigrationService extends Component
      */
     public function truncate(): int
     {
-        if (Craft::$app->plugins->getPlugin('navigation') === null
+        if (!OptionalPlugins::has(OptionalPlugins::NAVIGATION)
             || !class_exists(Navigation::class)
             || Navigation::$plugin === null
         ) {
