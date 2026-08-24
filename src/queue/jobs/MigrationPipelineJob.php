@@ -9,6 +9,7 @@ use InvalidArgumentException;
 use lameco\kunstmaanmigrator\Plugin;
 use RuntimeException;
 use Throwable;
+use yii\queue\RetryableJobInterface;
 
 /**
  * Staged dry-run/live migration pipeline queue job.
@@ -17,7 +18,7 @@ use Throwable;
  * workflow reports a nextBatchOffset. Payload properties stay scalar/array
  * only so Craft can safely serialize jobs between web and worker processes.
  */
-class MigrationPipelineJob extends BaseJob
+class MigrationPipelineJob extends BaseJob implements RetryableJobInterface
 {
     public int $runId;
     public string $mode;
@@ -86,7 +87,7 @@ class MigrationPipelineJob extends BaseJob
                     'summary' => (array) ($result['summary'] ?? []),
                 ]);
                 $this->setProgress($queue, 1.0, $this->label('failed'));
-                return;
+                throw new WorkflowFailedException($message);
             }
 
             if ($nextBatchOffset !== null) {
@@ -110,6 +111,8 @@ class MigrationPipelineJob extends BaseJob
                 $this->artifactPaths($result),
             );
             $this->setProgress($queue, 1.0, $this->label('completed'));
+        } catch (WorkflowFailedException $e) {
+            throw $e;
         } catch (Throwable $e) {
             $runService->markFailed($this->runId, $e->getMessage(), [
                 'mode' => $this->mode,
@@ -120,6 +123,20 @@ class MigrationPipelineJob extends BaseJob
             $this->setProgress($queue, 1.0, $this->label('failed'));
             throw $e;
         }
+    }
+
+    public function getTtr(): int
+    {
+        // Full workflow batches routinely outlive yii\queue's 300s default;
+        // a premature TTR expiry would re-run a partially applied batch.
+        return 3600;
+    }
+
+    public function canRetry($attempt, $error): bool
+    {
+        // A failed batch may have partially applied entries — auto-replay
+        // is never safe. Operators re-queue deliberately from the run record.
+        return false;
     }
 
     protected function defaultDescription(): ?string

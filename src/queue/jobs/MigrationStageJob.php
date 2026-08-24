@@ -8,6 +8,7 @@ use craft\queue\BaseJob;
 use InvalidArgumentException;
 use lameco\kunstmaanmigrator\Plugin;
 use Throwable;
+use yii\queue\RetryableJobInterface;
 
 /**
  * Queue-safe runner for the non-live migration console stages.
@@ -16,7 +17,7 @@ use Throwable;
  * can serialize the job payload without carrying services, records, or other
  * runtime-only objects across queue boundaries.
  */
-class MigrationStageJob extends BaseJob
+class MigrationStageJob extends BaseJob implements RetryableJobInterface
 {
     public int $runId;
     public string $stage;
@@ -83,6 +84,9 @@ class MigrationStageJob extends BaseJob
                 'summary' => (array) ($result['summary'] ?? []),
             ]);
             $this->setProgress($queue, 1.0, $this->label('failed'));
+            throw new WorkflowFailedException($message);
+        } catch (WorkflowFailedException $e) {
+            throw $e;
         } catch (Throwable $e) {
             $runService->markFailed($this->runId, $e->getMessage(), [
                 'stage' => $this->stage,
@@ -92,6 +96,20 @@ class MigrationStageJob extends BaseJob
             $this->setProgress($queue, 1.0, $this->label('failed'));
             throw $e;
         }
+    }
+
+    public function getTtr(): int
+    {
+        // Analyze/verify stages routinely outlive yii\queue's 300s default.
+        return 3600;
+    }
+
+    public function canRetry($attempt, $error): bool
+    {
+        // Stage results are recorded on the run record; a silent auto-replay
+        // would double work and mask the original failure. Operators re-queue
+        // deliberately from the run record.
+        return false;
     }
 
     protected function defaultDescription(): ?string
