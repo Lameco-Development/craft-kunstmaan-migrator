@@ -6,6 +6,9 @@ namespace Lameco\Kunstmaanmigrator\payload;
 
 use Craft;
 use DateTimeImmutable;
+
+use Lameco\KumaCompile\Payload\Payload;
+use Lameco\KumaCompile\Payload\SchemaGateway;
 use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;

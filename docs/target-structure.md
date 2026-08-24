@@ -85,7 +85,7 @@ worth having even if the later steps never happen.
    `KunstmaanCoreTables` (now in lib/Legacy) is the greppable index. The
    env-reader dead path was revived via `Settings::$legacySourcePath`
    rather than deleted.
-4. **Grow the kernel.** Move `Payload`, `PayloadValidator` next to
+4. **Grow the kernel** — DONE (this change). Move `Payload`, `PayloadValidator` next to
    `SourceUid` (they are already Craft-free — only their namespace says
    otherwise); `docs/loader-contract.md` then documents the package it sits
    beside.

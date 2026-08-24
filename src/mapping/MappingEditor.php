@@ -10,10 +10,10 @@ use Lameco\KumaCompile\Legacy\LegacyCatalogue;
 use Lameco\KumaCompile\Mapping\FieldProvenance;
 use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Mapping\Schema;
+use Lameco\KumaCompile\Payload\SchemaGateway;
 use Lameco\Kunstmaanmigrator\compile\TargetModel;
 use Lameco\Kunstmaanmigrator\models\Settings;
 use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
-use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Throwable;
 

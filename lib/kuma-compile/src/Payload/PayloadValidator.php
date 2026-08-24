@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Lameco\Kunstmaanmigrator\payload;
+namespace Lameco\KumaCompile\Payload;
 
 /**
  * Checks a structurally-valid `Payload` against the live Craft schema and

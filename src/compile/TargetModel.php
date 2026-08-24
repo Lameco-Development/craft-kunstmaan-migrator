@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\compile;
 
+use Lameco\KumaCompile\Payload\SchemaGateway;
 use Lameco\KumaCompile\Target\Slot;
 use Lameco\KumaCompile\Target\TargetSchema;
-use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 
 /**
  * The `TargetSchema` a migration run answers from: the live Craft site.
