@@ -57,7 +57,7 @@ final class MigrateEnvironmentJobTest extends TestCase
 
     public function testItRefusesToRunAgainstProduction(): void
     {
-        $this->withEnvironment('production', function (): void {
+        $this->withEnvironment('production', function(): void {
             $job = $this->job(['mappingPath' => '/does/not/matter', 'environment' => 'COM']);
 
             $this->expectException(RuntimeException::class);
@@ -74,7 +74,7 @@ final class MigrateEnvironmentJobTest extends TestCase
      */
     public function testItSaysWhichMappingFileWentMissing(): void
     {
-        $this->withEnvironment('dev', function (): void {
+        $this->withEnvironment('dev', function(): void {
             $job = $this->job([
                 'mappingPath' => '/tmp/no-such-mapping-' . __LINE__ . '.yaml',
                 'environment' => 'COM',

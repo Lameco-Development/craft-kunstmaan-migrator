@@ -14,7 +14,7 @@
   <div class="readable" style="text-align: center; padding: 30px 0;">
     <h2>{{ "Bring a Kunstmaan site into Craft"|t('kunstmaan-migrator') }}</h2>
     <p>
-      {{ "Four questions: where the old database is, which sites you are migrating, where each language and its files go — then it writes the plan and you review it."|t('kunstmaan-migrator') }}
+      {{ "Four questions: the old database, which sites migrate, and where each language and its files go. You review the result at the end."|t('kunstmaan-migrator') }}
     </p>
     <p style="margin-top: 18px;">
       <a class="btn submit big" href="{{ url('kunstmaan-migrator/setup') }}">{{ "Start"|t('kunstmaan-migrator') }}</a>
@@ -70,7 +70,7 @@
             {% endfor %}
             {% if check.localesNotMigrated %}
               <div class="light">
-                {{ "Not migrated by design:"|t('kunstmaan-migrator') }} {{ check.localesNotMigrated|join(', ') }}
+                {{ "Not migrating:"|t('kunstmaan-migrator') }} {{ check.localesNotMigrated|join(', ') }}
               </div>
             {% endif %}
           </td>
@@ -81,28 +81,10 @@
 
   <hr>
 
-  <h2>{{ "Diagnostics"|t('kunstmaan-migrator') }}</h2>
-
-  <div class="field">
-    <div class="input">
-      <button type="button" class="btn" id="kuma-doctor">{{ "Run doctor"|t('kunstmaan-migrator') }}</button>
-      <a class="btn" href="{{ actionUrl('kunstmaan-migrator/migration/export') }}">{{ "Export state"|t('kunstmaan-migrator') }}</a>
-    </div>
-    <div class="instructions">
-      <p>{{ "Doctor answers the same checks as the console command — the install, and every environment the mapping declares. Export writes the state table as NDJSON — the file to diff between runs."|t('kunstmaan-migrator') }}</p>
-    </div>
-  </div>
-
-  <table class="data fullwidth hidden" id="kuma-doctor-results">
-    <tbody></tbody>
-  </table>
-
-  <hr>
-
   <h2>{{ "Run"|t('kunstmaan-migrator') }}</h2>
 
   <p class="light">
-    {{ "A run reads the old site and writes into Craft. It takes hours on a real site, and it is safe to stop and start again — nothing is migrated twice."|t('kunstmaan-migrator') }}
+    {{ "Reads the old site and writes into Craft. Can take hours, and is safe to stop and restart: migrated pages are skipped."|t('kunstmaan-migrator') }}
   </p>
 
   {{ forms.selectField({
@@ -116,9 +98,20 @@
 
   {{ forms.lightswitchField({
     label: "Practice run"|t('kunstmaan-migrator'),
-    instructions: "Reads everything and reports what it would do, without writing anything to Craft. Worth doing once."|t('kunstmaan-migrator'),
+    instructions: "Reports what a run would do, without writing anything."|t('kunstmaan-migrator'),
     id: 'kuma-dry-run',
     name: 'dryRun',
+  }) }}
+
+  {# Skipping is what makes a stopped run safe to resume, and it is also what makes a corrected
+     mapping do nothing. This is the way to say "read it again anyway" — and it overwrites, so the
+     warning is the point of the field, not decoration. #}
+  {{ forms.lightswitchField({
+    label: "Re-run and overwrite"|t('kunstmaan-migrator'),
+    instructions: "Migrates already-migrated pages again, so a corrected mapping reaches them."|t('kunstmaan-migrator'),
+    warning: "Re-migrates pages that are already in Craft and overwrites them, including anything editors changed. Only safe while nothing else edits this content."|t('kunstmaan-migrator'),
+    id: 'kuma-force',
+    name: 'force',
   }) }}
 
   <div class="field">
@@ -142,7 +135,7 @@
   <details style="margin-top: 22px;">
     <summary>{{ "If a run stopped part-way"|t('kunstmaan-migrator') }}</summary>
     <p class="light">
-      {{ "A full run does all of these in order. Run one on its own only to pick up where a run stopped — each is safe to repeat."|t('kunstmaan-migrator') }}
+      {{ "A full run does all of these in order. Each is safe to repeat on its own."|t('kunstmaan-migrator') }}
     </p>
     <div class="btngroup">
       <button type="button" class="btn" data-pass="entries">{{ "Pages and content only"|t('kunstmaan-migrator') }}</button>
@@ -152,36 +145,6 @@
   </details>
 
   {% js %}
-    document.getElementById('kuma-doctor').addEventListener('click', function () {
-      var button = this;
-      var table = document.getElementById('kuma-doctor-results');
-      button.disabled = true;
-
-      Craft.sendActionRequest('POST', 'kunstmaan-migrator/migration/doctor')
-        .then(function (response) {
-          var body = table.querySelector('tbody');
-          body.innerHTML = '';
-
-          response.data.checks.forEach(function (check) {
-            var row = document.createElement('tr');
-            var name = document.createElement('th');
-            name.setAttribute('scope', 'row');
-            name.innerHTML = '<span data-icon="' + (check.ok ? 'check' : 'alert') + '"></span> ' + check.check;
-            var detail = document.createElement('td');
-            detail.textContent = check.detail;
-            if (!check.ok) { detail.className = 'error'; }
-            row.appendChild(name);
-            row.appendChild(detail);
-            body.appendChild(row);
-          });
-
-          table.classList.remove('hidden');
-        })
-        .finally(function () {
-          button.disabled = false;
-        });
-    });
-
     var isOn = function (id) {
       return document.getElementById(id).getAttribute('aria-checked') === 'true' ? 1 : 0;
     };
@@ -241,7 +204,7 @@
           pass: pass,
           environment: document.getElementById('kuma-environment').value,
           dryRun: isOn('kuma-dry-run'),
-          force: 0
+          force: isOn('kuma-force')
         }
       })
         .then(function (response) {
@@ -268,18 +231,41 @@
     // are not the same act, and one button labelled for both is how somebody
     // migrates a live site meaning to rehearse.
     var label = function () {
-      document.getElementById('kuma-queue').textContent = isOn('kuma-dry-run')
-        ? '{{ "Start practice run"|t('kunstmaan-migrator')|e('js') }}'
-        : '{{ "Start the migration"|t('kunstmaan-migrator')|e('js') }}';
+      var button = document.getElementById('kuma-queue');
+
+      if (isOn('kuma-dry-run')) {
+        button.textContent = '{{ "Start practice run"|t('kunstmaan-migrator')|e('js') }}';
+      } else if (isOn('kuma-force')) {
+        button.textContent = '{{ "Re-run and overwrite"|t('kunstmaan-migrator')|e('js') }}';
+      } else {
+        button.textContent = '{{ "Start the migration"|t('kunstmaan-migrator')|e('js') }}';
+      }
     };
 
     // Craft's lightswitch emits `change`; listening for `click` misses the
     // keyboard and misses anything that flips it programmatically.
     $('#kuma-dry-run').on('change', label);
+    $('#kuma-force').on('change', label);
 
     label();
 
+    // Only the combination that overwrites asks. A practice run writes nothing, and a first run
+    // has nothing to overwrite — prompting on those trains people to click through the prompt.
+    var confirmed = function () {
+      if (!isOn('kuma-force') || isOn('kuma-dry-run')) {
+        return true;
+      }
+
+      return window.confirm(
+        '{{ "This re-migrates pages that are already in Craft and overwrites them. Blocks are replaced, so any control-panel edits to them are lost. Continue?"|t('kunstmaan-migrator')|e('js') }}'
+      );
+    };
+
     document.getElementById('kuma-queue').addEventListener('click', function () {
+      if (!confirmed()) {
+        return;
+      }
+
       queue('full', this);
     });
 

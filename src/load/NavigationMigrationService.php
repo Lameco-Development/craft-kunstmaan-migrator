@@ -5,19 +5,19 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
-use Throwable;
-use yii\base\Component;
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
-use lameco\kunstmaanmigrator\sites\SiteMap;
+use craft\elements\Entry;
 use lameco\kunstmaanmigrator\adapters\GatedAdapter;
 use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
 use lameco\kunstmaanmigrator\craft\NavigationGateway;
 use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
-use craft\elements\Entry;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use lameco\kunstmaanmigrator\sites\SiteMap;
+use Throwable;
 use verbb\navigation\elements\Node as NavNode;
+use yii\base\Component;
 
 /**
  * NavigationMigrationService — imports Kunstmaan MenuBundle data

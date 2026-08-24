@@ -1,0 +1,75 @@
+{% extends "kunstmaan-migrator/_setup/_wizard" %}
+{% import "_includes/forms.twig" as forms %}
+{% do view.registerAssetBundle('lameco\\kunstmaanmigrator\\web\\MigratorAsset') %}
+{% set nextLabel = "Use this site"|t('kunstmaan-migrator') %}
+
+{% block step %}
+  {{ actionInput('kunstmaan-migrator/setup/choose-checkout') }}
+  <input type="hidden" name="path" id="kuma-checkout-path">
+
+  {% if existingMapping %}
+    {# Craft only styles note blockquotes inside a .readable wrapper. #}
+    <div class="readable" style="margin-bottom: 16px;">
+      <blockquote class="note warning">
+        <p>
+          {{ "A mapping already exists at {path}. At the end the wizard merges into it by default; replacing is a separate, explicit choice. To keep working on it instead, go to the Mapping screen."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
+        </p>
+      </blockquote>
+    </div>
+  {% endif %}
+
+  <div class="readable">
+    <p>
+      {{ "If the old site's code is on this machine, pick its folder. The next steps are prefilled from it, and every value stays editable."|t('kunstmaan-migrator') }}
+    </p>
+  </div>
+
+  {{ forms.autosuggestField({
+    label: "Look in"|t('kunstmaan-migrator'),
+    instructions: "The folder your site checkouts live in."|t('kunstmaan-migrator'),
+    id: 'kuma-root',
+    name: 'root',
+    value: root,
+    suggestEnvVars: false,
+  }) }}
+  <p><a class="btn" id="kuma-rescan">{{ "Look again"|t('kunstmaan-migrator') }}</a></p>
+
+  <div id="kuma-detect-results">
+    {% include 'kunstmaan-migrator/_setup/_detect-results' %}
+  </div>
+
+
+  <p style="margin-top: 16px;">
+    <a class="go" href="{{ url('kunstmaan-migrator/setup/connect') }}">{{ "The old site is not on this machine — enter the connection by hand"|t('kunstmaan-migrator') }}</a>
+  </p>
+
+  {% js %}
+    var path = document.getElementById('kuma-checkout-path');
+    var saves = function () { return [].slice.call(document.querySelectorAll('#main-form button[type=submit]')); };
+    saves().forEach(function (b) { b.disabled = true; });
+
+    document.addEventListener('change', function (e) {
+      if (!e.target.classList.contains('kuma-pick')) { return; }
+      path.value = e.target.value;
+      saves().forEach(function (b) { b.disabled = false; });
+    });
+
+    var results = document.getElementById('kuma-detect-results');
+    var rescanBtn = document.getElementById('kuma-rescan');
+    var rootField = document.getElementById('kuma-root');
+
+    var rescan = function () {
+      kumaSwap(results, 'kunstmaan-migrator/setup/detect-results', { root: rootField.value }, {
+        busy: rescanBtn,
+        onDone: function () {
+          // The picked checkout is gone with the old list.
+          path.value = '';
+          saves().forEach(function (b) { b.disabled = true; });
+        },
+      });
+    };
+
+    rescanBtn.addEventListener('click', rescan);
+    rootField.addEventListener('change', rescan);
+  {% endjs %}
+{% endblock %}

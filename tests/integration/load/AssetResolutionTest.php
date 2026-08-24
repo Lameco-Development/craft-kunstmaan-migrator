@@ -38,9 +38,12 @@ final class AssetResolutionFakeSchemaGateway implements SchemaGateway
         return $handle === 'contentPage' ? ['id' => 1, 'handle' => 'contentPage', 'hasTitleFormat' => false] : null;
     }
 
-    public function primarySite(): array { return ['id' => 1, 'handle' => 'en']; }
+    public function primarySite(): array
+    {
+        return ['id' => 1, 'handle' => 'en'];
+    }
 
-            public function siteByHandle(string $handle): ?array
+    public function siteByHandle(string $handle): ?array
     {
         return $handle === 'en' ? ['id' => 1, 'handle' => 'en'] : null;
     }
@@ -244,7 +247,7 @@ final class AssetResolutionTest extends TestCase
             $stateService,
             $assetService,
             new CkeditorRewriterService(),
-            static fn (callable $fn) => $fn(),
+            static fn(callable $fn) => $fn(),
         );
     }
 

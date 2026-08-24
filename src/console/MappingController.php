@@ -9,9 +9,8 @@ use craft\helpers\Console;
 use Lameco\KumaCompile\Legacy\EntityTableIndex;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
-use Lameco\KumaCompile\Mapping\Schema;
+use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\Skeleton;
-use Lameco\KumaCompile\Target\TargetCheck;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
@@ -149,7 +148,7 @@ final class MappingController extends Controller
         file_put_contents($this->out, $yaml);
 
         $this->stdout(sprintf("Wrote %s\n", $this->out), Console::FG_GREEN);
-        $this->stdout("Next: fill it in — Utilities → Kunstmaan Migration, or the file directly — then `mapping/check`.\n");
+        $this->stdout("Next: fill it in — Utilities → Kunstmaan Migrator, or the file directly — then `mapping/check`.\n");
 
         return ExitCode::OK;
     }
@@ -182,19 +181,10 @@ final class MappingController extends Controller
             return ExitCode::UNSPECIFIED_ERROR;
         }
 
-        if ($errors = (new Schema())->validate($mapping)) {
-            return $this->report('Mapping is not well-formed', $errors);
-        }
+        $verdict = (new MappingCheck(new TargetModel(new CraftSchemaGateway())))->verdict($mapping);
 
-        if ($errors = (new TargetCheck(new TargetModel(new CraftSchemaGateway())))->check($mapping)) {
-            return $this->report('Mapping does not match this Craft install', $errors);
-        }
-
-        if ($conflicts = $mapping->openConflicts()) {
-            return $this->report(
-                sprintf('%d unresolved conflicts — set conflict.status: decided', count($conflicts)),
-                array_map(static fn ($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
-            );
+        if ($verdict !== null) {
+            return $this->report($verdict[0], $verdict[1]);
         }
 
         $this->stdout(sprintf(

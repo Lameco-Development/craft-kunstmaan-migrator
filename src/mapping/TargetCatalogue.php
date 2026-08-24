@@ -23,9 +23,12 @@ interface TargetCatalogue
     public function entryTypes(): array;
 
     /**
-     * Section handles, for the lanes that name a section as well as a type.
+     * Entry type handles grouped by the section that uses them.
      *
-     * @return list<string>
+     * Types no section uses — Matrix block types — are absent here;
+     * `entryTypes()` still lists them.
+     *
+     * @return array<string, list<string>> section name => entry type handles
      */
-    public function sections(): array;
+    public function entryTypesBySection(): array;
 }

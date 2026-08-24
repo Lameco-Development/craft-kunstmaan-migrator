@@ -38,9 +38,9 @@ final class LegacyDatabase
             $dsn->user,
             $dsn->password,
             [
-                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES   => false,
+                PDO::ATTR_EMULATE_PREPARES => false,
             ],
         );
 
@@ -65,6 +65,32 @@ final class LegacyDatabase
         );
     }
 
+    /**
+     * Sidecar rows reachable from a published page — the live share.
+     *
+     * Sidecars are cloned per node version exactly like pageparts, so the raw
+     * table is roughly twenty times the live content; the only honest count
+     * resolves through the published version, the same way everything else here
+     * does.
+     */
+    public function liveSidecarRows(string $table): int
+    {
+        try {
+            $stmt = $this->pdo->query(sprintf(
+                'SELECT COUNT(DISTINCT s.id)
+                 FROM `%s` s
+                 JOIN kuma_node_versions v ON v.ref_id = s.ref_id AND v.ref_entity_name = s.ref_entity_name
+                 JOIN kuma_node_translations t ON t.public_node_version_id = v.id AND t.online = 1
+                 JOIN kuma_nodes n ON n.id = t.node_id AND n.deleted = 0',
+                $table,
+            ));
+
+            return (int) $stmt->fetchColumn();
+        } catch (\PDOException) {
+            return 0;
+        }
+    }
+
     /** @return list<string> */
     public function tables(): array
     {
@@ -73,6 +99,15 @@ final class LegacyDatabase
 
     public function hasTable(string $table): bool
     {
+        // The sqlite branch exists for the test fixtures every sqlite-backed
+        // suite runs on; production corpora are MySQL.
+        if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?');
+            $stmt->execute(['table', $table]);
+
+            return (bool) $stmt->fetchColumn();
+        }
+
         $stmt = $this->pdo->prepare(
             'SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
         );
@@ -84,6 +119,12 @@ final class LegacyDatabase
     /** @return list<string> */
     public function columns(string $table): array
     {
+        if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            $stmt = $this->pdo->query(sprintf('PRAGMA table_info(`%s`)', $table));
+
+            return array_map(static fn(array $row): string => (string) $row['name'], $stmt->fetchAll(PDO::FETCH_ASSOC));
+        }
+
         $stmt = $this->pdo->prepare(
             'SELECT COLUMN_NAME FROM information_schema.COLUMNS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION'
@@ -166,6 +207,173 @@ final class LegacyDatabase
     public function countAllPartRefs(): int
     {
         return (int) $this->pdo->query('SELECT COUNT(*) FROM kuma_page_part_refs')->fetchColumn();
+    }
+
+    /**
+     * Live placements per Kunstmaan context — `main`, `form`, the eight `footer-*`.
+     *
+     * A context is where a lane's work lands: `form` placements need the forms lane, `footer-*`
+     * the globals lane, and the editorial ones the blocks lane. Sizing a quote means knowing
+     * how many of each, and the number is one GROUP BY away from data already being read.
+     *
+     * @return array<string, int> context => live placements
+     */
+    public function livePlacementsByContext(): array
+    {
+        $sql = sprintf(
+            'SELECT r.context AS context, COUNT(*) AS n
+             FROM kuma_page_part_refs r
+             JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
+             GROUP BY r.context',
+            self::LIVE_PAGES,
+        );
+
+        $counts = [];
+
+        foreach ($this->pdo->query($sql) as $row) {
+            $counts[(string) $row['context']] = (int) $row['n'];
+        }
+
+        arsort($counts);
+
+        return $counts;
+    }
+
+    /**
+     * Every live pagepart placement on one node, in the order the page holds them.
+     *
+     * The per-entry question — "these parts became these blocks, and these did not" — needs the
+     * left-hand side, and nothing records it: the state row knows what *was* written, not what
+     * was there to write. Resolving it through the published version of each translation is the
+     * same rule as everywhere else here, so what comes back is what the live page shows.
+     *
+     * @return list<array{lang: string, context: string, part: string, entity: string, id: int, sequence: int}>
+     */
+    public function livePartsOfNode(int $nodeId): array
+    {
+        $sql = sprintf(
+            'SELECT l.lang AS lang, r.context AS context, r.page_part_entityname AS entity,
+                    r.page_part_id AS partId, r.sequencenumber AS sequence
+             FROM kuma_page_part_refs r
+             JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
+             JOIN kuma_node_translations t2 ON t2.node_id = :node
+             JOIN kuma_node_versions v2 ON v2.id = t2.public_node_version_id
+               AND v2.ref_id = r.pageId AND v2.ref_entity_name = r.pageEntityname
+             GROUP BY l.lang, r.context, r.page_part_entityname, r.page_part_id, r.sequencenumber
+             ORDER BY l.lang, r.context, r.sequencenumber',
+            self::LIVE_PAGES,
+        );
+
+        $statement = $this->pdo->prepare($sql);
+        $statement->execute(['node' => $nodeId]);
+        $out = [];
+
+        foreach ($statement as $row) {
+            $out[] = [
+                'lang' => (string) $row['lang'],
+                'context' => (string) $row['context'],
+                'part' => self::shortName((string) $row['entity'], 'PagePart'),
+                'entity' => (string) $row['entity'],
+                'id' => (int) $row['partId'],
+                'sequence' => (int) $row['sequence'],
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Live placements grouped by the page type they sit on and the pagepart class they are.
+     *
+     * Whether a part's block is *permitted* on a page's Matrix is a schema question, and which
+     * parts actually land on which page types is a data question. Neither half alone can say
+     * whether an allow-list rejection costs anything, which is why the pairing has to be read
+     * from the corpus rather than guessed from the mapping.
+     *
+     * @return array<string, array<string, int>> short page entity => short pagepart class => live placements
+     */
+    public function livePlacementsByPageType(): array
+    {
+        $sql = sprintf(
+            'SELECT l.pageEntityname AS entity, r.page_part_entityname AS part, COUNT(*) AS n
+             FROM kuma_page_part_refs r
+             JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
+             GROUP BY l.pageEntityname, r.page_part_entityname',
+            self::LIVE_PAGES,
+        );
+
+        $out = [];
+
+        foreach ($this->pdo->query($sql) as $row) {
+            $page = self::shortName((string) $row['entity']);
+            $part = self::shortName((string) $row['part'], 'PagePart');
+            $out[$page][$part] = ($out[$page][$part] ?? 0) + (int) $row['n'];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The same, for every live node in the environment, in one query.
+     *
+     * A corpus sweep asking `livePartsOfNode()` two thousand times runs the live-pages subquery
+     * two thousand times over a table of 158,000 rows. This walks the join once and buckets the
+     * result by node — 7,279 rows on the largest reference environment, which is nothing to
+     * hold — so the sweep is one query rather than a query per entry.
+     *
+     * Written out rather than reusing `LIVE_PAGES`: that constant selects DISTINCT over
+     * (page, id, lang) and adding `node_id` to it would change what DISTINCT means for its
+     * other three callers.
+     *
+     * @return array<int, list<array{lang: string, context: string, part: string, entity: string, id: int, sequence: int}>>
+     */
+    public function livePartsByNode(): array
+    {
+        $sql = <<<'SQL'
+            SELECT t.node_id AS nodeId, t.lang AS lang, r.context AS context,
+                   r.page_part_entityname AS entity, r.page_part_id AS partId,
+                   r.sequencenumber AS sequence
+            FROM kuma_node_translations t
+            JOIN kuma_nodes n ON n.id = t.node_id AND n.deleted = 0
+            JOIN kuma_node_versions v ON v.id = t.public_node_version_id
+            JOIN kuma_page_part_refs r
+              ON r.pageEntityname = v.ref_entity_name AND r.pageId = v.ref_id
+            WHERE t.online = 1 AND v.ref_id IS NOT NULL
+            ORDER BY t.node_id, t.lang, r.context, r.sequencenumber
+            SQL;
+
+        $out = [];
+
+        foreach ($this->pdo->query($sql) as $row) {
+            $out[(int) $row['nodeId']][] = [
+                'lang' => (string) $row['lang'],
+                'context' => (string) $row['context'],
+                'part' => self::shortName((string) $row['entity'], 'PagePart'),
+                'entity' => (string) $row['entity'],
+                'id' => (int) $row['partId'],
+                'sequence' => (int) $row['sequence'],
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * `SELECT COUNT(*)` on a table that may not be there.
+     *
+     * The twelve surveyed installs share eighteen bundles but not every table: an install
+     * without the form bundle has no `kuma_form_submissions`, and a survey that dies on it
+     * cannot survey anything. A missing table is null — "not installed" — not zero.
+     */
+    public function countOrNull(string $table, ?string $where = null): ?int
+    {
+        if (!$this->hasTable($table)) {
+            return null;
+        }
+
+        $sql = sprintf('SELECT COUNT(*) FROM %s', $table) . ($where !== null ? ' WHERE ' . $where : '');
+
+        return (int) $this->pdo->query($sql)->fetchColumn();
     }
 
 

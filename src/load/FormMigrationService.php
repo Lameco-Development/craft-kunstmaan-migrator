@@ -80,7 +80,7 @@ class FormMigrationService extends Component implements MigrationAdapter
         $compiler->compile(
             $context->legacy,
             $context->name,
-            function (array $record) use ($opts, $config, $prefix, $report): void {
+            function(array $record) use ($opts, $config, $prefix, $report): void {
                 $this->load($record, $opts, $config, $prefix, $report);
             },
         );

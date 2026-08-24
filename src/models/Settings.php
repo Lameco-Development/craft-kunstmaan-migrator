@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\models;
 
 use craft\base\Model;
-use lameco\kunstmaanmigrator\adapters\Adapter;
-use lameco\kunstmaanmigrator\adapters\AdapterSetting;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
-use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\adapters\Adapter;
+use lameco\kunstmaanmigrator\adapters\AdapterSetting;
 use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
+use lameco\kunstmaanmigrator\Plugin;
 
 /**
  * Plugin Settings — shared seam between env vars and config/kunstmaan-migrator.php.
@@ -22,13 +22,34 @@ use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
 class Settings extends Model
 {
     // Legacy DB connection (D-12). Defaults to CRAFT_LEGACY_DB_* env vars.
-    public ?string $legacyDbServer       = null;
-    public int     $legacyDbPort         = 3306;
-    public ?string $legacyDbDatabase     = null;
-    public ?string $legacyDbUser         = null;
-    public ?string $legacyDbPassword     = null;
-    public string  $legacyDbCharset      = 'utf8mb4';
-    public string  $legacyDbTablePrefix  = '';
+    /**
+     * The legacy checkout this migration reads — filled by the wizard's detect step.
+     * Powers the media-root prefill and source introspection; the database
+     * credentials it carried were copied into the legacyDb* settings below.
+     */
+    public ?string $legacySourcePath = null;
+
+    /**
+     * Where the old site's uploads live. Every Kunstmaan site here keeps them
+     * at `public/uploads/media`, so this is derived from the detected checkout
+     * and only needs a value when a site breaks that convention.
+     */
+    public ?string $legacyMediaRoot = null;
+
+    /**
+     * Directory of content-model block specs whose migration notes drive the
+     * mapping prefill. Empty means auto-detect `docs/content-model/page-builder`
+     * under the project root.
+     */
+    public ?string $specsPath = null;
+
+    public ?string $legacyDbServer = null;
+    public int     $legacyDbPort = 3306;
+    public ?string $legacyDbDatabase = null;
+    public ?string $legacyDbUser = null;
+    public ?string $legacyDbPassword = null;
+    public string  $legacyDbCharset = 'utf8mb4';
+    public string  $legacyDbTablePrefix = '';
 
     /**
      * Where the mapping YAML lives.
@@ -47,13 +68,26 @@ class Settings extends Model
      * use `media` (matches Kunstmaan's `kuma_media` semantics); override
      * via `config/kunstmaan-migrator.php` to align with the actual handle.
      */
-    public string  $targetVolume         = 'uploads';
+    public string  $targetVolume = 'uploads';
 
     /**
      * Subfolder within the volume. Assets land at `{subfolder}/{year}/filename`;
      * empty puts them at the volume root.
      */
-    public string  $targetSubfolder      = 'migrated';
+    public string  $targetSubfolder = 'migrated';
+
+    /**
+     * How the path below the subfolder is built: `year` or `legacy-tree`.
+     *
+     * `year` buckets by the file's own `created_at`, which is a fact about the file that no
+     * editor has ever gone looking for. `legacy-tree` mirrors the `kuma_folders` chain the file
+     * sat in, so the client's own media organisation survives the migration — rooted per
+     * environment when the corpus has more than one legacy source, because three installs each
+     * ship a folder named `Media/Afbeeldingen`.
+     *
+     * Defaults to `year` so an existing project's asset paths do not move under it.
+     */
+    public string  $assetFolderStrategy = 'year';
 
     /**
      * Skip starter-kit / project-side asset-size validators during ingest.
@@ -237,6 +271,15 @@ class Settings extends Model
     {
         return [
             new AdapterSetting(
+                'assetFolderStrategy',
+                'Asset folder structure',
+                AdapterSetting::TYPE_STRING,
+                'year',
+                '`year` buckets migrated assets by their own created date. `legacy-tree` mirrors the '
+                . 'Kunstmaan folder structure instead, rooted per environment when the corpus has more '
+                . 'than one legacy source.',
+            ),
+            new AdapterSetting(
                 'targetVolume',
                 'Asset volume',
                 AdapterSetting::TYPE_STRING,
@@ -257,7 +300,8 @@ class Settings extends Model
                 AdapterSetting::TYPE_BOOLEAN,
                 false,
                 'A project-side size cap that is right for editor uploads will reject valid legacy assets. '
-                . 'With this on, an oversized asset is skipped and reported instead of taking the whole entry down.',
+                . 'With this on, an oversized asset is ingested anyway — the save retries once with the '
+                . 'project size-cap listener held aside — and each bypass is logged.',
             ),
         ];
     }
@@ -376,7 +420,7 @@ class Settings extends Model
             'user' => $reader->getDsnUser(),
             'password' => $reader->getDsnPassword(),
             'database' => $reader->getDsnDatabase(),
-        ], static fn ($value): bool => $value !== null);
+        ], static fn($value): bool => $value !== null);
     }
 
     /**
@@ -402,7 +446,8 @@ class Settings extends Model
      */
     protected function getEnvReader(): KunstmaanEnvReader
     {
-        return Plugin::getInstance()->kunstmaanEnvReader;
+        return Plugin::getInstance()?->kunstmaanEnvReader
+            ?? throw new \RuntimeException('No plugin instance — tests override getEnvReader().');
     }
 
     /**
@@ -520,7 +565,7 @@ class Settings extends Model
     public function rules(): array
     {
         return [
-            [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser'], 'string'],
+            [['legacyDbServer', 'legacyDbDatabase', 'legacyDbUser', 'legacyMediaRoot', 'specsPath'], 'string'],
             [['legacyDbPort'], 'integer'],
             [['legacyDbPassword', 'legacyDbCharset', 'legacyDbTablePrefix'], 'string'],
             [['legacyDbPassword'], 'validateIsEnvReference'],
@@ -531,6 +576,7 @@ class Settings extends Model
             // Phase 4.1 / D-24 — adapter explicit-disable booleans.
             [['seoEnabled', 'retourEnabled', 'navigationEnabled', 'translationsEnabled', 'formsEnabled', 'globalsEnabled'], 'boolean'],
             [['nodeMenuNavHandle', 'mappingPath', 'targetVolume', 'targetSubfolder'], 'string'],
+            [['assetFolderStrategy'], 'in', 'range' => ['year', 'legacy-tree']],
             [['skipAssetSizeValidation'], 'boolean'],
             [['nodeMenuExcludedInternalNames', 'translationDomains', 'adapters'], 'safe'],
         ];

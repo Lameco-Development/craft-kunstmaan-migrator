@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\integration;
 
-use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\console\DoctorController;
 use lameco\kunstmaanmigrator\console\LoadController;
 use lameco\kunstmaanmigrator\console\StateController;
+use lameco\kunstmaanmigrator\Plugin;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
@@ -100,9 +100,9 @@ final class PluginConsoleRegistrationTest extends TestCase
             'Plugin handle drives the console command prefix — must be kunstmaan-migrator, not kunstmaan-migrator.',
         );
         self::assertSame(
-            'Kunstmaan Migrator',
+            'Laméco Kunstmaan Migrator',
             $composer['extra']['name'] ?? null,
-            'Plugin display name must be Kunstmaan Migrator.',
+            'Plugin display name matches the house style — Laméco Blitz, Laméco Kunstmaan Migrator.',
         );
         self::assertSame(
             'lameco/craft-kunstmaan-migrator',
@@ -112,14 +112,16 @@ final class PluginConsoleRegistrationTest extends TestCase
     }
 
     /**
-     * Task 7 — the v2 loader core exposes exactly five console commands:
+     * Task 7 — the v2 loader core exposes exactly seven console commands:
      * kunstmaan-migrator/load/entry, kunstmaan-migrator/load/fixup,
-     * kunstmaan-migrator/load/redirects, kunstmaan-migrator/state/export, kunstmaan-migrator/doctor.
+     * kunstmaan-migrator/load/redirects, kunstmaan-migrator/state/export,
+     * kunstmaan-migrator/state/diff, kunstmaan-migrator/state/explain,
+     * kunstmaan-migrator/doctor.
      * Enumerating every public actionXxx() method declared directly on the
      * three controllers (excluding inherited ones) locks that count so a
      * future addition/removal has to update this test deliberately.
      */
-    public function testExactlyFiveConsoleActionsAcrossLoadStateAndDoctor(): void
+    public function testExactlySevenConsoleActionsAcrossLoadStateAndDoctor(): void
     {
         $actions = [];
         foreach ([DoctorController::class, LoadController::class, StateController::class] as $fqcn) {
@@ -141,10 +143,12 @@ final class PluginConsoleRegistrationTest extends TestCase
                 LoadController::class . '::actionEntry',
                 LoadController::class . '::actionFixup',
                 LoadController::class . '::actionRedirects',
+                StateController::class . '::actionDiff',
+                StateController::class . '::actionExplain',
                 StateController::class . '::actionExport',
             ],
             $actions,
-            'Expected exactly the five kunstmaan-migrator commands: doctor, load/entry, load/fixup, load/redirects, state/export.',
+            'Expected exactly the seven kunstmaan-migrator commands: doctor, load/entry, load/fixup, load/redirects, state/diff, state/explain, state/export.',
         );
     }
 

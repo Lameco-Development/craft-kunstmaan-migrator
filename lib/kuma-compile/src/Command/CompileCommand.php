@@ -12,7 +12,6 @@ use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Target\CraftSchema;
-use Lameco\KumaCompile\Target\TargetSchema;
 use Lameco\KumaCompile\Target\TargetCheck;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;

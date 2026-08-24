@@ -6,12 +6,10 @@ namespace lameco\kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
-use craft\helpers\App;
 use lameco\kunstmaanmigrator\load\AssetMigrationService;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
-use lameco\kunstmaanmigrator\run\Diagnostics;
 use lameco\kunstmaanmigrator\Plugin;
-use Throwable;
+use lameco\kunstmaanmigrator\run\Diagnostics;
 use yii\console\ExitCode;
 
 /**

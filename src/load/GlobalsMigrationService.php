@@ -90,7 +90,7 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
         );
 
         $records = [];
-        $compiler->compile($context->legacy, $context->name, static function (array $r) use (&$records): void {
+        $compiler->compile($context->legacy, $context->name, static function(array $r) use (&$records): void {
             $records[] = $r;
         });
 
@@ -115,8 +115,7 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
         MigrationOptions $opts,
         EnvironmentContext $context,
         MigrationReport $report,
-    ): void
-    {
+    ): void {
         $locale = (string) ($record['locale'] ?? '');
         $siteId = $localeToSiteId[$locale] ?? null;
 

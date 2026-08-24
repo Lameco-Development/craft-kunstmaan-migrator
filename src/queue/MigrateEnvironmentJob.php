@@ -4,30 +4,40 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\queue;
 
-use craft\helpers\App;
-use Craft;
-use craft\queue\BaseJob;
+use craft\helpers\Queue as QueueHelper;
+use craft\queue\BaseBatchedJob;
+use Lameco\KumaCompile\Compile\CompilerRun;
 use Lameco\KumaCompile\Mapping\Mapping;
 use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use lameco\kunstmaanmigrator\run\RunLog;
 use lameco\kunstmaanmigrator\run\RunSettings;
 use lameco\kunstmaanmigrator\run\RunTally;
 use RuntimeException;
+use yii\queue\RetryableJobInterface;
 
 /**
- * One environment, run off the queue.
+ * One environment, run off the queue in batches (#48).
+ *
+ * The monolithic version was a single hour-scale unit inside a queue built
+ * for second-scale ones, and the first CP-driven run paid for it four times
+ * over: TTR kills, progress-label overflows, FIFO-hopeful ordering, and web
+ * runner write races. A batch is now ~fifty units — an entity-lane window, a
+ * page with its due structural placeholders — each execution compiles and
+ * saves its window and ends, and Craft spawns the continuation. Progress is
+ * batch arithmetic instead of a label doubling as an error log.
  *
  * A job carries scalars, not objects: the mapping arrives as a path and is
- * re-read here rather than serialised, which also means a job picked up
- * minutes later reads the mapping as it is now rather than as it was when
- * someone pressed the button.
+ * re-read per batch — guarded by `mappingHash`, because a mapping edited
+ * mid-run would compile the tail of the corpus against different rules than
+ * its head. Every stage stays idempotent via the state table, so a killed
+ * batch retries for the cost of one batch.
  *
- * Queueing is what makes a long migration survivable. Every stage is already
- * idempotent — the state table refuses to write a row twice — so a job that
- * dies halfway can simply be retried, which is the part of queue-driven
- * migration that is usually hard and here was already done.
+ * Chaining replaces FIFO hope: `after()` pushes the adapter job for this
+ * environment, which pushes the next environment, and the corpus-wide fixup
+ * and finalize passes run only after the last environment's adapters.
  */
-final class MigrateEnvironmentJob extends BaseJob
+final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJobInterface
 {
     public string $mappingPath = '';
     public string $environment = '';
@@ -38,14 +48,34 @@ final class MigrateEnvironmentJob extends BaseJob
     /** @var list<string>|null */
     public ?array $only = null;
 
+    /** @var list<string> environments still to run after this one */
+    public array $remainingEnvironments = [];
+
+    /** Whether the chain ends in the corpus-wide fixup + finalize passes. */
+    public bool $chainCorpusPasses = true;
+
+    /** sha1 of the mapping file at push time; a mid-run edit refuses to continue. */
+    public string $mappingHash = '';
+
     /**
-     * The counts this job produced, for whatever reads the queue afterwards.
+     * The counts this job accumulated across batches, for whatever reads the
+     * queue afterwards — carried on the job because each batch is its own
+     * process and a fresh RunTally.
      *
      * @var array<string, int>
      */
     public array $counts = [];
 
-    public function execute($queue): void
+    public int $problems = 0;
+
+    public int $batchSize = 50;
+
+    private ?EnvironmentPipeline $pipeline = null;
+    private ?CompilerRun $compilerRun = null;
+    private ?RunSettings $settings = null;
+    private ?RunTally $tally = null;
+
+    protected function loadData(): \craft\base\Batchable
     {
         // Refusing here as well as in the console command is deliberate: a job
         // is the one path that can reach a production queue without anyone
@@ -54,8 +84,26 @@ final class MigrateEnvironmentJob extends BaseJob
             throw new RuntimeException('Refusing to migrate against CRAFT_ENVIRONMENT=production');
         }
 
+        // Ahead of the element-index backlog, or the chain stalls: every entry
+        // save spawns slug/search jobs at default priority, and LV's second
+        // batch queued behind 34,000 of them on the first live run. Priority
+        // rides on the job, so spawned continuations inherit it.
+        $this->priority ??= 512;
+
         if (!is_file($this->mappingPath)) {
             throw new RuntimeException(sprintf('Mapping file is gone: %s', $this->mappingPath));
+        }
+
+        $hash = sha1((string) file_get_contents($this->mappingPath));
+
+        if ($this->mappingHash === '') {
+            $this->mappingHash = $hash;
+        } elseif ($hash !== $this->mappingHash) {
+            throw new RuntimeException(sprintf(
+                'The mapping changed while this run was underway (%s). The head of the corpus was compiled '
+                . 'against different rules than its tail would be — start a fresh run instead.',
+                $this->mappingPath,
+            ));
         }
 
         $mapping = Mapping::fromFile($this->mappingPath);
@@ -65,36 +113,137 @@ final class MigrateEnvironmentJob extends BaseJob
             throw new RuntimeException(sprintf('Mapping names no environment "%s"', $this->environment));
         }
 
-        $settings = new RunSettings(
+        $this->settings = new RunSettings(
             dryRun: $this->dryRun,
             force: $this->force,
             limit: $this->limit,
             entriesOnly: $this->entriesOnly,
             only: $this->only,
         );
+        $this->tally = new RunTally();
+        $this->pipeline = EnvironmentPipeline::build($mapping, $this->settings);
 
-        $tally = new RunTally();
+        [$db] = $this->pipeline->prepare($mapping, $this->environment, (array) $spec, $this->settings);
 
-        // The label moves, the bar does not: reporting a problem as progress 0.0
-        // sent the bar back to the start on every warning.
-        $progress = 0.0;
-        $tally->onProblem = function (string $problem) use ($queue, &$progress): void {
-            $this->setProgress($queue, $progress, $problem);
+        $compiler = $this->pipeline->compiler();
+        $run = $compiler->begin($db, $this->environment);
+        $this->compilerRun = $run;
+
+        $units = [];
+
+        foreach ($compiler->entityLaneCounts($run) as $lane => $count) {
+            for ($offset = 0; $offset < $count; $offset += 25) {
+                $units[] = ['e', $lane, $offset, 25];
+            }
+        }
+
+        foreach (array_keys($run->nodesById) as $nodeId) {
+            $units[] = ['n', $nodeId];
+        }
+
+        $units[] = ['t'];
+
+        // A resumed batch rebuilds the run from scratch; the structural
+        // placeholders an earlier batch emitted must be registered, silently,
+        // up to the last node unit already processed.
+        if ($this->itemOffset > 0) {
+            for ($i = min($this->itemOffset, count($units)) - 1; $i >= 0; $i--) {
+                if (($units[$i][0] ?? '') === 'n') {
+                    $compiler->catchUpStructural($run, (int) $units[$i][1]);
+                    break;
+                }
+            }
+        }
+
+        return new EnvironmentWorkload($units);
+    }
+
+    protected function processItem(mixed $item): void
+    {
+        $compiler = $this->pipeline->compiler();
+        $emit = function(array $raw): void {
+            $this->pipeline->processOne($raw, $this->settings, $this->tally);
         };
 
-        EnvironmentPipeline::build($mapping, $settings)
-            ->run($mapping, $this->environment, $spec, $settings, $tally);
-
-        $this->counts = $tally->counts;
-
-        if ($tally->hasFailures()) {
-            throw new RuntimeException(sprintf(
-                '%s: %d payloads failed — %s',
-                $this->environment,
-                $tally->counts['failed'],
-                $tally->problems[0] ?? 'no detail recorded',
-            ));
+        try {
+            match ($item[0]) {
+                'e' => $compiler->compileEntitySlice($this->compilerRun, (string) $item[1], (int) $item[2], (int) $item[3], $emit),
+                'n' => $compiler->compileNodeUnit($this->compilerRun, (int) $item[1], $emit),
+                't' => $compiler->finishStructural($this->compilerRun, $emit),
+                default => throw new RuntimeException('Unknown work unit: ' . json_encode($item)),
+            };
+        } catch (\Throwable $e) {
+            // A unit that dies — a compile-time throw, a write conflict that
+            // outlasted its retries — is one unit's problem, not the batch's:
+            // no state row was written, so the next run re-covers it. Failing
+            // the job here would abandon the forty-nine units behind it and
+            // the whole chain after them.
+            $this->tally->problem(sprintf('unit %s: %s', json_encode($item), $e->getMessage()));
         }
+    }
+
+    /**
+     * Whatever the label and whoever produced it, it fits the column.
+     * craft_queue.progressLabel is varchar(255), and an exception message
+     * riding a label has now killed environment jobs twice — once through the
+     * old onProblem wiring, once through a path no grep of this plugin finds.
+     * The job is the choke point every label passes through, so the job is
+     * where the guarantee lives.
+     */
+    protected function setProgress($queue, float $progress, ?string $label = null): void
+    {
+        parent::setProgress($queue, $progress, $label === null ? null : mb_substr($label, 0, 250));
+    }
+
+    protected function before(): void
+    {
+        RunLog::default()->append([
+            'event' => 'started',
+            'job' => 'migrate',
+            'environment' => $this->environment,
+            'dryRun' => $this->dryRun,
+            'force' => $this->force,
+            'limit' => $this->limit,
+            'only' => $this->only,
+        ]);
+    }
+
+    protected function afterBatch(): void
+    {
+        foreach ($this->tally->counts as $name => $count) {
+            $this->counts[$name] = ($this->counts[$name] ?? 0) + $count;
+        }
+
+        $this->problems += count($this->tally->problems);
+    }
+
+    protected function after(): void
+    {
+        // Content failures are the report's to carry, not the queue's to
+        // abort on: a console run keeps going past a failed payload and the
+        // chain must too — stopping here would skip the adapters and the
+        // corpus-wide passes over content an operator triages afterwards.
+        RunLog::default()->append([
+            'event' => 'finished',
+            'job' => 'migrate',
+            'environment' => $this->environment,
+            'dryRun' => $this->dryRun,
+            'force' => $this->force,
+            'counts' => $this->counts,
+            'problems' => $this->problems,
+        ]);
+
+        QueueHelper::push(job: new RunAdaptersJob([
+            'mappingPath' => $this->mappingPath,
+            'environment' => $this->environment,
+            'remainingEnvironments' => $this->remainingEnvironments,
+            'dryRun' => $this->dryRun,
+            'force' => $this->force,
+            'entriesOnly' => $this->entriesOnly,
+            'only' => $this->only,
+            'chainCorpusPasses' => $this->chainCorpusPasses,
+            'mappingHash' => $this->mappingHash,
+        ]), priority: 512);
     }
 
     protected function defaultDescription(): string
@@ -104,5 +253,27 @@ final class MigrateEnvironmentJob extends BaseJob
         // back out of the queue table by tests that cannot boot Craft, and a
         // guard for that would be worse than English here.
         return sprintf('Migrating %s — pages, content and files', $this->environment);
+    }
+
+    /**
+     * A batch is minutes, and the budget check inside BaseBatchedJob breaks a
+     * batch early rather than letting it near this. Declared on the job because
+     * TTR must survive every push path — the CP run screen, the console
+     * --queue mode, and the queue manager's Retry, which re-activates the row
+     * with the channel default of 300 seconds and killed the first CP-driven
+     * DE run at five minutes.
+     */
+    public function getTtr(): int
+    {
+        return 3600;
+    }
+
+    /**
+     * A failed migration pass is retried by an operator who has read the
+     * error, not by the queue on a loop.
+     */
+    public function canRetry($attempt, $error): bool
+    {
+        return false;
     }
 }

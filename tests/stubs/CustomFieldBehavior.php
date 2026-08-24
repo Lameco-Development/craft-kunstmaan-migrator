@@ -66,7 +66,7 @@ class CustomFieldBehavior extends Behavior
 /* GENERATED HANDLES */
     ];
 
-/* PROPERTIES */
+    /* PROPERTIES */
 
     /**
      * @var array Additional custom field values we don’t know about yet.

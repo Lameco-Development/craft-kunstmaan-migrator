@@ -1,24 +1,30 @@
 {% extends "kunstmaan-migrator/_setup/_wizard" %}
 {% import "_includes/forms.twig" as forms %}
+{% set nextLabel = "Create the mapping"|t('kunstmaan-migrator') %}
 
 {% block step %}
   {{ actionInput('kunstmaan-migrator/setup/write') }}
   {{ hiddenInput('envs', envs) }}
   {{ hiddenInput('choices', choices) }}
 
+  {# A review screen reviews. Every fact below is stated, not asked — anything
+     that still needs deciding belongs on the step that asks it. #}
+
   <div class="readable">
     <p>
-      {{ "This creates the mapping file — the list of decisions the migration follows. Nothing is migrated yet, and nothing is written to the old site."|t('kunstmaan-migrator') }}
+      {{ "{pages, number} pages across the languages below will migrate{skipped, plural, =0{.} other{; {skipped, number} pages stay behind.}}"|t('kunstmaan-migrator', { pages: totalPages, skipped: totalSkipped }) }}
     </p>
   </div>
 
+  {# .tablepane bleeds upward with a negative margin; without this it rides
+     over whatever precedes it. #}
+  <div class="tablepane" style="margin-top: 14px;">
   <table class="data fullwidth">
     <thead>
       <tr>
         <th>{{ "Site"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Languages coming across"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Coming across"|t('kunstmaan-migrator') }}</th>
         <th>{{ "Not migrating"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Files"|t('kunstmaan-migrator') }}</th>
       </tr>
     </thead>
     <tbody>
@@ -26,41 +32,88 @@
         <tr>
           <th scope="row">{{ row.label }} <span class="light"><code>{{ row.database }}</code></span></th>
           <td>
-            {% for locale, site in row.migrating %}
-              <div><code>{{ locale }}</code> → <code>{{ site }}</code></div>
+            {% for locale, choice in row.migrating %}
+              <div>
+                <code>{{ locale }}</code> → <code>{{ choice.site }}</code>
+                <span class="light">· {{ "{n, plural, =1{1 page} other{# pages}}"|t('kunstmaan-migrator', { n: choice.pages }) }}</span>
+              </div>
             {% else %}
               <span class="error">{{ "Nothing — this site would migrate no pages."|t('kunstmaan-migrator') }}</span>
             {% endfor %}
           </td>
           <td>
-            {% for locale, reason in row.skipping %}
-              <div class="light"><code>{{ locale }}</code> — {{ reason }}</div>
+            {% for locale, pages in row.skipping %}
+              <div class="light"><code>{{ locale }}</code> · {{ "{n, plural, =1{1 page} other{# pages}}"|t('kunstmaan-migrator', { n: pages }) }}</div>
             {% else %}
               <span class="light">—</span>
-            {% endfor %}
-          </td>
-          <td>
-            {% for path in row.mediaRoot %}
-              <div><code>{{ path }}</code></div>
-            {% else %}
-              <span class="light">{{ "not set"|t('kunstmaan-migrator') }}</span>
             {% endfor %}
           </td>
         </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 
   <hr>
 
-  {{ forms.textField({
-    label: "Old site’s code, if you have it"|t('kunstmaan-migrator'),
-    instructions: "Optional. With it, the migrator can name every database table for you. Without it, you fill those in yourself."|t('kunstmaan-migrator'),
-    name: 'source',
-    placeholder: '/Users/you/Sites/old-site',
-  }) }}
+  <h2>{{ "What gets created"|t('kunstmaan-migrator') }}</h2>
+
+  <div class="readable">
+  <ul class="bullets">
+    <li>
+      {{ "{path} — the list of decisions the migration follows. Creating it migrates nothing."|t('kunstmaan-migrator', { path: '<code>' ~ mappingPath ~ '</code>' })|raw }}
+    </li>
+    {% if sourcePath %}
+      <li>
+        {{ "Read from the old site's code at {path}: exact table names and relations."|t('kunstmaan-migrator', { path: '<code>' ~ sourcePath ~ '</code>' })|raw }}
+      </li>
+    {% else %}
+      <li class="light">
+        {{ "No old-site code found on this machine. Table names are left as TODOs to fill in later."|t('kunstmaan-migrator') }}
+      </li>
+    {% endif %}
+    <li>
+      {% if mediaRoot %}
+        {{ "Files will be read from {path} — the Kunstmaan convention, taken from the detected checkout. The plugin settings can override it."|t('kunstmaan-migrator', { path: '<code>' ~ mediaRoot ~ '</code>' })|raw }}
+      {% else %}
+        {{ "No uploads folder was detected — set one in the plugin settings, or add mediaRoot lines to the mapping afterwards."|t('kunstmaan-migrator') }}
+      {% endif %}
+    </li>
+  </ul>
+  </div>
+
+  {% if existingMapping %}
+    {# Craft only styles note blockquotes inside a .readable wrapper. #}
+    <div class="readable" style="margin-bottom: 16px;">
+      <blockquote class="note">
+        <p>
+          {{ "A mapping already exists at {path}."|t('kunstmaan-migrator', { path: '<code>' ~ existingMapping ~ '</code>' })|raw }}
+          {% if (existingDecided ?? 0) > 0 %}
+            {{ "It holds {count} decided rows."|t('kunstmaan-migrator', { count: existingDecided }) }}
+          {% endif %}
+        </p>
+        {{ forms.radioGroupField({
+          name: 'existing',
+          value: 'merge',
+          options: [
+            {
+              label: "Merge — add newly found rows, refresh counts, keep every decision"|t('kunstmaan-migrator'),
+              value: 'merge',
+            },
+            {
+              label: "Start over — keep the current mapping as a timestamped copy and begin blank"|t('kunstmaan-migrator'),
+              value: 'replace',
+            },
+          ],
+        }) }}
+        {% if (existingDecided ?? 0) > 0 %}
+          <p class="light">{{ "Starting over sets all {count} decided rows back to open. Merging loses nothing."|t('kunstmaan-migrator', { count: existingDecided }) }}</p>
+        {% endif %}
+      </blockquote>
+    </div>
+  {% endif %}
 
   <p class="light">
-    {{ "Writing to"|t('kunstmaan-migrator') }} <code>{{ mappingPath }}</code>
+    {{ "Next: decide what each piece of old content becomes, on the Mapping screen."|t('kunstmaan-migrator') }}
   </p>
 {% endblock %}

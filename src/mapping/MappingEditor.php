@@ -7,6 +7,7 @@ namespace lameco\kunstmaanmigrator\mapping;
 use craft\helpers\App;
 use Lameco\KumaCompile\Compile\Transforms;
 use Lameco\KumaCompile\Legacy\LegacyCatalogue;
+use Lameco\KumaCompile\Mapping\FieldProvenance;
 use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Mapping\Schema;
 use lameco\kunstmaanmigrator\compile\TargetModel;
@@ -30,6 +31,14 @@ use Throwable;
  */
 final class MappingEditor
 {
+    /** One parse per request: every screen asks document() several times over. */
+    private ?MappingDocument $memo = null;
+
+    /** One inversion per request: every provenance question reads this snapshot. */
+    private ?FieldProvenance $provenance = null;
+
+    public const LANES = ['parts', 'pages', 'entities', 'sidecars'];
+
     public function __construct(
         private readonly Settings $settings,
         private readonly SchemaGateway $schema,
@@ -54,13 +63,30 @@ final class MappingEditor
 
     public function document(): MappingDocument
     {
+        if ($this->memo !== null) {
+            return $this->memo;
+        }
+
         $path = $this->path();
 
         if ($path === null) {
             throw new MappingEditorException('No mapping file is configured. Set one in the plugin settings.');
         }
 
-        return MappingDocument::fromFile($path);
+        return $this->memo = MappingDocument::fromFile($path);
+    }
+
+    /**
+     * What feeds every field of every mapped entry type — one snapshot, so a
+     * screen can never disagree with another screen about the same mapping.
+     */
+    private function provenance(): FieldProvenance
+    {
+        return $this->provenance ??= FieldProvenance::of(
+            $this->document()->mapping(),
+            $this->target,
+            $this->availableBlocks(),
+        );
     }
 
     /**
@@ -80,7 +106,7 @@ final class MappingEditor
             $rows[] = MappingRow::fromSpec((string) $key, is_array($spec) ? $spec : []);
         }
 
-        usort($rows, static fn (MappingRow $a, MappingRow $b): int => $b->live <=> $a->live);
+        usort($rows, static fn(MappingRow $a, MappingRow $b): int => $b->live <=> $a->live);
 
         return $rows;
     }
@@ -169,20 +195,64 @@ final class MappingEditor
     }
 
     /**
-     * The targets a lane may choose from, read from this install.
+     * The target dropdown's options, grouped where grouping means something.
      *
      * A `parts` row becomes a page-builder block; a `pages` or `entities` row
-     * becomes an entry type. Same question either way — what may I write here —
-     * so the screen asks the editor rather than knowing per lane.
+     * becomes an entry type. Entry types come grouped by the section that uses them — a flat list of
+     * every handle in the install is a list you search, not read — with the
+     * types no section uses (Matrix block types) together at the end, because
+     * on the pages and entities lanes they are almost never the answer.
+     *
+     * @return list<array{label: string, value: string}|array{optgroup: string}>
+     */
+    public function targetOptions(string $lane): array
+    {
+        $option = static fn(string $handle): array => ['label' => $handle, 'value' => $handle];
+
+        if ($lane === 'parts') {
+            return array_map($option, $this->availableBlocks());
+        }
+
+        $options = [];
+        $grouped = [];
+
+        foreach ($this->catalogue->entryTypesBySection() as $section => $handles) {
+            $options[] = ['optgroup' => $section];
+
+            foreach ($handles as $handle) {
+                $options[] = $option($handle);
+                $grouped[$handle] = true;
+            }
+        }
+
+        $rest = array_filter(
+            $this->catalogue->entryTypes(),
+            static fn(string $handle): bool => !isset($grouped[$handle]),
+        );
+
+        if ($rest !== []) {
+            if ($options !== []) {
+                $options[] = ['optgroup' => \Yii::t('kunstmaan-migrator', 'Not in a section')];
+            }
+
+            $options = [...$options, ...array_map($option, array_values($rest))];
+        }
+
+        return $options;
+    }
+
+    /**
+     * The union of fields across the page entry types the mapping targets.
+     *
+     * A sidecar decorates every page carrying its ref, and the hero fields are
+     * placed on some entry types and not others — the compiler drops and counts
+     * a field the type lacks, so offering the union here is honest.
      *
      * @return list<string>
      */
-    public function targetsFor(string $lane): array
+    public function pageFields(): array
     {
-        return match ($lane) {
-            'parts' => $this->availableBlocks(),
-            default => $this->catalogue->entryTypes(),
-        };
+        return $this->provenance()->pageFields();
     }
 
     /**
@@ -197,6 +267,57 @@ final class MappingEditor
     }
 
     /**
+     * Which of an entry type's fields the sidecars already fill.
+     *
+     * @return array<string, list<array{sidecar: string, expression: string}>>
+     */
+    public function sidecarFillsFor(string $entryType): array
+    {
+        return $this->provenance()->sidecarFills($entryType);
+    }
+
+    /**
+     * For each field a sidecar maps, which of the mapped entry types carry it.
+     *
+     * @return array<string, array{carried: int, total: int, missing: list<string>}>
+     */
+    public function sidecarCarriage(MappingRow $row): array
+    {
+        return $this->provenance()->carriage($row->key);
+    }
+
+    /**
+     * Where every field of one target gets its content from, across lanes.
+     *
+     * @return array{kind: string, receives: list<string>, fields: array<string, array{required: bool, feeders: list<array{lane: string, name: string, expression: string}>, partsCount: ?int}>}
+     */
+    public function coverageFor(string $kind, string $handle): array
+    {
+        return $this->provenance()->coverage($kind, $handle);
+    }
+
+    /**
+     * Everything that receives content — page entry types, entity entry
+     * types, blocks — for the coverage picker.
+     *
+     * @return list<array{handle: string, kind: string}>
+     */
+    public function coverageTargets(): array
+    {
+        return $this->provenance()->targets();
+    }
+
+    /**
+     * The distinct entry types the pages lane targets, live-volume first.
+     *
+     * @return list<string>
+     */
+    public function mappedEntryTypes(): array
+    {
+        return $this->provenance()->entryTypes();
+    }
+
+    /**
      * The legacy columns a row's table actually has.
      *
      * Read from the first environment the mapping declares: a part's table has
@@ -207,15 +328,7 @@ final class MappingEditor
      */
     public function columnsFor(MappingRow $row): array
     {
-        if ($row->table === null) {
-            return [];
-        }
-
-        $environments = $this->document()->lane('environments');
-        $first = is_array(reset($environments)) ? reset($environments) : [];
-        $database = (string) ($first['database'] ?? '');
-
-        if ($database === '') {
+        if ($row->table === null || ($database = $this->firstDatabase()) === null) {
             return [];
         }
 
@@ -226,6 +339,111 @@ final class MappingEditor
             // fall back to a text box, not to fail opening the row.
             return [];
         }
+    }
+
+    /**
+     * The first environment's database — where columnsFor and samplesFor read,
+     * because a table has the same shape in every environment and connecting
+     * to all three to answer a metadata question would triple the cost.
+     */
+    private function firstDatabase(): ?string
+    {
+        $environments = $this->document()->lane('environments');
+        $first = reset($environments);
+        $database = (string) ((is_array($first) ? $first : [])['database'] ?? '');
+
+        return $database !== '' ? $database : null;
+    }
+
+    /**
+     * Up to three real values per column of a row's table.
+     *
+     * `title` next to `page_title` is a coin flip until you see what each one
+     * holds; three samples turn the guess into a choice. Read from the first
+     * environment like `columnsFor`, and empty when the database is not
+     * reachable — a hint, never a requirement.
+     *
+     * @return array<string, list<string>>
+     */
+    public function samplesFor(MappingRow $row): array
+    {
+        if ($row->table === null || ($database = $this->firstDatabase()) === null) {
+            return [];
+        }
+
+        try {
+            $rows = (new LegacyCatalogue(EnvironmentPipeline::dsnFromSettings()))->sampleRows($database, $row->table);
+        } catch (Throwable) {
+            // sampleRows() swallows query failures itself; this guards the DSN
+            // construction, which throws on unconfigured settings.
+            return [];
+        }
+
+        return self::aggregateSamples($rows);
+    }
+
+    /**
+     * Distinct, displayable values per column: markup stripped, whitespace
+     * collapsed, cut at 40 characters — a glimpse of the content, not the
+     * content.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return array<string, list<string>>
+     */
+    public static function aggregateSamples(array $rows): array
+    {
+        $out = [];
+
+        foreach ($rows as $row) {
+            foreach ($row as $column => $value) {
+                if (!is_scalar($value)) {
+                    continue;
+                }
+
+                $value = trim((string) preg_replace('/\s+/', ' ', strip_tags((string) $value)));
+
+                if ($value === '') {
+                    continue;
+                }
+
+                if (mb_strlen($value) > 40) {
+                    $value = mb_substr($value, 0, 40) . '…';
+                }
+
+                $column = (string) $column;
+                $seen = $out[$column] ?? [];
+
+                if (count($seen) < 3 && !in_array($value, $seen, true)) {
+                    $out[$column][] = $value;
+                }
+            }
+        }
+
+        unset($out['id']);
+
+        return $out;
+    }
+
+    /**
+     * The targets whose fields are not all fed — the roll-up that saves
+     * clicking through every target to find the three with holes. An empty
+     * return is the finished state.
+     *
+     * @return list<array{handle: string, kind: string, unfed: int, required: int}>
+     */
+    public function coverageGaps(): array
+    {
+        return $this->provenance()->gaps();
+    }
+
+    /**
+     * The legacy connection the plugin settings describe — for the fast
+     * metadata reads the editor's screens make (columns, prefill drafting).
+     * A migration run never comes through here; it belongs to the queue.
+     */
+    public function legacyDsn(): \Lameco\KumaCompile\Legacy\Dsn
+    {
+        return EnvironmentPipeline::dsnFromSettings();
     }
 
     /** @return array<string, string> transform => what it does */
@@ -247,10 +465,20 @@ final class MappingEditor
      */
     public function patch(string $lane, string $key, array $changes): void
     {
+        // Row-scoped on purpose: a fresh skeleton fails whole-document
+        // validation by design — every row still open — and this screen is
+        // the advertised way to close them one at a time. Only damage to the
+        // edited row itself refuses the save; completeness stays a progress
+        // bar, and `validate()` stays the gate a run must pass in full.
         $document = $this->document()->patch($lane, $key, $changes);
-        $errors = (new Schema())->validate($document->mapping());
+        $errors = (new Schema())->validateRow($document->mapping(), $lane, $key);
 
         if ($errors !== []) {
+            // The memo is the instance patch() just mutated; a refused edit
+            // must not stay visible to later reads.
+            $this->memo = null;
+            $this->provenance = null;
+
             throw new MappingEditorException(sprintf(
                 "That edit would make the mapping invalid:\n  · %s",
                 implode("\n  · ", array_slice($errors, 0, 5)),
@@ -258,5 +486,8 @@ final class MappingEditor
         }
 
         $document->save();
+
+        // The write went through: the provenance snapshot predates it.
+        $this->provenance = null;
     }
 }

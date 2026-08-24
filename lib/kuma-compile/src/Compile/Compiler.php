@@ -68,6 +68,32 @@ final class Compiler
      */
     public function compile(LegacyDatabase $db, string $environment, callable $emit, ?int $limit = null): void
     {
+        $run = $this->begin($db, $environment);
+
+        // Taxonomies first. A page's category relation points at the entry a taxonomy row
+        // becomes, and the loader resolves a `_ref` against entries it has already seen —
+        // so emitting them after the pages that reference them costs a whole fixup pass.
+        $this->compileEntities($run->pdo, $run->builder, $environment, $run->locales, $emit, $limit);
+
+        foreach ($run->nodesById as $nodeId => $node) {
+            if ($limit !== null && $this->entries >= $limit) {
+                return;
+            }
+
+            $this->compileNodeUnit($run, $nodeId, $emit);
+        }
+
+        // Anything left is deeper in `lft` than the last page emitted.
+        $this->finishStructural($run, $emit);
+    }
+
+    /**
+     * Everything the environment walk holds in scope, opened once and carried
+     * between units — a console run keeps it for the whole loop, a batched
+     * queue job rebuilds it per batch and catches up (see `catchUpStructural`).
+     */
+    public function begin(LegacyDatabase $db, string $environment): CompilerRun
+    {
         $pdo = $db->pdo();
         $pages = new PageReader($pdo);
         $parts = new PartReader($pdo);
@@ -84,20 +110,13 @@ final class Compiler
         $sequencer = new SequenceEngine($this->mapping->sequence(), $this->mapping->parts(), $parts, $builder, $this->schema);
 
         $locales = ($this->mapping->environments()[$environment] ?? [])['locales'] ?? [];
-        $pageSpecs = $this->mapping->pages();
-
-        // Taxonomies first. A page's category relation points at the entry a taxonomy row
-        // becomes, and the loader resolves a `_ref` against entries it has already seen —
-        // so emitting them after the pages that reference them costs a whole fixup pass.
-        $this->compileEntities($pdo, $builder, $environment, $locales, $emit, $limit);
         $contexts = $this->mapping->all()['defaults']['contexts'] ?? ['main' => ['field' => 'commonPageBuilder']];
-        $published = $pages->publishedNodeIds();
 
         // The Craft section each live node's entry lands in — the only thing a structure
         // parent may be checked against, since Craft cannot parent across sections.
         $parentable = [];
 
-        foreach ($published as $nodeId => $entity) {
+        foreach ($pages->publishedNodeIds() as $nodeId => $entity) {
             $section = $this->sectionOfEntity((string) $entity);
 
             if ($section !== null) {
@@ -117,106 +136,151 @@ final class Compiler
         // repairable after the fact: Craft assigns a `-2` slug the moment two entries collide
         // at the root and never gives the base slug back. `lft` is the nested-set tree order,
         // so following it guarantees a parent is written before its children.
-        $structural = $this->structuralNodes($ancestry, $parentable);
         $pendingStructural = [];
 
-        foreach (array_keys($structural) as $nodeId) {
+        foreach (array_keys($this->structuralNodes($ancestry, $parentable)) as $nodeId) {
             $pendingStructural[$nodeId] = $ancestry[$nodeId]['lft'] ?? 0;
         }
 
         asort($pendingStructural);
 
-        $flushStructural = function (int $beforeLft) use (
-            &$pendingStructural, &$parentable, $ancestry, $locales, $environment, $emit
-        ): void {
-            foreach ($pendingStructural as $nodeId => $lft) {
-                if ($lft >= $beforeLft) {
-                    break;
-                }
-
-                unset($pendingStructural[$nodeId]);
-
-                // Registered only once actually emitted. A placeholder that cannot be built —
-                // no configured entry type, no mapped locale — must not become a `parentRef`
-                // target, or its children point at an entry no payload ever writes.
-                if ($this->emitStructural($nodeId, $ancestry, $parentable, $locales, $environment, $emit)) {
-                    $parentable[$nodeId] = 'pages';
-                }
-            }
-        };
+        $nodesById = [];
 
         foreach ($pages->nodes() as $node) {
-            if ($limit !== null && $this->entries >= $limit) {
-                return;
-            }
-
-            $flushStructural($ancestry[$node['nodeId']]['lft'] ?? PHP_INT_MAX);
-
-            if (!$this->wanted($node['entity'])) {
-                continue;
-            }
-
-            $spec = $pageSpecs[$node['entity']] ?? null;
-
-            if ($spec === null || isset($spec['manual']) || !isset($spec['entryType'])) {
-                $this->skip($node['entity']);
-
-                continue;
-            }
-
-            $sites = [];
-
-            foreach ($node['translations'] as $translation) {
-                $site = $locales[$translation['lang']] ?? null;
-
-                if ($site === null) {
-                    $this->skip('locale:' . $environment . ':' . $translation['lang']);
-
-                    continue;
-                }
-
-                $sites[$site] = $this->site(
-                    $translation, $node, $parts, $builder, $sequencer,
-                    $contexts, $parentable, $environment, $spec,
-                    (string) $spec['entryType'],
-                );
-            }
-
-            if ($sites === []) {
-                continue;
-            }
-
-            // A locale whose translation is offline still owns its slug in that locale's URL:
-            // Kunstmaan builds `for-resellers/products-services/...` from an EN slug on a node
-            // whose EN translation is switched off. Carrying only the online translations
-            // leaves Craft to propagate the primary site's slug into that locale, and every
-            // descendant inherits the wrong word. The row is written disabled, so it owns the
-            // path segment without publishing anything.
-            //
-            // Only ever an addition to a page that is published *somewhere* mapped. A node
-            // with no published mapped locale at all is not a page here — if it still owns a
-            // path segment, the structural lane above emits it, and reviving it as an entry
-            // enabled nowhere is what `NO_ENABLED_SITE` is there to catch.
-            $sites += $this->offlineSites($node, $ancestry, $parentable, $locales, $environment, $spec, $sites);
-
-            $emit([
-                'sourceUid' => $this->uid($environment, $node['nodeId']),
-                'section' => (string) ($spec['section'] ?? 'pages'),
-                'entryType' => (string) $spec['entryType'],
-                'sites' => $sites,
-                // What the SEO pass needs to find its rows. `kuma_seo` is keyed on the fully
-                // qualified page class and the *per-locale* entity row id — a node's
-                // translations each point at their own row, and one shared id would leak the
-                // primary locale's meta into every other site. The loader has no way to work
-                // either out after the fact, so they travel with the payload.
-                'legacy' => $this->legacyRefs($node),
-            ]);
-
-            $this->entries++;
+            $nodesById[(int) $node['nodeId']] = $node;
         }
 
-        // Anything left is deeper in `lft` than the last page emitted.
-        $flushStructural(PHP_INT_MAX);
+        return new CompilerRun(
+            $environment,
+            $pdo,
+            $pages,
+            $parts,
+            $builder,
+            $sequencer,
+            $locales,
+            $this->mapping->pages(),
+            $contexts,
+            $parentable,
+            $ancestry,
+            $nodesById,
+            $pendingStructural,
+        );
+    }
+
+    /**
+     * One node, compiled: the structural placeholders due before it, then the
+     * page itself. Emits zero payloads for a node the mapping does not carry.
+     */
+    public function compileNodeUnit(CompilerRun $run, int $nodeId, callable $emit): void
+    {
+        $node = $run->nodesById[$nodeId] ?? null;
+
+        if ($node === null) {
+            return;
+        }
+
+        $this->flushStructural($run, $run->lftOf($nodeId), $emit);
+
+        if (!$this->wanted($node['entity'])) {
+            return;
+        }
+
+        $spec = $run->pageSpecs[$node['entity']] ?? null;
+
+        if ($spec === null || isset($spec['manual']) || !isset($spec['entryType'])) {
+            $this->skip($node['entity']);
+
+            return;
+        }
+
+        $sites = [];
+
+        foreach ($node['translations'] as $translation) {
+            $site = $run->locales[$translation['lang']] ?? null;
+
+            if ($site === null) {
+                $this->skip('locale:' . $run->environment . ':' . $translation['lang']);
+
+                continue;
+            }
+
+            $sites[$site] = $this->site(
+                $translation, $node, $run->parts, $run->builder, $run->sequencer,
+                $run->contexts, $run->parentable, $run->environment, $spec,
+                (string) $spec['entryType'],
+            );
+        }
+
+        if ($sites === []) {
+            return;
+        }
+
+        // A locale whose translation is offline still owns its slug in that locale's URL:
+        // Kunstmaan builds `for-resellers/products-services/...` from an EN slug on a node
+        // whose EN translation is switched off. Carrying only the online translations
+        // leaves Craft to propagate the primary site's slug into that locale, and every
+        // descendant inherits the wrong word. The row is written disabled, so it owns the
+        // path segment without publishing anything.
+        //
+        // Only ever an addition to a page that is published *somewhere* mapped. A node
+        // with no published mapped locale at all is not a page here — if it still owns a
+        // path segment, the structural lane above emits it, and reviving it as an entry
+        // enabled nowhere is what `NO_ENABLED_SITE` is there to catch.
+        $sites += $this->offlineSites($node, $run->ancestry, $run->parentable, $run->locales, $run->environment, $spec, $sites);
+
+        $emit([
+            'sourceUid' => $this->uid($run->environment, $node['nodeId']),
+            'section' => (string) ($spec['section'] ?? 'pages'),
+            'entryType' => (string) $spec['entryType'],
+            'sites' => $sites,
+            // What the SEO pass needs to find its rows. `kuma_seo` is keyed on the fully
+            // qualified page class and the *per-locale* entity row id — a node's
+            // translations each point at their own row, and one shared id would leak the
+            // primary locale's meta into every other site. The loader has no way to work
+            // either out after the fact, so they travel with the payload.
+            'legacy' => $this->legacyRefs($node),
+        ]);
+
+        $this->entries++;
+    }
+
+    /**
+     * Register the structural placeholders an earlier batch already emitted.
+     *
+     * A resumed batch rebuilds this run from scratch, so every placeholder is
+     * pending again — but the ones before the resume point were emitted by a
+     * previous batch, and re-emitting them would double-count. They are flushed
+     * against a no-op emit: `parentable` learns them exactly as the original
+     * flush taught it, and nothing is emitted twice.
+     */
+    public function catchUpStructural(CompilerRun $run, int $lastCompiledNodeId): void
+    {
+        $this->flushStructural($run, $run->lftOf($lastCompiledNodeId), static function(): void {
+        });
+    }
+
+    /** The placeholders deeper in `lft` than the last page emitted. */
+    public function finishStructural(CompilerRun $run, callable $emit): void
+    {
+        $this->flushStructural($run, PHP_INT_MAX, $emit);
+    }
+
+    private function flushStructural(CompilerRun $run, int $beforeLft, callable $emit): void
+    {
+        foreach ($run->pendingStructural as $nodeId => $lft) {
+            if ($lft >= $beforeLft) {
+                break;
+            }
+
+            unset($run->pendingStructural[$nodeId]);
+
+            // Registered only once actually emitted. A placeholder that cannot be built —
+            // no configured entry type, no mapped locale — must not become a `parentRef`
+            // target, or its children point at an entry no payload ever writes.
+            if ($this->emitStructural($nodeId, $run->ancestry, $run->parentable, $run->locales, $run->environment, $emit)) {
+                $run->parentable[$nodeId] = 'pages';
+            }
+        }
     }
 
     /**
@@ -283,57 +347,133 @@ final class Compiler
             }
 
             $table = (string) $spec['table'];
-            $dedupe = ($spec['dedupe'] ?? false) === true;
-            $titleColumn = (string) ($spec['title'] ?? 'title');
 
             foreach ($reader->rows($table, isset($spec['softDelete']) ? (string) $spec['softDelete'] : null) as $row) {
                 if ($limit !== null && $this->entries >= $limit) {
                     return;
                 }
 
-                $title = trim((string) ($row[$titleColumn] ?? ''));
-
-                // Craft's title is required on every one of these entry types, and an entry
-                // with no title is a row nobody can find again.
-                if ($title === '') {
-                    $this->skip(sprintf('%s: row %s has no `%s`', $name, (string) ($row['id'] ?? '?'), $titleColumn));
-
-                    continue;
-                }
-
-                $uid = EntityIndex::uid(
-                    $dedupe ? EntityIndex::SHARED : $environment,
-                    $table,
-                    (int) $row['id'],
-                );
-
-                if ($dedupe) {
-                    $seen = $this->sharedTitles[$uid] ?? null;
-
-                    if ($seen !== null && $seen !== $title) {
-                        $this->skip(sprintf('%s: `%s` and `%s` share id %d across environments', $name, $seen, $title, (int) $row['id']));
-                    }
-
-                    $this->sharedTitles[$uid] = $title;
-                }
-
-                $fields = $builder->fieldsFrom($spec['map'] ?? [], $row, (string) $name);
-                $site = ['enabled' => true, 'title' => $title];
-
-                if ($fields !== []) {
-                    $site['fieldValues'] = $fields;
-                }
-
-                $emit([
-                    'sourceUid' => $uid,
-                    'section' => (string) $spec['section'],
-                    'entryType' => (string) $spec['entryType'],
-                    'sites' => array_fill_keys($sites, $site),
-                ]);
-
-                $this->entries++;
+                $this->compileEntityRow((string) $name, $spec, $row, $builder, $environment, $sites, $emit);
             }
         }
+    }
+
+    /**
+     * The entity lanes and their row counts, for a batched job to slice.
+     *
+     * Same lane filter `compileEntities` applies, same reader, same order —
+     * a unit list built from this stays aligned with what a slice compiles.
+     *
+     * @return array<string, int> lane name => row count
+     */
+    public function entityLaneCounts(CompilerRun $run): array
+    {
+        $reader = new \Lameco\KumaCompile\Legacy\TaxonomyReader($run->pdo);
+        $counts = [];
+
+        foreach ($this->mapping->entities() as $name => $spec) {
+            if (!$this->wanted((string) $name)) {
+                continue;
+            }
+
+            if (!is_array($spec) || ($spec['table'] ?? '') === '' || ($spec['entryType'] ?? '') === '') {
+                continue;
+            }
+
+            $counts[(string) $name] = count($reader->rows(
+                (string) $spec['table'],
+                isset($spec['softDelete']) ? (string) $spec['softDelete'] : null,
+            ));
+        }
+
+        return $counts;
+    }
+
+    /**
+     * One window of one entity lane — the batched counterpart of the lane loop
+     * inside `compileEntities`. Cross-environment dedupe warnings only fire
+     * within a single process; the loader's shared-uid state row is what
+     * actually prevents a duplicate entry either way.
+     */
+    public function compileEntitySlice(CompilerRun $run, string $lane, int $offset, int $limit, callable $emit): void
+    {
+        $spec = $this->mapping->entities()[$lane] ?? null;
+
+        if (!is_array($spec) || ($spec['table'] ?? '') === '' || ($spec['entryType'] ?? '') === '') {
+            return;
+        }
+
+        $sites = $this->siteHandles($run->locales);
+
+        if ($sites === []) {
+            return;
+        }
+
+        $reader = new \Lameco\KumaCompile\Legacy\TaxonomyReader($run->pdo);
+        $rows = $reader->rows((string) $spec['table'], isset($spec['softDelete']) ? (string) $spec['softDelete'] : null);
+
+        foreach (array_slice($rows, $offset, $limit) as $row) {
+            $this->compileEntityRow($lane, $spec, $row, $run->builder, $run->environment, $sites, $emit);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $spec
+     * @param array<string, mixed> $row
+     * @param list<string> $sites
+     */
+    private function compileEntityRow(
+        string $name,
+        array $spec,
+        array $row,
+        BlockBuilder $builder,
+        string $environment,
+        array $sites,
+        callable $emit,
+    ): void {
+        $dedupe = ($spec['dedupe'] ?? false) === true;
+        $titleColumn = (string) ($spec['title'] ?? 'title');
+        $title = trim((string) ($row[$titleColumn] ?? ''));
+
+        // Craft's title is required on every one of these entry types, and an entry
+        // with no title is a row nobody can find again.
+        if ($title === '') {
+            $this->skip(sprintf('%s: row %s has no `%s`', $name, (string) ($row['id'] ?? '?'), $titleColumn));
+
+            return;
+        }
+
+        $uid = EntityIndex::uid(
+            $dedupe ? EntityIndex::SHARED : $environment,
+            (string) $spec['table'],
+            (int) $row['id'],
+        );
+
+        if ($dedupe) {
+            $seen = $this->sharedTitles[$uid] ?? null;
+
+            if ($seen !== null && $seen !== $title) {
+                $this->skip(sprintf('%s: `%s` and `%s` share id %d across environments', $name, $seen, $title, (int) $row['id']));
+            }
+
+            $this->sharedTitles[$uid] = $title;
+        }
+
+        $fields = $builder->fieldsFrom($spec['map'] ?? [], $row, $name, (string) $spec['entryType']);
+        $site = ['enabled' => true, 'title' => $title];
+
+        if ($fields !== []) {
+            $site['fieldValues'] = $fields;
+        }
+
+        $emit([
+            'sourceUid' => $uid,
+            'section' => (string) $spec['section'],
+            'entryType' => (string) $spec['entryType'],
+            'sites' => array_fill_keys($sites, $site),
+        ]);
+
+        $this->entries++;
     }
 
     /**
@@ -398,7 +538,7 @@ final class Compiler
             : null;
 
         $pageFields = $pageRow !== null
-            ? $builder->fieldsFrom($pageSpec['map'] ?? [], $pageRow, $translation['entity'])
+            ? $builder->fieldsFrom($pageSpec['map'] ?? [], $pageRow, $translation['entity'], $entryType)
             : [];
 
         // A page entity can own collections too. Partner branches, contact persons and awards
@@ -413,6 +553,12 @@ final class Compiler
                 true,
             );
         }
+
+        // Sidecar entities — the header tab, structured data — decorate a page through the
+        // polymorphic ref, outside both the page's own table and the pagepart tree. Which
+        // pages carry one is a per-page fact the data answers, not a mapping declaration; a
+        // page without a row simply gets nothing. The page's own map wins a target collision.
+        $pageFields += $this->sidecarFields($parts, $builder, $translation, $entryType);
 
         // The node's `created` is when the page was made, not when it was published. Editorial
         // types carry their own date, and on the first real corpus the two disagreed on 279 of
@@ -475,8 +621,14 @@ final class Compiler
 
         $builderBlocks = array_merge($prependedBlocks, $builderBlocks);
 
+        $formBlock = $this->formBlockFor($parts, $translation, $entryType, $contexts, $environment);
+
+        if ($formBlock !== null) {
+            $builderBlocks[] = $formBlock;
+        }
+
         if ($builderBlocks !== []) {
-            $field = (string) (reset($contexts)['field'] ?? 'pageBuilder');
+            $field = $this->builderField($contexts);
             $pageFields[$field] = $builderBlocks;
         }
 
@@ -485,6 +637,97 @@ final class Compiler
         }
 
         return $site;
+    }
+
+    /** @param array<string, mixed> $contexts */
+    private function builderField(array $contexts): string
+    {
+        $first = $contexts !== [] ? reset($contexts) : null;
+
+        return (string) (is_array($first) ? ($first['field'] ?? 'pageBuilder') : 'pageBuilder');
+    }
+
+    /**
+     * The form the page owns, referenced from the page itself.
+     *
+     * The forms lane compiles a page's `form` context into a Formie form and stops there:
+     * on the first full Enreach run, 70 forms existed and no page pointed at any of them.
+     * A page whose form context holds at least one mappable field gets a form block at the
+     * foot of its builder, carrying `{"_form": <form sourceUid>}` for the loader to resolve
+     * against the form lane's state row — the same two-pass contract a `_ref` follows when
+     * the target does not exist yet.
+     *
+     * @param array<string, mixed> $translation
+     * @param array<string, mixed> $contexts
+     * @return array{type:string, fields:array<string,mixed>}|null
+     */
+    private function formBlockFor(
+        PartReader $parts,
+        array $translation,
+        string $entryType,
+        array $contexts,
+        string $environment,
+    ): ?array {
+        $spec = $this->mapping->all()['forms'] ?? null;
+        $fieldSpecs = $this->mapping->formFields();
+
+        if (!is_array($spec) || $fieldSpecs === []) {
+            return null;
+        }
+
+        $context = (string) ($spec['context'] ?? 'form');
+        $sequence = $parts->sequence((string) $translation['entity'], (int) $translation['entityId'], $context);
+        $mappable = array_filter($sequence, static fn(array $ref): bool => isset($fieldSpecs[$ref['part']]));
+
+        if ($mappable === []) {
+            return null;
+        }
+
+        $field = $this->builderField($contexts);
+        $slot = $this->schema?->slot($entryType, $field);
+
+        if ($slot === null || !$slot->isMatrix()) {
+            $this->skip(sprintf('form on %s: no %s to land in', $entryType, $field));
+
+            return null;
+        }
+
+        foreach ($slot->nested as $blockType) {
+            $formsHandle = $this->soleFormsSlot($blockType);
+
+            if ($formsHandle === null) {
+                continue;
+            }
+
+            $this->blocks++;
+
+            return ['type' => $blockType, 'fields' => [$formsHandle => [[
+                '_form' => sprintf(
+                    'kuma:%s:form:%s:%d',
+                    $environment,
+                    (string) $translation['entity'],
+                    (int) $translation['entityId'],
+                ),
+            ]]]];
+        }
+
+        $this->skip(sprintf('form on %s: no allowed block carries a Forms field', $entryType));
+
+        return null;
+    }
+
+    /** The one Forms-type field on a block type, or null when there is none or several. */
+    private function soleFormsSlot(string $blockType): ?string
+    {
+        $found = [];
+
+        foreach ($this->schema?->slots($blockType) ?? [] as $slot) {
+            if ($slot->type === 'Forms') {
+                $found[] = $slot->handle;
+            }
+        }
+
+        return count($found) === 1 ? $found[0] : null;
     }
 
     /** @return array{type:string, fields:array<string,mixed>}|null */
@@ -803,6 +1046,63 @@ final class Compiler
         $this->structuralEntries++;
 
         return true;
+    }
+
+    /**
+     * Every sidecar's contribution to one page entry.
+     *
+     * A sidecar names targets for every page it decorates, but the hero fields are placed on
+     * some entry types and not others — `heroImage` exists on eight. A field the type does not
+     * carry is dropped here and counted, per type, so widening a field layout is what turns
+     * the counter into content rather than a mapping edit.
+     *
+     * @param array<string, mixed> $translation
+     * @return array<string, mixed>
+     */
+    private function sidecarFields(
+        PartReader $parts,
+        BlockBuilder $builder,
+        array $translation,
+        string $entryType,
+    ): array {
+        $fields = [];
+
+        foreach ($this->mapping->sidecars() as $name => $spec) {
+            // No `wanted()` gate: a sidecar rides the page it decorates, so a run narrowed
+            // to one page entity still carries that page's hero. Excluding one is `drop:`.
+            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
+                continue;
+            }
+
+            $row = $parts->sidecarRow(
+                (string) $spec['table'],
+                (string) $translation['entity'],
+                (int) $translation['entityId'],
+            );
+
+            if ($row === null) {
+                continue;
+            }
+
+            $context = 'sidecar:' . $name;
+            $mapped = $builder->fieldsFrom($spec['map'] ?? [], $row, $context, $entryType);
+
+            if (isset($row['id'])) {
+                $mapped += $builder->childrenOf($spec['children'] ?? [], $entryType, (int) $row['id'], $context, true);
+            }
+
+            foreach ($mapped as $target => $value) {
+                if ($this->schema !== null && $this->schema->slot($entryType, (string) $target) === null) {
+                    $this->skip(sprintf('sidecar %s: %s not on %s', $name, $target, $entryType));
+
+                    continue;
+                }
+
+                $fields[(string) $target] ??= $value;
+            }
+        }
+
+        return $fields;
     }
 
     /** The Craft section an entry of this page entity lands in, per the mapping. */

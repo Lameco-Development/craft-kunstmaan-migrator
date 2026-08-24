@@ -6,6 +6,189 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+
+- **A Coverage screen — the inverse of the mapping.** Pick an entry type and
+  see every field and what feeds it: page maps, sidecars, the parts lane
+  through its context fields, with required-but-unfed fields flagged and a
+  roll-up naming only the entry types with holes. Backed by
+  `FieldProvenance`, one computed inversion every screen answers from, so a
+  screen can no longer disagree with another screen — or with the run.
+- **A permanent run log.** Every migrate, finalize and fixup run writes
+  started/finished/failed with its counts to
+  `storage/kunstmaan-migrator/runs.jsonl` (one shared `RunLog::track()`
+  envelope; counts survive into the failed event). A read-only **Kunstmaan
+  migration log** utility renders the history beside Craft's own logs.
+- **Re-running the wizard merges instead of clobbering.** Newly discovered
+  rows join the existing mapping as open, live counts refresh, every decision
+  and comment stays; "start over" remains as the explicit choice, with its
+  cost stated in decided rows. This retires the failure where a finished
+  mapping became a skeleton because replace was the only door.
+- **The mapping screens answer live.** Choosing a Becomes redraws the field
+  map without a save; the detect step rescans without a reload; the coverage
+  picker swaps in place and keeps the URL meaningful; `mapping/check` is a
+  button whose verdict renders inline. One shared `kumaSwap` helper owns the
+  loading and error paths.
+- **Rows show their context.** Page rows name the sidecar that fills each
+  hero field (with an edit link); sidecar rows say how many mapped entry
+  types carry each field and which drop it; every column dropdown shows three
+  real sample values from the legacy table; lane tabs carry their open
+  counts; the Becomes dropdown is searchable and grouped by section.
+
+### Changed
+
+- **The Run screen moved from Utilities into the plugin's own section** —
+  one workflow, one nav area. Its production guard and confirmations came
+  along unchanged; every screen and action now requires the plugin's section
+  permission (`accessPlugin-kunstmaan-migrator`) instead of the old utility
+  permission. The section also gained its nav icon (`icon-mask.svg`).
+- **A row save is refused only for damage, never for unfinished work.**
+  `Schema::validateRow()` distinguishes malformation (unknown keys,
+  conflicting dispositions, broken children) from completeness (no target
+  yet, columns unreviewed) — the progress bar's business. Saving a fresh
+  skeleton row by row, clearing a target, and keeping a column
+  not-looked-at all work now; `validate()` remains the gate a run must pass
+  in full.
+- **One check verdict for three renderers.** The CLI `mapping/check`, the
+  migrate preflight and the CP button all ask `MappingCheck` in kuma-compile;
+  the CP button gained the blocks-nothing-accepts stage it silently lacked.
+- **`state/export` returns an `ExportResult`** carrying rows, the exclusion
+  count and its warning — both exports report exclusions, by signature
+  rather than by convention.
+
+### Fixed
+
+- The mapping YAML is parsed once per request instead of per question (the
+  coverage screen alone cost ~2N+4 full parses for N mapped entry types).
+- `RunLog::entries()` reads a bounded tail instead of the whole append-only
+  file.
+- The unit suite runs clean: the export builder no longer needs a booted
+  Craft to count its exclusions, null-plugin property reads are guarded, and
+  the deprecated `setAccessible()` calls are gone.
+
+### Internal
+
+- A phpstan rule holds the kuma-compile boundary mechanically: nothing under
+  `lib/kuma-compile` may reference Craft, `craft\*`, `yii\*`, or the
+  plugin's own namespace.
+
+- **A fresh mapping opens with a prefill offer, not sixty empty rows.** The
+  content model's block specs already say which legacy parts each block covers
+  (`migrationSource:` and the notes-table headers) and which property becomes
+  which field. The Mapping screen offers "Prefill from the content model"
+  whenever parts lack a target and a specs directory exists
+  (`docs/content-model/page-builder` under the project root by default, a
+  plugin setting to override); `suggest --apply` is the same thing from the
+  CLI. A draft is not a decision: drafted rows get the block, the field maps
+  and the spec's own drops as reasoned ignores, while every leftover column
+  stays `unreviewed` — so each row remains open until somebody reviews it.
+  On the reference corpus a fresh skeleton prefills 22 of 61 parts in one
+  click, with the skipped ones each carrying their reason.
+
+- **The locales step asks one question.** The dropdowns now start on the Craft
+  site whose language matches the legacy locale, so the step is a check rather
+  than a form; the per-locale "why not" box is gone (a skipped locale is
+  written as `!unmapped "not selected during setup"`, still a declaration the
+  coverage report honours, and the mapping file is where a better reason
+  belongs); and the uploads textarea left the wizard entirely — every
+  Kunstmaan site keeps uploads at `public/uploads/media`, so the path is read
+  from the detected checkout, with a plugin setting to override the one site
+  that breaks the convention.
+
+- **A CP section: Kunstmaan Migration.** The authoring screens stop hiding
+  behind URLs nothing linked to — the nav item carries a subnav of Mapping,
+  Set up, and Run (which points across to the Utility, where a destructive,
+  occasional operation belongs). The section lands on the mapping when one
+  exists and on the wizard when none does.
+
+- **The setup wizard starts by finding the site, not asking about it.** A new
+  first step scans a folder (default: the Craft project's parent, e.g.
+  `~/Sites`) for Kunstmaan checkouts — a checkout qualifies by its
+  `composer.lock` naming a `kunstmaan/*` package — and offers them as a list
+  with the Kunstmaan version, the database its own `.env` names (`.env.local`
+  winning), and whether `public/uploads/media` exists. Picking one prefills the
+  connection, the media root on the locales step, and the source path on the
+  review step; every value stays editable, and "enter it by hand" remains one
+  click. The password is never copied as a literal — the settings model
+  rightly refuses one — so the prefill references an env var that already
+  resolves to it, or tells the operator exactly what to add to `.env`.
+- **The wizard's write step produces the introspection artifact too.** With a
+  source path known (detected or typed), creating the mapping runs the same
+  introspection the CLI does — booted metadata with static fallback — writes
+  `introspection.json` next to the mapping, and generates the skeleton from
+  its exact table names and child-collection ownership.
+
+- **`kuma-compile bootstrap`** — starting a migration is one command: it runs
+  `survey` (size the corpus), `introspect` (read the application's wiring) and
+  `init` (generate the mapping skeleton) in order, writing
+  `<dir>/introspection.json` and `<dir>/mapping.yaml`. A mapping that exists is
+  never overwritten — bootstrap is how a migration starts, not how it starts
+  over — while the survey and the artifact refresh on every run. The three
+  steps stay available individually. `init` gained `--introspection=` and
+  prefers the artifact's booted metadata (exact tables, child-collection
+  ownership from resolved associations) over its static source scan.
+
+- **`kuma-compile introspect`** — dumps the legacy application's own account of
+  itself as a committed artifact: booted Doctrine metadata when the checkout
+  runs on this machine's PHP (exact tables, columns, associations including
+  ManyToMany join tables, run as a child process so the two dependency trees
+  never mix), a static ORM-attribute scan when it does not, plus two scans that
+  are static either way — the sidecar entities a `NodeListener` wires into the
+  page UI, and which columns each form type actually draws. The compiler never
+  reads the artifact; the mapping stays the program.
+- **`validate --introspection=`** — the mapping checked against that wiring:
+  unclaimed ManyToMany selections (a join table is invisible to every column
+  list), editor-facing columns ignored without a written reason, and mapped
+  columns the entity does not have. First run on the reference corpus: 11
+  unclaimed relation selections, 118 silently dropped editor-facing columns,
+  and one mapped column that did not exist — an expression that had been
+  reading null for the entire life of the mapping.
+- **`m2m(join_table, owner_column, target_column)` expression** — reads the ids
+  an owning row selects through a ManyToMany join table; `ref()` now accepts
+  the resulting list and turns each id into the entry it became, keeping order
+  and dropping ids that resolve to nothing.
+- **Literal expressions** — `'band'` supplies a value no column carries, for a
+  required field whose answer is a design fact rather than data.
+- **`readiness` walks the entities lane** — a required field on a taxonomy
+  target was invisible before; `country.flag` (required Assets, no legacy
+  source) now reports as missing instead of not at all.
+
+- **A `sidecars:` lane** for the per-page entities Kunstmaan attaches outside
+  the pagepart tree — header tabs, footer tabs, structured data. The lane keys
+  on the polymorphic `(ref_entity_name, ref_id)` column pair, not on a table
+  name, so any corpus's variant of the concept maps the same way. Resolution is
+  per locale through the published node version, the same path `kuma_seo`
+  already follows, so two locales with different tab rows each get their own.
+  A mapped field the target entry type does not carry is dropped and counted
+  per type, which turns a field-layout gap into a measured fact. `readiness`
+  credits the lane; `survey` and `init` discover candidate tables by the column
+  signature; the control panel mapping editor gains the lane, offering the
+  union of page fields since a sidecar decorates whichever page carries a row.
+- **`links()` accepts nested `link(...)` groups** — a table holding several
+  whole links (primary/secondary/tertiary) becomes several buttons in one
+  Matrix, the fourth column of a group still mapping to the button style.
+
+- **`links(column=Label, …)` field expression** — N sibling single-URL columns
+  become one button each in a Matrix of buttons, with the label carried by the
+  mapping because the legacy table never stored one. Built for SocialMedia's
+  five network columns, which target `linksBlock.buttons`, a required Matrix
+  nothing could fill.
+- **`concat(expr, expr, …)` field expression** — joins every non-empty
+  alternative where `coalesce()` keeps only the first. Built for ContactPerson,
+  which keeps prose in both `content` and `contact_person_content` on 80 live
+  rows; the spec folds them into one field.
+- **`centered` transform** — a legacy alignment string (`center`/`centered`)
+  becomes the alignment Lightswitch value.
+
+### Fixed
+
+- **`link()` aimed at an indexed nested position now sees its Matrix.** A target
+  like `cards[0].buttons` addresses the buttons Matrix on the nested card type;
+  the slot resolver only looked at top-level targets, so `link()` emitted a bare
+  link map Craft discards without a word. The resolver now walks nested
+  positions, which is what lets a single-tile part (Product: title + link, no
+  child table) compile as a cardsBlock holding one card.
+
 ## 2.0.0-alpha.3 — 2026-08-22
 
 Setting the plugin up no longer starts with a text field and prior knowledge.

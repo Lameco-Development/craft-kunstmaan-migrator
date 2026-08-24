@@ -105,14 +105,14 @@ final class AdapterConfigurationTest extends TestCase
         self::assertNotNull($navigation);
         self::assertSame(
             ['navHandle', 'excludedInternalNames'],
-            array_map(static fn (AdapterSetting $s): string => $s->handle, $navigation->settings),
+            array_map(static fn(AdapterSetting $s): string => $s->handle, $navigation->settings),
         );
 
         $translations = $registry->byHandle('translations');
         self::assertNotNull($translations);
         self::assertSame(
             ['domains'],
-            array_map(static fn (AdapterSetting $s): string => $s->handle, $translations->settings),
+            array_map(static fn(AdapterSetting $s): string => $s->handle, $translations->settings),
         );
     }
 

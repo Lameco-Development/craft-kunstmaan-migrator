@@ -21,7 +21,7 @@ final class AdapterRegistryTest extends TestCase
     public function testTheBuiltInAdaptersAreRegistered(): void
     {
         $handles = array_map(
-            static fn (Adapter $a): string => $a->handle,
+            static fn(Adapter $a): string => $a->handle,
             (new AdapterRegistry())->all(),
         );
 
@@ -47,7 +47,7 @@ final class AdapterRegistryTest extends TestCase
     public function testAdapterHandlesAreUnique(): void
     {
         $handles = array_map(
-            static fn (Adapter $a): string => $a->handle,
+            static fn(Adapter $a): string => $a->handle,
             (new AdapterRegistry())->all(),
         );
 
@@ -58,7 +58,7 @@ final class AdapterRegistryTest extends TestCase
     {
         $withoutPlugin = array_values(array_filter(
             (new AdapterRegistry())->all(),
-            static fn (Adapter $a): bool => $a->pluginHandle === null,
+            static fn(Adapter $a): bool => $a->pluginHandle === null,
         ));
 
         self::assertCount(1, $withoutPlugin);
@@ -78,7 +78,7 @@ final class AdapterRegistryTest extends TestCase
         $registry = new AdapterRegistry();
         $registry->on(
             AdapterRegistry::EVENT_REGISTER_ADAPTERS,
-            static function (RegisterAdaptersEvent $event): void {
+            static function(RegisterAdaptersEvent $event): void {
                 $event->adapters[] = new Adapter('forms', 'Forms', 'formsEnabled', 'formie');
             },
         );
@@ -93,7 +93,7 @@ final class AdapterRegistryTest extends TestCase
         $calls = 0;
         $registry->on(
             AdapterRegistry::EVENT_REGISTER_ADAPTERS,
-            static function () use (&$calls): void {
+            static function() use (&$calls): void {
                 $calls++;
             },
         );

@@ -6,20 +6,29 @@
   <input type="hidden" name="envs" id="envs">
 
   {% if error %}
-    <blockquote class="note warning">
-      <p>{{ error }}</p>
-      <p><a href="{{ url('kunstmaan-migrator/setup') }}">{{ "Check the connection"|t('kunstmaan-migrator') }}</a></p>
-    </blockquote>
+    <div class="readable">
+      <blockquote class="note warning">
+        <p>{{ error }}</p>
+        <p><a class="go" href="{{ url('kunstmaan-migrator/setup/connect') }}">{{ "Check the connection"|t('kunstmaan-migrator') }}</a></p>
+      </blockquote>
+    </div>
   {% else %}
     <div class="readable">
       <p>
-        {{ "These are the Kunstmaan sites on that server. One site is usually one database, and a multi-language site often has one per country."|t('kunstmaan-migrator') }}
+        {% if narrowed %}
+          {{ "The database named earlier, plus its siblings — multi-country sites often have one per country. Untick anything that should not migrate."|t('kunstmaan-migrator') }}
+        {% else %}
+          {{ "One site is usually one database; multi-country sites often have one per country. Anything named earlier is already ticked."|t('kunstmaan-migrator') }}
+        {% endif %}
       </p>
     </div>
 
-    {{ forms.text({ id: 'kuma-filter', placeholder: "Search"|t('kunstmaan-migrator'), class: 'fullwidth' }) }}
+    {% if not narrowed %}
+      {{ forms.text({ id: 'kuma-filter', placeholder: "Search"|t('kunstmaan-migrator'), class: 'fullwidth' }) }}
+    {% endif %}
 
-    <table class="data fullwidth" style="margin-top: 10px;">
+    <div class="tablepane" style="margin-top: 10px;">
+    <table class="data fullwidth">
       <thead>
         <tr>
           <th style="width: 40px;"></th>
@@ -32,7 +41,7 @@
         {% for candidate in databases %}
           <tr data-name="{{ candidate.database }}">
             <td>
-              <input type="checkbox" class="checkbox kuma-pick" id="pick-{{ loop.index }}" data-database="{{ candidate.database }}">
+              <input type="checkbox" class="checkbox kuma-pick" id="pick-{{ loop.index }}" data-database="{{ candidate.database }}"{% if candidate.preselected ?? false %} checked{% endif %}>
               <label for="pick-{{ loop.index }}"></label>
             </td>
             <th scope="row"><code>{{ candidate.database }}</code></th>
@@ -43,12 +52,21 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="4" class="light">{{ "No Kunstmaan sites found on that server."|t('kunstmaan-migrator') }}</td></tr>
+          <tr><td colspan="4"><p class="zilch small">{{ "No Kunstmaan sites found on that server."|t('kunstmaan-migrator') }}</p></td></tr>
         {% endfor %}
       </tbody>
     </table>
+    </div>
 
     <p class="light" id="kuma-count" style="margin-top: 10px;"></p>
+
+    {% if narrowed %}
+      <p>
+        <a class="go" href="{{ url('kunstmaan-migrator/setup/sites', { all: 1 }) }}">
+          {{ "Missing one? Show all {n} Kunstmaan sites on this server."|t('kunstmaan-migrator', { n: hiddenCount + databases|length }) }}
+        </a>
+      </p>
+    {% endif %}
   {% endif %}
 
   {% js %}
@@ -65,9 +83,10 @@
 
       document.getElementById('envs').value = pairs.join(',');
 
-      var save = document.querySelector('#main-form button[type=submit]');
       var named = picked.every(function (b) { return b.closest('tr').querySelector('.kuma-label').value.trim() !== ''; });
-      if (save) { save.disabled = picked.length === 0 || !named; }
+      [].slice.call(document.querySelectorAll('#main-form button[type=submit]')).forEach(function (save) {
+        save.disabled = picked.length === 0 || !named;
+      });
 
       document.getElementById('kuma-count').textContent = picked.length === 0
         ? '{{ "Nothing selected yet."|t('kunstmaan-migrator')|e('js') }}'
@@ -83,7 +102,8 @@
       if (e.target.classList.contains('kuma-label')) { refresh(); }
     });
 
-    document.getElementById('kuma-filter').addEventListener('input', function () {
+    var filter = document.getElementById('kuma-filter');
+    if (filter) filter.addEventListener('input', function () {
       var needle = this.value.toLowerCase();
       document.querySelectorAll('tbody tr[data-name]').forEach(function (row) {
         row.style.display = row.getAttribute('data-name').toLowerCase().indexOf(needle) === -1 ? 'none' : '';

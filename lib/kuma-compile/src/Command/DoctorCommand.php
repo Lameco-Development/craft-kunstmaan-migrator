@@ -51,7 +51,7 @@ final class DoctorCommand extends Command
                 $db = LegacyDatabase::connect((string) $env, $database, $dsn);
                 $missing = array_filter(
                     ['kuma_nodes', 'kuma_node_translations', 'kuma_node_versions', 'kuma_page_part_refs'],
-                    static fn (string $t): bool => !$db->hasTable($t),
+                    static fn(string $t): bool => !$db->hasTable($t),
                 );
 
                 if ($missing !== []) {
@@ -99,14 +99,6 @@ final class DoctorCommand extends Command
             }
 
             $failed = true;
-        }
-
-        if ($unreasoned = $mapping->unreasonedIgnores()) {
-            $io->writeln(sprintf(
-                '  <comment>note</comment>      %d columns are ignored without a reason across %d subjects',
-                array_sum(array_map('count', $unreasoned)),
-                count($unreasoned),
-            ));
         }
 
         if ($todos = $mapping->todos()) {

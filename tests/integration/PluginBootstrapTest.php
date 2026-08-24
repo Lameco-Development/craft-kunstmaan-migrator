@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\integration;
 
-use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
 use lameco\kunstmaanmigrator\models\Settings;
+use lameco\kunstmaanmigrator\Plugin;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 

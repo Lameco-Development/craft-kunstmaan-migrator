@@ -6,6 +6,7 @@ namespace Lameco\KumaCompile\Compile;
 
 use Lameco\KumaCompile\Legacy\MediaIndex;
 use Lameco\KumaCompile\Legacy\PartReader;
+use Lameco\KumaCompile\Target\Slot;
 use Lameco\KumaCompile\Target\TargetSchema;
 
 /**
@@ -51,6 +52,7 @@ final class BlockBuilder
         $this->block = (string) $block;
         $fields = $this->fieldsFrom($spec['map'] ?? [], $row, $partClass);
         $fields['_sourcePartRef'] = $this->sourceRef((string) $table, $partId);
+        $fields = $this->stampNestedRefs($fields, $fields['_sourcePartRef']);
 
         $fields += $this->childrenOf($spec['children'] ?? [], (string) $block, $partId, $partClass);
 
@@ -97,15 +99,24 @@ final class BlockBuilder
 
             $blocks = [];
 
-            foreach ($rows as $childRow) {
-                $fields = $this->fieldsFrom($child['map'] ?? [], $childRow, $context . '.' . $field);
+            // A child's map addresses fields on the *nested* entry type, so that is the type the
+            // schema must be asked about while it is evaluated — `commonLink` is a Link field on
+            // `button`, and nothing at all on the block that owns the Matrix.
+            $childType = $this->childBlockType((string) $field);
 
-                if ($trackable && isset($childRow['id'])) {
+            foreach ($rows as $childRow) {
+                $fields = $this->fieldsFrom($child['map'] ?? [], $childRow, $context . '.' . $field, $childType);
+
+                // Every block carries its origin, at every depth. The loader threads these back
+                // into the payload on a re-run so Craft updates a block in place instead of
+                // replacing it — and a nested block that carries none is rebuilt every time,
+                // which is what happened to `contentColumn` and `button` on every forced run.
+                if (isset($childRow['id'])) {
                     $fields['_sourcePartRef'] = $this->sourceRef((string) $child['table'], (int) $childRow['id']);
                 }
 
                 $blocks[] = [
-                    'type' => $this->childBlockType((string) $field),
+                    'type' => $childType,
                     'fields' => $fields,
                 ];
             }
@@ -123,30 +134,45 @@ final class BlockBuilder
     /**
      * @param array<string, string> $map
      * @param array<string, mixed> $row
+     * @param ?string $owner the entry type these targets name, when the caller knows it — a page
+     *   map addresses a page entry type, and without it the schema is asked about whichever block
+     *   happened to be built last.
      * @return array<string, mixed>
      */
-    public function fieldsFrom(array $map, array $row, string $context): array
+    public function fieldsFrom(array $map, array $row, string $context, ?string $owner = null): array
     {
+        $previous = $this->block;
+
+        if ($owner !== null) {
+            $this->block = $owner;
+        }
+
         $fields = [];
 
         foreach ($map as $target => $expression) {
-            $value = $this->evaluate((string) $expression, $row, $context);
+            $value = $this->evaluate((string) $expression, $row, $context, (string) $target);
 
             if ($value !== null && $value !== '' && $value !== []) {
                 $this->assign($fields, (string) $target, $value);
             }
         }
 
+        $this->block = $previous;
+
         return $fields;
     }
 
     /** `column`, `column | transform`, `column | ref(Entity)`, or `link(url, text, newWindow, type)`. */
-    private function evaluate(string $expression, array $row, string $context): mixed
+    private function evaluate(string $expression, array $row, string $context, string $target = ''): mixed
     {
         $expression = trim($expression);
 
         if (preg_match('/^link\((.*)\)$/', $expression, $m) === 1) {
-            return $this->link(array_map('trim', explode(',', $m[1])), $row);
+            return $this->link(array_map('trim', explode(',', $m[1])), $row, $target);
+        }
+
+        if (preg_match('/^links\((.*)\)$/', $expression, $m) === 1) {
+            return $this->links($m[1], $row, $target);
         }
 
         if (preg_match('/^address\((.*)\)$/s', $expression, $m) === 1) {
@@ -167,21 +193,69 @@ final class BlockBuilder
             return null;
         }
 
+        // One target, several columns that each hold part of it. ContactPerson keeps prose in
+        // both `content` and `contact_person_content` — 80 live rows fill both, so picking one
+        // (which is what coalesce does) drops the other's text.
+        if (preg_match('/^concat\((.*)\)$/s', $expression, $m) === 1) {
+            $values = [];
+
+            foreach ($this->splitArguments($m[1]) as $piece) {
+                $value = $this->evaluate($piece, $row, $context);
+
+                if (is_scalar($value) && trim((string) $value) !== '') {
+                    $values[] = (string) $value;
+                }
+            }
+
+            return $values === [] ? null : implode("\n", $values);
+        }
+
         $parts = array_map('trim', explode('|', $expression));
         $column = array_shift($parts);
-        $value = $row[$column] ?? null;
+
+        // `m2m(join_table, owner_column, target_column)` reads the ids the owning row selects
+        // through a ManyToMany join table — a relation Doctrine keeps in a table of two foreign
+        // keys, which no column expression could reach. Pipes onward like any value; in practice
+        // always into `ref()`, which turns each id into the entry it became.
+        // `'band'` is a literal: a value the mapping decides because the legacy table has no
+        // column that carries it — ContentHighlight has no background_color, and its variant
+        // is a design fact, not data.
+        if (preg_match("/^'(.*)'$/", (string) $column, $m) === 1) {
+            $column = null;
+            $value = $m[1];
+        } elseif (preg_match('/^m2m\((.*)\)$/', (string) $column, $m) === 1) {
+            $args = array_map(trim(...), explode(',', $m[1]));
+
+            if (count($args) !== 3 || !isset($row['id'])) {
+                return null;
+            }
+
+            $value = $this->parts->m2m($args[0], $args[1], $args[2], (int) $row['id']);
+        } else {
+            $value = $row[(string) $column] ?? null;
+        }
 
         foreach ($parts as $transform) {
             // A legacy FK holds a row id; the loader resolves an element id from a sourceUid.
             // Building that uid needs the entity's table, which only the mapping knows — so it
             // happens here rather than inside a transform that has no access to it.
             if (preg_match('/^ref\((\w+)\)$/', $transform, $m) === 1) {
-                $uid = $this->entities?->uidFor($m[1], $value, $this->environment);
-
                 // A relation field takes a list of element ids. The loader replaces each
                 // `_ref` node in place, so the list has to be here already — handing it a
-                // bare node saved without complaint and related nothing.
-                return $uid === null ? null : [['_ref' => $uid]];
+                // bare node saved without complaint and related nothing. A list input (an
+                // m2m read) keeps its order; an id that resolves to nothing is dropped,
+                // because it points at content that did not migrate.
+                $refs = [];
+
+                foreach (is_array($value) ? $value : [$value] as $id) {
+                    $uid = $this->entities?->uidFor($m[1], $id, $this->environment);
+
+                    if ($uid !== null) {
+                        $refs[] = ['_ref' => $uid];
+                    }
+                }
+
+                return $refs === [] ? null : $refs;
             }
 
             // `lookup(Entity.column)` follows a foreign key to a column on the row it points
@@ -291,35 +365,313 @@ final class BlockBuilder
     }
 
     /**
-     * The legacy link columns collapse into one button. A link with no URL is not a button,
-     * it is an empty row an editor left behind.
+     * The legacy link columns collapse into one link. A link with no URL is not a link, it is
+     * an empty row an editor left behind.
+     *
+     * The shape depends on where it lands, and the schema is what knows: a Craft `Link` field
+     * takes one value keyed `value`, while a Matrix of buttons takes a list of blocks with the
+     * link on the nested entry type. Emitting a list of `url` keys — which is what this did —
+     * satisfies neither, and Craft discards both without a word.
      *
      * @param list<string> $columns
      */
-    private function link(array $columns, array $row): ?array
+    private function link(array $columns, array $row, string $target = ''): mixed
     {
         [$urlCol, $textCol] = [$columns[0] ?? null, $columns[1] ?? null];
-        $url = $urlCol !== null ? ($row[$urlCol] ?? null) : null;
+        $url = $urlCol !== null ? (string) ($row[$urlCol] ?? '') : '';
+        $label = $textCol !== null ? (string) ($row[$textCol] ?? '') : '';
+        $newWindow = isset($columns[2]) && (int) ($row[$columns[2]] ?? 0) === 1;
 
-        if ($url === null || trim((string) $url) === '') {
+        $link = $this->oneLink($url, $label, $newWindow);
+
+        if ($link === null) {
             return null;
         }
 
-        $button = ['url' => (string) $url];
+        $resolved = $this->resolveTarget($target);
+        $slot = $resolved === null ? null : $this->schema?->slot($resolved[0], $resolved[1]);
 
-        if ($textCol !== null && ($row[$textCol] ?? null) !== null) {
-            $button['label'] = (string) $row[$textCol];
+        if ($slot === null || !$slot->isMatrix()) {
+            return $link;
         }
 
-        if (isset($columns[2]) && (int) ($row[$columns[2]] ?? 0) === 1) {
-            $button['target'] = '_blank';
+        $nested = $this->schema?->nestedTypeOf($resolved[0], $resolved[1]) ?? $resolved[1];
+        $linkHandle = $this->soleSlotOfType($nested, 'Link');
+
+        if ($linkHandle === null) {
+            return null;
         }
 
-        if (isset($columns[3]) && ($row[$columns[3]] ?? null) !== null) {
-            $button['type'] = (string) $row[$columns[3]];
+        $fields = [$linkHandle => $link];
+        $style = $this->styleValue($columns[3] ?? null, $row, $target);
+        $styleHandle = $style !== '' ? $this->soleSlotOfType($nested, 'Dropdown') : null;
+
+        if ($styleHandle !== null) {
+            $fields[$styleHandle] = $style;
         }
 
-        return [$button];
+        return [['type' => $nested, 'fields' => $fields]];
+    }
+
+    /**
+     * The fourth `link()` column — the button style — may pipe through a transform:
+     * `link(url, text, new_window, tertiary_link_type | buttonType)`.
+     *
+     * The style lands in a Dropdown, and a dropdown validates its vocabulary: Kunstmaan
+     * stores CSS classes (`btn-outline-white`) where Craft offers `primary|secondary`, and
+     * writing the class raw failed the whole entry. The first three columns stay bare column
+     * names — they feed `oneLink()`, whose shape is fixed.
+     */
+    private function styleValue(?string $expression, array $row, string $context): string
+    {
+        if ($expression === null || $expression === '') {
+            return '';
+        }
+
+        if (!str_contains($expression, '|')) {
+            return trim((string) ($row[$expression] ?? ''));
+        }
+
+        $parts = array_map('trim', explode('|', $expression));
+        $value = $row[array_shift($parts)] ?? null;
+
+        foreach ($parts as $transform) {
+            $value = $this->transforms->apply($transform, $value, $context);
+        }
+
+        return trim((string) ($value ?? ''));
+    }
+
+    /**
+     * Several single-URL columns, one button each — `links(twitter=Twitter, linkedin=LinkedIn)`.
+     *
+     * `link()` gathers the four-column pattern one legacy link is spread across; this is its
+     * complement for the opposite shape, N sibling URL columns each carrying a whole link whose
+     * label the table never stored. SocialMedia holds five network columns and targets
+     * `linksBlock.buttons`, a required Matrix nothing could fill.
+     *
+     * Matrix targets only: a Craft Link field holds one link, and a part with several columns
+     * has several.
+     *
+     * @return list<array{type: string, fields: array<string, mixed>}>|null
+     */
+    private function links(string $arguments, array $row, string $target): ?array
+    {
+        $resolved = $this->resolveTarget($target);
+        $slot = $resolved === null ? null : $this->schema?->slot($resolved[0], $resolved[1]);
+
+        if ($slot === null || !$slot->isMatrix()) {
+            return null;
+        }
+
+        $nested = $this->schema?->nestedTypeOf($resolved[0], $resolved[1]) ?? $resolved[1];
+        $linkHandle = $this->soleSlotOfType($nested, 'Link');
+
+        if ($linkHandle === null) {
+            return null;
+        }
+
+        $blocks = [];
+
+        foreach ($this->splitArguments($arguments) as $argument) {
+            // A nested `link(...)` argument is one four-column group — how a table holding
+            // several whole links (primary/secondary/tertiary) becomes several buttons.
+            if (preg_match('/^link\((.*)\)$/', $argument, $lm) === 1) {
+                $columns = array_map('trim', explode(',', $lm[1]));
+                $link = $this->oneLink(
+                    (string) ($row[$columns[0] ?? ''] ?? ''),
+                    isset($columns[1]) ? (string) ($row[$columns[1]] ?? '') : '',
+                    isset($columns[2]) && (int) ($row[$columns[2]] ?? 0) === 1,
+                );
+
+                if ($link === null) {
+                    continue;
+                }
+
+                $fields = [$linkHandle => $link];
+                $style = $this->styleValue($columns[3] ?? null, $row, $target);
+                $styleHandle = $style !== '' ? $this->soleSlotOfType($nested, 'Dropdown') : null;
+
+                if ($styleHandle !== null) {
+                    $fields[$styleHandle] = $style;
+                }
+
+                $blocks[] = ['type' => $nested, 'fields' => $fields];
+
+                continue;
+            }
+
+            [$column, $label] = str_contains($argument, '=')
+                ? array_map(trim(...), explode('=', $argument, 2))
+                : [$argument, ''];
+
+            $link = $this->oneLink((string) ($row[$column] ?? ''), $label, false);
+
+            if ($link !== null) {
+                $blocks[] = ['type' => $nested, 'fields' => [$linkHandle => $link]];
+            }
+        }
+
+        return $blocks === [] ? null : $blocks;
+    }
+
+    /**
+     * One link map from a URL, a label and a new-window flag. A link with no URL is not a
+     * link, it is an empty row an editor left behind.
+     *
+     * Kunstmaan writes an internal link as `[NT<id>]`, which a Link field rejects outright.
+     * It addresses a node translation, and the node is what becomes an entry, so it is
+     * handed over as a ref for the loader to turn into a reference tag.
+     *
+     * @return array<string, string>|null
+     */
+    private function oneLink(string $url, string $label, bool $newWindow): ?array
+    {
+        $url = trim($url);
+
+        if ($url === '') {
+            return null;
+        }
+
+        $ref = $this->entities?->uidFor('nodeLink', $url, $this->environment);
+        $link = $ref !== null ? ['_linkRef' => $ref] : $this->linkTarget($url);
+
+        if (trim($label) !== '') {
+            $link['label'] = $label;
+        }
+
+        if ($newWindow) {
+            $link['target'] = '_blank';
+        }
+
+        return $link;
+    }
+
+    /**
+     * Which kind of link a legacy URL column is holding.
+     *
+     * Craft only sniffs the type when the value is a bare string. A map — the only way to carry
+     * a label — defaults to `url`, so a column holding a bare address is validated as a URL and
+     * fails the whole entry. Four live pages died on `sales.sp@enreach.com` that way.
+     *
+     * @return array<string, string>
+     */
+    private function linkTarget(string $url): array
+    {
+        foreach (['mailto:' => 'email', 'tel:' => 'tel', 'sms:' => 'sms'] as $prefix => $type) {
+            if (stripos($url, $prefix) === 0) {
+                return ['type' => $type, 'value' => $url];
+            }
+        }
+
+        // The old templates wrote the scheme; the column holds the bare address.
+        if (filter_var($url, FILTER_VALIDATE_EMAIL) !== false) {
+            return ['type' => 'email', 'value' => 'mailto:' . $url];
+        }
+
+        return ['value' => $url];
+    }
+
+    /** The slot a target names, walked through any nested positions it addresses. */
+    private function slotFor(string $target): ?Slot
+    {
+        $resolved = $this->resolveTarget($target);
+
+        return $resolved === null ? null : $this->schema?->slot($resolved[0], $resolved[1]);
+    }
+
+    /**
+     * The entry type and field a target path lands on.
+     *
+     * `buttons` names a field on the block being built; `cards[0].buttons` names one on the
+     * nested card type. Without the walk, `link()` aimed at an indexed position could not see
+     * it was feeding a Matrix and emitted a bare link map Craft discards without a word.
+     *
+     * @return array{0: string, 1: string}|null
+     */
+    private function resolveTarget(string $target): ?array
+    {
+        if ($this->schema === null || $this->block === null || $target === '') {
+            return null;
+        }
+
+        $owner = $this->block;
+
+        while (preg_match('/^(\w+)\[\d+\]\.(.+)$/', $target, $m) === 1) {
+            $nested = $this->schema->nestedTypeOf($owner, $m[1]);
+
+            if ($nested === null) {
+                return null;
+            }
+
+            [$owner, $target] = [$nested, $m[2]];
+        }
+
+        if (str_contains($target, '.') || str_contains($target, '[')) {
+            return null;
+        }
+
+        return [$owner, $target];
+    }
+
+    /**
+     * The one field of this type on an entry type, when there is exactly one.
+     *
+     * Reading it from the schema rather than naming `commonLink` keeps this working on a target
+     * whose button block calls its fields something else.
+     */
+    private function soleSlotOfType(string $entryType, string $type): ?string
+    {
+        if ($this->schema === null) {
+            return null;
+        }
+
+        $found = [];
+
+        foreach ($this->schema->slots($entryType) as $handle => $slot) {
+            if ($slot->type === $type) {
+                $found[] = (string) $handle;
+            }
+        }
+
+        return count($found) === 1 ? $found[0] : null;
+    }
+
+    /**
+     * Give every nested block an origin of its own, derived from its parent's.
+     *
+     * A `contentColumns[0].content` path synthesises a block that no legacy row backs, so there
+     * is no id to name it by — but the loader still needs to recognise it on a re-run, or Craft
+     * rebuilds it under a parent it otherwise reuses. The parent's ref plus the path is stable
+     * for exactly as long as the parent is, which is the property that matters.
+     *
+     * @param array<string, mixed> $fields
+     * @return array<string, mixed>
+     */
+    private function stampNestedRefs(array $fields, string $parentRef): array
+    {
+        foreach ($fields as $handle => $value) {
+            if (!is_array($value) || $value === [] || $handle === '_sourcePartRef') {
+                continue;
+            }
+
+            foreach ($value as $index => $block) {
+                if (!is_array($block) || !isset($block['type']) || !is_array($block['fields'] ?? null)) {
+                    continue;
+                }
+
+                $ref = $block['fields']['_sourcePartRef']
+                    ?? sprintf('%s#%s[%s]', $parentRef, $handle, (string) $index);
+
+                $block['fields']['_sourcePartRef'] = $ref;
+                $block['fields'] = $this->stampNestedRefs($block['fields'], $ref);
+                $value[$index] = $block;
+            }
+
+            $fields[$handle] = $value;
+        }
+
+        return $fields;
     }
 
     /** `a.b` and `a[0].b` address nested Matrix positions. */

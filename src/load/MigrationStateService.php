@@ -4,15 +4,13 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
-use lameco\kunstmaanmigrator\load\MigrationStateReader;
-use lameco\kunstmaanmigrator\load\MigrationStateStream;
-use lameco\kunstmaanmigrator\payload\RefResolver;
 use Craft;
 use craft\db\Connection;
 use craft\db\Query;
 use craft\helpers\Db;
 use DateTime;
 use Generator;
+use lameco\kunstmaanmigrator\payload\RefResolver;
 use RuntimeException;
 use Throwable;
 use yii\base\Component;
@@ -392,9 +390,9 @@ class MigrationStateService extends Component implements MigrationStateReader, M
     private function buildTerminalMeta(string $reason): array
     {
         return [
-            'terminalState'  => 'permanently_failed',
+            'terminalState' => 'permanently_failed',
             'terminalReason' => $reason,
-            'terminalAt'     => gmdate('Y-m-d\TH:i:s\Z'),
+            'terminalAt' => gmdate('Y-m-d\TH:i:s\Z'),
         ];
     }
 

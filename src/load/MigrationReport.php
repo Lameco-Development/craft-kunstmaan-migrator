@@ -87,8 +87,8 @@ final class MigrationReport
     {
         $this->assetRcaRows[] = [
             'legacyId' => $legacyId,
-            'reason'   => $reason,
-            'path'     => $path,
+            'reason' => $reason,
+            'path' => $path,
         ];
     }
 

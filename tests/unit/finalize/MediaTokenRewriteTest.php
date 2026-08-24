@@ -118,7 +118,7 @@ final class MediaTokenRewriteTest extends TestCase
     public function testResolveKumaMediaIdOnlyCallsTheAssetResolverOnceForTheSameUnresolvedIdWithinOnePass(): void
     {
         $svc = $this->service();
-        $resolver = new class {
+        $resolver = new class() {
             public int $calls = 0;
 
             public function resolveFromLegacyId(int $kumaMediaId): int

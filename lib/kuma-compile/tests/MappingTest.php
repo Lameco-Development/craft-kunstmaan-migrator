@@ -93,13 +93,13 @@ final class MappingTest extends TestCase
             YAML);
 
         self::assertSame([
-            'Text'      => 'blocks',
-            'Header'    => 'sequence',
-            'Dead'      => 'dropped',
-            'Rare'      => 'manual',
-            'Email'     => 'forms',
+            'Text' => 'blocks',
+            'Header' => 'sequence',
+            'Dead' => 'dropped',
+            'Rare' => 'manual',
+            'Email' => 'forms',
             'FooterBox' => 'globals',
-            'RowStart'  => 'unmapped',
+            'RowStart' => 'unmapped',
         ], $m->accountedParts());
     }
 

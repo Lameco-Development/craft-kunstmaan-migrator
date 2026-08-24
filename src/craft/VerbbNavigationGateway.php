@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\craft;
 
 use Craft;
-use verbb\navigation\Navigation;
 use verbb\navigation\elements\Node as NavNode;
+use verbb\navigation\Navigation;
 
 /**
  * The production adapter over verbb/navigation.

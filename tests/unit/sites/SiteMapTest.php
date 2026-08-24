@@ -22,7 +22,7 @@ final class SiteMapTest extends TestCase
         $out = [];
 
         foreach ($sites as $handle => [$id, $language]) {
-            $out[] = new class ($id, (string) $handle, $language) {
+            $out[] = new class($id, (string) $handle, $language) {
                 public function __construct(
                     public readonly int $id,
                     public readonly string $handle,
@@ -64,7 +64,7 @@ final class SiteMapTest extends TestCase
     public function testBindingsFollowTheConfiguredOrderNotCraftsSiteOrder(): void
     {
         $locales = array_map(
-            static fn ($binding): string => $binding->locale,
+            static fn($binding): string => $binding->locale,
             $this->map()->bindings(),
         );
 
@@ -190,7 +190,7 @@ final class SiteMapTest extends TestCase
 
         self::assertSame(
             ['pt', 'en', 'br'],
-            array_map(static fn ($binding): string => $binding->locale, $map->bindings()),
+            array_map(static fn($binding): string => $binding->locale, $map->bindings()),
         );
     }
 

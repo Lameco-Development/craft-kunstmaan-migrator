@@ -6,8 +6,10 @@ namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
 use craft\base\Element;
-use craft\fields\Matrix;
+use craft\base\ElementInterface;
 use craft\elements\Entry;
+use craft\enums\PropagationMethod;
+use craft\fields\Matrix;
 use craft\models\Section;
 use craft\models\Site;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
@@ -79,6 +81,18 @@ class EntryMigrationService extends Component
      *
      * @var array<string, string>
      */
+    /**
+     * Per-locale block content this Craft install cannot represent, one message per entry+field.
+     *
+     * A public accumulator rather than a `MigrationReport`, because the payload path builds no
+     * report — the saver never makes one, so `$report` is null for every real run and the
+     * warning reached the log and nothing else. Read by `MigrateController` after the run, the
+     * same way `AssetMigrationService::$assetRcaRows` is.
+     *
+     * @var list<string>
+     */
+    public array $perSiteBlockLosses = [];
+
     public array $sites = [];
 
     /**
@@ -347,6 +361,16 @@ class EntryMigrationService extends Component
         // Extract source-ref positions BEFORE applyPerSiteData strips them.
         $primarySourceRefPositions = $this->extractSourceRefPositions(
             (array) ($primaryData['fieldValues'] ?? []),
+        );
+
+        // Say so before writing, not after: on a field that shares one block set across sites,
+        // locales carrying different legacy parts cannot all survive the save.
+        $this->reportUnrepresentablePerSiteBlocks(
+            $entry,
+            $perSite,
+            $report,
+            $stateSource,
+            (string) $stateKey,
         );
         $this->applyPerSiteData(
             $entry,
@@ -678,7 +702,7 @@ class EntryMigrationService extends Component
         // NOT ?DateTimeInterface — so PHP's strict typing rejects
         // DateTimeImmutable. Always return a DateTime instance, coercing from
         // DateTimeImmutable when needed.
-        $nativeDate = static function (mixed $raw): ?\DateTime {
+        $nativeDate = static function(mixed $raw): ?\DateTime {
             if ($raw === null || $raw === '') {
                 return null;
             }
@@ -866,19 +890,36 @@ class EntryMigrationService extends Component
      * Two Phase 04 bugs we clean up here, centrally:
      *
      * 1. Strip `_sourcePartRef` from every block's `fields` hash.
-     *    `_sourcePartRef` was designed as a hidden re-run-tracking field on
-     *    each block, but the project config never added it to the 50 matrix
-     *    block entry types — so Craft's CustomFieldBehavior rejects it as
-     *    an unknown property. Stripping it loses idempotent UID threading
-     *    on re-runs; a clean re-run currently requires resetting the
-     *    affected Craft elements + state rows by hand.
+     *    It is a compile-side marker, not a Craft field: the project config
+     *    never added it to the 50 matrix block entry types, so Craft's
+     *    CustomFieldBehavior rejects it as an unknown property.
      *
-     * 2. Lift `title` (and `heading`, which was a typo in CasesMigration's
-     *    newsGridBlock payload) from `fields` to peer-level. Matrix block
-     *    entry types with `hasTitleField: true` expect `title` as a native
-     *    entry property — it must be a peer of `type`/`enabled`/`fields`,
-     *    not nested inside `fields`. `heading` on newsGridBlock is not a
-     *    real custom field either; it was intended for the native title.
+     *    Stripping it does *not* cost the UID threading, though this docblock
+     *    said so for as long as that was true. The sourceRef→blockId map is
+     *    read off the marker before the strip and persisted in the state row's
+     *    `meta.blockIds`, per site; `threadBlockUidsIntoPageBuilder()` reads it
+     *    back on the next run and keys each block by its existing id, so Craft
+     *    updates in place. Adding the field to the entry types would change
+     *    nothing here — the marker never needed to survive the save, only the
+     *    map does.
+     *
+     *    What does still rebuild a block set on every run is `propagationMethod:
+     *    all` on the page-builder Matrix fields: Craft keeps one block set for
+     *    the owner shared across every site, so two locales naming different
+     *    parts overwrite each other's blocks each save, whatever this thread.
+     *    That is a Craft-side field configuration, not a loader bug — see
+     *    `PerSiteBlockDivergence`, which names the entries it happens to.
+     *
+     * 2. Lift `title` from `fields` to peer-level. Matrix block entry types with
+     *    `hasTitleField: true` expect `title` as a native entry property — it must
+     *    be a peer of `type`/`enabled`/`fields`, not nested inside `fields`.
+     *
+     *    `heading` is lifted the same way, but only on entry types that do not
+     *    declare a `heading` field. It was added for CasesMigration's newsGridBlock
+     *    payload, where `heading` was a typo for the native title. On a target whose
+     *    blocks do have a `heading` field, lifting unconditionally moved editorial
+     *    copy out of that field and onto a native title those types do not have, so
+     *    Craft dropped it — measured at 4,196 lost headings on the Enreach corpus.
      *
      * @param array<string, mixed> $fieldValues
      * @return array<string, mixed>
@@ -914,14 +955,22 @@ class EntryMigrationService extends Component
 
                 // Lift native-property keys from fields → peer.
                 // Prefer existing peer-level value if the caller already set one.
+                $blockType = is_string($block['type'] ?? null) ? $block['type'] : null;
                 foreach (['title', 'heading'] as $nativeKey) {
-                    if (array_key_exists($nativeKey, $block['fields'])) {
-                        $lifted = $block['fields'][$nativeKey];
-                        unset($block['fields'][$nativeKey]);
-                        $peerKey = $nativeKey === 'heading' ? 'title' : $nativeKey;
-                        if (!array_key_exists($peerKey, $block)) {
-                            $block[$peerKey] = $lifted;
-                        }
+                    if (!array_key_exists($nativeKey, $block['fields'])) {
+                        continue;
+                    }
+                    // `heading` is a real custom field on most block types. Lifting it there
+                    // would move editorial copy onto a native title the entry type usually
+                    // does not even have, and Craft would drop it.
+                    if ($nativeKey === 'heading' && $this->entryTypeHasField($blockType, 'heading')) {
+                        continue;
+                    }
+                    $lifted = $block['fields'][$nativeKey];
+                    unset($block['fields'][$nativeKey]);
+                    $peerKey = $nativeKey === 'heading' ? 'title' : $nativeKey;
+                    if (!array_key_exists($peerKey, $block)) {
+                        $block[$peerKey] = $lifted;
                     }
                 }
 
@@ -987,6 +1036,62 @@ class EntryMigrationService extends Component
     }
 
     /**
+     * `entryTypeHandle:fieldHandle` pairs the project config declares, or null until read.
+     *
+     * @var array<string, bool>|null
+     */
+    private ?array $entryTypeFieldHandles = null;
+
+    /**
+     * Override the entry-type field lookup. Tests use this to describe a target's shape
+     * without a Craft bootstrap; production leaves it null and reads the real layouts.
+     *
+     * @param callable(string, string): bool $probe
+     */
+    public function setEntryTypeFieldProbe(callable $probe): void
+    {
+        $this->entryTypeFieldProbe = $probe;
+    }
+
+    /** @var (callable(string, string): bool)|null */
+    private $entryTypeFieldProbe = null;
+
+    /**
+     * Does the entry type behind a matrix block declare a custom field with this handle?
+     *
+     * A field instance may re-handle its field on the layout, so the layout is the only
+     * authority — the global field handle can differ from the one the payload names.
+     */
+    private function entryTypeHasField(?string $entryTypeHandle, string $fieldHandle): bool
+    {
+        if ($entryTypeHandle === null || $entryTypeHandle === '') {
+            return false;
+        }
+
+        if ($this->entryTypeFieldProbe !== null) {
+            return ($this->entryTypeFieldProbe)($entryTypeHandle, $fieldHandle);
+        }
+
+        if ($this->entryTypeFieldHandles === null) {
+            $this->entryTypeFieldHandles = [];
+            foreach (Craft::$app->getEntries()->getAllEntryTypes() as $entryType) {
+                $layout = $entryType->getFieldLayout();
+                if ($layout === null) {
+                    continue;
+                }
+                foreach ($layout->getCustomFieldElements() as $element) {
+                    $handle = $element->attribute();
+                    if ($handle !== '') {
+                        $this->entryTypeFieldHandles[$entryType->handle . ':' . $handle] = true;
+                    }
+                }
+            }
+        }
+
+        return isset($this->entryTypeFieldHandles[$entryTypeHandle . ':' . $fieldHandle]);
+    }
+
+    /**
      * Recognises a Kunstmaan HomePage state source from its FQCN-derived slug
      * form (e.g. `App_Entity_Pages_HomePage`). Lameco's portfolio convention
      * names the homepage entity literally `HomePage` across all 3 sampled
@@ -1001,6 +1106,111 @@ class EntryMigrationService extends Component
     private static function isHomePageStateSource(string $stateSource): bool
     {
         return str_ends_with($stateSource, '_HomePage');
+    }
+
+    /**
+     * Report per-locale block content that this Craft install cannot hold.
+     *
+     * A Matrix field with `propagationMethod: all` keeps **one** block set for the owner, shared
+     * across every site. That is fine while each locale's payload names the same legacy parts —
+     * 753 entries on the reference corpus do — but when the locales name *different* parts, the
+     * two sets cannot both exist. Each site's save replaces the other's, forever: measured at 61
+     * blocks replaced per forced run with the live count flat, and the losing locale left showing
+     * the winner's content — a Latvian page serving English blocks.
+     *
+     * The loader cannot fix this. The block set is global by the field's own configuration, so
+     * representing divergent locales needs `propagationMethod: none` (or a per-site
+     * `propagationKeyFormat`) on the Craft side. What the loader can do is stop doing it quietly:
+     * the run reports the loss, and `--fail-on-loss` turns it into a non-zero exit.
+     *
+     * @param array<string, mixed> $perSite payload data keyed by site handle
+     */
+    private function reportUnrepresentablePerSiteBlocks(
+        Entry $entry,
+        array $perSite,
+        ?MigrationReport $report,
+        string $stateSource,
+        string $stateKey,
+    ): void {
+        // sourceRefs per matrix handle per site, from the payload the compiler produced.
+        $refsByField = [];
+
+        foreach ($perSite as $siteHandle => $siteData) {
+            foreach ($this->extractSourceRefPositions((array) ($siteData['fieldValues'] ?? [])) as $fieldHandle => $positions) {
+                $refs = [];
+
+                foreach ($positions as $position) {
+                    if (is_array($position) && $position['ref'] !== null) {
+                        $refs[(string) $position['ref']] = true;
+                    }
+                }
+
+                if ($refs !== []) {
+                    $refsByField[(string) $fieldHandle][(string) $siteHandle] = $refs;
+                }
+            }
+        }
+
+        foreach ($refsByField as $fieldHandle => $perSiteRefs) {
+            if (count($perSiteRefs) < 2) {
+                continue;
+            }
+
+            // Identical refs across locales are representable in one shared set — that is the
+            // common case, and warning on it would make the warning worthless.
+            if (!PerSiteBlockDivergence::isUnrepresentable($perSiteRefs)) {
+                continue;
+            }
+
+            if ($this->matrixPropagatesToAllSites($entry, (string) $fieldHandle) !== true) {
+                continue;
+            }
+
+            $this->perSiteBlockLosses[] = sprintf(
+                '%s:%s field "%s": %d locales carry different legacy parts, but the field '
+                . 'propagates one block set to all sites — only the last locale written survives.',
+                $stateSource,
+                $stateKey,
+                $fieldHandle,
+                count($perSiteRefs),
+            );
+
+            $this->recordFallback(
+                $report,
+                'perSiteBlocksNotRepresentable',
+                sprintf(
+                    '%s:%s field "%s": %d locales carry different legacy parts, but the field '
+                    . 'propagates one block set to all sites — only the last locale written survives. '
+                    . 'Set propagationMethod to none (or a per-site propagationKeyFormat) on this field.',
+                    $stateSource,
+                    $stateKey,
+                    $fieldHandle,
+                    count($perSiteRefs),
+                ),
+            );
+        }
+    }
+
+    /**
+     * Whether a Matrix field keeps one block set across every site.
+     *
+     * Resolved through the entry's field layout rather than the field handle: page-builder
+     * fields are field *instances*, so `getFieldByHandle('pageBuilder')` finds nothing while
+     * the layout knows exactly which field that instance points at.
+     */
+    private function matrixPropagatesToAllSites(Entry $entry, string $fieldHandle): ?bool
+    {
+        try {
+            $field = $entry->getFieldLayout()?->getFieldByHandle($fieldHandle);
+
+            if (!$field instanceof Matrix) {
+                return null;
+            }
+
+            return $field->propagationMethod === PropagationMethod::All;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
@@ -1066,9 +1276,19 @@ class EntryMigrationService extends Component
 
         $rewritten = [];
         foreach ($payload as $key => $block) {
+            // A block's own nested Matrixes are threaded first, so reusing a parent in place
+            // reuses its children too rather than rebuilding them underneath it.
+            if (is_array($block) && is_array($block['fields'] ?? null)) {
+                foreach ($block['fields'] as $nestedHandle => $nestedPayload) {
+                    if (is_array($nestedPayload) && $nestedPayload !== [] && $this->looksLikeMatrixPayload($nestedPayload)) {
+                        $block['fields'][$nestedHandle] = $this->threadBlockUidsIntoPageBuilder($nestedPayload, $uidMap);
+                    }
+                }
+            }
+
             $sourceRef = $block['fields']['_sourcePartRef'] ?? null;
             if ($sourceRef !== null && isset($uidMap[$sourceRef])) {
-                // Use the persisted UID as the key so Craft updates in place
+                // Use the persisted id as the key so Craft updates in place
                 $rewritten[$uidMap[$sourceRef]] = $block;
             } else {
                 $rewritten[$key] = $block;
@@ -1106,7 +1326,13 @@ class EntryMigrationService extends Component
             }
             $refs = [];
             foreach (array_values($value) as $block) {
-                $refs[] = is_array($block) ? ($block['fields']['_sourcePartRef'] ?? null) : null;
+                $fields = is_array($block) ? (array) ($block['fields'] ?? []) : [];
+                $refs[] = [
+                    'ref' => $fields['_sourcePartRef'] ?? null,
+                    // A nested Matrix is the same problem one level down, and a block whose
+                    // children cannot be threaded has them rebuilt under it on every re-run.
+                    'children' => $this->extractSourceRefPositions($fields),
+                ];
             }
             $positions[$handle] = $refs;
         }
@@ -1131,7 +1357,7 @@ class EntryMigrationService extends Component
      * @param array<string, list<string|null>> $sourceRefPositions
      * @return array<string, string> sourceRef → elementId (string-cast integer)
      */
-    private function collectBlockUidsByPosition(Entry $entry, array $sourceRefPositions): array
+    private function collectBlockUidsByPosition(ElementInterface $entry, array $sourceRefPositions): array
     {
         $map = [];
         foreach ($sourceRefPositions as $fieldHandle => $sourceRefs) {
@@ -1141,9 +1367,18 @@ class EntryMigrationService extends Component
                     continue;
                 }
                 foreach (array_values($blocks->all()) as $idx => $block) {
-                    $sourceRef = $sourceRefs[$idx] ?? null;
-                    if ($sourceRef !== null && $block->id) {
-                        $map[$sourceRef] = (string) $block->id;
+                    $position = $sourceRefs[$idx] ?? null;
+
+                    if (!is_array($position)) {
+                        continue;
+                    }
+
+                    if ($position['ref'] !== null && $block->id) {
+                        $map[$position['ref']] = (string) $block->id;
+                    }
+
+                    if ($position['children'] !== []) {
+                        $map += $this->collectBlockUidsByPosition($block, $position['children']);
                     }
                 }
             } catch (\Throwable) {
@@ -1283,6 +1518,14 @@ class EntryMigrationService extends Component
             }
 
             foreach ($this->nestedEntriesOn($localised) as $block) {
+                // A nested entry is one element shared across the sites it exists on, so the
+                // copy reachable from an unpayloaded site is the *same row* the payloaded site
+                // renders. Deleting it there takes the content with it — measured at 294 of 825
+                // pages losing their whole Page Builder on a clean run.
+                if ($this->blockLivesOnAnySite($block, $keep)) {
+                    continue;
+                }
+
                 try {
                     $this->elements()->delete($block, true);
                 } catch (\Throwable $e) {
@@ -1294,6 +1537,24 @@ class EntryMigrationService extends Component
                 }
             }
         }
+    }
+
+    /**
+     * Does this nested entry have a row on any of the sites the payload named?
+     *
+     * @param array<int, bool> $keep site ids the payload named
+     */
+    private function blockLivesOnAnySite(Entry $block, array $keep): bool
+    {
+        if ($block->id === null || $keep === []) {
+            return false;
+        }
+
+        return (new \craft\db\Query())
+            ->from(\craft\db\Table::ELEMENTS_SITES)
+            ->where(['elementId' => $block->id])
+            ->andWhere(['siteId' => array_keys($keep)])
+            ->exists();
     }
 
     /**

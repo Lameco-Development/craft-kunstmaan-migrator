@@ -48,6 +48,6 @@ final class InMemoryMigrationState extends MigrationStateService
     /** @return list<int> */
     public function recordedTargetIds(): array
     {
-        return array_map(static fn (array $row): int => $row['targetId'], $this->recorded);
+        return array_map(static fn(array $row): int => $row['targetId'], $this->recorded);
     }
 }

@@ -119,8 +119,15 @@ final class AddressTest extends TestCase
             array_column(array_column($tracked['partnerBranches'], 'fields'), '_sourcePartRef'),
         );
 
-        // A pagepart's children stay untagged: their stability follows from the parent block.
+        // A pagepart's children carry one too. They used to stay untagged on the theory that
+        // their stability followed from the parent block's ref — it does not. Craft matches a
+        // block by the payload key, and a nested block with no ref to thread gets a `new` key
+        // however stable its parent is. Measured on a forced re-run: every `contentColumn` and
+        // `button` destroyed and rebuilt, while the top-level blocks around them survived.
         $nested = $builder->childrenOf($children, 'someBlock', 5, 'SomePart');
-        self::assertArrayNotHasKey('_sourcePartRef', $nested['partnerBranches'][0]['fields']);
+        self::assertSame(
+            ['DE:branches:11', 'DE:branches:12'],
+            array_column(array_column($nested['partnerBranches'], 'fields'), '_sourcePartRef'),
+        );
     }
 }

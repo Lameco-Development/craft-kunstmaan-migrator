@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\finalize;
 
-use lameco\kunstmaanmigrator\load\MigrationStateStream;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
 use Craft;
+use lameco\kunstmaanmigrator\db\LegacyDbService;
+use lameco\kunstmaanmigrator\load\MigrationStateStream;
 use yii\base\Component;
 
 /**
@@ -326,7 +326,7 @@ class CkeditorRewriterService extends Component
 
         return preg_replace_callback(
             self::KUMA_MEDIA_PLACEHOLDER_REGEX,
-            function ($m) use ($siteId) {
+            function($m) use ($siteId) {
                 $kumaMediaId = (int) $m[1];
                 $craftAssetId = $this->resolveKumaMediaId($kumaMediaId);
                 if ($craftAssetId !== null) {
@@ -356,7 +356,7 @@ class CkeditorRewriterService extends Component
 
         return preg_replace_callback(
             self::KUMA_NT_PLACEHOLDER_REGEX,
-            function ($m) use ($siteId) {
+            function($m) use ($siteId) {
                 $ntId = (int) $m[1];
                 $craftEntryId = $this->resolveNodeTranslationId($ntId);
                 if ($craftEntryId !== null) {
@@ -399,7 +399,7 @@ class CkeditorRewriterService extends Component
 
         return preg_replace_callback(
             self::KUMA_MEDIA_TOKEN_REGEX,
-            function ($m) use ($siteId) {
+            function($m) use ($siteId) {
                 $kumaMediaId = (int) $m[1];
                 $craftAssetId = $this->resolveKumaMediaId($kumaMediaId);
                 if ($craftAssetId !== null) {
@@ -724,7 +724,7 @@ class CkeditorRewriterService extends Component
         // Match <img src="..."> and <a href="..."> where the URL contains /uploads/media/
         $pattern = '#(src|href)=(["\'])([^"\']*?' . preg_quote(self::LEGACY_MEDIA_URL_PREFIX, '#') . '[^"\']+)\2#i';
 
-        return preg_replace_callback($pattern, function ($m) use ($siteId) {
+        return preg_replace_callback($pattern, function($m) use ($siteId) {
             $attr = $m[1];
             $quote = $m[2];
             $url = $m[3];
@@ -795,7 +795,7 @@ class CkeditorRewriterService extends Component
     {
         return preg_replace_callback(
             '#href=(["\'])(/[^"\']+)\1#i',
-            function ($m) use ($siteId, $entryUrlToId) {
+            function($m) use ($siteId, $entryUrlToId) {
                 $quote = $m[1];
                 $url = $m[2];
                 // Skip media URLs — already handled by rewriteAssetAttributes
@@ -816,7 +816,7 @@ class CkeditorRewriterService extends Component
     {
         return preg_replace_callback(
             '#\s?class=(["\'])([^"\']*)\1#i',
-            function ($m) {
+            function($m) {
                 $quote = $m[1];
                 $classes = preg_split('/\s+/', trim($m[2])) ?: [];
                 $filtered = array_values(array_filter(

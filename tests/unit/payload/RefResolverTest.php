@@ -47,6 +47,19 @@ final class RefResolverTest extends TestCase
         self::assertSame(881, $resolver->resolve('kuma:COM:nt_page:143'));
     }
 
+    public function testResolveHandlesTheFormUidGrammarViaTheFormStateSource(): void
+    {
+        // A form's sourceUid carries one segment more than the entry grammar, and
+        // `FormMigrationService` keys its state row as source="form", key=<whole uid>.
+        $reader = new FakeStateReader();
+        $reader->targets['form|kuma:COM:form:PotionsLandingPage:100'] = 55;
+
+        $resolver = new RefResolver($reader);
+
+        self::assertSame(55, $resolver->resolve('kuma:COM:form:PotionsLandingPage:100'));
+        self::assertNull($resolver->resolve('kuma:COM:form:PotionsLandingPage:999'));
+    }
+
     public function testResolveReturnsNullOnStateMiss(): void
     {
         $resolver = new RefResolver(new FakeStateReader());
@@ -56,7 +69,7 @@ final class RefResolverTest extends TestCase
 
     public function testResolveQueriesStateWithEnvColonTableAsSourceAndIdAsKey(): void
     {
-        $reader = new class implements MigrationStateReader {
+        $reader = new class() implements MigrationStateReader {
             public ?string $capturedSource = null;
             public ?string $capturedKey = null;
 
@@ -88,7 +101,7 @@ final class RefResolverTest extends TestCase
 
     public function testResolveReturnsNullForMalformedGrammarWithoutTouchingState(): void
     {
-        $reader = new class implements MigrationStateReader {
+        $reader = new class() implements MigrationStateReader {
             public bool $called = false;
 
             public function getTargetId(string $source, string $key, ?int $siteId = null): ?int

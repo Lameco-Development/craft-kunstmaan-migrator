@@ -1,6 +1,9 @@
 <?php
+
 namespace App\Entity;
+
 use Doctrine\ORM\Mapping as ORM;
+
 #[ORM\Table(name: 'legacy_user_story_items')]
 #[ORM\Entity]
 class UserStoryItem

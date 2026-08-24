@@ -1,0 +1,34 @@
+{# The detected checkouts — included by detect.twig and rendered standalone
+ by setup/detect-results, so "Look again" and a changed root redraw the list
+ without a page load. #}
+{% if checkouts is empty %}
+  <p class="zilch">{{ "No Kunstmaan sites found in {root} — a site is a folder whose composer.lock names a kunstmaan/* package."|t('kunstmaan-migrator', { root: root }) }}</p>
+{% else %}
+  <div class="tablepane" style="margin-top: 10px;">
+  <table class="data fullwidth">
+    <thead>
+      <tr>
+        <th style="width: 40px;"></th>
+        <th>{{ "Site"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Kunstmaan"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Database"|t('kunstmaan-migrator') }}</th>
+        <th>{{ "Uploads"|t('kunstmaan-migrator') }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for checkout in checkouts %}
+        <tr>
+          <td>
+            <input type="radio" name="pick" class="kuma-pick" id="pick-{{ loop.index }}" value="{{ checkout.path }}">
+            <label for="pick-{{ loop.index }}"></label>
+          </td>
+          <th scope="row"><label for="pick-{{ loop.index }}">{{ checkout.name }}</label><br><span class="light"><code>{{ checkout.path }}</code></span></th>
+          <td>{{ checkout.kunstmaan }}</td>
+          <td>{% if checkout.database %}<span class="status on"></span><code>{{ checkout.database.database }}</code>{% else %}<span class="status"></span><span class="light">{{ "not in .env"|t('kunstmaan-migrator') }}</span>{% endif %}</td>
+          <td>{% if checkout.mediaRoot %}<span class="status on"></span>{{ "found"|t('kunstmaan-migrator') }}{% else %}<span class="status"></span><span class="light">—</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+{% endif %}

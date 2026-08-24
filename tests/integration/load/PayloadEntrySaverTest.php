@@ -39,9 +39,12 @@ final class SaverFakeSchemaGateway implements SchemaGateway
         return $handle === 'contentPage' ? ['id' => 1, 'handle' => 'contentPage', 'hasTitleFormat' => false] : null;
     }
 
-    public function primarySite(): array { return ['id' => 1, 'handle' => 'en']; }
+    public function primarySite(): array
+    {
+        return ['id' => 1, 'handle' => 'en'];
+    }
 
-            public function siteByHandle(string $handle): ?array
+    public function siteByHandle(string $handle): ?array
     {
         return $handle === 'en' ? ['id' => 1, 'handle' => 'en'] : null;
     }
@@ -264,7 +267,7 @@ final class PayloadEntrySaverTest extends TestCase
             $stateService,
             $assetService ?? new AssetMigrationService(),
             $ckeditorRewriter ?? new CkeditorRewriterService(),
-            static fn (callable $fn) => $fn(),
+            static fn(callable $fn) => $fn(),
         );
     }
 
@@ -295,7 +298,7 @@ final class PayloadEntrySaverTest extends TestCase
     private function writeTempNdjson(array $records): string
     {
         $path = tempnam(sys_get_temp_dir(), 'kunstmaan-migrator-live-') . '.ndjson';
-        $lines = array_map(static fn (array $r): string => json_encode($r), $records);
+        $lines = array_map(static fn(array $r): string => json_encode($r), $records);
         file_put_contents($path, implode("\n", $lines) . "\n");
 
         return $path;
@@ -567,7 +570,7 @@ final class PayloadEntrySaverTest extends TestCase
         $state = new InMemoryMigrationStateService();
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
-        $assetService = new class extends AssetMigrationService {
+        $assetService = new class() extends AssetMigrationService {
             public function resolveFromLegacyUrl(string $legacyUrl): int
             {
                 return 0; // every _asset in this test is genuinely missing
@@ -608,7 +611,7 @@ final class PayloadEntrySaverTest extends TestCase
         $state = new InMemoryMigrationStateService();
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
-        $assetService = new class extends AssetMigrationService {
+        $assetService = new class() extends AssetMigrationService {
             public function resolveFromLegacyId(int $legacyId): int
             {
                 return $legacyId === 5 ? 501 : 0;
@@ -642,7 +645,7 @@ final class PayloadEntrySaverTest extends TestCase
         $state = new InMemoryMigrationStateService();
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
-        $assetService = new class extends AssetMigrationService {
+        $assetService = new class() extends AssetMigrationService {
             public function resolveFromLegacyId(int $legacyId): int
             {
                 return 0; // genuinely unresolvable

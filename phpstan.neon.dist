@@ -3,6 +3,7 @@ parameters:
     paths:
         - src
         - lib/kuma-compile/src
+        - phpstan
     bootstrapFiles:
         - vendor/autoload.php
     scanFiles:
@@ -18,3 +19,10 @@ parameters:
         - vendor/nystudio107/craft-retour/src
         - vendor/verbb/navigation/src
         - vendor/verbb/formie/src
+        - vendor/spicyweb/craft-embedded-assets/src
+
+# The lib boundary, held mechanically rather than by taste.
+services:
+    -
+        class: lameco\kunstmaanmigrator\phpstan\LibPurityRule
+        tags: [phpstan.rules.rule]
