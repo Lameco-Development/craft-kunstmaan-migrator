@@ -22,6 +22,7 @@ use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Lameco\Kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\run\WriteConflictRetry;
 use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use Throwable;
@@ -441,7 +442,7 @@ class LoadController extends Controller
      * the same way it reaches a `migrate` run — the two used to read different
      * halves of `SaveResult`.
      *
-     * @return array{processed: int, violations: list<array{sourceUid: string, code: string, message: string}>, saved: int, created: int, updated: int, skipped: int, failed: list<array{sourceUid: string, error: string}>, unresolvedAssets: list<array<string, mixed>>, mediaTokenIssues: list<array<string, mixed>>, deferredRefs: list<array<string, mixed>>, droppedAddresses: array<string, int>}
+     * @return array{processed: int, violations: list<array{sourceUid: string, code: string, message: string}>, saved: int, created: int, updated: int, skipped: int, writeConflictRetries: int, failed: list<array{sourceUid: string, error: string}>, unresolvedAssets: list<array<string, mixed>>, mediaTokenIssues: list<array<string, mixed>>, deferredRefs: list<array<string, mixed>>, droppedAddresses: array<string, int>}
      */
     public static function buildLiveReport(
         string $path,
@@ -480,6 +481,7 @@ class LoadController extends Controller
 
         $saved = 0;
         $failed = [];
+        $retry = new WriteConflictRetry($saver->save(...));
 
         if ($violations === []) {
             foreach ($payloads as $p) {
@@ -487,7 +489,7 @@ class LoadController extends Controller
                     // "saved" alone hid the case --force exists for: an existing entry
                     // short-circuiting, reported as a success while nothing was written.
                     // The tally splits created / updated / skipped so a no-op is visible.
-                    $tally->absorb($saver->save($p, $context, $tally), $saver->refreshesExisting());
+                    $tally->absorb($retry->save($p, $context, $tally), $saver->refreshesExisting());
                     $saved++;
                 } catch (Throwable $e) {
                     $failed[] = ['sourceUid' => $p->sourceUid, 'error' => $e->getMessage()];
@@ -502,6 +504,7 @@ class LoadController extends Controller
             'created' => $tally->counts['created'],
             'updated' => $tally->counts['updated'],
             'skipped' => $tally->counts['skipped'],
+            'writeConflictRetries' => $tally->counts['writeConflictRetries'],
             'failed' => $failed,
             'unresolvedAssets' => $tally->unresolvedAssets,
             'mediaTokenIssues' => $tally->mediaTokenIssues,
