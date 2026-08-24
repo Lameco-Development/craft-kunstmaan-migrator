@@ -496,6 +496,13 @@ class AssetMigrationService extends Component
      */
     public function ingestOne(int $kumaMediaId, MigrationOptions $opts): ?Asset
     {
+        // Same failure mode as ingestReferenced: an unwired connection is a
+        // warned miss, not an uncaught null-dereference three frames deep.
+        if ($this->legacyDb === null) {
+            Craft::warning("ingestOne: legacyDb is not wired — cannot look up kuma_media:{$kumaMediaId}", __METHOD__);
+            return null;
+        }
+
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
         // v1 mediaById() helper dropped intentionally — page-driven JIT default per FH-03.
         // Replacement: inline kuma_media lookup via LegacyDbService::queryOne.

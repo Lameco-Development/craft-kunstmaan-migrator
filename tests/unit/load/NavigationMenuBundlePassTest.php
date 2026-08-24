@@ -489,6 +489,27 @@ final class NavigationMenuBundlePassTest extends TestCase
         self::assertStringContainsString('has no migrated entry yet', implode("\n", $report->warnings));
     }
 
+    public function testAPageLinkWithoutANodeTranslationIsCorruptAndSkippedNotAHashNode(): void
+    {
+        // This row used to fall into the url branch and mint an enabled '#'
+        // node titled '(URL)' — a live dead menu item — with no warning.
+        $svc = $this->service(
+            $this->legacyDb([
+                [$this->menu()],
+                [$this->item(10, ['type' => 'page_link', 'node_translation_id' => null, 'title' => null, 'url' => null])],
+            ]),
+            $w = new InMemoryElementWriter(),
+            new InMemoryNavigationGateway(['top' => self::NAV_ID]),
+            new InMemoryMigrationState(),
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(), $this->context());
+
+        self::assertSame([], $w->saved);
+        self::assertSame(1, $report->counts['skipped'] ?? 0);
+        self::assertStringContainsString('corrupt legacy row', implode("\n", $report->warnings));
+    }
+
     public function testADryRunWritesNothingAnywhere(): void
     {
         $svc = $this->service(
