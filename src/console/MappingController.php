@@ -6,10 +6,12 @@ namespace Lameco\Kunstmaanmigrator\console;
 
 use craft\console\Controller;
 use craft\helpers\Console;
+use Lameco\KumaCompile\Legacy\Introspection;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\MappingException;
 use Lameco\KumaCompile\Mapping\MappingInit;
+use Lameco\KumaCompile\Target\SpecNotes;
 use Lameco\Kunstmaanmigrator\compile\TargetModel;
 use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
@@ -51,11 +53,16 @@ final class MappingController extends Controller
     public ?string $source = null;
 
     /**
-     * Introspection artifact from `kuma-compile introspect` — exact entity
-     * tables and child-collection ownership from booted Doctrine metadata,
-     * instead of the static --source scan. Wins over --source when both are given.
+     * Introspection artifact from `kuma-compile introspect`. For init: exact
+     * entity tables and child-collection ownership from booted Doctrine
+     * metadata, instead of the static --source scan (wins over --source when
+     * both are given). For check: warns where the mapping contradicts the
+     * legacy app's own wiring.
      */
     public ?string $introspection = null;
+
+    /** Directories of content-model specs, comma separated — check fails on any field their migration notes give a source for that the mapping does not fill. */
+    public ?string $specs = null;
 
     /** Where to write. Prints to stdout when omitted. */
     public ?string $out = null;
@@ -82,6 +89,7 @@ final class MappingController extends Controller
     {
         return array_merge(parent::options($actionID), match ($actionID) {
             'init' => ['environments', 'source', 'introspection', 'out'],
+            'check' => ['specs', 'introspection'],
             default => [],
         });
     }
@@ -159,7 +167,9 @@ final class MappingController extends Controller
      * the order matters: a mapping that is not well-formed produces misleading
      * target errors, so the shape is checked first. `migrate` runs exactly
      * these before it writes anything; this is how you ask without starting a
-     * migration.
+     * migration. --specs and --introspection add the authoring lanes the
+     * standalone `kuma-compile validate` has: spec divergence blocks, wiring
+     * the mapping contradicts warns.
      *
      * @param string $path the mapping to check
      */
@@ -173,13 +183,23 @@ final class MappingController extends Controller
 
         try {
             $mapping = Mapping::fromFile($path);
+            $specNotes = array_map(
+                SpecNotes::fromDirectory(...),
+                array_values(array_filter(array_map(trim(...), explode(',', $this->specs ?? '')))),
+            );
+            $artifact = $this->introspection !== null ? Introspection::fromFile($this->introspection) : null;
         } catch (Throwable $e) {
             $this->stderr(sprintf("Mapping is unreadable: %s\n", $e->getMessage()), Console::FG_RED);
 
             return ExitCode::UNSPECIFIED_ERROR;
         }
 
-        $verdict = (new MappingCheck(new TargetModel(new CraftSchemaGateway())))->verdict($mapping);
+        $check = new MappingCheck(new TargetModel(new CraftSchemaGateway()));
+        $verdict = $check->verdict($mapping, ...$specNotes);
+
+        foreach ($check->warnings($mapping, $artifact) as $warning) {
+            $this->stderr('  · ' . $warning . "\n", Console::FG_YELLOW);
+        }
 
         if ($verdict !== null) {
             return $this->report($verdict[0], $verdict[1]);

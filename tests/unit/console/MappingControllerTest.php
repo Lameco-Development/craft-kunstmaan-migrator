@@ -53,6 +53,19 @@ final class MappingControllerTest extends TestCase
     }
 
     /**
+     * The authoring lanes the standalone `validate` has — spec divergence and
+     * the legacy app's own wiring — are reachable from the Craft check too,
+     * so the two commands cannot disagree on what a finished mapping is.
+     */
+    public function testCheckHasTheAuthoringLanesTheStandaloneValidateHas(): void
+    {
+        $controller = (new ReflectionClass(MappingController::class))->newInstanceWithoutConstructor();
+
+        self::assertContains('specs', $controller->options('check'));
+        self::assertContains('introspection', $controller->options('check'));
+    }
+
+    /**
      * The mapping is the migration. An accidental `init` over a finished one is
      * hours of decisions gone, so it refuses rather than overwrites — a rule
      * that lives in the shared engine, so the vendored binary refuses too.
