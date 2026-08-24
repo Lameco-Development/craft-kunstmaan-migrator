@@ -6,12 +6,9 @@ namespace Lameco\KumaCompile\Command;
 
 use Lameco\KumaCompile\Legacy\Introspection;
 use Lameco\KumaCompile\Mapping\Mapping;
-use Lameco\KumaCompile\Mapping\Schema;
-use Lameco\KumaCompile\Report\IntrospectionCheck;
-use Lameco\KumaCompile\Report\SpecDivergence;
+use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Target\CraftSchema;
 use Lameco\KumaCompile\Target\SpecNotes;
-use Lameco\KumaCompile\Target\TargetCheck;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -24,6 +21,14 @@ use Symfony\Component\Console\Style\SymfonyStyle;
     name: 'validate',
     description: 'Check a mapping is well-formed, without touching a database',
 )]
+/**
+ * Thin renderer over `Mapping\MappingCheck` — the same engine
+ * `./craft kunstmaan-migrator/mapping/check`, the migrate preflight and the
+ * CP Check button ask. This one answers from `config/project/**` on disk
+ * (`--craft`) instead of the live schema gateway, so it runs before a Craft
+ * install exists; without `--craft` the verdict covers what is checkable —
+ * shape and conflicts.
+ */
 final class ValidateCommand extends Command
 {
     protected function configure(): void
@@ -45,37 +50,24 @@ final class ValidateCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
         $mapping = Mapping::fromFile((string) $input->getArgument('mapping'));
-        $errors = (new Schema())->validate($mapping);
-        $warnings = [];
 
+        $craftRoot = $input->getOption('craft');
         $specDirs = (array) $input->getOption('specs');
 
-        if ($craftRoot = $input->getOption('craft')) {
-            $schema = CraftSchema::fromProjectConfig((string) $craftRoot);
-            $target = new TargetCheck($schema);
-            $errors = [...$errors, ...$target->check($mapping), ...$target->blocksNoPageAccepts($mapping)];
-            $warnings = [...$target->pagesWithNoBlockField($mapping), ...$target->unfilledRequired($mapping)];
-
-            foreach ($specDirs as $dir) {
-                $divergence = new SpecDivergence($mapping, SpecNotes::fromDirectory((string) $dir), $schema);
-                $errors = [...$errors, ...$divergence->divergences()];
-            }
-        } elseif ($specDirs !== []) {
+        if ($craftRoot === null && $specDirs !== []) {
             $io->error('--specs needs --craft: the built content model is what says which of the spec\'s fields exist.');
 
             return Command::INVALID;
         }
 
-        if ($artifact = $input->getOption('introspection')) {
-            $check = new IntrospectionCheck($mapping, Introspection::fromFile((string) $artifact));
-            $warnings = [...$warnings, ...$check->warnings()];
-        }
+        $check = new MappingCheck($craftRoot !== null ? CraftSchema::fromProjectConfig((string) $craftRoot) : null);
+        $specNotes = array_map(static fn($dir): SpecNotes => SpecNotes::fromDirectory((string) $dir), $specDirs);
 
-        if ($errors === [] && $warnings === []) {
-            $io->success(sprintf('%s is well-formed.', $mapping->path));
+        $artifact = $input->getOption('introspection');
+        $introspection = $artifact !== null ? Introspection::fromFile((string) $artifact) : null;
 
-            return Command::SUCCESS;
-        }
+        $verdict = $check->verdict($mapping, ...$specNotes);
+        $warnings = $check->warnings($mapping, $introspection);
 
         if ($warnings !== []) {
             $io->section(sprintf('%d warnings', count($warnings)));
@@ -85,19 +77,22 @@ final class ValidateCommand extends Command
             }
         }
 
-        if ($errors === []) {
-            $io->success(sprintf('%s is well-formed; see the warnings above.', $mapping->path));
+        if ($verdict === null) {
+            $io->success(sprintf(
+                $warnings === [] ? '%s is well-formed.' : '%s is well-formed; see the warnings above.',
+                $mapping->path,
+            ));
 
             return Command::SUCCESS;
         }
 
-        $io->section(sprintf('%d problems', count($errors)));
+        $io->section(sprintf('%s — %d problems', $verdict[0], count($verdict[1])));
 
-        foreach ($errors as $error) {
+        foreach ($verdict[1] as $error) {
             $io->writeln('  <error>·</error> ' . $error);
         }
 
-        $io->error('Mapping does not match the target.');
+        $io->error($verdict[0] . '.');
 
         return Command::FAILURE;
     }

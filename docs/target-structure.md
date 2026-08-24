@@ -96,8 +96,13 @@ worth having even if the later steps never happen.
    `Mapping\MappingInit` is the one skeleton engine — pair grammar, entity
    ladder, overwrite refusal — and both commands are thin adapters over it;
    the Craft command gained the `--introspection` support only the CLI had.
-   Remaining verbs: `check`/`validate`, `coverage` — same treatment, one at
-   a time. The standalone binary stays — as an adapter, not an
+   check DONE (this change): `Mapping\MappingCheck` is the one verdict —
+   shape, install, blocks, spec divergence, conflicts, in that order, plus
+   one warnings list — and `kuma-compile validate` renders it like the
+   Craft check, the migrate preflight and the CP button already did; the
+   Craft check gained the `--specs`/`--introspection` lanes, the CLI
+   validate gained the conflict gate. Remaining verb: `coverage` — same
+   treatment. The standalone binary stays — as an adapter, not an
    implementation.
 6. **Namespace consolidation.** Mechanical, last, optional: fold
    `Lameco\KumaCompile\` into `Lameco\KunstmaanMigrator\{Payload,Source,
