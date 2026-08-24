@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\payload;
 
 use Craft;
+
+use Lameco\KumaCompile\Payload\SourceUid;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use RuntimeException;
@@ -70,7 +72,7 @@ final class FixupService
 
             $source = (string) $row['source'];
             $key = (string) $row['sourceKey'];
-            $sourceUid = 'kuma:' . $source . ':' . $key;
+            $sourceUid = SourceUid::fromStateRow($source, $key);
             $targetId = $row['targetId'] !== null ? (int) $row['targetId'] : null;
 
             $remaining = [];

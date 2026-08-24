@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Lameco\KumaCompile\Compile;
 
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
+
 use Lameco\KumaCompile\Legacy\PartReader;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Payload\SourceUid;
 use PDO;
 
 /**
@@ -134,12 +136,11 @@ final class GlobalsCompiler
             $this->count++;
 
             $emit([
-                'sourceUid' => sprintf(
-                    'kuma:%s:global:%s:%s:%d',
+                'sourceUid' => SourceUid::forGlobalPart(
                     $environment,
                     $context,
-                    $ref['part'],
-                    $ref['id'],
+                    (string) $ref['part'],
+                    (int) $ref['id'],
                 ),
                 'environment' => $environment,
                 'locale' => $locale,
@@ -181,7 +182,7 @@ final class GlobalsCompiler
                 $fields = $builder->fieldsFrom((array) ($childSpec['map'] ?? []), $row, $context);
 
                 $out[] = [
-                    'sourceUid' => sprintf('kuma:%s:global:%s:%d', $environment, $table, (int) ($row['id'] ?? 0)),
+                    'sourceUid' => SourceUid::forGlobalChild($environment, $table, (int) ($row['id'] ?? 0)),
                     'title' => (string) ($fields['title'] ?? ''),
                     'url' => (string) ($fields['url'] ?? ''),
                     'newWindow' => (bool) ($fields['newWindow'] ?? false),

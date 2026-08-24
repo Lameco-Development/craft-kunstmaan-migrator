@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Lameco\KumaCompile\Compile;
 
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
+
 use Lameco\KumaCompile\Legacy\PartReader;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Payload\SourceUid;
 use PDO;
 
 /**
@@ -118,7 +120,7 @@ final class FormCompiler
             $this->count++;
 
             $emit([
-                'sourceUid' => sprintf('kuma:%s:form:%s:%d', $environment, $entity, $pageId),
+                'sourceUid' => SourceUid::forForm($environment, $entity, $pageId),
                 'environment' => $environment,
                 'owner' => ['entity' => $entity, 'id' => $pageId],
                 'title' => $this->titleFor($pdo, $entity, $pageId),

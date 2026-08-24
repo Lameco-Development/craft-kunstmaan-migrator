@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace Lameco\KumaCompile\Compile;
 
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
+
 use Lameco\KumaCompile\Legacy\MediaIndex;
 use Lameco\KumaCompile\Legacy\PageReader;
 use Lameco\KumaCompile\Legacy\PartReader;
 use Lameco\KumaCompile\Legacy\TaxonomyReader;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Payload\SourceUid;
 use Lameco\KumaCompile\Target\TargetSchema;
 
 /**
@@ -724,8 +726,7 @@ final class Compiler
             $this->blocks++;
 
             return ['type' => $blockType, 'fields' => [$formsHandle => [[
-                '_form' => sprintf(
-                    'kuma:%s:form:%s:%d',
+                '_form' => SourceUid::forForm(
                     $environment,
                     (string) $translation['entity'],
                     (int) $translation['entityId'],
@@ -848,7 +849,7 @@ final class Compiler
 
     private function uid(string $environment, int $nodeId): string
     {
-        return sprintf('kuma:%s:kuma_nodes:%d', $environment, $nodeId);
+        return SourceUid::forNode($environment, $nodeId);
     }
 
     /**
