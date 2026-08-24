@@ -86,6 +86,7 @@ final class MappingController extends Controller
     {
         $this->requireCpRequest();
         $this->requirePostRequest();
+        $this->requirePermission(Plugin::PERMISSION_REVIEW_MAPPING);
 
         $request = Craft::$app->getRequest();
         $rowIndex = (int) $request->getRequiredBodyParam('rowIndex');
@@ -115,6 +116,7 @@ final class MappingController extends Controller
     {
         $this->requireCpRequest();
         $this->requirePostRequest();
+        $this->requirePermission(Plugin::PERMISSION_REVIEW_MAPPING);
 
         $request = Craft::$app->getRequest();
         $rowIndex = (int) $request->getRequiredBodyParam('rowIndex');
@@ -148,7 +150,7 @@ final class MappingController extends Controller
     {
         $this->requireCpRequest();
         $this->requirePostRequest();
-        $this->requireAdmin();
+        $this->requirePermission(Plugin::PERMISSION_REVIEW_MAPPING);
 
         $request = Craft::$app->getRequest();
         $action = (string) $request->getRequiredBodyParam('batchAction');

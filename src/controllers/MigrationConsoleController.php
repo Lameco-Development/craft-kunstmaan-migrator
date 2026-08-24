@@ -159,7 +159,7 @@ final class MigrationConsoleController extends Controller
     {
         $this->requireCpRequest();
         $this->requirePostRequest();
-        $this->requireAdmin();
+        $this->requirePermission(Plugin::PERMISSION_RUN_MIGRATIONS);
 
         $plugin = Plugin::getInstance();
         $plugin->migrationSafety->assertNotProductionForCp();

@@ -9,6 +9,8 @@ use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use craft\events\RegisterComponentTypesEvent;
 use craft\events\RegisterTemplateRootsEvent;
+use craft\events\RegisterUserPermissionsEvent;
+use craft\services\UserPermissions;
 use craft\services\Utilities;
 use craft\web\View as CraftView;
 use lameco\kunstmaanmigrator\analyze\HeuristicProposer;
@@ -146,6 +148,9 @@ use yii\db\Connection;
  */
 class Plugin extends BasePlugin
 {
+    public const PERMISSION_REVIEW_MAPPING = 'kunstmaan-migrator:reviewMapping';
+    public const PERMISSION_RUN_MIGRATIONS = 'kunstmaan-migrator:runMigrations';
+
     // D-08: v2 starts below v1.x's 2.0.0; Phase 12 bumps for run-record migrations.
     public string $schemaVersion = '1.1.0';
 
@@ -267,6 +272,23 @@ class Plugin extends BasePlugin
                 Utilities::EVENT_REGISTER_UTILITIES,
                 static function (RegisterComponentTypesEvent $event): void {
                     $event->types[] = KunstmaanMappingUtility::class;
+                },
+            );
+            Event::on(
+                UserPermissions::class,
+                UserPermissions::EVENT_REGISTER_PERMISSIONS,
+                static function (RegisterUserPermissionsEvent $event): void {
+                    $event->permissions[] = [
+                        'heading' => 'Kunstmaan migrator',
+                        'permissions' => [
+                            self::PERMISSION_REVIEW_MAPPING => [
+                                'label' => 'Review and edit the migration mapping',
+                            ],
+                            self::PERMISSION_RUN_MIGRATIONS => [
+                                'label' => 'Queue migration stages from the control panel',
+                            ],
+                        ],
+                    ];
                 },
             );
         }

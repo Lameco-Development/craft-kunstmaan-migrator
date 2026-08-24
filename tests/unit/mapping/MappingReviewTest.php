@@ -211,7 +211,7 @@ final class MappingReviewTest extends TestCase
         self::assertGreaterThanOrEqual(2, substr_count($source, "hiddenInput('tab', 'mapping')"));
     }
 
-    public function testMappingControllerBatchActionUsesAdminPostValidationAndCanonicalUpdates(): void
+    public function testMappingControllerBatchActionUsesPermissionPostValidationAndCanonicalUpdates(): void
     {
         $source = file_get_contents(dirname(__DIR__, 3) . '/src/controllers/MappingController.php');
         self::assertIsString($source);
@@ -221,9 +221,10 @@ final class MappingReviewTest extends TestCase
         self::assertIsInt($batchStart);
         $batchSource = substr($source, $batchStart, 2600);
 
-        foreach (['requireCpRequest', 'requirePostRequest', 'requireAdmin'] as $guard) {
+        foreach (['requireCpRequest', 'requirePostRequest'] as $guard) {
             self::assertStringContainsString('$this->' . $guard . '();', $batchSource);
         }
+        self::assertStringContainsString('$this->requirePermission(Plugin::PERMISSION_REVIEW_MAPPING);', $batchSource);
         foreach (['accept', 'needs-review', 'drop', 'accept-warnings'] as $batchAction) {
             self::assertStringContainsString("'{$batchAction}'", $batchSource);
         }
