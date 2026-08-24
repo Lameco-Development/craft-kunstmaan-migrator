@@ -92,6 +92,25 @@ final class Mapping
         return $this->data['environments'] ?? [];
     }
 
+    /**
+     * The legacy databases the mapping names, by environment. An environment
+     * with no `database:` is declared but not readable and is left out.
+     *
+     * @return array<string, string> environment => database
+     */
+    public function databases(): array
+    {
+        $databases = [];
+
+        foreach ($this->environments() as $env => $spec) {
+            if (isset($spec['database']) && (string) $spec['database'] !== '') {
+                $databases[(string) $env] = (string) $spec['database'];
+            }
+        }
+
+        return $databases;
+    }
+
     /** @return array<string, array<string, mixed>> */
     public function pages(): array
     {

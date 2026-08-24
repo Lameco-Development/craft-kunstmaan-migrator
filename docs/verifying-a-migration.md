@@ -92,7 +92,7 @@ they are gates rather than reports.
 
 | Question | Command |
 |---|---|
-| Is anything in the legacy site unaccounted for? | `kuma-compile coverage <mapping>` |
+| Is anything in the legacy site unaccounted for? | `craft kunstmaan-migrator/mapping/coverage <mapping>` (or `kuma-compile coverage` — same measurement) |
 | Will every required Craft field get a value? | `kuma-compile readiness <mapping> --craft=.` |
 | Which Craft fields does *no* lane fill? | `kuma-compile readiness <mapping> --craft=. --unfilled` |
 | Does any Matrix in the target reject a block the mapping writes? | `kuma-compile validate <mapping> --craft=.` |
@@ -100,7 +100,7 @@ they are gates rather than reports.
 | Did this run lose content? | `migrate --fail-on-loss` |
 | Is this run better or worse than the last one? | `state/export` twice, then `state/diff --from= --to=` |
 | Why is *this* entry empty? | `state/explain --node=COM:1285` |
-| What do I show the client? | `kuma-compile coverage <mapping> --markdown` |
+| What do I show the client? | `craft kunstmaan-migrator/mapping/coverage <mapping> --markdown` |
 
 `readiness --unfilled` is the one people skip and should not. A required field with no source is
 a load blocker and shows up loudly; an *optional* field that no lane fills is invisible, and on

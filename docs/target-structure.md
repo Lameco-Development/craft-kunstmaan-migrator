@@ -101,9 +101,20 @@ worth having even if the later steps never happen.
    one warnings list — and `kuma-compile validate` renders it like the
    Craft check, the migrate preflight and the CP button already did; the
    Craft check gained the `--specs`/`--introspection` lanes, the CLI
-   validate gained the conflict gate. Remaining verb: `coverage` — same
-   treatment. The standalone binary stays — as an adapter, not an
-   implementation.
+   validate gained the conflict gate. coverage DONE (this change):
+   `Report\Coverage::measure()` takes the measurement and
+   `Report\CoverageReport` owns its three readings (json, holes, client
+   markdown) — the standalone `coverage`, the new
+   `./craft kunstmaan-migrator/mapping/coverage` and the migrate preflight
+   all render from it; the preflight no longer sends the operator to the
+   vendored binary. Step 5 is complete. The standalone binary stays — as
+   an adapter, not an implementation.
+
+   One naming collision noted, not fixed: the control panel's "Coverage"
+   page (`MigrationController::actionCoverage`, `MappingEditor::coverage*`)
+   answers the *target-side* question — which Craft fields does a lane
+   feed — which is `readiness`'s mirror, not this `coverage`. Renaming the
+   CP page is a UI change and waits for its own pass.
 6. **Namespace consolidation.** Mechanical, last, optional: fold
    `Lameco\KumaCompile\` into `Lameco\KunstmaanMigrator\{Payload,Source,
    Mapping,Target,Compile}` and generalise the purity rule to package lists.

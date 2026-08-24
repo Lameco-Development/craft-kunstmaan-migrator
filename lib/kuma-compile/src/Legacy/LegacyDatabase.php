@@ -47,6 +47,32 @@ final class LegacyDatabase
         return new self($pdo, $environment, $database);
     }
 
+    /**
+     * @param array<string, string> $databases environment => database
+     *
+     * @return array<string, self> environment => connection
+     *
+     * @throws \RuntimeException naming the environment that could not be reached
+     */
+    public static function connectAll(array $databases, Dsn $dsn): array
+    {
+        $connections = [];
+
+        foreach ($databases as $environment => $database) {
+            try {
+                $connections[$environment] = self::connect($environment, $database, $dsn);
+            } catch (\Throwable $e) {
+                throw new \RuntimeException(
+                    sprintf('Cannot reach %s (%s): %s', $environment, $database, $e->getMessage()),
+                    0,
+                    $e,
+                );
+            }
+        }
+
+        return $connections;
+    }
+
     /** The live connection, for the readers that need their own prepared statements. */
     public function pdo(): PDO
     {

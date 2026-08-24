@@ -7,10 +7,13 @@ namespace Lameco\Kunstmaanmigrator\console;
 use craft\console\Controller;
 use craft\helpers\Console;
 use Lameco\KumaCompile\Legacy\Introspection;
+use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\MappingException;
 use Lameco\KumaCompile\Mapping\MappingInit;
+use Lameco\KumaCompile\Report\Coverage;
+use Lameco\KumaCompile\Report\CoverageReport;
 use Lameco\KumaCompile\Target\SpecNotes;
 use Lameco\Kunstmaanmigrator\compile\TargetModel;
 use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
@@ -20,19 +23,20 @@ use Throwable;
 use yii\console\ExitCode;
 
 /**
- * Making a mapping, and checking one.
+ * Making a mapping, checking one, and measuring it against the legacy site.
  *
  * The engine for this has existed since the DSL did, as a second binary
  * shipped inside the plugin — `php vendor/lameco/craft-kunstmaan-migrator/lib/
  * kuma-compile/bin/kuma-compile init`. A plugin you install and then have to
  * find a vendored CLI inside is not a plugin you can hand to somebody, so the
- * two commands that start a migration are Craft commands now.
+ * commands that build a migration are Craft commands now.
  *
  * The binary stays: the compile half genuinely runs without Craft, and being
  * able to point it at a legacy database from a machine that has no Craft
- * install is worth keeping. Both surfaces are thin adapters over
- * `Mapping\MappingInit` — same grammar, same skeleton, same refusals; only
- * option syntax and the DSN source differ.
+ * install is worth keeping. Both surfaces are thin adapters over the same
+ * lib engines — `Mapping\MappingInit`, `Mapping\MappingCheck`,
+ * `Report\Coverage` + `Report\CoverageReport`; only option syntax and the
+ * DSN source differ.
  */
 final class MappingController extends Controller
 {
@@ -67,6 +71,12 @@ final class MappingController extends Controller
     /** Where to write. Prints to stdout when omitted. */
     public ?string $out = null;
 
+    /** coverage: emit machine-readable JSON instead of the summary. */
+    public bool $json = false;
+
+    /** coverage: emit the client-facing document — what moves, what does not, and why. */
+    public bool $markdown = false;
+
     public function beforeAction($action): bool
     {
         $this->neverProductionExitCode = $this->enforceNeverProduction();
@@ -90,6 +100,7 @@ final class MappingController extends Controller
         return array_merge(parent::options($actionID), match ($actionID) {
             'init' => ['environments', 'source', 'introspection', 'out'],
             'check' => ['specs', 'introspection'],
+            'coverage' => ['json', 'markdown'],
             default => [],
         });
     }
@@ -214,6 +225,90 @@ final class MappingController extends Controller
         ), Console::FG_GREEN);
 
         return ExitCode::OK;
+    }
+
+    /**
+     * Whether the mapping accounts for everything live in the legacy site.
+     *
+     * Every live pagepart class and page type must be claimed by a lane —
+     * `unmapped:` with a reason counts — and anything else is a hole that
+     * exits non-zero. `migrate` takes this same measurement at the top of a
+     * run and refuses on it; this is how you ask without starting one, and
+     * `--markdown` is the version you send the client.
+     *
+     * @param string $path the mapping to measure
+     */
+    public function actionCoverage(string $path): int
+    {
+        if (!is_file($path)) {
+            $this->stderr(sprintf("Mapping file not found: %s\n", $path), Console::FG_RED);
+
+            return ExitCode::USAGE;
+        }
+
+        try {
+            $mapping = Mapping::fromFile($path);
+            $coverage = Coverage::measure(
+                $mapping,
+                LegacyDatabase::connectAll($mapping->databases(), EnvironmentPipeline::dsnFromSettings()),
+            );
+        } catch (Throwable $e) {
+            $this->stderr($e->getMessage() . "\n", Console::FG_RED);
+
+            return ExitCode::UNAVAILABLE;
+        }
+
+        $report = new CoverageReport($coverage);
+        $exit = $coverage->hasHoles() ? ExitCode::UNSPECIFIED_ERROR : ExitCode::OK;
+
+        if ($this->markdown) {
+            $this->stdout($report->markdown('craft kunstmaan-migrator/mapping/coverage', date('Y-m-d')));
+
+            return $exit;
+        }
+
+        if ($this->json) {
+            $this->stdout(json_encode($report->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
+
+            return $exit;
+        }
+
+        $this->stdout(sprintf(
+            "%s live placements across %s live pages — %.1f%% of all pagepart rows (the rest belong to superseded versions).\n",
+            number_format($coverage->totalPlacements()),
+            number_format($coverage->totalPages()),
+            $coverage->liveShare() * 100,
+        ));
+
+        $total = max(1, $coverage->totalPlacements());
+
+        foreach ($coverage->placementsByLane() as $lane => $n) {
+            $this->stdout(sprintf("  %-12s %10s  %5.1f%%\n", $lane, number_format($n), $n / $total * 100));
+        }
+
+        foreach ($coverage->strandedLocales() as $locale => $pages) {
+            $this->stdout(sprintf("  %-12s %s live pages stranded — no Craft site\n", $locale, number_format($pages)), Console::FG_YELLOW);
+        }
+
+        if ($stale = $coverage->staleParts()) {
+            $this->stdout('Described but no longer live: ' . implode(', ', $stale) . "\n", Console::FG_YELLOW);
+        }
+
+        if (!$coverage->hasHoles()) {
+            $this->stdout("No holes — every live pagepart class and page type is claimed by a lane.\n", Console::FG_GREEN);
+
+            return ExitCode::OK;
+        }
+
+        $this->stderr("Holes — live content no lane claims:\n", Console::FG_RED);
+
+        foreach ($report->holes() as $hole) {
+            $this->stderr('  · ' . $hole . "\n");
+        }
+
+        $this->stderr("Claim each in a lane, or declare it under `unmapped:` with a reason.\n", Console::FG_RED);
+
+        return ExitCode::UNSPECIFIED_ERROR;
     }
 
     /** @param list<string> $errors */

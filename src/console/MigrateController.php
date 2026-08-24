@@ -15,6 +15,7 @@ use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Report\BlockPlacement;
 use Lameco\KumaCompile\Report\Coverage;
+use Lameco\KumaCompile\Report\CoverageReport;
 use Lameco\KumaCompile\Target\TargetSchema;
 use Lameco\Kunstmaanmigrator\compile\TargetModel;
 use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
@@ -586,18 +587,9 @@ final class MigrateController extends Controller
             return null;
         }
 
-        $holes = [];
-
-        foreach ($coverage->unclaimedParts() as $class => $n) {
-            $holes[] = sprintf('pagepart  %-32s %s live placements', (string) $class, number_format($n));
-        }
-
-        foreach ($coverage->unclaimedPageTypes() as $entity => $n) {
-            $holes[] = sprintf('page      %-32s %s live pages', (string) $entity, number_format($n));
-        }
-
+        $holes = (new CoverageReport($coverage))->holes();
         $holes[] = 'Claim each in a lane, or declare it under `unmapped:` with a reason.';
-        $holes[] = 'Run `kuma-compile coverage <mapping>` for the whole picture, or --allow-drift to run anyway.';
+        $holes[] = 'Run `mapping/coverage <mapping>` for the whole picture, or --allow-drift to run anyway.';
 
         if ($this->narrowed()) {
             $this->stderr("The corpus has grown past the mapping:\n", Console::FG_YELLOW);
