@@ -88,6 +88,18 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `uris`), the queue chain as `RecomputeStructureUrisJob` after `FinalizeJob`,
   and the run screen offers it as a recovery pass. `migrate --resave` is now
   off by default and only there to compare against.
+- **A deadlock no longer commits a partial entry.** The writer adapter
+  retried the one element save that hit a 1213 deadlock, inside the entry's
+  transaction — which InnoDB had already rolled back whole. The retried
+  element then committed on top of an entry whose primary save, state row
+  and earlier site rows were gone, and the run reported success: a partial
+  entry the state table cannot describe. The adapter now retries nothing;
+  `run\WriteConflictRetry` re-runs the whole payload save (bounded, with
+  backoff) for both callers, counts each retry as `writeConflictRetries` in
+  the summary, and when it gives up the problem names the sourceUid and says
+  the entry was rolled back whole. A file an asset ingest already copied into
+  the volume before the rollback is not undone; the next run re-ingests it
+  under a conflict-avoiding filename, as before.
 - The mapping YAML is parsed once per request instead of per question (the
   coverage screen alone cost ~2N+4 full parses for N mapped entry types).
 - `RunLog::entries()` reads a bounded tail instead of the whole append-only

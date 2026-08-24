@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
+use craft\base\ElementInterface;
 use craft\elements\Entry;
 use craft\fields\Matrix;
 use craft\models\EntryType;
 use craft\models\FieldLayout;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
 use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
@@ -16,6 +18,7 @@ use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryMigrationState;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use yii\db\Exception as DbException;
 
 /**
  * `saveEntryForSites()` driven through its interface, start to finish.
@@ -201,6 +204,88 @@ final class EntryMigrationServiceSaveTest extends TestCase
         $this->expectExceptionMessage('Primary-site save failed for ' . self::SOURCE . ':42');
 
         $this->save(['default' => $this->siteData('Over ons')]);
+    }
+
+    /**
+     * A deadlock inside the save is the caller's to handle, not the seam's.
+     *
+     * The writer adapter used to retry the one element save that raised it.
+     * The save runs inside the entry's transaction, and InnoDB rolls that whole
+     * transaction back on a deadlock, so the retried element committed on top
+     * of an entry whose earlier statements were already gone. Letting it
+     * propagate is what makes `run\WriteConflictRetry` — which re-runs the
+     * whole payload — the only retry there is.
+     */
+    public function testADeadlockDuringASavePropagatesOutOfTheEntrySave(): void
+    {
+        $deadlock = new DbException(
+            'SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock',
+            ['40001', 1213, 'Deadlock found when trying to get lock; try restarting transaction'],
+        );
+        $this->svc->elementWriter = new class($this->writer, $deadlock) implements ElementWriter {
+            public int $saves = 0;
+
+            public function __construct(private readonly InMemoryElementWriter $inner, private readonly DbException $deadlock)
+            {
+            }
+
+            public function createEntry(int $sectionId, int $typeId, int $siteId): Entry
+            {
+                return $this->inner->createEntry($sectionId, $typeId, $siteId);
+            }
+
+            public function singleEntry(int $sectionId, int $siteId): ?Entry
+            {
+                return $this->inner->singleEntry($sectionId, $siteId);
+            }
+
+            public function livesOnAnySite(int $elementId, array $siteIds): bool
+            {
+                return $this->inner->livesOnAnySite($elementId, $siteIds);
+            }
+
+            public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
+            {
+                $this->saves++;
+
+                throw $this->deadlock;
+            }
+
+            public function delete(ElementInterface $element, bool $hardDelete = false): void
+            {
+                $this->inner->delete($element, $hardDelete);
+            }
+
+            public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
+            {
+                return $this->inner->findById($id, $class, $siteId);
+            }
+
+            public function structureEntries(string $sectionHandle): iterable
+            {
+                return $this->inner->structureEntries($sectionHandle);
+            }
+
+            public function updateSlugAndUri(ElementInterface $element): void
+            {
+                $this->inner->updateSlugAndUri($element);
+            }
+
+            public function invalidateCaches(): void
+            {
+                $this->inner->invalidateCaches();
+            }
+        };
+
+        try {
+            $this->save(['default' => $this->siteData('Over ons'), 'en' => $this->siteData('About us')]);
+            self::fail('the deadlock has to reach the caller');
+        } catch (DbException $e) {
+            self::assertSame($deadlock, $e, 'unchanged: the payload-level retry recognises it by its driver code');
+        }
+
+        self::assertSame(1, $this->svc->elementWriter->saves, 'the seam retried nothing');
+        self::assertNull($this->state->getTargetId(self::SOURCE, '42'), 'no state row for an entry that never landed');
     }
 
     public function testARefusedSecondarySiteSaveIsAWarningAndTheEntryStillLands(): void

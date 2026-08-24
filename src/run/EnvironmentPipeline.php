@@ -38,12 +38,15 @@ use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
  */
 final class EnvironmentPipeline
 {
+    private readonly ?WriteConflictRetry $retry;
+
     public function __construct(
         private readonly PayloadValidator $validator,
         private readonly ?PayloadEntrySaver $saver,
         private readonly Compiler $compiler,
         private readonly Transforms $transforms,
     ) {
+        $this->retry = $saver === null ? null : new WriteConflictRetry($saver->save(...));
     }
 
     /**
@@ -259,12 +262,12 @@ final class EnvironmentPipeline
             return;
         }
 
-        if ($this->saver === null) {
+        if ($this->saver === null || $this->retry === null) {
             return;
         }
 
         try {
-            $tally->absorb($this->saver->save($payload, $context, $tally), $this->saver->refreshesExisting());
+            $tally->absorb($this->retry->save($payload, $context, $tally), $this->saver->refreshesExisting());
         } catch (\Throwable $e) {
             $tally->count('failed');
             $tally->problem(sprintf('%s: %s', $payload->sourceUid, $e->getMessage()));
