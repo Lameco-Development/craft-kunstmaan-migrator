@@ -33,7 +33,7 @@ use yii\base\Component;
  * real directories. Operator input never reaches shell or SQL — this resolver
  * only feeds is_dir() + filesystem reads downstream.
  */
-final class KunstmaanSourcePathResolver extends Component
+class KunstmaanSourcePathResolver extends Component
 {
     /**
      * Validated absolute path to the Kunstmaan source checkout, or null when

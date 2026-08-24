@@ -106,9 +106,20 @@ final class KunstmaanPageStructureScanner extends Component
         }
 
         $out = [];
-        $iterator = new FilesystemIterator(
-            $pagesDir,
-            FilesystemIterator::SKIP_DOTS | FilesystemIterator::CURRENT_AS_FILEINFO,
+        // Recursive walk: berkvens (and possibly other sites) namespace Page
+        // entities into subdirectories like `Pages/Search/SearchPage.php`.
+        // A non-recursive FilesystemIterator silently skipped these and
+        // dropped them from pageStructure.json → compile dropped them from
+        // nodeClasses → extract never produced extracted/<fqcn-slug>/, so the
+        // starter-kit placeholder entry remained the active entry in the
+        // adopted Single section (404 on the real URL). The sister scanners
+        // (KunstmaanSourceScanner, DoctrineEntityParser) already walk
+        // recursively; aligning here closes that inconsistency.
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator(
+                $pagesDir,
+                FilesystemIterator::SKIP_DOTS | FilesystemIterator::CURRENT_AS_FILEINFO,
+            ),
         );
         foreach ($iterator as $fileInfo) {
             /** @var \SplFileInfo $fileInfo */
