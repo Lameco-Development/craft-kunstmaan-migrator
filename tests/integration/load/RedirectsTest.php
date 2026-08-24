@@ -43,7 +43,7 @@ final class RedirectsTest extends TestCase
      */
     private function refResolverWithTargets(array $targets): RefResolver
     {
-        $reader = new class ($targets) implements MigrationStateReader {
+        $reader = new class($targets) implements MigrationStateReader {
             /** @param array<string, int> $targets */
             public function __construct(private readonly array $targets)
             {
@@ -73,7 +73,7 @@ final class RedirectsTest extends TestCase
      */
     private function stubUriResolver(array $map): callable
     {
-        return static fn (int $entryId, string $siteHandle): ?string => $map[$entryId . '|' . $siteHandle] ?? null;
+        return static fn(int $entryId, string $siteHandle): ?string => $map[$entryId . '|' . $siteHandle] ?? null;
     }
 
     /**
@@ -81,7 +81,7 @@ final class RedirectsTest extends TestCase
      */
     private function recordingSaver(array &$calls, string $outcome = 'created'): callable
     {
-        return static function (string $from, string $to, int $type, string $stateKey, array $extraMeta) use (&$calls, $outcome): array {
+        return static function(string $from, string $to, int $type, string $stateKey, array $extraMeta) use (&$calls, $outcome): array {
             $calls[] = compact('from', 'to', 'type', 'stateKey', 'extraMeta');
 
             return ['outcome' => $outcome];
@@ -249,7 +249,7 @@ final class RedirectsTest extends TestCase
             $this->refResolverWithTargets([]),
             true,
             $this->stubUriResolver([]),
-            static fn (string $from, string $to, int $type, string $stateKey, array $extraMeta): array
+            static fn(string $from, string $to, int $type, string $stateKey, array $extraMeta): array
                 => ['outcome' => 'failed', 'message' => 'Retour saveRedirect refused'],
         );
 
@@ -294,8 +294,8 @@ final class RedirectsTest extends TestCase
             $records,
             $this->refResolverWithTargets(['COM:kuma_nodes|15' => 4321]),
             true,
-            static fn (int $entryId, string $site): ?string => $entryId === 4321 ? '/company/news' : null,
-            static function (string $from, string $to, int $code, string $key, array $meta) use (&$saved): array {
+            static fn(int $entryId, string $site): ?string => $entryId === 4321 ? '/company/news' : null,
+            static function(string $from, string $to, int $code, string $key, array $meta) use (&$saved): array {
                 $saved[] = [$from, $to, $code];
 
                 return ['outcome' => 'created'];
@@ -317,8 +317,8 @@ final class RedirectsTest extends TestCase
             [['from' => '/gone', 'to' => 'kuma:COM:kuma_nodes:99', 'siteHandle' => 'en', 'type' => 301]],
             $this->refResolverWithTargets([]),
             true,
-            static fn (int $entryId, string $site): ?string => null,
-            static function (): array {
+            static fn(int $entryId, string $site): ?string => null,
+            static function(): array {
                 self::fail('An unresolved destination must never reach Retour.');
             },
         );

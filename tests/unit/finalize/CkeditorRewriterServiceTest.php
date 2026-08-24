@@ -85,7 +85,7 @@ final class CkeditorRewriterServiceTest extends TestCase
         $svc = $this->service();
         $svc->seedUrlIdCache([]);
         $svc->seedMediaUrlToKumaMediaIdCache(['/uploads/media/doc.pdf' => 493]);
-        $svc->assetResolver = new class {
+        $svc->assetResolver = new class() {
             public function resolveFromLegacyId(int $kumaMediaId): int
             {
                 return $kumaMediaId === 493 ? 9001 : 0;
@@ -103,7 +103,7 @@ final class CkeditorRewriterServiceTest extends TestCase
     {
         $svc = $this->service();
         $svc->seedUrlIdCache([]);
-        $svc->assetResolver = new class {
+        $svc->assetResolver = new class() {
             public function resolveFromLegacyUrl(string $legacyUrl): int
             {
                 return $legacyUrl === '/uploads/media/orphan.png' ? 9002 : 0;
@@ -352,7 +352,7 @@ final class CkeditorRewriterServiceTest extends TestCase
         $svc->seedUrlIdCache([]);
         $svc->seedMediaUrlToKumaMediaIdCache(['/uploads/media/known.png' => 1384]);
         $svc->seedKumaMediaIdCache([]); // the id resolves to no asset
-        $svc->assetResolver = new class {
+        $svc->assetResolver = new class() {
             // The id path genuinely fails — that is the case under test.
             public function resolveFromLegacyId(int $kumaMediaId): int
             {
@@ -535,7 +535,7 @@ final class CkeditorRewriterServiceTest extends TestCase
         $svc = $this->service();
         $svc->seedUrlIdCache([]);
         $svc->seedMediaUrlToKumaMediaIdCache(['/uploads/media/doc.pdf' => 493]);
-        $svc->assetResolver = new class {
+        $svc->assetResolver = new class() {
             public function resolveFromLegacyId(int $kumaMediaId): int
             {
                 return $kumaMediaId === 493 ? 9001 : 0;
@@ -587,7 +587,7 @@ final class CkeditorRewriterServiceTest extends TestCase
         // written back to the per-request cache.
         $svc = $this->service();
         $svc->seedKumaMediaIdCache([]); // warm but empty
-        $svc->assetResolver = new class {
+        $svc->assetResolver = new class() {
             public function resolveFromLegacyId(int $kumaMediaId): int
             {
                 return $kumaMediaId === 7 ? 700 : 0;
@@ -604,7 +604,7 @@ final class CkeditorRewriterServiceTest extends TestCase
     {
         $svc = $this->service();
         $svc->seedKumaMediaIdCache([]);
-        $svc->assetResolver = new class {
+        $svc->assetResolver = new class() {
             public function resolveFromLegacyId(int $kumaMediaId): int
             {
                 return 0;

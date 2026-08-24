@@ -61,8 +61,8 @@ final class Mapping
         foreach ($data as $key => $value) {
             $data[$key] = match (true) {
                 $value instanceof TaggedValue && $value->getTag() === 'unmapped' => null,
-                is_array($value)                                                 => self::resolveTags($value),
-                default                                                          => $value,
+                is_array($value) => self::resolveTags($value),
+                default => $value,
             };
         }
 
@@ -204,9 +204,9 @@ final class Mapping
         foreach ($this->parts() as $class => $spec) {
             $accounted[$class] = match (true) {
                 ($spec['consumedBy'] ?? null) === 'sequence' => 'sequence',
-                isset($spec['drop'])                         => 'dropped',
-                isset($spec['manual'])                       => 'manual',
-                default                                      => 'blocks',
+                isset($spec['drop']) => 'dropped',
+                isset($spec['manual']) => 'manual',
+                default => 'blocks',
             };
         }
 
@@ -284,7 +284,7 @@ final class Mapping
             }
         }
 
-        usort($open, static fn (Conflict $a, Conflict $b) => ($b->live ?? 0) <=> ($a->live ?? 0));
+        usort($open, static fn(Conflict $a, Conflict $b) => ($b->live ?? 0) <=> ($a->live ?? 0));
 
         return $open;
     }
@@ -352,7 +352,7 @@ final class Mapping
 
         array_walk_recursive(
             $data,
-            static function (mixed $value, string|int $key) use (&$todos): void {
+            static function(mixed $value, string|int $key) use (&$todos): void {
                 if ($key === 'todo' && is_string($value)) {
                     $todos[] = trim($value);
                 }

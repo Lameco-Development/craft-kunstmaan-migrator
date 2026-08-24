@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\load;
 
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
 use Craft;
 use craft\elements\Asset;
 use craft\helpers\App;
 use craft\helpers\Console;
+use lameco\kunstmaanmigrator\craft\CraftElementWriter;
+use lameco\kunstmaanmigrator\craft\ElementWriter;
+use lameco\kunstmaanmigrator\craft\EmbedGateway;
+use lameco\kunstmaanmigrator\craft\SpicywebEmbedGateway;
+use lameco\kunstmaanmigrator\db\LegacyDbService;
 use RuntimeException;
 use Throwable;
 use yii\base\Component;
@@ -160,6 +162,14 @@ class AssetMigrationService extends Component
      * per-extension size cap (modules/lameco/Module.php).
      */
     public bool $skipAssetSizeValidation = false;
+
+    /** Injectable for tests; defaults to the spicyweb/craft-embedded-assets implementation. */
+    public ?EmbedGateway $embeds = null;
+
+    private function embedGateway(): EmbedGateway
+    {
+        return $this->embeds ??= new SpicywebEmbedGateway();
+    }
 
     /**
      * Skip the asset stage for this run.
@@ -435,8 +445,8 @@ class AssetMigrationService extends Component
                     // can render the `## Asset RCA` table without re-grepping logs.
                     $this->assetRcaRows[] = [
                         'legacyId' => (int) ($row['id'] ?? 0),
-                        'reason'   => $reason,
-                        'path'     => $relativePath,
+                        'reason' => $reason,
+                        'path' => $relativePath,
                     ];
                 }
 
@@ -559,8 +569,49 @@ class AssetMigrationService extends Component
         $isRemoteVideo = str_starts_with($contentType, 'remote/')
             || (str_contains($contentType, 'video') && ($location === null || $location === ''));
 
-        // Remote video: parse metadata for video id, record state, no file copy.
+        // Remote video: no file to copy — the row names a video on someone
+        // else's server. When Embedded Assets is installed, the URL becomes a
+        // real embedded-asset element in the target folder, which is what the
+        // Assets fields expect (`commonVideo` allows the json kind for exactly
+        // this). 281 live rows on the Enreach corpus previously resolved to
+        // nothing and took every mediaBlock.video and heroVideo with them.
         if ($isRemoteVideo) {
+            $videoUrl = RemoteVideoUrl::fromRow($row);
+
+            if ($videoUrl !== null && $this->embedGateway()->available()) {
+                if ($opts->dryRun) {
+                    $counts['created'] = ($counts['created'] ?? 0) + 1;
+                    return null;
+                }
+
+                $volume = Craft::$app->volumes->getVolumeByHandle($this->targetVolume);
+                $folder = $volume !== null
+                    ? Craft::$app->assets->ensureFolderByFullPathAndVolume($this->targetFolderPath($row), $volume)
+                    : null;
+                $assetId = $folder !== null ? $this->embedGateway()->createFromUrl($videoUrl, (int) $folder->id) : null;
+
+                if ($assetId !== null) {
+                    $this->migrationState->record(
+                        self::STATE_SOURCE,
+                        $key,
+                        'asset',
+                        $assetId,
+                        null,
+                        null,
+                        [
+                            'kind' => 'embedded-video',
+                            'videoUrl' => $videoUrl,
+                            'contentType' => $contentType,
+                        ],
+                    );
+                    $counts['created'] = ($counts['created'] ?? 0) + 1;
+
+                    return Craft::$app->assets->getAssetById($assetId) ?? null;
+                }
+                // Fetch or save failed — fall through to the id-only state row
+                // this branch always wrote, so a re-run can try again.
+            }
+
             // Serialized-blob decoder deferred to Phase 4 — null-slot guard.
             // Without the decoder we cannot extract a video id from the
             // serialized blob; emit a warning and skip until Phase 4 wires it.
@@ -580,8 +631,8 @@ class AssetMigrationService extends Component
                         null,
                         null,
                         [
-                            'kind'        => 'remote-video',
-                            'videoId'     => $videoId,
+                            'kind' => 'remote-video',
+                            'videoId' => $videoId,
                             'originalUrl' => $row['url'] ?? null,
                             'contentType' => $contentType,
                         ],
@@ -676,13 +727,13 @@ class AssetMigrationService extends Component
                     $existing->uid,
                     null,
                     [
-                        'kind'        => 'local-file',
+                        'kind' => 'local-file',
                         'originalUrl' => $row['url'] ?? null,
-                        'location'    => $location,
+                        'location' => $location,
                         'contentType' => $contentType,
-                        'copyright'   => $row['copyright'] ?? null,
-                        'file_size'   => $sourceFileSize,
-                        'deduped'     => true,
+                        'copyright' => $row['copyright'] ?? null,
+                        'file_size' => $sourceFileSize,
+                        'deduped' => true,
                     ],
                 );
                 // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
@@ -726,21 +777,36 @@ class AssetMigrationService extends Component
             // operator opted in (Settings::$skipAssetSizeValidation). The
             // starter-kit's listener throws HttpException(400, "The file is
             // too large for {$ext} files. Maximum allowed size: …MB.").
-            // Treat that specific message as a skip; bubble everything else.
+            //
+            // "Bypass" used to mean "skip the asset", which left every
+            // reference to it unresolved — 410 images on the Enreach corpus.
+            // Now the save is retried once with the class-level beforeSave
+            // handlers held aside, so the legacy file actually lands. Only
+            // this specific message triggers the retry; everything else bubbles.
             if ($this->skipAssetSizeValidation
                 && $e->statusCode === 400
                 && str_starts_with((string) $e->getMessage(), 'The file is too large')
             ) {
-                @unlink($tempPath);
+                $asset = $this->retrySaveWithoutSizeCap($row, $safeName, $yearFolder->id, $tempPath);
+
+                if ($asset === null) {
+                    @unlink($tempPath);
+                    Craft::warning(
+                        "kuma_media:{$mediaId} skipped — size-cap bypass retry failed: " . $e->getMessage(),
+                        __METHOD__,
+                    );
+                    $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
+                    return null;
+                }
+
                 Craft::warning(
-                    "kuma_media:{$mediaId} skipped — size cap bypassed: " . $e->getMessage(),
+                    "kuma_media:{$mediaId} ingested past the project size cap: " . $e->getMessage(),
                     __METHOD__,
                 );
-                $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
-                return null;
+            } else {
+                @unlink($tempPath);
+                throw $e;
             }
-            @unlink($tempPath);
-            throw $e;
         }
         $tSave = round((microtime(true) - $tSaveStart) * 1000);
 
@@ -756,12 +822,12 @@ class AssetMigrationService extends Component
             $asset->uid,
             null,
             [
-                'kind'        => 'local-file',
+                'kind' => 'local-file',
                 'originalUrl' => $row['url'] ?? null,
-                'location'    => $location,
+                'location' => $location,
                 'contentType' => $contentType,
-                'copyright'   => $row['copyright'] ?? null,
-                'file_size'   => $sourceFileSize !== false ? $sourceFileSize : ($row['file_size'] ?? null),
+                'copyright' => $row['copyright'] ?? null,
+                'file_size' => $sourceFileSize !== false ? $sourceFileSize : ($row['file_size'] ?? null),
             ],
         );
         $tState = round((microtime(true) - $tStateStart) * 1000);
@@ -782,6 +848,80 @@ class AssetMigrationService extends Component
         // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
         $counts['created'] = ($counts['created'] ?? 0) + 1;
         return $asset;
+    }
+
+    /**
+     * One more save attempt with the class-level `Asset::EVENT_BEFORE_SAVE`
+     * handlers held aside — the starter-kit's size cap lives there, attached by
+     * the project module we must not edit.
+     *
+     * A fresh element, because the first attempt died inside its own save. The
+     * handlers are snapshotted and restored in a finally, so the cap is back in
+     * force for editor uploads the moment this returns. Any handler another
+     * plugin attached at class level skips this one save too — the price of
+     * bypassing a listener we do not own, paid only behind the operator's
+     * explicit `skipAssetSizeValidation` opt-in.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function retrySaveWithoutSizeCap(array $row, string $safeName, int $folderId, string $tempPath): ?Asset
+    {
+        if (!is_file($tempPath)) {
+            return null;
+        }
+
+        $asset = new Asset();
+        $asset->tempFilePath = $tempPath;
+        $asset->filename = $safeName;
+        $asset->newFolderId = $folderId;
+        $asset->avoidFilenameConflicts = true;
+        if (!empty($row['name'])) {
+            $asset->alt = (string) $row['name'];
+        }
+        $asset->setScenario(Asset::SCENARIO_CREATE);
+
+        try {
+            $saved = $this->withClassEventDetached(
+                Asset::class,
+                Asset::EVENT_BEFORE_SAVE,
+                fn(): bool => $this->elements()->save($asset, true, true),
+            );
+        } catch (Throwable) {
+            return null;
+        }
+
+        return $saved ? $asset : null;
+    }
+
+    /**
+     * Run $fn with every class-level handler for ($class, $name) detached, then
+     * put them back exactly as they were.
+     *
+     * Yii offers `Event::off($class, $name)` but no way to read the handlers
+     * back, so the snapshot goes through reflection on `Event::$_events`. The
+     * restore writes the original array segment back verbatim — order included,
+     * because handler order is attach order and other code may depend on it.
+     */
+    private function withClassEventDetached(string $class, string $name, callable $fn): mixed
+    {
+        $prop = new \ReflectionProperty(\yii\base\Event::class, '_events');
+        $events = (array) $prop->getValue();
+        $saved = $events[$name][$class] ?? null;
+
+        if ($saved !== null) {
+            unset($events[$name][$class]);
+            $prop->setValue(null, $events);
+        }
+
+        try {
+            return $fn();
+        } finally {
+            if ($saved !== null) {
+                $events = (array) $prop->getValue();
+                $events[$name][$class] = $saved;
+                $prop->setValue(null, $events);
+            }
+        }
     }
 
     /**
@@ -884,8 +1024,8 @@ class AssetMigrationService extends Component
                 );
                 $this->assetRcaRows[] = [
                     'legacyId' => (int) ($row['id'] ?? 0),
-                    'reason'   => $reason,
-                    'path'     => $relativePath,
+                    'reason' => $reason,
+                    'path' => $relativePath,
                 ];
             }
         }
@@ -1032,5 +1172,4 @@ class AssetMigrationService extends Component
         // Phase 3 stub; orphan-set tracking deferred (NEXT-05).
         return [];
     }
-
 }

@@ -29,13 +29,13 @@ final class TransformsTest extends TestCase
     public static function headings(): array
     {
         return [
-            'plain'            => ['Business flexibility', 'Business flexibility'],
-            'wrapped'          => ['<p>Leave us a message</p>', 'Leave us a message'],
+            'plain' => ['Business flexibility', 'Business flexibility'],
+            'wrapped' => ['<p>Leave us a message</p>', 'Leave us a message'],
             'wrapped w/ attrs' => ['<p class="x">Give us a call</p>', 'Give us a call'],
-            'nested wrappers'  => ['<div><p>Deep</p></div>', 'Deep'],
-            'keeps emphasis'   => ['<p>Why <strong>Shomi</strong>?</p>', 'Why <strong>Shomi</strong>?'],
+            'nested wrappers' => ['<div><p>Deep</p></div>', 'Deep'],
+            'keeps emphasis' => ['<p>Why <strong>Shomi</strong>?</p>', 'Why <strong>Shomi</strong>?'],
             'strips block-level inside' => ['<p>A<ul><li>b</li></ul></p>', 'Ab'],
-            'empty'            => ['<p></p>', null],
+            'empty' => ['<p></p>', null],
         ];
     }
 

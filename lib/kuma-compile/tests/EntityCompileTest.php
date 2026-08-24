@@ -66,7 +66,7 @@ final class EntityCompileTest extends TestCase
         $out = [];
 
         (new Compiler(Mapping::fromFile($path), new Transforms()))
-            ->compile($this->db($environment), $environment, static function (array $p) use (&$out): void {
+            ->compile($this->db($environment), $environment, static function(array $p) use (&$out): void {
                 $out[] = $p;
             });
 

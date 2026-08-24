@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\tests\unit\run;
 
 use lameco\kunstmaanmigrator\controllers\MigrationController;
-use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\ProductionGuard;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -158,7 +158,10 @@ final class RunSurfaceTest extends TestCase
     {
         $controller = (string) file_get_contents($this->root() . '/src/controllers/MigrationController.php');
 
-        self::assertStringContainsString('getQueue()->push(new MigrateEnvironmentJob(', $controller);
+        // QueueHelper::push, not getQueue()->push — batched jobs must travel
+        // through the helper so spawned continuation batches inherit priority
+        // and TTR (BaseBatchedJob's own warning).
+        self::assertStringContainsString('QueueHelper::push(job: new MigrateEnvironmentJob(', $controller);
         self::assertStringNotContainsString(
             'EnvironmentPipeline',
             $controller,

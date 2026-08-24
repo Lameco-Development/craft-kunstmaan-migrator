@@ -20,7 +20,7 @@ final class LogUtility extends Utility
 {
     public static function displayName(): string
     {
-        return Craft::t('kunstmaan-migrator', 'Kunstmaan migration log');
+        return Craft::t('kunstmaan-migrator', 'Kunstmaan Migrator Logs');
     }
 
     public static function id(): string
@@ -30,7 +30,9 @@ final class LogUtility extends Utility
 
     public static function icon(): ?string
     {
-        return 'clock-rotate-left';
+        // The same mask the CP sidebar shows for the plugin (cpNavIconPath reads
+        // src/icon-mask.svg) — one mark for every door into the migrator.
+        return dirname(__DIR__) . '/icon-mask.svg';
     }
 
     public static function contentHtml(): string

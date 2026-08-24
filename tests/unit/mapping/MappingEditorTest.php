@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace lameco\kunstmaanmigrator\tests\unit\mapping;
 
+use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\mapping\MappingEditor;
 use lameco\kunstmaanmigrator\mapping\MappingEditorException;
 use lameco\kunstmaanmigrator\mapping\MappingRow;
 use lameco\kunstmaanmigrator\mapping\TargetCatalogue;
-use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\payload\SchemaGateway;
 use lameco\kunstmaanmigrator\tests\support\InMemoryTargetCatalogue;
 use lameco\kunstmaanmigrator\tests\support\SettingsFactory;
@@ -120,7 +120,7 @@ final class MappingEditorTest extends TestCase
         ];
 
         $counts = array_count_values(array_map(
-            static fn (MappingRow $row): string => $row->status(),
+            static fn(MappingRow $row): string => $row->status(),
             $rows,
         ));
 
@@ -271,7 +271,7 @@ final class MappingEditorTest extends TestCase
             YAML);
 
         $schema = $this->createStub(SchemaGateway::class);
-        $schema->method('fieldSlotsFor')->willReturnCallback(static fn (string $entryType): array => match ($entryType) {
+        $schema->method('fieldSlotsFor')->willReturnCallback(static fn(string $entryType): array => match ($entryType) {
             'contentPage' => ['heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []]],
             default => [],
         });
@@ -325,7 +325,7 @@ final class MappingEditorTest extends TestCase
             YAML);
 
         $schema = $this->createStub(SchemaGateway::class);
-        $schema->method('fieldSlotsFor')->willReturnCallback(static fn (string $handle): array => match ($handle) {
+        $schema->method('fieldSlotsFor')->willReturnCallback(static fn(string $handle): array => match ($handle) {
             'contentPage', 'newsPage' => [
                 'pageBuilder' => ['type' => 'matrix', 'required' => false, 'nested' => ['contentBlock']],
                 'summary' => ['type' => 'ckeditor', 'required' => false, 'nested' => []],
@@ -424,7 +424,7 @@ final class MappingEditorTest extends TestCase
             YAML);
 
         $schema = $this->createStub(SchemaGateway::class);
-        $schema->method('fieldSlotsFor')->willReturnCallback(static fn (string $entryType): array => match ($entryType) {
+        $schema->method('fieldSlotsFor')->willReturnCallback(static fn(string $entryType): array => match ($entryType) {
             'contentPage' => ['heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []]],
             'newsPage' => [
                 'heroTitle' => ['type' => 'plaintext', 'required' => false, 'nested' => []],

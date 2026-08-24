@@ -54,16 +54,16 @@ final class CoverageCommand extends Command
 
         if ($input->getOption('json')) {
             $output->writeln((string) json_encode([
-                'placements'        => $coverage->totalPlacements(),
-                'pages'             => $coverage->totalPages(),
-                'liveShare'         => round($coverage->liveShare(), 4),
-                'byLane'            => $coverage->placementsByLane(),
-                'unclaimedParts'    => $coverage->unclaimedParts(),
-                'unclaimedPageTypes'=> $coverage->unclaimedPageTypes(),
-                'staleParts'        => $coverage->staleParts(),
-                'strandedLocales'   => $coverage->strandedLocales(),
-                'omissions'         => $coverage->declaredOmissions(),
-            'holes'             => $coverage->hasHoles(),
+                'placements' => $coverage->totalPlacements(),
+                'pages' => $coverage->totalPages(),
+                'liveShare' => round($coverage->liveShare(), 4),
+                'byLane' => $coverage->placementsByLane(),
+                'unclaimedParts' => $coverage->unclaimedParts(),
+                'unclaimedPageTypes' => $coverage->unclaimedPageTypes(),
+                'staleParts' => $coverage->staleParts(),
+                'strandedLocales' => $coverage->strandedLocales(),
+                'omissions' => $coverage->declaredOmissions(),
+            'holes' => $coverage->hasHoles(),
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
             return $coverage->hasHoles() ? Command::FAILURE : Command::SUCCESS;

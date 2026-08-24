@@ -23,7 +23,6 @@ use lameco\kunstmaanmigrator\mapping\SetupStep;
 use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\ProductionGuard;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
-use PDO;
 use Symfony\Component\Yaml\Tag\TaggedValue;
 use Throwable;
 use yii\web\BadRequestHttpException;
@@ -230,7 +229,7 @@ final class SetupController extends Controller
             ?? Plugin::getInstance()->getSettings()->legacyDbDatabase ?? ''));
 
         if ($detected !== '') {
-            $names = array_map(static fn (array $c): string => (string) $c['database'], $found);
+            $names = array_map(static fn(array $c): string => (string) $c['database'], $found);
             $siblings = self::siblingsOf($detected, $names);
 
             if (in_array($detected, $names, true)) {
@@ -279,7 +278,7 @@ final class SetupController extends Controller
         // A pre-check is a suggestion, not a decision — the near-duplicate that
         // should stay behind is unticked here, once.
         $detected = trim((string) (Plugin::getInstance()->getSettings()->legacyDbDatabase ?? ''));
-        $names = array_map(static fn (array $c): string => (string) $c['database'], $databases);
+        $names = array_map(static fn(array $c): string => (string) $c['database'], $databases);
         $siblings = $detected !== '' ? self::siblingsOf($detected, $names) : [];
 
         foreach ($databases as $i => $candidate) {
@@ -298,7 +297,7 @@ final class SetupController extends Controller
         if (!$showAll && in_array($detected, $names, true)) {
             $databases = array_values(array_filter(
                 $databases,
-                static fn (array $c): bool => (bool) $c['preselected'],
+                static fn(array $c): bool => (bool) $c['preselected'],
             ));
         }
 
@@ -630,7 +629,7 @@ final class SetupController extends Controller
         $locale = strtolower($locale);
         $language = $aliases[$locale] ?? $locale;
 
-        $matches = array_values(array_filter($sites, static function ($site) use ($language): bool {
+        $matches = array_values(array_filter($sites, static function($site) use ($language): bool {
             $siteLanguage = strtolower((string) $site->language);
 
             return $siteLanguage === $language || str_starts_with($siteLanguage, $language . '-');
@@ -670,7 +669,7 @@ final class SetupController extends Controller
     {
         return array_values(array_filter(
             $candidates,
-            static fn (string $name): bool => $name !== $database && str_starts_with($name, $database . '_'),
+            static fn(string $name): bool => $name !== $database && str_starts_with($name, $database . '_'),
         ));
     }
 

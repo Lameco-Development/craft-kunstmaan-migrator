@@ -69,7 +69,7 @@ final class PayloadEntrySaver
         private readonly bool $force = false,
     ) {
         $this->refResolver = new RefResolver($stateService);
-        $this->transactionRunner = $transactionRunner ?? static function (callable $fn) {
+        $this->transactionRunner = $transactionRunner ?? static function(callable $fn) {
             return Craft::$app->getDb()->transaction($fn);
         };
     }
@@ -82,7 +82,7 @@ final class PayloadEntrySaver
 
     public function save(Payload $p): SaveResult
     {
-        return ($this->transactionRunner)(fn (): SaveResult => $this->doSave($p));
+        return ($this->transactionRunner)(fn(): SaveResult => $this->doSave($p));
     }
 
     private function doSave(Payload $p): SaveResult
@@ -335,6 +335,27 @@ final class PayloadEntrySaver
 
                 // Unresolved _ref: no bogus id is written — the node is
                 // dropped from its containing list/map entirely.
+                return ['present' => false, 'value' => null];
+            }
+
+            return ['present' => true, 'value' => $resolvedId];
+        }
+
+        // A form block's Forms relation arrives as `{"_form": <form sourceUid>}` inside its
+        // list container. Resolution goes through the form lane's state row; a form not
+        // migrated yet defers exactly like a `_ref`, and the fixup pass appends the id once
+        // the forms adapter has run — which on a full migration is after every entry.
+        if (array_key_exists('_form', $node) && is_string($node['_form'])) {
+            $resolvedId = $this->refResolver->resolve($node['_form']);
+
+            if ($resolvedId === null) {
+                $deferredRefs[] = [
+                    'field' => $fieldHandle,
+                    'site' => $siteHandle,
+                    'ref' => $node['_form'],
+                    'path' => array_slice($path, 0, -1),
+                ];
+
                 return ['present' => false, 'value' => null];
             }
 

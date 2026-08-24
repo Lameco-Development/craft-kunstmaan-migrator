@@ -23,7 +23,7 @@ final class LinkShapeTest extends TestCase
 {
     private function schema(): TargetSchema
     {
-        return new class implements TargetSchema {
+        return new class() implements TargetSchema {
             /** @var array<string, array<string, Slot>> */
             private array $types = [];
 
@@ -262,6 +262,35 @@ final class LinkShapeTest extends TestCase
             ),
         );
     }
+    #[Test]
+    public function the_style_column_may_pipe_through_a_configured_transform(): void
+    {
+        // Kunstmaan stores the button style as a CSS class; the Dropdown it lands in
+        // validates its own vocabulary, so the class must translate on the way through.
+        $builder = new BlockBuilder(
+            new PartReader(new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION])),
+            new Transforms(['buttonType' => ['map' => ['btn-outline-white' => 'secondary'], 'fallback' => 'primary']]),
+            'COM',
+            $this->schema(),
+            'contentMediaBlock',
+        );
+
+        self::assertSame(
+            ['buttons' => [[
+                'type' => 'button',
+                'fields' => [
+                    'commonLink' => ['value' => 'https://example.com/y', 'label' => 'Se mere'],
+                    'commonButtonType' => 'secondary',
+                ],
+            ]]],
+            $builder->fieldsFrom(
+                ['buttons' => 'link(link_url, link_text, link_new_window, link_type | buttonType)'],
+                ['link_url' => 'https://example.com/y', 'link_text' => 'Se mere', 'link_new_window' => 0, 'link_type' => 'btn-outline-white'],
+                'ContentMedia',
+            ),
+        );
+    }
+
     #[Test]
     public function a_link_aimed_at_an_indexed_nested_position_still_sees_its_matrix(): void
     {

@@ -403,8 +403,7 @@ final class BlockBuilder
         }
 
         $fields = [$linkHandle => $link];
-        $styleColumn = $columns[3] ?? null;
-        $style = $styleColumn !== null ? trim((string) ($row[$styleColumn] ?? '')) : '';
+        $style = $this->styleValue($columns[3] ?? null, $row, $target);
         $styleHandle = $style !== '' ? $this->soleSlotOfType($nested, 'Dropdown') : null;
 
         if ($styleHandle !== null) {
@@ -412,6 +411,35 @@ final class BlockBuilder
         }
 
         return [['type' => $nested, 'fields' => $fields]];
+    }
+
+    /**
+     * The fourth `link()` column — the button style — may pipe through a transform:
+     * `link(url, text, new_window, tertiary_link_type | buttonType)`.
+     *
+     * The style lands in a Dropdown, and a dropdown validates its vocabulary: Kunstmaan
+     * stores CSS classes (`btn-outline-white`) where Craft offers `primary|secondary`, and
+     * writing the class raw failed the whole entry. The first three columns stay bare column
+     * names — they feed `oneLink()`, whose shape is fixed.
+     */
+    private function styleValue(?string $expression, array $row, string $context): string
+    {
+        if ($expression === null || $expression === '') {
+            return '';
+        }
+
+        if (!str_contains($expression, '|')) {
+            return trim((string) ($row[$expression] ?? ''));
+        }
+
+        $parts = array_map('trim', explode('|', $expression));
+        $value = $row[array_shift($parts)] ?? null;
+
+        foreach ($parts as $transform) {
+            $value = $this->transforms->apply($transform, $value, $context);
+        }
+
+        return trim((string) ($value ?? ''));
     }
 
     /**
@@ -461,7 +489,7 @@ final class BlockBuilder
                 }
 
                 $fields = [$linkHandle => $link];
-                $style = isset($columns[3]) ? trim((string) ($row[$columns[3]] ?? '')) : '';
+                $style = $this->styleValue($columns[3] ?? null, $row, $target);
                 $styleHandle = $style !== '' ? $this->soleSlotOfType($nested, 'Dropdown') : null;
 
                 if ($styleHandle !== null) {

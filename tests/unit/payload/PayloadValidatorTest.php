@@ -45,9 +45,12 @@ final class FakeSchemaGateway implements SchemaGateway
         return $this->entryTypes[$handle] ?? null;
     }
 
-    public function primarySite(): array { return ['id' => 11, 'handle' => 'en']; }
+    public function primarySite(): array
+    {
+        return ['id' => 11, 'handle' => 'en'];
+    }
 
-            public function siteByHandle(string $handle): ?array
+    public function siteByHandle(string $handle): ?array
     {
         return $this->sites[$handle] ?? null;
     }
@@ -261,6 +264,24 @@ final class PayloadValidatorTest extends TestCase
         self::assertSame([], $this->validator->validate(Payload::fromArray($raw)));
     }
 
+    public function testBadFormRefProducesViolation(): void
+    {
+        // `_form` carries the form lane's longer grammar (`kuma:<ENV>:form:<Entity>:<id>`);
+        // a malformed one must not escape validation just because the key is different.
+        $raw = $this->validPayloadArray();
+        $raw['sites']['en']['fieldValues']['relatedPages'] = [['_form' => 'kuma:COM:kuma_nodes:42']];
+        $violations = $this->validator->validate(Payload::fromArray($raw));
+        self::assertCount(1, $violations);
+        self::assertSame('BAD_REF', $violations[0]->code);
+    }
+
+    public function testWellFormedFormRefPasses(): void
+    {
+        $raw = $this->validPayloadArray();
+        $raw['sites']['en']['fieldValues']['relatedPages'] = [['_form' => 'kuma:COM:form:PotionsLandingPage:100']];
+        self::assertSame([], $this->validator->validate(Payload::fromArray($raw)));
+    }
+
     public function testBadParentRefProducesViolation(): void
     {
         $raw = $this->validPayloadArray();
@@ -338,7 +359,7 @@ final class PayloadValidatorTest extends TestCase
         $raw['sites']['en']['enabled'] = false;
         $raw['sites']['en']['title'] = null;
         $violations = $this->validator->validate(Payload::fromArray($raw));
-        $codes = array_map(static fn (\lameco\kunstmaanmigrator\payload\Violation $v): string => $v->code, $violations);
+        $codes = array_map(static fn(\lameco\kunstmaanmigrator\payload\Violation $v): string => $v->code, $violations);
         self::assertNotContains('MISSING_TITLE', $codes);
         self::assertContains('NO_ENABLED_SITE', $codes);
     }

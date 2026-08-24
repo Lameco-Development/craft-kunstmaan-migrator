@@ -106,7 +106,7 @@ final class CraftSchema implements TargetSchema
 
         foreach ($fields as &$field) {
             $field['nested'] = array_values(array_filter(array_map(
-                static fn (string $uid): string => $byUid[$uid] ?? '',
+                static fn(string $uid): string => $byUid[$uid] ?? '',
                 $field['nested'],
             )));
         }
@@ -152,7 +152,7 @@ final class CraftSchema implements TargetSchema
     {
         $slots = [];
 
-        $walk = static function (mixed $node) use (&$walk, &$slots, $fields): void {
+        $walk = static function(mixed $node) use (&$walk, &$slots, $fields): void {
             if (is_array($node)) {
                 if (str_ends_with((string) ($node['type'] ?? ''), 'CustomField')) {
                     $uid = (string) ($node['fieldUid'] ?? '');

@@ -46,10 +46,10 @@ final class Schema
     private const CHILD_KEYS = ['table', 'fk', 'order', 'map', 'ignore', 'unreviewed', 'todo'];
 
     private const PAGE_KEYS = ['live', 'table', 'section', 'entryType', 'map', 'children', 'ignore',
-        'unreviewed', 'contexts', 'postDate', 'manual', 'drop', 'todo', 'note'];
+        'unreviewed', 'contexts', 'postDate', 'manual', 'drop', 'todo', 'note', ];
 
     private const ENTITY_KEYS = ['live', 'table', 'section', 'entryType', 'title', 'softDelete', 'dedupe',
-        'map', 'ignore', 'unreviewed', 'todo', 'note'];
+        'map', 'ignore', 'unreviewed', 'todo', 'note', ];
 
     private const REDIRECT_KEYS = ['live', 'table', 'map', 'defaultType', 'ignore', 'unreviewed', 'todo', 'note'];
 
@@ -623,9 +623,9 @@ final class Schema
     private function checkLaneCollisions(Mapping $mapping, array &$errors): void
     {
         $lanes = [
-            'parts'    => array_keys($mapping->parts()),
-            'forms'    => array_keys($mapping->formFields()),
-            'globals'  => array_keys($mapping->globalParts()),
+            'parts' => array_keys($mapping->parts()),
+            'forms' => array_keys($mapping->formFields()),
+            'globals' => array_keys($mapping->globalParts()),
             'unmapped' => array_keys($mapping->unmappedParts()),
         ];
 

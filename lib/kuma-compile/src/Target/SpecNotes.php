@@ -154,12 +154,12 @@ final class SpecNotes
 
         $kind = match (true) {
             (bool) preg_match('/\bMatrix order\b/i', $right) => self::ORDER,
-            (bool) preg_match('/\(\s*dropped/i', $right)     => self::DROPPED,
+            (bool) preg_match('/\(\s*dropped/i', $right) => self::DROPPED,
             // A row whose target is the entry's place in the tree names a section, not a
             // field: "tree parent (child of `eventOverviewPage`)" was read as a field handle
             // and reported as a divergence against every editorial page type.
             (bool) preg_match('/\bentries in the\b|\btaxonomy\b|\bEntries →|\b(tree|structure) parent\b/i', $right) => self::STRUCTURAL,
-            default                                          => self::MAPPED,
+            default => self::MAPPED,
         };
 
         return new Note(

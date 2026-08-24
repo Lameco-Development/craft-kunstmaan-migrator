@@ -5,14 +5,13 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\load;
 
 use Craft;
-use Throwable;
-use yii\base\Component;
 use craft\helpers\FileHelper;
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
-use lameco\kunstmaanmigrator\sites\SiteMap;
 use lameco\kunstmaanmigrator\adapters\GatedAdapter;
 use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
 use lameco\kunstmaanmigrator\db\LegacyDbService;
+use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use Throwable;
+use yii\base\Component;
 
 /**
  * TranslationMigrationService — imports Kunstmaan TranslatorBundle data

@@ -43,7 +43,7 @@ final class FieldProvenance
         // Page entry types in live-volume order: everything that lists them
         // should lead with where the content is.
         $pages = $mapping->pages();
-        uasort($pages, static fn ($a, $b): int =>
+        uasort($pages, static fn($a, $b): int =>
             (int) (is_array($b) ? ($b['live'] ?? 0) : 0) <=> (int) (is_array($a) ? ($a['live'] ?? 0) : 0));
 
         $pageEntryTypes = [];
@@ -238,7 +238,7 @@ final class FieldProvenance
             foreach (array_keys($map) as $field) {
                 $missing = array_values(array_filter(
                     $pageEntryTypes,
-                    static fn (string $entryType): bool => !isset($fieldSets[$entryType][$field]),
+                    static fn(string $entryType): bool => !isset($fieldSets[$entryType][$field]),
                 ));
 
                 $carriage[(string) $sidecar][(string) $field] = [

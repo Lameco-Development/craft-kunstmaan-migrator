@@ -88,5 +88,4 @@ final class IntrospectCommand extends Command
 
         return Command::SUCCESS;
     }
-
 }

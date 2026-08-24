@@ -16,7 +16,7 @@ final class TargetCheckTest extends TestCase
     /** A content model with one entry type carrying one field. */
     private function schema(): TargetSchema
     {
-        return new class implements TargetSchema {
+        return new class() implements TargetSchema {
             /** @var array<string, Slot> */
             private array $slots;
 

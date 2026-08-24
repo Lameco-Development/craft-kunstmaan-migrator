@@ -7,13 +7,13 @@ namespace Lameco\KumaCompile\Command;
 use Lameco\KumaCompile\Legacy\Dsn;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Target\CraftSchema;
-use Lameco\KumaCompile\Target\TargetSchema;
 use Lameco\KumaCompile\Target\Note;
 use Lameco\KumaCompile\Target\Slot;
-use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Target\SpecNotes;
 use Lameco\KumaCompile\Target\Suggester;
+use Lameco\KumaCompile\Target\TargetSchema;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -365,15 +365,15 @@ final class SuggestCommand extends Command
         $relational = in_array($slot?->type, ['Entries', 'Categories', 'Users', 'Tags'], true);
 
         return match (true) {
-            str_ends_with($column, '_id') && $relational                      => $column . ' | ref',
-            str_ends_with($column, '_id') && $slot?->type === 'Assets'        => $column . ' | asset',
-            str_ends_with($column, '_id') && $slot !== null                   => $column,
-            in_array($field, ['content', 'text', 'quote'], true)              => $column . ' | ckeditor',
+            str_ends_with($column, '_id') && $relational => $column . ' | ref',
+            str_ends_with($column, '_id') && $slot?->type === 'Assets' => $column . ' | asset',
+            str_ends_with($column, '_id') && $slot !== null => $column,
+            in_array($field, ['content', 'text', 'quote'], true) => $column . ' | ckeditor',
             in_array($field, ['heading', 'label', 'eyebrow', 'tabLabel', 'paneTitle', 'personName'], true)
                                                                               => $column . ' | inlineHtml',
-            $field === 'colorScheme'                                          => $column . ' | colorScheme',
-            $field === 'titleLevel'                                           => $column . ' | titleLevel',
-            default                                                           => $column,
+            $field === 'colorScheme' => $column . ' | colorScheme',
+            $field === 'titleLevel' => $column . ' | titleLevel',
+            default => $column,
         };
     }
 }

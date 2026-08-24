@@ -13,7 +13,7 @@ final class EntryExplanationTest extends TestCase
     /** @return list<array{lang: string, context: string, part: string, entity: string, id: int, sequence: int}> */
     private function parts(array ...$rows): array
     {
-        return array_map(static fn (array $r): array => [
+        return array_map(static fn(array $r): array => [
             'lang' => $r[3] ?? 'en',
             'context' => $r[2],
             'part' => $r[0],

@@ -4,20 +4,19 @@ declare(strict_types=1);
 
 namespace Lameco\KumaCompile\Command;
 
+use Lameco\KumaCompile\Legacy\Introspection;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\Schema;
-use Lameco\KumaCompile\Legacy\Introspection;
 use Lameco\KumaCompile\Report\IntrospectionCheck;
 use Lameco\KumaCompile\Report\SpecDivergence;
 use Lameco\KumaCompile\Target\CraftSchema;
-use Lameco\KumaCompile\Target\TargetSchema;
 use Lameco\KumaCompile\Target\SpecNotes;
 use Lameco\KumaCompile\Target\TargetCheck;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 

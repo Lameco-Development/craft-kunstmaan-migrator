@@ -49,7 +49,7 @@ final class FinalizePass
         if ($onlyEnvironment !== null) {
             $environments = array_filter(
                 $environments,
-                static fn (string $name): bool => $name === $onlyEnvironment,
+                static fn(string $name): bool => $name === $onlyEnvironment,
                 ARRAY_FILTER_USE_KEY,
             );
         }

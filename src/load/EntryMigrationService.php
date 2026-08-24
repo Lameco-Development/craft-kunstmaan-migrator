@@ -7,9 +7,9 @@ namespace lameco\kunstmaanmigrator\load;
 use Craft;
 use craft\base\Element;
 use craft\base\ElementInterface;
+use craft\elements\Entry;
 use craft\enums\PropagationMethod;
 use craft\fields\Matrix;
-use craft\elements\Entry;
 use craft\models\Section;
 use craft\models\Site;
 use lameco\kunstmaanmigrator\craft\CraftElementWriter;
@@ -702,7 +702,7 @@ class EntryMigrationService extends Component
         // NOT ?DateTimeInterface — so PHP's strict typing rejects
         // DateTimeImmutable. Always return a DateTime instance, coercing from
         // DateTimeImmutable when needed.
-        $nativeDate = static function (mixed $raw): ?\DateTime {
+        $nativeDate = static function(mixed $raw): ?\DateTime {
             if ($raw === null || $raw === '') {
                 return null;
             }

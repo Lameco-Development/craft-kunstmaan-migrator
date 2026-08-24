@@ -63,8 +63,8 @@ final class InitCommand extends Command
         $introspection = $artifact !== null ? Introspection::fromFile((string) $artifact) : null;
         $entities = match (true) {
             $introspection !== null => EntityTableIndex::fromIntrospection($introspection),
-            $source !== null        => EntityTableIndex::fromSource((string) $source),
-            default                 => EntityTableIndex::empty(),
+            $source !== null => EntityTableIndex::fromSource((string) $source),
+            default => EntityTableIndex::empty(),
         };
 
         if ($entities->isEmpty()) {

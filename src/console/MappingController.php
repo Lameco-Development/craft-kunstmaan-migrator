@@ -10,9 +10,7 @@ use Lameco\KumaCompile\Legacy\EntityTableIndex;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\MappingCheck;
-use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Mapping\Skeleton;
-use Lameco\KumaCompile\Target\TargetCheck;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
@@ -150,7 +148,7 @@ final class MappingController extends Controller
         file_put_contents($this->out, $yaml);
 
         $this->stdout(sprintf("Wrote %s\n", $this->out), Console::FG_GREEN);
-        $this->stdout("Next: fill it in — Utilities → Kunstmaan Migration, or the file directly — then `mapping/check`.\n");
+        $this->stdout("Next: fill it in — Utilities → Kunstmaan Migrator, or the file directly — then `mapping/check`.\n");
 
         return ExitCode::OK;
     }

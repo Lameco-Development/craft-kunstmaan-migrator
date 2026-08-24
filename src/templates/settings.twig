@@ -1,107 +1,17 @@
 {% import "_includes/forms.twig" as forms %}
 
-{# The migrator only ever runs locally, against a legacy database on the same
-   machine. Craft writes plugin settings into project config, which is committed
-   and deployed — so the connection fields take the NAME of an environment
-   variable, not its value, and the password field refuses anything else. #}
+{# What lives here, and what deliberately does not.
 
-<h2>{{ "Legacy database"|t('kunstmaan-migrator') }}</h2>
-
-<p class="light">
-  {{ "Takes environment variable names, so values stay in .env. Which database each environment reads comes from the mapping."|t('kunstmaan-migrator') }}
-</p>
-
-{{ forms.autosuggestField({
-  label: "Server"|t('kunstmaan-migrator'),
-  id: 'legacyDbServer',
-  name: 'legacyDbServer',
-  value: settings.legacyDbServer,
-  suggestEnvVars: true,
-  errors: settings.getErrors('legacyDbServer'),
-}) }}
-
-{{ forms.textField({
-  label: "Port"|t('kunstmaan-migrator'),
-  id: 'legacyDbPort',
-  name: 'legacyDbPort',
-  type: 'number',
-  size: 6,
-  value: settings.legacyDbPort,
-  errors: settings.getErrors('legacyDbPort'),
-}) }}
-
-{{ forms.autosuggestField({
-  label: "User"|t('kunstmaan-migrator'),
-  id: 'legacyDbUser',
-  name: 'legacyDbUser',
-  value: settings.legacyDbUser,
-  suggestEnvVars: true,
-  errors: settings.getErrors('legacyDbUser'),
-}) }}
-
-{{ forms.autosuggestField({
-  label: "Password"|t('kunstmaan-migrator'),
-  instructions: "Must be an environment variable — a value typed here would be committed to project config."|t('kunstmaan-migrator'),
-  id: 'legacyDbPassword',
-  name: 'legacyDbPassword',
-  value: settings.legacyDbPassword,
-  suggestEnvVars: true,
-  errors: settings.getErrors('legacyDbPassword'),
-}) }}
-
-<hr>
-
-<h2>{{ "Assets"|t('kunstmaan-migrator') }}</h2>
-
-{{ forms.autosuggestField({
-  label: "Old site's uploads folder"|t('kunstmaan-migrator'),
-  instructions: "Leave empty — uploads are at public/uploads/media by convention. Set this only when a site differs."|t('kunstmaan-migrator'),
-  id: 'legacyMediaRoot',
-  name: 'legacyMediaRoot',
-  value: settings.legacyMediaRoot,
-  suggestEnvVars: true,
-  placeholder: '/Users/you/Sites/old-site/public/uploads/media',
-  errors: settings.getErrors('legacyMediaRoot'),
-}) }}
-
-<p class="light">
-  {{ "Where migrated files land."|t('kunstmaan-migrator') }}
-</p>
-
-{# Rendered from Settings::coreSettings(), for the same reason the adapter
-   settings below are rendered from what each adapter declares: a list typed
-   into a template is a list that gets forgotten. `targetVolume` spent this
-   plugin's life invisible while defaulting to a volume half the projects
-   using it do not have. #}
-{% for setting in coreSettings %}
-  {% set pinned = setting.handle in overridden %}
-  {% set warning = pinned
-    ? "Set in config/kunstmaan-migrator.php, which wins over anything saved here."|t('kunstmaan-migrator')
-    : null %}
-
-  {% if setting.type == 'boolean' %}
-    {{ forms.lightswitchField({
-      label: setting.label,
-      instructions: setting.instructions,
-      name: setting.handle,
-      on: settings.core(setting),
-      disabled: pinned,
-      warning: warning,
-    }) }}
-  {% else %}
-    {{ forms.textField({
-      label: setting.label,
-      instructions: setting.instructions,
-      name: setting.handle,
-      value: settings.core(setting),
-      placeholder: setting.default,
-      disabled: pinned,
-      warning: warning,
-    }) }}
-  {% endif %}
-{% endfor %}
-
-<hr>
+   This screen holds the settings that vary with the legacy corpus — which
+   adapter passes run, and the per-adapter knobs (source-table overrides,
+   translation domains, the nav handle) that differ from one Kunstmaan install
+   to the next. Everything machine- or deploy-level — the legacy connection,
+   the mapping path, where assets land — lives in config/kunstmaan-migrator.php
+   and .env: those values are either machine-local (an absolute path, a DB
+   password variable) or one-time operator decisions, and a form that writes
+   them into committed project config invited both kinds to travel to
+   production. The environments themselves are the mapping's to declare; the
+   Mapping screen and the wizard show them where they are edited. #}
 
 <h2>{{ "Adapters"|t('kunstmaan-migrator') }}</h2>
 
@@ -153,9 +63,7 @@
 {# Rendered from what each adapter declares, not from a list kept here. An
    adapter's preferences used to be literal properties on the Settings model
    and fields typed into this template, which meant a project's own adapter
-   could be neither configured nor shown — and meant the single most
-   project-specific value in the plugin, the nav the navigation pass writes
-   into, was editable only in a PHP config file. #}
+   could be neither configured nor shown. #}
 {% for adapter in adapters|filter(adapter => adapter.settings is not empty) %}
   <h3>{{ adapter.label }}</h3>
 
@@ -188,75 +96,19 @@
 
 <hr>
 
-<h2>{{ "Environments"|t('kunstmaan-migrator') }}</h2>
+<h2>{{ "Configuration"|t('kunstmaan-migrator') }}</h2>
 
-{{ forms.autosuggestField({
-  disabled: 'mappingPath' in overridden,
-  warning: 'mappingPath' in overridden
-    ? "Set in config/kunstmaan-migrator.php, which wins over anything saved here."|t('kunstmaan-migrator')
-    : null,
-  label: "Mapping file"|t('kunstmaan-migrator'),
-  instructions: "The mapping decides which databases exist, where uploads live, and which language writes to which Craft site."|t('kunstmaan-migrator'),
-  id: 'mappingPath',
-  name: 'mappingPath',
-  value: settings.mappingPath,
-  suggestEnvVars: true,
-  errors: settings.getErrors('mappingPath'),
-}) }}
+<p class="light">
+  {{ "The connection, the mapping path and asset placement are set in config/kunstmaan-migrator.php and .env — machine-level values a control panel form would commit to project config. This is what is in force right now:"|t('kunstmaan-migrator') }}
+</p>
 
-{{ forms.autosuggestField({
-  label: "Content-model specs"|t('kunstmaan-migrator'),
-  instructions: "Where the block specs live. Leave empty to use docs/content-model/page-builder."|t('kunstmaan-migrator'),
-  id: 'specsPath',
-  name: 'specsPath',
-  value: settings.specsPath,
-  suggestEnvVars: true,
-  placeholder: 'docs/content-model/page-builder',
-  errors: settings.getErrors('specsPath'),
-}) }}
-
-{% if environments is empty %}
-  <p class="light">
-    {{ "Point at a mapping file and save to see the environments it declares."|t('kunstmaan-migrator') }}
-  </p>
-{% else %}
-  <p class="light">
-    {{ "Read-only — edit the mapping file to change any of this."|t('kunstmaan-migrator') }}
-  </p>
-
-  <table class="data fullwidth">
-    <thead>
+<table class="data fullwidth">
+  <tbody>
+    {% for row in effective %}
       <tr>
-        <th>{{ "Environment"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Database"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Upload directories"|t('kunstmaan-migrator') }}</th>
-        <th>{{ "Locale → site"|t('kunstmaan-migrator') }}</th>
+        <th scope="row">{{ row.label|t('kunstmaan-migrator') }}</th>
+        <td>{% if row.value is null or row.value == '' %}<span class="light">—</span>{% else %}<code>{{ row.value }}</code>{% endif %}</td>
       </tr>
-    </thead>
-    <tbody>
-      {% for name, env in environments %}
-        <tr>
-          <th scope="row">{{ name }}</th>
-          <td><code>{{ env.database ?? '—' }}</code></td>
-          <td>
-            {% for root in env.mediaRoot %}
-              <div><code>{{ root }}</code>{% if not loop.first %} <span class="light">{{ "(fallback)"|t('kunstmaan-migrator') }}</span>{% endif %}</div>
-            {% else %}
-              <span class="light">—</span>
-            {% endfor %}
-          </td>
-          <td>
-            {% for locale, handle in env.locales %}
-              <div>
-                <code>{{ locale }}</code> →
-                {% if handle %}<code>{{ handle }}</code>{% else %}<span class="light">{{ "not migrated"|t('kunstmaan-migrator') }}</span>{% endif %}
-              </div>
-            {% else %}
-              <span class="light">—</span>
-            {% endfor %}
-          </td>
-        </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-{% endif %}
+    {% endfor %}
+  </tbody>
+</table>

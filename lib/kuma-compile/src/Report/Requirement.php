@@ -93,20 +93,20 @@ final class Requirement
     public function action(): string
     {
         return match ($this->verdict()) {
-            self::MISSING   => 'set a default in the mapping, or relax the field in Craft',
-            self::PARTIAL   => 'add a fallback for the empty rows, or relax the field in Craft',
+            self::MISSING => 'set a default in the mapping, or relax the field in Craft',
+            self::PARTIAL => 'add a fallback for the empty rows, or relax the field in Craft',
             self::DEFAULTED => sprintf('none — Craft writes `%s`; override in the mapping to choose otherwise', (string) $this->craftDefault),
-            default         => '',
+            default => '',
         };
     }
 
     public function affected(): int
     {
         return match ($this->verdict()) {
-            self::MISSING             => $this->live ?? 0,
-            self::PARTIAL             => $this->empty ?? 0,
-            self::DEFAULTED           => $this->empty ?? $this->live ?? 0,
-            default                   => 0,
+            self::MISSING => $this->live ?? 0,
+            self::PARTIAL => $this->empty ?? 0,
+            self::DEFAULTED => $this->empty ?? $this->live ?? 0,
+            default => 0,
         };
     }
 }

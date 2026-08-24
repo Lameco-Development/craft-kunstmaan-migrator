@@ -43,14 +43,14 @@ class Install extends Migration
         // D-06: schema byte-for-byte from v1.x src/craft/migrations/Install.php.
         // The 570-row CQM rehearsal site already has rows in this exact shape.
         $this->createTable(self::STATE_TABLE, [
-            'id'          => $this->primaryKey(),
-            'source'      => $this->string(64)->notNull(),
-            'sourceKey'   => $this->string(255)->notNull(),
-            'targetType'  => $this->string(64)->notNull(),
-            'targetId'    => $this->integer(),
-            'targetUid'   => $this->uid(),
-            'siteId'      => $this->integer()->null(),
-            'meta'        => $this->json()->null(),
+            'id' => $this->primaryKey(),
+            'source' => $this->string(64)->notNull(),
+            'sourceKey' => $this->string(255)->notNull(),
+            'targetType' => $this->string(64)->notNull(),
+            'targetId' => $this->integer(),
+            'targetUid' => $this->uid(),
+            'siteId' => $this->integer()->null(),
+            'meta' => $this->json()->null(),
             'dateCreated' => $this->dateTime()->notNull(),
             'dateUpdated' => $this->dateTime()->notNull(),
         ]);
@@ -89,11 +89,11 @@ class Install extends Migration
         // D-09 step 3: greenfield Craft host — mint a new field + UID.
         // Plain Text type per PROJECT.md Key Decisions ("kunstmaanSourceId field stays Plain Text").
         $field = new PlainText([
-            'name'         => 'Kunstmaan Source ID',
-            'handle'       => self::FIELD_HANDLE,
+            'name' => 'Kunstmaan Source ID',
+            'handle' => self::FIELD_HANDLE,
             'instructions' => "Legacy Kunstmaan source identifier (format '<source>:<id>'). Used by the Kunstmaan→Craft migrator for upsert lookup. Do not edit.",
-            'searchable'   => true,
-            'uid'          => StringHelper::UUID(),
+            'searchable' => true,
+            'uid' => StringHelper::UUID(),
         ]);
         $field->charLimit = 255;
 

@@ -11,12 +11,11 @@ use craft\helpers\App;
 use craft\helpers\Console;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\load\EntryExplanation;
 use lameco\kunstmaanmigrator\load\ExplainContext;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
 use yii\console\ExitCode;
 
 /**
@@ -221,8 +220,8 @@ class StateController extends Controller
         }
 
         arsort($byPart);
-        usort($worst, static fn (array $a, array $b): int => $b['unexplained'] <=> $a['unexplained']);
-        uasort($byEntryType, static fn (array $a, array $b): int => $b['unexplained'] <=> $a['unexplained']);
+        usort($worst, static fn(array $a, array $b): int => $b['unexplained'] <=> $a['unexplained']);
+        uasort($byEntryType, static fn(array $a, array $b): int => $b['unexplained'] <=> $a['unexplained']);
 
         $this->stdout(json_encode([
             'environment' => $environment,
@@ -231,7 +230,7 @@ class StateController extends Controller
             'blocksWritten' => $written,
             'missingByDecision' => $decided,
             'unexplained' => $unexplained,
-            'byEntryType' => array_filter($byEntryType, static fn (array $r): bool => $r['unexplained'] > 0),
+            'byEntryType' => array_filter($byEntryType, static fn(array $r): bool => $r['unexplained'] > 0),
             'byPart' => $byPart,
             // Ranked by size, then sampled across entry types: the tail matters more than the
             // head here. Fifty `casePage` nodes each losing ten placements will otherwise fill
@@ -443,7 +442,7 @@ class StateController extends Controller
 
         sort($lost);
         sort($added);
-        usort($recreated, static fn (array $a, array $b): int => strcmp($a['sourceUid'], $b['sourceUid']));
+        usort($recreated, static fn(array $a, array $b): int => strcmp($a['sourceUid'], $b['sourceUid']));
 
         return [
             'counts' => [

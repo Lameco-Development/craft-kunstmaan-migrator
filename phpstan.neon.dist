@@ -19,6 +19,7 @@ parameters:
         - vendor/nystudio107/craft-retour/src
         - vendor/verbb/navigation/src
         - vendor/verbb/formie/src
+        - vendor/spicyweb/craft-embedded-assets/src
 
 # The lib boundary, held mechanically rather than by taste.
 services:

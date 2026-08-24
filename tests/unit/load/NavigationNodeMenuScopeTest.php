@@ -39,5 +39,4 @@ final class NavigationNodeMenuScopeTest extends TestCase
 
         self::assertContains(SiteMap::class, $types, 'migrateNodeMenu reads $sites; it must be given one.');
     }
-
 }

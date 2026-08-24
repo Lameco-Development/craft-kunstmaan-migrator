@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\KumaCompile\Mapping;
 
-use Lameco\KumaCompile\Legacy\Introspection;
-
 use Lameco\KumaCompile\Legacy\EntityTableIndex;
+
+use Lameco\KumaCompile\Legacy\Introspection;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 
 /**
@@ -455,7 +455,7 @@ final class Skeleton
     {
         $partTables = array_values(array_filter(
             $db->tables(),
-            static fn (string $t): bool => str_ends_with($t, '_page_parts'),
+            static fn(string $t): bool => str_ends_with($t, '_page_parts'),
         ));
 
         $children = [];
@@ -503,7 +503,7 @@ final class Skeleton
             return null;
         }
 
-        usort($candidates, static fn (string $a, string $b): int => strlen($a) <=> strlen($b));
+        usort($candidates, static fn(string $a, string $b): int => strlen($a) <=> strlen($b));
 
         return $candidates[0];
     }

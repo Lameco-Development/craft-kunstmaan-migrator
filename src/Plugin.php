@@ -5,13 +5,11 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator;
 
 use Craft;
-use craft\helpers\App;
-use Lameco\KumaCompile\Mapping\Mapping;
-use Throwable;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
 use craft\events\RegisterComponentTypesEvent;
 use craft\events\RegisterUrlRulesEvent;
+use craft\helpers\App;
 use craft\services\Utilities;
 use craft\web\UrlManager;
 use lameco\kunstmaanmigrator\adapters\AdapterGate;
@@ -30,9 +28,9 @@ use lameco\kunstmaanmigrator\load\GlobalsMigrationService;
 use lameco\kunstmaanmigrator\load\MigrationStateService;
 use lameco\kunstmaanmigrator\load\NavigationMigrationService;
 use lameco\kunstmaanmigrator\load\RedirectMigrationService;
-use lameco\kunstmaanmigrator\load\TranslationMigrationService;
-use lameco\kunstmaanmigrator\load\SeoMigrationService;
 use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
+use lameco\kunstmaanmigrator\load\SeoMigrationService;
+use lameco\kunstmaanmigrator\load\TranslationMigrationService;
 use lameco\kunstmaanmigrator\mapping\SetupStep;
 use lameco\kunstmaanmigrator\models\Settings;
 use PDO;
@@ -96,7 +94,7 @@ class Plugin extends BasePlugin
             return null;
         }
 
-        $item['label'] = Craft::t('kunstmaan-migrator', 'Kunstmaan Migration');
+        $item['label'] = Craft::t('kunstmaan-migrator', 'Kunstmaan Migrator');
         $item['subnav'] = [
             'mapping' => [
                 'label' => Craft::t('kunstmaan-migrator', 'Mapping'),
@@ -133,19 +131,19 @@ class Plugin extends BasePlugin
             'components' => [
                 'legacyDbService' => LegacyDbService::class,      // Phase 1 (literal preserved for PluginBootstrapTest)
                 'kunstmaanEnvReader' => KunstmaanEnvReader::class, // Settings::beforeValidate() DSN auto-fill seam
-                'migrationStateService'   => MigrationStateService::class,
+                'migrationStateService' => MigrationStateService::class,
                 'ckeditorRewriterService' => CkeditorRewriterService::class,
                 'ckeditorFinalizeService' => CkeditorFinalizeService::class,
-                'assetMigrationService'   => AssetMigrationService::class,
-                'entryMigrationService'   => EntryMigrationService::class,
+                'assetMigrationService' => AssetMigrationService::class,
+                'entryMigrationService' => EntryMigrationService::class,
                 // Phase 4 additions — load-side adapter services.
-                'seoMigrationService'        => SeoMigrationService::class,
-                'seomaticPayloadBuilder'     => SeomaticPayloadBuilder::class,
-                'redirectMigrationService'   => RedirectMigrationService::class,
+                'seoMigrationService' => SeoMigrationService::class,
+                'seomaticPayloadBuilder' => SeomaticPayloadBuilder::class,
+                'redirectMigrationService' => RedirectMigrationService::class,
                 'navigationMigrationService' => NavigationMigrationService::class,
                 'translationMigrationService' => TranslationMigrationService::class,
-                'formMigrationService'        => FormMigrationService::class,
-                'globalsMigrationService'     => GlobalsMigrationService::class,
+                'formMigrationService' => FormMigrationService::class,
+                'globalsMigrationService' => GlobalsMigrationService::class,
             ],
         ];
     }
@@ -164,8 +162,8 @@ class Plugin extends BasePlugin
         if (!Craft::$app->has('legacyDb', true)) {
             $connection = $this->getSettings()->legacyConnection();
             Craft::$app->set('legacyDb', [
-                'class'       => Connection::class,
-                'dsn'         => sprintf(
+                'class' => Connection::class,
+                'dsn' => sprintf(
                     'mysql:host=%s;port=%d;dbname=%s',
                     $connection['host'],
                     $connection['port'],
@@ -174,11 +172,11 @@ class Plugin extends BasePlugin
                     // outside a migration.
                     (string) App::parseEnv($this->getSettings()->legacyDbDatabase),
                 ),
-                'username'    => $connection['user'],
-                'password'    => $connection['password'],
-                'charset'     => $connection['charset'],
+                'username' => $connection['user'],
+                'password' => $connection['password'],
+                'charset' => $connection['charset'],
                 'tablePrefix' => $connection['tablePrefix'],
-                'attributes'  => [PDO::ATTR_EMULATE_PREPARES => false],
+                'attributes' => [PDO::ATTR_EMULATE_PREPARES => false],
             ]);
         }
 
@@ -193,7 +191,7 @@ class Plugin extends BasePlugin
         Event::on(
             UrlManager::class,
             UrlManager::EVENT_REGISTER_CP_URL_RULES,
-            static function (RegisterUrlRulesEvent $event): void {
+            static function(RegisterUrlRulesEvent $event): void {
                 $event->rules['kunstmaan-migrator'] = 'kunstmaan-migrator/migration/home';
                 $event->rules['kunstmaan-migrator/mapping'] = 'kunstmaan-migrator/migration/mapping';
                 $event->rules['kunstmaan-migrator/mapping-row'] = 'kunstmaan-migrator/migration/mapping-row';
@@ -213,7 +211,7 @@ class Plugin extends BasePlugin
         Event::on(
             Utilities::class,
             Utilities::EVENT_REGISTER_UTILITIES,
-            static function (RegisterComponentTypesEvent $event): void {
+            static function(RegisterComponentTypesEvent $event): void {
                 $event->types[] = \lameco\kunstmaanmigrator\utilities\LogUtility::class;
             },
         );
@@ -224,7 +222,7 @@ class Plugin extends BasePlugin
         // unrelated console command. onInit() runs once the application is up,
         // which is early enough for a console command and late enough to cost a
         // cached page nothing.
-        Craft::$app->onInit(function (): void {
+        Craft::$app->onInit(function(): void {
             $this->wireServices();
         });
     }
@@ -242,17 +240,17 @@ class Plugin extends BasePlugin
         // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
         // ?object — AssetMigrationService satisfies the duck-typed surface.
         // The finalize pass shares the one rewriter, so its lazily-warmed caches are warmed once.
-        $this->ckeditorFinalizeService->rewriter      = $this->ckeditorRewriterService;
+        $this->ckeditorFinalizeService->rewriter = $this->ckeditorRewriterService;
         $this->ckeditorFinalizeService->elementWriter = new CraftElementWriter();
 
         $this->ckeditorRewriterService->migrationState = $this->migrationStateService;
-        $this->ckeditorRewriterService->legacyDb       = $this->legacyDbService;
-        $this->ckeditorRewriterService->assetResolver  = $this->assetMigrationService;
+        $this->ckeditorRewriterService->legacyDb = $this->legacyDbService;
+        $this->ckeditorRewriterService->assetResolver = $this->assetMigrationService;
 
         // AssetMigrationService deps.
-        $this->assetMigrationService->legacyDb       = $this->legacyDbService;
+        $this->assetMigrationService->legacyDb = $this->legacyDbService;
         $this->assetMigrationService->migrationState = $this->migrationStateService;
-        $this->assetMigrationService->elementWriter  = new CraftElementWriter();
+        $this->assetMigrationService->elementWriter = new CraftElementWriter();
         $settingsTargetVolume = (string) ($this->getSettings()->targetVolume ?? '');
         if ($settingsTargetVolume !== '') {
             $this->assetMigrationService->targetVolume = $settingsTargetVolume;
@@ -275,9 +273,9 @@ class Plugin extends BasePlugin
         // the mapping states it per environment, so MigrateController::applySites() fills it
         // from there for the environment being run. Empty is tolerated at init() —
         // saveEntryForSites() throws on first access if nothing has set it.
-        $this->entryMigrationService->stateService   = $this->migrationStateService;
+        $this->entryMigrationService->stateService = $this->migrationStateService;
         $this->entryMigrationService->elementWriter = new CraftElementWriter();
-        $this->entryMigrationService->sites         = [];
+        $this->entryMigrationService->sites = [];
 
         // Phase 4 Adapter wiring — D-54 / D-56 / D-57 / PATTERNS flag #7.
 
@@ -286,40 +284,40 @@ class Plugin extends BasePlugin
 
         // SeoMigrationService — 5 sibling deps + sites map set per environment.
         $adapterGate = new AdapterGate(new CraftPluginRegistry(), $this->getSettings());
-        $this->seoMigrationService->adapterGate         = $adapterGate;
-        $this->redirectMigrationService->adapterGate    = $adapterGate;
-        $this->navigationMigrationService->adapterGate  = $adapterGate;
+        $this->seoMigrationService->adapterGate = $adapterGate;
+        $this->redirectMigrationService->adapterGate = $adapterGate;
+        $this->navigationMigrationService->adapterGate = $adapterGate;
         $this->translationMigrationService->adapterGate = $adapterGate;
-        $this->formMigrationService->adapterGate        = $adapterGate;
-        $this->formMigrationService->stateService       = $this->migrationStateService;
+        $this->formMigrationService->adapterGate = $adapterGate;
+        $this->formMigrationService->stateService = $this->migrationStateService;
 
-        $this->globalsMigrationService->adapterGate       = $adapterGate;
-        $this->globalsMigrationService->stateService      = $this->migrationStateService;
-        $this->globalsMigrationService->elementWriter     = new CraftElementWriter();
+        $this->globalsMigrationService->adapterGate = $adapterGate;
+        $this->globalsMigrationService->stateService = $this->migrationStateService;
+        $this->globalsMigrationService->elementWriter = new CraftElementWriter();
         $this->globalsMigrationService->navigationGateway = new VerbbNavigationGateway();
 
-        $this->seoMigrationService->legacyDb      = $this->legacyDbService;
-        $this->seoMigrationService->stateService  = $this->migrationStateService;
-        $this->seoMigrationService->seoPayload    = $this->seomaticPayloadBuilder;
+        $this->seoMigrationService->legacyDb = $this->legacyDbService;
+        $this->seoMigrationService->stateService = $this->migrationStateService;
+        $this->seoMigrationService->seoPayload = $this->seomaticPayloadBuilder;
         $this->seoMigrationService->elementWriter = new CraftElementWriter();
 
         // RedirectMigrationService — 3 sibling deps + sites map (per environment).
-        $this->redirectMigrationService->legacyDb     = $this->legacyDbService;
+        $this->redirectMigrationService->legacyDb = $this->legacyDbService;
         $this->redirectMigrationService->stateService = $this->migrationStateService;
 
         // NavigationMigrationService — same shape as Redirect adapter.
         // verbb/navigation node migration. Reads kuma_menu + kuma_menu_item,
         // resolves entry-typed nodes via state map. Source-table overrides
         // flow from Settings below.
-        $this->navigationMigrationService->legacyDb      = $this->legacyDbService;
-        $this->navigationMigrationService->stateService  = $this->migrationStateService;
+        $this->navigationMigrationService->legacyDb = $this->legacyDbService;
+        $this->navigationMigrationService->stateService = $this->migrationStateService;
         $this->navigationMigrationService->elementWriter = new CraftElementWriter();
         $this->navigationMigrationService->navigationGateway = new VerbbNavigationGateway();
 
         // TranslationMigrationService — kuma_translation → Craft site
         // translations PHP catalogs (+ enupal-translate DB rows). Same
         // wiring shape as the other adapters.
-        $this->translationMigrationService->legacyDb     = $this->legacyDbService;
+        $this->translationMigrationService->legacyDb = $this->legacyDbService;
         $this->translationMigrationService->stateService = $this->migrationStateService;
 
         // D-57: Settings table-name overrides wired here so adapter services pick them up.
@@ -364,57 +362,42 @@ class Plugin extends BasePlugin
             'settings' => $this->getSettings(),
             'adapters' => $registry->all(),
             'detected' => $detected,
-            'environments' => $this->declaredEnvironments(),
-            'coreSettings' => Settings::coreSettings(),
-            'overridden' => $this->configFileKeys(),
+            'effective' => $this->effectiveConfiguration(),
         ]);
     }
 
     /**
-     * The settings this project pins in `config/kunstmaan-migrator.php`.
+     * The machine-level configuration currently in force, for the settings
+     * screen to state rather than offer.
      *
-     * A config file beats project config in Craft, so a field backed by one is
-     * a field an operator can edit and save with no effect whatsoever. Enreach
-     * pins two. Craft's own settings screens disable such fields and say why;
-     * a screen that accepts a value it will ignore is worse than one that does
-     * not offer it.
+     * These values used to be form fields. Every one of them is either
+     * machine-local (the mapping's absolute path, the DB variable names) or a
+     * one-time operator decision (where assets land), and a form that writes
+     * them into committed project config invited both kinds to travel to
+     * production — enreach pinned them in config/kunstmaan-migrator.php, at
+     * which point the fields rendered disabled and the section was decoration.
      *
-     * @return list<string>
+     * @return list<array{label: string, value: ?string}>
      */
-    private function configFileKeys(): array
+    private function effectiveConfiguration(): array
     {
-        $config = Craft::$app->getConfig()->getConfigFromFile($this->handle);
+        $settings = $this->getSettings();
+        $connection = $settings->legacyConnection();
+        $strategy = (string) ($settings->assetFolderStrategy ?? 'year');
+        $subfolder = (string) ($settings->targetSubfolder ?? '');
 
-        return array_values(array_map(strval(...), array_keys($config)));
-    }
-
-    /**
-     * The environments the mapping declares, for the settings screen to show.
-     *
-     * Read-only on purpose. A control panel form is worse than a YAML file at
-     * exactly the parts a real corpus needs: Enreach's DE environment looks for
-     * uploads in its own directory and then falls back to COM's, and its COM
-     * environment marks two locales as deliberately not migrated with a reason
-     * attached — an ordered fallback list and a "no, and here is why" that a
-     * checkbox cannot express. It also belongs in the same reviewable diff as
-     * the field mappings it travels with.
-     *
-     * @return array<string, array<string, mixed>>
-     */
-    private function declaredEnvironments(): array
-    {
-        $path = App::parseEnv($this->getSettings()->mappingPath);
-
-        if (!is_string($path) || $path === '' || !is_file($path)) {
-            return [];
-        }
-
-        try {
-            return Mapping::fromFile($path)->environments();
-        } catch (Throwable) {
-            // A broken mapping is the migrate command's problem to report properly;
-            // the settings screen just shows nothing rather than fataling.
-            return [];
-        }
+        return [
+            ['label' => 'Mapping file', 'value' => (string) App::parseEnv($settings->mappingPath)],
+            ['label' => 'Legacy database server', 'value' => $connection['host'] . ':' . $connection['port']],
+            ['label' => 'Legacy database user', 'value' => $connection['user']],
+            ['label' => 'Asset volume', 'value' => (string) $settings->targetVolume],
+            [
+                'label' => 'Asset placement',
+                'value' => $strategy === 'legacy-tree'
+                    ? rtrim($subfolder . '/', '/') . '{legacy folder tree}'
+                    : rtrim($subfolder . '/', '/') . '{year}',
+            ],
+            ['label' => 'Size cap bypass', 'value' => $settings->skipAssetSizeValidation ? 'on' : 'off'],
+        ];
     }
 }

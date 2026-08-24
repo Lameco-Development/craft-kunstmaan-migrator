@@ -6,6 +6,7 @@ namespace lameco\kunstmaanmigrator\controllers;
 
 use Craft;
 use craft\helpers\App;
+use craft\helpers\Queue as QueueHelper;
 use craft\web\Controller;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
@@ -14,19 +15,19 @@ use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Target\CraftSchema;
 use Lameco\KumaCompile\Target\SpecNotes;
 use Lameco\KumaCompile\Target\Suggester;
+use lameco\kunstmaanmigrator\compile\TargetModel;
+use lameco\kunstmaanmigrator\console\StateController;
 use lameco\kunstmaanmigrator\mapping\FieldExpression;
 use lameco\kunstmaanmigrator\mapping\MappingEditor;
 use lameco\kunstmaanmigrator\mapping\MappingRow;
-use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\run\RunPanel;
 use lameco\kunstmaanmigrator\ProductionGuard;
-use lameco\kunstmaanmigrator\console\StateController;
 use lameco\kunstmaanmigrator\queue\FinalizeJob;
 use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
 use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use lameco\kunstmaanmigrator\run\Diagnostics;
+use lameco\kunstmaanmigrator\run\RunPanel;
 use Throwable;
 use yii\web\BadRequestHttpException;
 use yii\web\Response;
@@ -82,7 +83,7 @@ final class MigrationController extends Controller
 
         $export = StateController::buildExportRows(Plugin::getInstance()->migrationStateService);
         $lines = array_map(
-            static fn (array $row): string => (string) json_encode($row, JSON_UNESCAPED_SLASHES),
+            static fn(array $row): string => (string) json_encode($row, JSON_UNESCAPED_SLASHES),
             $export->rows,
         );
 
@@ -130,7 +131,7 @@ final class MigrationController extends Controller
         // a target, and only when a content-model spec directory is there to
         // draft from — a fresh mapping is exactly when all three hold.
         $undecided = $lane === 'parts'
-            ? count(array_filter($rows, static fn ($row): bool => $row->target === null && $row->dropped === null))
+            ? count(array_filter($rows, static fn($row): bool => $row->target === null && $row->dropped === null))
             : 0;
         $specsPath = self::specsPath();
 
@@ -152,7 +153,7 @@ final class MigrationController extends Controller
         return $this->renderTemplate('kunstmaan-migrator/_mapping', [
             'lane' => $lane,
             'lanes' => self::EDITABLE_LANES,
-            'open' => array_map(static fn (?array $p): ?int => $p['open'] ?? null, $progress),
+            'open' => array_map(static fn(?array $p): ?int => $p['open'] ?? null, $progress),
             'rows' => $rows,
             'progress' => $progress[$lane] ?? null,
             'path' => $editor->path(),
@@ -290,7 +291,7 @@ final class MigrationController extends Controller
 
         if ($lane === 'sidecars') {
             $mapped = array_keys($row->map);
-            usort($fields, static fn (string $a, string $b): int =>
+            usort($fields, static fn(string $a, string $b): int =>
                 [!in_array($a, $mapped, true), $a] <=> [!in_array($b, $mapped, true), $b]);
         }
 
@@ -680,41 +681,42 @@ final class MigrationController extends Controller
             return $this->asJson(['ok' => false, 'message' => $e->getMessage()]);
         }
 
-        $queued = [];
+        $selected = [];
 
         foreach (array_keys($environments) as $environment) {
             if (is_string($only) && $only !== '' && $only !== $environment) {
                 continue;
             }
 
-            Craft::$app->getQueue()->push(new MigrateEnvironmentJob([
-                'mappingPath' => $path,
-                'environment' => (string) $environment,
-                'dryRun' => $dryRun,
-                'force' => $force,
-                'entriesOnly' => $pass === 'entries',
-            ]));
-
-            $queued[] = (string) $environment;
+            $selected[] = (string) $environment;
         }
 
-        if ($queued === []) {
+        if ($selected === []) {
             return $this->asJson([
                 'ok' => false,
                 'message' => Craft::t('kunstmaan-migrator', 'The mapping declares no such environment.'),
             ]);
         }
 
-        // The two corpus-wide passes, chained onto the same queue rather than left
-        // for the operator to remember. `migrate` runs both at the end of an inline
-        // run, so a queued "full" that stopped after the environments was not the
-        // same migration under a different name — it left every deferred reference
-        // dangling and every `[NT<id>]` unrewritten, with nothing saying so. The
-        // queue is FIFO, which is the ordering both passes need: they resolve
-        // against entries that must already exist.
+        // One job starts the chain (#48): each environment's last batch pushes
+        // its adapter pass, each adapter pass pushes the next environment, and
+        // the corpus-wide fixup + finalize run only after the last one — an
+        // ordering the queue now enforces structurally, where FIFO used to
+        // merely suggest it (#47) and the web runner proved it a suggestion.
+        QueueHelper::push(job: new MigrateEnvironmentJob([
+            'mappingPath' => $path,
+            'environment' => $selected[0],
+            'remainingEnvironments' => array_values(array_slice($selected, 1)),
+            'dryRun' => $dryRun,
+            'force' => $force,
+            'entriesOnly' => $pass === 'entries',
+            'chainCorpusPasses' => $pass === 'full',
+            'mappingHash' => sha1((string) file_get_contents($path)),
+        ]), priority: 512);
+
+        $queued = $selected;
+
         if ($pass === 'full') {
-            Craft::$app->getQueue()->push(new ResolveDeferredRefsJob());
-            Craft::$app->getQueue()->push(new FinalizeJob(['mappingPath' => $path, 'dryRun' => $dryRun]));
             $queued[] = 'fixup';
             $queued[] = 'finalize';
         }
@@ -724,7 +726,7 @@ final class MigrationController extends Controller
         return $this->asJson([
             'ok' => true,
             'queued' => $queued,
-            'message' => Craft::t('kunstmaan-migrator', '{n, plural, =1{Started. 1 job queued.} other{Started. # jobs queued.}}', [
+            'message' => Craft::t('kunstmaan-migrator', '{n, plural, =1{Started. 1 stage queued.} other{Started. # stages, chained.}}', [
                 'n' => count($queued),
             ]),
         ]);

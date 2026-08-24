@@ -120,7 +120,7 @@ final class StructuralAncestorTest extends TestCase
         $out = [];
 
         (new Compiler(Mapping::fromFile($path), new Transforms()))
-            ->compile($this->db(), 'COM', static function (array $p) use (&$out): void {
+            ->compile($this->db(), 'COM', static function(array $p) use (&$out): void {
                 $out[] = $p;
             });
 
@@ -210,7 +210,7 @@ final class StructuralAncestorTest extends TestCase
         self::assertArrayNotHasKey('parentRef', $payloads['kuma:COM:kuma_nodes:28']['sites']['comEnUs']);
         self::assertArrayNotHasKey('kuma:COM:kuma_nodes:1', array_filter(
             $payloads,
-            static fn (array $p): bool => (bool) ($p['structural'] ?? false),
+            static fn(array $p): bool => (bool) ($p['structural'] ?? false),
         ));
     }
 
@@ -255,7 +255,7 @@ final class StructuralAncestorTest extends TestCase
         file_put_contents($path, self::MAPPING);
 
         $compiler = new Compiler(Mapping::fromFile($path), new Transforms());
-        $compiler->compile($this->db(), 'COM', static function (array $p): void {
+        $compiler->compile($this->db(), 'COM', static function(array $p): void {
         });
 
         // Three case pages and one home page are content; the two ancestors are not.
@@ -271,12 +271,12 @@ final class StructuralAncestorTest extends TestCase
 
         $compiler = new Compiler(Mapping::fromFile($path), new Transforms());
         $payloads = [];
-        $compiler->compile($this->db(), 'COM', static function (array $p) use (&$payloads): void {
+        $compiler->compile($this->db(), 'COM', static function(array $p) use (&$payloads): void {
             $payloads[] = $p;
         });
 
         self::assertSame(0, $compiler->structuralCount());
-        self::assertSame([], array_filter($payloads, static fn (array $p): bool => (bool) ($p['structural'] ?? false)));
+        self::assertSame([], array_filter($payloads, static fn(array $p): bool => (bool) ($p['structural'] ?? false)));
         self::assertArrayHasKey('structural:no-entry-type:COM', $compiler->skipped());
 
         // …and the children that lose their segment are counted too, so a run that cannot

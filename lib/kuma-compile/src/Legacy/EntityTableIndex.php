@@ -70,7 +70,7 @@ final class EntityTableIndex
         }
 
         foreach ($children as &$collections) {
-            usort($collections, static fn (array $a, array $b): int => $a['table'] <=> $b['table']);
+            usort($collections, static fn(array $a, array $b): int => $a['table'] <=> $b['table']);
         }
 
         return new self($tables, $children);
@@ -113,7 +113,7 @@ final class EntityTableIndex
         }
 
         foreach ($children as &$collections) {
-            usort($collections, static fn (array $a, array $b): int => $a['table'] <=> $b['table']);
+            usort($collections, static fn(array $a, array $b): int => $a['table'] <=> $b['table']);
         }
 
         return new self($tables, $children);

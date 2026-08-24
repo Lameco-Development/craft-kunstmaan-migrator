@@ -54,23 +54,60 @@ final class Transforms
     public function apply(string $name, mixed $value, ?string $context = null): mixed
     {
         return match ($name) {
-            'titleLevel'  => $this->titleLevel($value, $context),
+            'titleLevel' => $this->titleLevel($value, $context),
             'colorScheme' => $this->colorScheme($value, $context),
-            'variant'     => $this->variant($value),
-            'bool'        => $value !== null && (int) $value === 1,
-            'centered'    => in_array(strtolower(trim((string) ($value ?? ''))), ['center', 'centered'], true),
-            'ckeditor'    => $this->ckeditor($value),
-            'inlineHtml'  => $this->inlineHtml($value),
+            'variant' => $this->variant($value),
+            'bool' => $value !== null && (int) $value === 1,
+            'centered' => in_array(strtolower(trim((string) ($value ?? ''))), ['center', 'centered'], true),
+            'ckeditor' => $this->ckeditor($value),
+            'inlineHtml' => $this->inlineHtml($value),
             'externalUrl' => $this->externalUrl($value, $context),
             'beforeComma' => $this->commaPart($value, 0),
-            'afterComma'  => $this->commaPart($value, 1),
-            'url'         => $this->url($value, $context),
-            'mailto'      => $this->scheme($value, 'mailto:', $context),
-            'tel'         => $this->scheme($value, 'tel:', $context),
-            'asset'       => $value === null ? null : ['_asset' => (string) $value],
-            'ref'         => $value === null ? null : ['_ref' => (string) $value],
-            default       => throw new \InvalidArgumentException(sprintf('Unknown transform `%s`', $name)),
+            'afterComma' => $this->commaPart($value, 1),
+            'url' => $this->url($value, $context),
+            'mailto' => $this->scheme($value, 'mailto:', $context),
+            'tel' => $this->scheme($value, 'tel:', $context),
+            'asset' => $value === null ? null : ['_asset' => (string) $value],
+            'ref' => $value === null ? null : ['_ref' => (string) $value],
+            default => $this->configured($name, $value, $context),
         };
+    }
+
+    /**
+     * A transform the mapping declares rather than the code: any `transforms:` entry with a
+     * `map:` is usable as `column | <name>`.
+     *
+     * `colorScheme` proved the shape — a per-project vocabulary collapse — and then a second
+     * field with a *different* vocabulary needed the same move: `heroColorScheme` offers
+     * indigo/lavender where `commonColorScheme` offers purple, so one shared map cannot serve
+     * both. A name without a configured `map:` still throws: a typo'd transform name must
+     * fail the compile, not silently pass values through.
+     */
+    private function configured(string $name, mixed $value, ?string $context): mixed
+    {
+        $spec = $this->config[$name] ?? null;
+        $map = is_array($spec) ? ($spec['map'] ?? null) : null;
+
+        if (!is_array($map)) {
+            throw new \InvalidArgumentException(sprintf('Unknown transform `%s`', $name));
+        }
+
+        $raw = strtolower(trim((string) ($value ?? '')));
+
+        if (array_key_exists($raw, $map)) {
+            $to = (string) $map[$raw];
+
+            if ($raw !== '' && $to !== $raw) {
+                $this->record($name, $raw, $to, $context);
+            }
+
+            return $to;
+        }
+
+        $fallback = $spec['fallback'] ?? null;
+        $this->record($name, $raw, $fallback ?? 'null', $context);
+
+        return $fallback === null ? null : (string) $fallback;
     }
 
     /**

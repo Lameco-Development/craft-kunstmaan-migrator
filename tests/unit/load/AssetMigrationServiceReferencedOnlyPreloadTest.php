@@ -20,7 +20,7 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
     {
         putenv('LEGACY_MEDIA_PATH=' . dirname(__DIR__, 3));
 
-        $legacyDb = new class extends LegacyDbService {
+        $legacyDb = new class() extends LegacyDbService {
             /** @var list<string> */
             public array $queries = [];
 
@@ -50,7 +50,7 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
             }
         };
 
-        $state = new class extends MigrationStateService {
+        $state = new class() extends MigrationStateService {
             public function get(string $source, string $key, ?int $siteId = null): ?array
             {
                 return null;
@@ -76,7 +76,7 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
     {
         putenv('LEGACY_MEDIA_PATH=' . dirname(__DIR__, 3));
 
-        $legacyDb = new class extends LegacyDbService {
+        $legacyDb = new class() extends LegacyDbService {
             /** @var list<string> */
             public array $queries = [];
 
@@ -89,7 +89,7 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
 
         $service = new AssetMigrationService();
         $service->legacyDb = $legacyDb;
-        $service->migrationState = new class extends MigrationStateService {
+        $service->migrationState = new class() extends MigrationStateService {
             public function get(string $source, string $key, ?int $siteId = null): ?array
             {
                 return null;

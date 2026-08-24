@@ -11,7 +11,6 @@ use Lameco\KumaCompile\Report\FillMeasurer;
 use Lameco\KumaCompile\Report\Readiness;
 use Lameco\KumaCompile\Report\Requirement;
 use Lameco\KumaCompile\Target\CraftSchema;
-use Lameco\KumaCompile\Target\TargetSchema;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -103,9 +102,9 @@ final class ReadinessCommand extends Command
 
         $shown = $input->getOption('all')
             ? $requirements
-            : array_values(array_filter($requirements, static fn (Requirement $r): bool => $r->verdict() !== Requirement::OK));
+            : array_values(array_filter($requirements, static fn(Requirement $r): bool => $r->verdict() !== Requirement::OK));
 
-        usort($shown, static function (Requirement $a, Requirement $b): int {
+        usort($shown, static function(Requirement $a, Requirement $b): int {
             $rank = [
                 Requirement::MISSING => 0,
                 Requirement::PARTIAL => 1,
@@ -134,7 +133,7 @@ final class ReadinessCommand extends Command
             }
         }
 
-        $unsatisfied = count(array_filter($requirements, static fn (Requirement $r): bool => $r->verdict() !== Requirement::OK));
+        $unsatisfied = count(array_filter($requirements, static fn(Requirement $r): bool => $r->verdict() !== Requirement::OK));
 
         return $input->getOption('strict') && $unsatisfied > 0 ? Command::FAILURE : Command::SUCCESS;
     }
@@ -172,7 +171,7 @@ final class ReadinessCommand extends Command
         }
 
         unset($row);
-        usort($byField, static fn (array $a, array $b): int => [$b['placements'], $b['live']] <=> [$a['placements'], $a['live']]);
+        usort($byField, static fn(array $a, array $b): int => [$b['placements'], $b['live']] <=> [$a['placements'], $a['live']]);
 
         if ($json) {
             $output->writeln((string) json_encode(array_values($byField), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -195,7 +194,7 @@ final class ReadinessCommand extends Command
 
         $io->table(
             ['field', 'entry types', 'lanes', 'live rows', 'Craft writes'],
-            array_map(static fn (array $row): array => [
+            array_map(static fn(array $row): array => [
                 $row['field'],
                 $row['placements'] . ($row['placements'] > 3
                     ? sprintf(' (%s, …)', implode(', ', array_slice($row['targets'], 0, 3)))
@@ -240,10 +239,10 @@ final class ReadinessCommand extends Command
                 sprintf('%s.%s', $r->target, $r->field),
                 $r->source ?? ($r->supplier ?? '—'),
                 match ($r->verdict()) {
-                    Requirement::MISSING   => '<error> missing </error>',
-                    Requirement::PARTIAL   => '<comment> partial </comment>',
+                    Requirement::MISSING => '<error> missing </error>',
+                    Requirement::PARTIAL => '<comment> partial </comment>',
                     Requirement::DEFAULTED => sprintf('<info> default </info> %s', (string) $r->craftDefault),
-                    default                => 'ok',
+                    default => 'ok',
                 },
                 $this->scale($r),
             ];
@@ -307,9 +306,9 @@ final class ReadinessCommand extends Command
                 $r->field,
                 $r->source !== null ? sprintf('`%s`', str_replace('|', '\\|', $r->source)) : ($r->supplier ?? '—'),
                 match ($r->verdict()) {
-                    Requirement::MISSING   => '**missing**',
+                    Requirement::MISSING => '**missing**',
                     Requirement::DEFAULTED => sprintf('default → `%s`', (string) $r->craftDefault),
-                    default                => $r->verdict(),
+                    default => $r->verdict(),
                 },
                 $this->scale($r),
             ));

@@ -42,7 +42,7 @@ final class RunPanel
                 $environments = Mapping::fromFile($path)->environments();
                 $checks = (new MappingPreflight(
                     new PdoPreflightProbe(EnvironmentPipeline::dsnFromSettings()),
-                    static fn (string $path): string => (string) App::parseEnv($path),
+                    static fn(string $path): string => (string) App::parseEnv($path),
                 ))
                     ->inspect($environments, Craft::$app->getSites()->getAllSites());
             } catch (Throwable $e) {

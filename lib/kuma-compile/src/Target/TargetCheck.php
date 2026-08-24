@@ -161,7 +161,7 @@ final class TargetCheck
             }
 
             $supplied = array_map(
-                static fn (string $p): string => explode('.', str_replace(['[0]'], '', $p))[0],
+                static fn(string $p): string => explode('.', str_replace(['[0]'], '', $p))[0],
                 array_keys($spec['map'] ?? []),
             );
             $supplied = array_merge($supplied, array_keys($spec['children'] ?? []));

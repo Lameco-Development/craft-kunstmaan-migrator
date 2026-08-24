@@ -176,7 +176,7 @@ final class Coverage
             }
         }
 
-        usort($out, static fn (array $a, array $b): int => $b['placements'] <=> $a['placements']);
+        usort($out, static fn(array $a, array $b): int => $b['placements'] <=> $a['placements']);
 
         return $out;
     }

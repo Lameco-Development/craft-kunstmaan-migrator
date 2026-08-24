@@ -44,7 +44,7 @@ final class MappingCheck
         if ($conflicts = $mapping->openConflicts()) {
             return [
                 sprintf('%d unresolved conflicts — set conflict.status: decided', count($conflicts)),
-                array_map(static fn ($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
+                array_map(static fn($c): string => sprintf('%s: %s vs %s', $c->subject, $c->artifact, $c->spec), $conflicts),
             ];
         }
 

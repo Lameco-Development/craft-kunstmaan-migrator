@@ -55,7 +55,7 @@ final class TemplatesCompileTest extends TestCase
         // stubbed — a template reaching for a tag not listed here should fail
         // loudly rather than be quietly skipped.
         foreach (['js', 'css'] as $tag) {
-            $twig->addTokenParser(new class ($tag) extends AbstractTokenParser {
+            $twig->addTokenParser(new class($tag) extends AbstractTokenParser {
                 public function __construct(private readonly string $craftTag)
                 {
                 }
@@ -64,7 +64,7 @@ final class TemplatesCompileTest extends TestCase
                 {
                     $stream = $this->parser->getStream();
                     $stream->expect(Token::BLOCK_END_TYPE);
-                    $body = $this->parser->subparse(fn (Token $t): bool => $t->test('end' . $this->craftTag));
+                    $body = $this->parser->subparse(fn(Token $t): bool => $t->test('end' . $this->craftTag));
                     $stream->next();
                     $stream->expect(Token::BLOCK_END_TYPE);
 
@@ -82,14 +82,14 @@ final class TemplatesCompileTest extends TestCase
         // other, so the ones these templates use are declared here. Same rule as
         // the tags: anything not listed fails loudly.
         foreach (['t'] as $filter) {
-            $twig->addFilter(new TwigFilter($filter, static fn (mixed $value): mixed => $value));
+            $twig->addFilter(new TwigFilter($filter, static fn(mixed $value): mixed => $value));
         }
 
         foreach ([
             'actionUrl', 'url', 'siteUrl',
             'csrfInput', 'actionInput', 'redirectInput', 'hiddenInput',
         ] as $function) {
-            $twig->addFunction(new TwigFunction($function, static fn (mixed ...$args): string => ''));
+            $twig->addFunction(new TwigFunction($function, static fn(mixed ...$args): string => ''));
         }
 
         try {

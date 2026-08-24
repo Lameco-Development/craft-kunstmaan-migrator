@@ -61,7 +61,7 @@ final class MigrationAdapterContractTest extends TestCase
      */
     public function testARegisteredAdapterResolvesToSomethingRunnable(): void
     {
-        $pass = new class implements MigrationAdapter {
+        $pass = new class() implements MigrationAdapter {
             public function handle(): string
             {
                 return 'acme';
@@ -75,7 +75,7 @@ final class MigrationAdapterContractTest extends TestCase
             }
         };
 
-        $adapter = new Adapter('acme', 'Acme', 'acmeEnabled', null, static fn () => $pass);
+        $adapter = new Adapter('acme', 'Acme', 'acmeEnabled', null, static fn() => $pass);
 
         self::assertSame($pass, $adapter->service());
     }

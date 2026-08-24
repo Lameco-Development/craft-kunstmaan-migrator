@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace lameco\kunstmaanmigrator\models;
 
 use craft\base\Model;
-use lameco\kunstmaanmigrator\adapters\Adapter;
-use lameco\kunstmaanmigrator\adapters\AdapterSetting;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
-use lameco\kunstmaanmigrator\Plugin;
+use lameco\kunstmaanmigrator\adapters\Adapter;
+use lameco\kunstmaanmigrator\adapters\AdapterSetting;
 use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
+use lameco\kunstmaanmigrator\Plugin;
 
 /**
  * Plugin Settings — shared seam between env vars and config/kunstmaan-migrator.php.
@@ -27,29 +27,29 @@ class Settings extends Model
      * Powers the media-root prefill and source introspection; the database
      * credentials it carried were copied into the legacyDb* settings below.
      */
-    public ?string $legacySourcePath     = null;
+    public ?string $legacySourcePath = null;
 
     /**
      * Where the old site's uploads live. Every Kunstmaan site here keeps them
      * at `public/uploads/media`, so this is derived from the detected checkout
      * and only needs a value when a site breaks that convention.
      */
-    public ?string $legacyMediaRoot      = null;
+    public ?string $legacyMediaRoot = null;
 
     /**
      * Directory of content-model block specs whose migration notes drive the
      * mapping prefill. Empty means auto-detect `docs/content-model/page-builder`
      * under the project root.
      */
-    public ?string $specsPath            = null;
+    public ?string $specsPath = null;
 
-    public ?string $legacyDbServer       = null;
-    public int     $legacyDbPort         = 3306;
-    public ?string $legacyDbDatabase     = null;
-    public ?string $legacyDbUser         = null;
-    public ?string $legacyDbPassword     = null;
-    public string  $legacyDbCharset      = 'utf8mb4';
-    public string  $legacyDbTablePrefix  = '';
+    public ?string $legacyDbServer = null;
+    public int     $legacyDbPort = 3306;
+    public ?string $legacyDbDatabase = null;
+    public ?string $legacyDbUser = null;
+    public ?string $legacyDbPassword = null;
+    public string  $legacyDbCharset = 'utf8mb4';
+    public string  $legacyDbTablePrefix = '';
 
     /**
      * Where the mapping YAML lives.
@@ -68,13 +68,13 @@ class Settings extends Model
      * use `media` (matches Kunstmaan's `kuma_media` semantics); override
      * via `config/kunstmaan-migrator.php` to align with the actual handle.
      */
-    public string  $targetVolume         = 'uploads';
+    public string  $targetVolume = 'uploads';
 
     /**
      * Subfolder within the volume. Assets land at `{subfolder}/{year}/filename`;
      * empty puts them at the volume root.
      */
-    public string  $targetSubfolder      = 'migrated';
+    public string  $targetSubfolder = 'migrated';
 
     /**
      * How the path below the subfolder is built: `year` or `legacy-tree`.
@@ -87,7 +87,7 @@ class Settings extends Model
      *
      * Defaults to `year` so an existing project's asset paths do not move under it.
      */
-    public string  $assetFolderStrategy  = 'year';
+    public string  $assetFolderStrategy = 'year';
 
     /**
      * Skip starter-kit / project-side asset-size validators during ingest.
@@ -300,7 +300,8 @@ class Settings extends Model
                 AdapterSetting::TYPE_BOOLEAN,
                 false,
                 'A project-side size cap that is right for editor uploads will reject valid legacy assets. '
-                . 'With this on, an oversized asset is skipped and reported instead of taking the whole entry down.',
+                . 'With this on, an oversized asset is ingested anyway — the save retries once with the '
+                . 'project size-cap listener held aside — and each bypass is logged.',
             ),
         ];
     }
@@ -419,7 +420,7 @@ class Settings extends Model
             'user' => $reader->getDsnUser(),
             'password' => $reader->getDsnPassword(),
             'database' => $reader->getDsnDatabase(),
-        ], static fn ($value): bool => $value !== null);
+        ], static fn($value): bool => $value !== null);
     }
 
     /**

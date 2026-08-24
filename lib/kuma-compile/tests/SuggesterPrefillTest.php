@@ -24,7 +24,7 @@ final class SuggesterPrefillTest extends TestCase
 {
     private function schema(): TargetSchema
     {
-        return new class implements TargetSchema {
+        return new class() implements TargetSchema {
             /** @var array<string, array<string, Slot>> */
             private array $types = [
                 'demoBlock' => [],

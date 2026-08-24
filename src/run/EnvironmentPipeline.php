@@ -9,23 +9,19 @@ use craft\elements\Entry;
 use craft\helpers\App;
 use Lameco\KumaCompile\Compile\Compiler;
 use Lameco\KumaCompile\Compile\PayloadWriter;
-use Lameco\KumaCompile\Compile\RedirectCompiler;
 use Lameco\KumaCompile\Compile\Transforms;
 use Lameco\KumaCompile\Legacy\Dsn;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\payload\Payload;
-use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
 use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
 use lameco\kunstmaanmigrator\compile\TargetModel;
+use lameco\kunstmaanmigrator\load\MigrationOptions;
+use lameco\kunstmaanmigrator\load\MigrationReport;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
+use lameco\kunstmaanmigrator\payload\Payload;
+use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
 use lameco\kunstmaanmigrator\payload\PayloadValidator;
 use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\console\LoadController;
-use lameco\kunstmaanmigrator\load\RedirectMigrationService;
-use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\sites\SiteMap;
 use yii\db\Connection;
 
@@ -130,6 +126,46 @@ final class EnvironmentPipeline
         RunTally $tally,
         ?PayloadWriter $writer = null,
     ): void {
+        [$db, $siteMap] = $this->prepare($mapping, $env, $spec, $settings);
+
+        $this->compiler->compile(
+            $db,
+            $env,
+            function(array $raw) use ($settings, $tally, $writer): void {
+                $this->handlePayload($raw, $settings, $tally, $writer);
+            },
+            $settings->limit,
+        );
+
+        if (!$settings->entriesOnly) {
+            $tally->adapters[$env] = $this->runAdapters(
+                new EnvironmentContext(
+                    name: $env,
+                    database: (string) $spec['database'],
+                    sites: $siteMap,
+                    mediaRoots: self::mediaRootsFrom($spec),
+                    mapping: $mapping,
+                    legacy: $db,
+                    only: $settings->only,
+                ),
+                $settings,
+            );
+        }
+    }
+
+    /**
+     * Point every shared component at one environment — connection, site map,
+     * media roots, asset flags — and open the legacy database.
+     *
+     * Extracted from `run()` for the batched queue path (#48): a batch job
+     * rebuilds this in every process, compiles a window, and lets the process
+     * end. Both callers prepare identically or the halves drift again.
+     *
+     * @param array<string, mixed> $spec the mapping's block for this environment
+     * @return array{0: LegacyDatabase, 1: SiteMap}
+     */
+    public function prepare(Mapping $mapping, string $env, array $spec, RunSettings $settings): array
+    {
         $dsn = self::dsnFromSettings();
         $db = LegacyDatabase::connect($env, (string) $spec['database'], $dsn);
 
@@ -155,29 +191,28 @@ final class EnvironmentPipeline
         // the service to reach them.
         $this->plugin->assetMigrationService->skipAssets = $settings->skipAssets;
 
-        $this->compiler->compile(
-            $db,
-            $env,
-            function (array $raw) use ($settings, $tally, $writer): void {
-                $this->handlePayload($raw, $settings, $tally, $writer);
-            },
-            $settings->limit,
-        );
+        return [$db, $siteMap];
+    }
 
-        if (!$settings->entriesOnly) {
-            $tally->adapters[$env] = $this->runAdapters(
-                new EnvironmentContext(
-                    name: $env,
-                    database: (string) $spec['database'],
-                    sites: $siteMap,
-                    mediaRoots: self::mediaRootsFrom($spec),
-                    mapping: $mapping,
-                    legacy: $db,
-                    only: $settings->only,
-                ),
-                $settings,
-            );
-        }
+    /**
+     * One payload, validated and saved — the public face of `handlePayload`,
+     * for the batched job whose processItem() is exactly this.
+     *
+     * @param array<string, mixed> $raw
+     */
+    public function processOne(array $raw, RunSettings $settings, RunTally $tally, ?PayloadWriter $writer = null): void
+    {
+        $this->handlePayload($raw, $settings, $tally, $writer);
+    }
+
+    /**
+     * The adapter passes for one prepared environment, as `run()` executes them.
+     *
+     * @return array<string, mixed>
+     */
+    public function runAdaptersFor(EnvironmentContext $context, RunSettings $settings): array
+    {
+        return $this->runAdapters($context, $settings);
     }
 
     /** @param array<string, mixed> $raw */
@@ -244,7 +279,7 @@ final class EnvironmentPipeline
 
             if ($service !== null) {
                 $out[$adapter->handle] = self::summarise(
-                    static fn (): MigrationReport => $service->migrateAll($opts, $context),
+                    static fn(): MigrationReport => $service->migrateAll($opts, $context),
                 );
 
                 continue;
@@ -333,9 +368,9 @@ final class EnvironmentPipeline
         $roots = is_array($roots) ? array_values($roots) : ($roots === null ? [] : [$roots]);
 
         return array_values(array_filter(array_map(
-            static fn ($path): string => (string) App::parseEnv((string) $path),
+            static fn($path): string => (string) App::parseEnv((string) $path),
             $roots,
-        ), static fn (string $path): bool => $path !== ''));
+        ), static fn(string $path): bool => $path !== ''));
     }
 
     /**
@@ -368,5 +403,4 @@ final class EnvironmentPipeline
 
         Plugin::getInstance()?->ckeditorRewriterService->resetLookupCaches();
     }
-
 }

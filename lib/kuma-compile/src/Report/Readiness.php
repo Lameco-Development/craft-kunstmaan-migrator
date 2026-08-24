@@ -51,7 +51,7 @@ final class Readiness
     /** @return list<Requirement> */
     public function requirements(): array
     {
-        return array_values(array_filter($this->all(), static fn (Requirement $r): bool => $r->required));
+        return array_values(array_filter($this->all(), static fn(Requirement $r): bool => $r->required));
     }
 
     /**
@@ -68,7 +68,7 @@ final class Readiness
     {
         return array_values(array_filter(
             $this->all(),
-            static fn (Requirement $r): bool => !$r->required && !$r->isSupplied(),
+            static fn(Requirement $r): bool => !$r->required && !$r->isSupplied(),
         ));
     }
 
@@ -356,10 +356,10 @@ final class Readiness
             $field = (string) $field;
             $source = $map[$field] ?? null;
             $supplier = match (true) {
-                $source !== null          => 'map',
+                $source !== null => 'map',
                 isset($addressed[$field]) => 'map',
-                isset($extra[$field])     => $extra[$field],
-                default                   => null,
+                isset($extra[$field]) => $extra[$field],
+                default => null,
             };
 
             $out[] = new Requirement(
@@ -492,7 +492,7 @@ final class Readiness
     {
         return array_values(array_filter(
             $this->mapping->sequence(),
-            static fn (array $rule): bool => ($rule['action'] ?? '') === 'absorb',
+            static fn(array $rule): bool => ($rule['action'] ?? '') === 'absorb',
         ));
     }
 

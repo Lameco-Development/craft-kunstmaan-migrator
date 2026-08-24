@@ -119,6 +119,11 @@ served.
   Craft stores an entry link as a reference tag, so the loader resolves the uid and writes
   `{"value": "{entry:<id>@<siteId>:url}", …}`. Same grammar and same fail-forward contract as
   `_ref`: unresolved means the link is dropped, not that a bogus value is written.
+- **Formie form relation** — `{"_form": "kuma:<ENV>:form:<Entity>:<id>"}`, emitted inside its
+  list container (`"commonForm": [{"_form": …}]`). The form lane's own grammar: one segment
+  more than `sourceUid`, resolved against the state row `FormMigrationService` records
+  (`source = "form"`, `key = <the whole uid>`). Unresolved defers exactly like a `_ref` —
+  on a full run the forms adapter follows the entries, so the fixup pass is what patches it.
 
 ## `sourceUid` grammar
 

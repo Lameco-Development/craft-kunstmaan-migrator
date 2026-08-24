@@ -56,7 +56,7 @@ final class EntryMigrationServiceTest extends TestCase
         // there would move editorial copy onto a native title Craft then drops. Describing the
         // shape through the probe is what lets the rule be asserted without booting Craft; without
         // it the lookup reaches Craft::$app and the test errors rather than failing.
-        $service->setEntryTypeFieldProbe(static fn (string $entryType, string $field): bool => false);
+        $service->setEntryTypeFieldProbe(static fn(string $entryType, string $field): bool => false);
 
         $normalized = $service->normalizeMatrixPayload([
             'contentBuilder' => [

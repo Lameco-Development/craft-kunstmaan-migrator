@@ -76,7 +76,7 @@ final class IntrospectionCheckTest extends TestCase
 
         self::assertSame(
             [],
-            array_values(array_filter($warnings, fn (string $w) => str_contains($w, 'form widget'))),
+            array_values(array_filter($warnings, fn(string $w) => str_contains($w, 'form widget'))),
         );
     }
 
@@ -91,7 +91,7 @@ final class IntrospectionCheckTest extends TestCase
             $this->introspection(),
         ))->warnings();
 
-        $missing = array_values(array_filter($warnings, fn (string $w) => str_contains($w, 'not a column')));
+        $missing = array_values(array_filter($warnings, fn(string $w) => str_contains($w, 'not a column')));
 
         self::assertCount(1, $missing);
         self::assertStringContainsString('titel', $missing[0]);

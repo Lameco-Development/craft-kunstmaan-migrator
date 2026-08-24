@@ -32,7 +32,7 @@ final class BlockPropagation
      */
     public static function problems(array $methods, array $localesPer): array
     {
-        $multi = array_keys(array_filter($localesPer, static fn (int $n): bool => $n > 1));
+        $multi = array_keys(array_filter($localesPer, static fn(int $n): bool => $n > 1));
 
         // One locale per environment means one site writing each block set, so a shared set is
         // exactly right and warning about it would be noise on every single-language corpus.
@@ -40,7 +40,7 @@ final class BlockPropagation
             return [];
         }
 
-        $shared = array_keys(array_filter($methods, static fn (?string $m): bool => $m === 'all'));
+        $shared = array_keys(array_filter($methods, static fn(?string $m): bool => $m === 'all'));
 
         if ($shared === []) {
             return [];

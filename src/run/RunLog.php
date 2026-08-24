@@ -113,7 +113,7 @@ final class RunLog
             $tail = substr($tail, (int) (strpos($tail, "\n") ?: -1) + 1);
         }
 
-        $lines = array_values(array_filter(explode("\n", $tail), static fn (string $line): bool => $line !== ''));
+        $lines = array_values(array_filter(explode("\n", $tail), static fn(string $line): bool => $line !== ''));
         $out = [];
 
         foreach (array_reverse(array_slice($lines, -$limit)) as $line) {

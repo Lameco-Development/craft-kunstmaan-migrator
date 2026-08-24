@@ -19,7 +19,7 @@ final class SetupStepTest extends TestCase
     {
         self::assertSame(
             ['detect', 'connect', 'sites', 'locales', 'review'],
-            array_map(static fn (SetupStep $s): string => $s->value, SetupStep::all()),
+            array_map(static fn(SetupStep $s): string => $s->value, SetupStep::all()),
         );
 
         self::assertSame(1, SetupStep::Detect->number());

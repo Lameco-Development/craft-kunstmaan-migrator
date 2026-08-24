@@ -358,7 +358,7 @@ final class MappingDocument
 
         // `map.caseIndustry` touches only that entry of `map:`; a bare `map`
         // replaces the key outright.
-        $whole = array_values(array_filter($changedKeys, static fn (string $p): bool => !str_contains($p, '.')));
+        $whole = array_values(array_filter($changedKeys, static fn(string $p): bool => !str_contains($p, '.')));
         $nested = [];
 
         foreach ($changedKeys as $path) {
@@ -404,7 +404,7 @@ final class MappingDocument
         }
 
         array_splice($lines, $start, $end - $start, array_merge(...array_map(
-            static fn (string $chunk): array => explode("\n", rtrim($chunk, "\n")),
+            static fn(string $chunk): array => explode("\n", rtrim($chunk, "\n")),
             $out,
         )));
 
@@ -608,7 +608,7 @@ final class MappingDocument
         $pad = str_repeat(' ', $spaces);
 
         return implode("\n", array_map(
-            static fn (string $line): string => $line === '' ? '' : $pad . $line,
+            static fn(string $line): string => $line === '' ? '' : $pad . $line,
             explode("\n", rtrim($yaml, "\n")),
         )) . "\n";
     }

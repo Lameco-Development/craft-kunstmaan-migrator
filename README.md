@@ -11,10 +11,16 @@ It is a **development tool**. It refuses to run when `CRAFT_ENVIRONMENT=producti
 - PHP 8.3+
 - Craft CMS 5 (`^5.0`)
 
-Optional, each enabling one adapter — detected at runtime, never required:
+Optional, each enabling one adapter (or one enhancement) — detected at runtime,
+never required:
 [SEOmatic](https://github.com/nystudio107/craft-seomatic),
 [Retour](https://github.com/nystudio107/craft-retour),
-[Navigation](https://github.com/verbb/navigation).
+[Navigation](https://github.com/verbb/navigation),
+[Formie](https://github.com/verbb/formie) — the forms lane compiles a form-owning
+page into a Formie form and wires a `formBlock` on the page to reference it.
+[Embedded Assets](https://github.com/spicyweb/craft-embedded-assets) turns a
+legacy remote-video reference into a real embedded-asset element instead of an
+id-only state row.
 
 ## Installation
 
@@ -72,17 +78,24 @@ resolved falls back to the year bucket rather than the volume root.
 
 Two things, and they live in different places on purpose.
 
-**The connection and the adapter switches** are plugin settings
-(Settings → Kunstmaan Migrator, or `config/kunstmaan-migrator.php`). The
-credential fields take the *name* of an environment variable, not its value —
-Craft writes plugin settings into project config, which is committed and
-deployed, and a password typed here would go with it. The settings screen
-refuses one.
+**The connection, the mapping path and asset placement** are machine-level
+values — an absolute path, a database credential's environment-variable name,
+a one-time operator decision about where files land — and live in
+`config/kunstmaan-migrator.php` plus `.env`, never in the control panel. Craft
+writes plugin settings into project config, which is committed and deployed;
+a form that wrote these there would ship one developer's local paths and
+credentials to everyone else. The Settings screen (Settings → Kunstmaan
+Migrator) states what is currently in force instead of offering to edit it,
+and holds only what genuinely varies per Kunstmaan install: which adapter
+passes run, and each adapter's own knobs (source-table overrides, translation
+domains, the target navigation handle, the redirects adapter's `sectionMoves`
+opt-in).
 
 **The topology** — which databases exist, where each one's uploads live, which
 legacy locale writes to which Craft site — comes from the mapping file, which
-is version-controlled next to the field mappings it travels with. The settings
-screen shows it read-only.
+is version-controlled next to the field mappings it travels with. The Mapping
+screen and the setup wizard show it where it is edited; Settings does not
+mirror it at all.
 
 You do not hand-write one. `kuma-compile init` discovers the inventory from the
 live legacy database — every pagepart class and page type ordered by volume,
@@ -179,13 +192,43 @@ populated on every migrated entry with no legacy data behind it, which is how
 
 ## Running it
 
-Point the plugin at a mapping, then either use the control panel utility
-(Utilities → Kunstmaan Migration) or the console:
+Point the plugin at a mapping, then either use its own control-panel section
+(**Kunstmaan Migrator** in the primary nav — Mapping, Coverage, Run, Wizard) or
+the console:
 
 ```bash
 ./craft kunstmaan-migrator/doctor        # is this install ready, and is every environment reachable
 ./craft kunstmaan-migrator/migrate --mapping=migration/mapping/site.yaml
 ```
+
+`doctor` sweeps every plugin-backed adapter from the registry — SEOmatic,
+Retour, Navigation, Formie, and the Embedded Assets enhancement — reporting
+each installed/disabled/missing rather than naming one and staying silent
+about the rest, plus per-environment database reachability, upload-directory
+readability, and whether the target's page-builder fields can hold per-locale
+blocks. The read-only history of every run — console or control panel — is at
+**Utilities → Kunstmaan Migrator Logs**.
+
+### Running from the control panel
+
+The Run screen's button chains the whole migration as one queue sequence
+instead of pushing independent jobs: `MigrateEnvironmentJob` is a
+`craft\queue\BaseBatchedJob` that compiles and saves ~50 legacy nodes per
+execution (an entity-lane window, a page with its due structural
+placeholders) and lets Craft spawn the continuation, so no single execution
+runs the whole environment inside one request or one TTR. A batch's last
+execution pushes that environment's adapter pass; the adapter pass pushes the
+next environment; the corpus-wide fixup and finalize passes are pushed only
+after the last environment's adapters — an ordering the queue enforces
+structurally rather than relying on FIFO. A mapping file hash travels with
+the chain and refuses a continuation batch if the mapping changed mid-run,
+since the head of the corpus would otherwise compile against different rules
+than the tail.
+
+This is what makes Craft's web runner (any open control-panel tab) capable of
+carrying a real migration end to end — the same one-hour-plus run that a
+monolithic per-environment job could not survive inside a web request's
+budget.
 
 `migrate` validates the mapping's shape, then every handle it names against the
 live Craft schema, then refuses to run while any `conflict:` is still open. Per
@@ -206,7 +249,7 @@ media in rich text.
 | `--force` | re-save entries that already exist |
 | `--entries-only` | skip the adapters, the fixup and the finalize pass |
 | `--finalize-only` | run the finalize pass alone (idempotent, safe to re-run) |
-| `--queue` | hand the run to Craft's queue, one job per environment |
+| `--queue` | hand the run to Craft's queue as one chained sequence: each environment runs in ~50-node batches, its last batch pushes that environment's adapters, which push the next environment, with the fixup and finalize passes chained after the last one — see **Running from the control panel** below |
 | `--skip-assets` | skip the asset stage entirely |
 | `--fail-on-loss` | exit non-zero when the run lost content, not only when it failed |
 | `--resave=0` | skip the closing re-save (on by default; see below) |
@@ -380,7 +423,7 @@ Event::on(AdapterRegistry::class, AdapterRegistry::EVENT_REGISTER_ADAPTERS,
 
 ```bash
 composer install
-composer test              # 658 tests
+composer test              # 725 tests
 composer test-coverage     # per-module gate, needs pcov or xdebug
 ```
 

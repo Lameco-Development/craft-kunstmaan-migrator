@@ -11,7 +11,7 @@ final class CraftTargetCatalogue implements TargetCatalogue
     public function entryTypes(): array
     {
         $handles = array_map(
-            static fn ($entryType): string => (string) $entryType->handle,
+            static fn($entryType): string => (string) $entryType->handle,
             Craft::$app->getEntries()->getAllEntryTypes(),
         );
 
@@ -32,7 +32,7 @@ final class CraftTargetCatalogue implements TargetCatalogue
 
         ksort($groups);
 
-        return array_map(static function (array $handles): array {
+        return array_map(static function(array $handles): array {
             $handles = array_keys($handles);
             sort($handles);
 

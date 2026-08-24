@@ -23,7 +23,7 @@ final class MappingCheckTest extends TestCase
         $path = tempnam(sys_get_temp_dir(), 'kuma') . '.yaml';
         file_put_contents($path, $yaml);
 
-        $schema = new class implements TargetSchema {
+        $schema = new class() implements TargetSchema {
             public function hasEntryType(string $handle): bool
             {
                 return $handle === 'contentPage';

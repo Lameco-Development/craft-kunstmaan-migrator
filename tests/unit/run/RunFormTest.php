@@ -31,17 +31,33 @@ final class RunFormTest extends TestCase
     }
 
     /**
-     * An inline `migrate` ends with fixup and finalize. A queued "full" that
-     * stopped after the environments left every deferred reference dangling
-     * with nothing saying so.
+     * An inline `migrate` ends with fixup and finalize. A queued "full" must
+     * reach them too — but since #48 the ordering is structural, not FIFO:
+     * both push sites start ONE chain (first environment, chainCorpusPasses),
+     * and RunAdaptersJob is the only place the corpus-wide passes are pushed —
+     * after the last environment's adapters, never before the entries exist.
      */
     public function testAQueuedFullRunChainsTheTwoCorpusWidePasses(): void
     {
         foreach (['src/controllers/MigrationController.php', 'src/console/MigrateController.php'] as $file) {
             $source = $this->source($file);
 
-            self::assertStringContainsString('new ResolveDeferredRefsJob()', $source, $file);
-            self::assertStringContainsString('new FinalizeJob(', $source, $file);
+            self::assertStringContainsString('remainingEnvironments', $source, $file);
+            self::assertStringContainsString('chainCorpusPasses', $source, $file);
+            self::assertStringContainsString('mappingHash', $source, $file);
         }
+
+        // The console has no standalone pass commands; only the chain reaches
+        // the corpus passes there. (The CP keeps its manual fixup/finalize
+        // buttons — an operator escape hatch, not part of a full run.)
+        self::assertStringNotContainsString(
+            'new ResolveDeferredRefsJob()',
+            $this->source('src/console/MigrateController.php'),
+        );
+
+        $chain = $this->source('src/queue/RunAdaptersJob.php');
+        self::assertStringContainsString('new ResolveDeferredRefsJob()', $chain);
+        self::assertStringContainsString('new FinalizeJob(', $chain);
+        self::assertStringContainsString('new MigrateEnvironmentJob(', $chain);
     }
 }

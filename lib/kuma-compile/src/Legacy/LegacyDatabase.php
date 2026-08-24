@@ -38,9 +38,9 @@ final class LegacyDatabase
             $dsn->user,
             $dsn->password,
             [
-                PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES   => false,
+                PDO::ATTR_EMULATE_PREPARES => false,
             ],
         );
 
@@ -122,7 +122,7 @@ final class LegacyDatabase
         if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
             $stmt = $this->pdo->query(sprintf('PRAGMA table_info(`%s`)', $table));
 
-            return array_map(static fn (array $row): string => (string) $row['name'], $stmt->fetchAll(PDO::FETCH_ASSOC));
+            return array_map(static fn(array $row): string => (string) $row['name'], $stmt->fetchAll(PDO::FETCH_ASSOC));
         }
 
         $stmt = $this->pdo->prepare(

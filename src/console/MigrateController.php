@@ -7,25 +7,24 @@ namespace lameco\kunstmaanmigrator\console;
 use Craft;
 use craft\console\Controller;
 use craft\helpers\Console;
+use craft\helpers\Queue as QueueHelper;
 use Lameco\KumaCompile\Compile\PayloadWriter;
-use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
+use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Report\BlockPlacement;
 use Lameco\KumaCompile\Report\Coverage;
-use Lameco\KumaCompile\Target\TargetCheck;
 use Lameco\KumaCompile\Target\TargetSchema;
 use lameco\kunstmaanmigrator\compile\TargetModel;
 use lameco\kunstmaanmigrator\finalize\FinalizePass;
-use lameco\kunstmaanmigrator\payload\FixupService;
-use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
+use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
+use lameco\kunstmaanmigrator\payload\FixupService;
 use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\queue\FinalizeJob;
 use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
-use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use lameco\kunstmaanmigrator\run\RunLog;
 use lameco\kunstmaanmigrator\run\RunOutcome;
 use lameco\kunstmaanmigrator\run\RunSettings;
 use lameco\kunstmaanmigrator\run\RunTally;
@@ -228,7 +227,7 @@ final class MigrateController extends Controller
         $plugin = Plugin::getInstance();
 
         $tally = new RunTally();
-        $tally->onProblem = function (string $problem): void {
+        $tally->onProblem = function(string $problem): void {
             $this->reportProblem($problem);
         };
 
@@ -261,33 +260,39 @@ final class MigrateController extends Controller
         if ($this->queue) {
             $queued = [];
 
-            foreach ($mapping->environments() as $env => $spec) {
+            foreach (array_keys($mapping->environments()) as $env) {
                 if ($this->legacyEnv !== null && $env !== $this->legacyEnv) {
                     continue;
                 }
 
-                Craft::$app->getQueue()->push(new MigrateEnvironmentJob([
-                    'mappingPath' => $this->mapping,
-                    'environment' => (string) $env,
-                    'dryRun' => $this->dryRun,
-                    'force' => $this->force,
-                    'limit' => $this->limit,
-                    'entriesOnly' => $this->entriesOnly,
-                    'only' => $only,
-                ]));
-
                 $queued[] = (string) $env;
             }
 
-            // The same two corpus-wide passes an inline run performs at the end.
-            // Without them a `--queue` run is not the same migration as the run
-            // it replaces. FIFO gives them the ordering they need.
+            if ($queued === []) {
+                $this->stderr(sprintf("Mapping names no environment \"%s\"\n", (string) $this->legacyEnv));
+
+                return ExitCode::UNSPECIFIED_ERROR;
+            }
+
+            // One job starts the chain (#48): each environment's last batch
+            // pushes its adapters, each adapter pass pushes the next
+            // environment, and the corpus-wide fixup + finalize run only after
+            // the last — the same migration as an inline run, with the
+            // ordering enforced structurally instead of FIFO-hopeful (#47).
+            QueueHelper::push(job: new MigrateEnvironmentJob([
+                'mappingPath' => $this->mapping,
+                'environment' => $queued[0],
+                'remainingEnvironments' => array_values(array_slice($queued, 1)),
+                'dryRun' => $this->dryRun,
+                'force' => $this->force,
+                'limit' => $this->limit,
+                'entriesOnly' => $this->entriesOnly,
+                'only' => $only,
+                'chainCorpusPasses' => true,
+                'mappingHash' => sha1((string) file_get_contents($this->mapping)),
+            ]), priority: 512);
+
             if (!$this->entriesOnly) {
-                Craft::$app->getQueue()->push(new ResolveDeferredRefsJob());
-                Craft::$app->getQueue()->push(new FinalizeJob([
-                    'mappingPath' => $this->mapping,
-                    'dryRun' => $this->dryRun,
-                ]));
                 $queued[] = 'fixup';
                 $queued[] = 'finalize';
             }
@@ -307,14 +312,39 @@ final class MigrateController extends Controller
                 continue;
             }
 
-            $pipeline->run(
-                $mapping,
-                (string) $env,
-                (array) $spec,
-                $settings,
-                $tally,
-                $this->dump !== null ? $this->writerFor((string) $env) : null,
-            );
+            // The same run-log entry a queued MigrateEnvironmentJob writes. The log
+            // utility read only queue runs, so a console migrate — the way every e2e
+            // verification actually runs — left the screen empty and the operator
+            // wondering whether the CP was looking at the right database.
+            RunLog::default()->track('migrate', [
+                'environment' => (string) $env,
+                'dryRun' => $this->dryRun,
+                'force' => $this->force,
+                'limit' => $this->limit,
+                'only' => $only,
+            ], function(array &$extra) use ($pipeline, $mapping, $env, $spec, $settings, $tally): void {
+                $before = $tally->counts;
+
+                try {
+                    $pipeline->run(
+                        $mapping,
+                        (string) $env,
+                        (array) $spec,
+                        $settings,
+                        $tally,
+                        $this->dump !== null ? $this->writerFor((string) $env) : null,
+                    );
+                } finally {
+                    $delta = [];
+
+                    foreach ($tally->counts as $name => $count) {
+                        $delta[$name] = $count - ($before[$name] ?? 0);
+                    }
+
+                    $extra['counts'] = $delta;
+                    $extra['problems'] = count($tally->problems);
+                }
+            });
         }
 
         // A payload can name a parent or a relation that no entry had been written for yet, and
@@ -324,7 +354,11 @@ final class MigrateController extends Controller
         $fixup = null;
 
         if (!$this->dryRun) {
-            $fixup = (new FixupService($plugin->migrationStateService, $plugin->entryMigrationService))->run();
+            RunLog::default()->track('fixup', [], function(array &$extra) use ($plugin, &$fixup): void {
+                $fixup = (new FixupService($plugin->migrationStateService, $plugin->entryMigrationService))->run();
+                $extra['patched'] = $fixup['patched'] ?? 0;
+                $extra['orphans'] = count($fixup['orphans'] ?? []);
+            });
 
             foreach (($fixup['orphans'] ?? []) as $orphan) {
                 $tally->problem(sprintf(
@@ -345,7 +379,11 @@ final class MigrateController extends Controller
         if (!$this->entriesOnly) {
             // Per environment, not once: the pass resolves against the legacy database,
             // and running it after the loop meant it only ever saw the last one.
-            $finalizeReport = (new FinalizePass())->run($mapping, $this->dryRun, $this->legacyEnv);
+            $finalizeReport = null;
+            RunLog::default()->track('finalize', ['dryRun' => $this->dryRun], function(array &$extra) use ($mapping, &$finalizeReport): void {
+                $finalizeReport = (new FinalizePass())->run($mapping, $this->dryRun, $this->legacyEnv);
+                $extra['counts'] = $finalizeReport->counts;
+            });
             $finalize = $finalizeReport->counts;
 
             foreach (array_slice($finalizeReport->warnings, 0, 20) as $warning) {
@@ -484,7 +522,7 @@ final class MigrateController extends Controller
             return null;
         }
 
-        $names = array_values(array_filter(array_map(trim(...), explode(',', $this->only)), static fn (string $n): bool => $n !== ''));
+        $names = array_values(array_filter(array_map(trim(...), explode(',', $this->only)), static fn(string $n): bool => $n !== ''));
 
         return $names === [] ? null : $names;
     }
@@ -594,7 +632,7 @@ final class MigrateController extends Controller
             return;
         }
 
-        $total = array_sum(array_map(static fn (array $r): int => (int) $r['placements'], $rejections));
+        $total = array_sum(array_map(static fn(array $r): int => (int) $r['placements'], $rejections));
 
         $this->stderr(sprintf(
             "%s live placements will be dropped: the block is not on the target Matrix's allow-list.\n",
@@ -641,5 +679,4 @@ final class MigrateController extends Controller
 
         return ExitCode::UNSPECIFIED_ERROR;
     }
-
 }

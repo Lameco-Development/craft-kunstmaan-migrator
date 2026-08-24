@@ -45,7 +45,7 @@ final class CheckoutScanner
             }
         }
 
-        usort($out, static fn (array $a, array $b): int => strcasecmp($a['name'], $b['name']));
+        usort($out, static fn(array $a, array $b): int => strcasecmp($a['name'], $b['name']));
 
         return $out;
     }

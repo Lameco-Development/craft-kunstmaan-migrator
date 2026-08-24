@@ -24,9 +24,11 @@
         "nystudio107/craft-retour": "Enables the Retour adapter (^5.0)."
     },
     "require-dev": {
+        "craftcms/ecs": "dev-main",
         "nystudio107/craft-retour": "^5.0",
         "phpstan/phpstan": "^2.2",
         "phpunit/phpunit": "^11.0",
+        "spicyweb/craft-embedded-assets": "^5.4",
         "verbb/formie": "^3.1",
         "verbb/navigation": "^3.0"
     },
@@ -53,17 +55,20 @@
             "@php tools/check-coverage.php"
         ],
         "analyse": "vendor/bin/phpstan analyse --no-progress",
+    "check-cs": "vendor/bin/ecs check --ansi",
+    "fix-cs": "vendor/bin/ecs check --ansi --fix",
         "check": [
-            "@analyse",
-            "@test"
-        ]
+    "@check-cs",
+    "@analyse",
+    "@test"
+  ]
     },
     "extra": {
         "handle": "kunstmaan-migrator",
-        "name": "Kunstmaan Migrator",
+        "name": "Laméco Kunstmaan Migrator",
         "class": "lameco\\kunstmaanmigrator\\Plugin",
         "schemaVersion": "1.1.0",
-        "developer": "Lameco Development",
+        "developer": "Laméco",
         "documentationUrl": "https://github.com/Lameco-Development/craft-kunstmaan-migrator#readme",
         "changelogUrl": "https://raw.githubusercontent.com/Lameco-Development/craft-kunstmaan-migrator/development/CHANGELOG.md"
     },

@@ -77,21 +77,22 @@ final class SettingsSurfaceTest extends TestCase
         }
     }
 
-    public function testTheCredentialFieldsOfferEnvironmentVariables(): void
+    /**
+     * 2026-08-23 — the connection, the mapping path and asset placement moved
+     * out of the form entirely: machine-local values and one-time operator
+     * decisions live in config/kunstmaan-migrator.php + .env, and the screen
+     * states what is in force instead of offering to edit it.
+     */
+    public function testMachineLevelValuesAreStatedNotOffered(): void
     {
         $template = $this->template();
 
-        foreach (['legacyDbServer', 'legacyDbUser', 'legacyDbPassword'] as $field) {
-            $offset = strpos($template, "id: '" . $field . "'");
-            self::assertNotFalse($offset, sprintf('%s is missing from the settings screen', $field));
-
-            $block = substr($template, max(0, $offset - 200), 400);
-            self::assertStringContainsString(
-                'suggestEnvVars: true',
-                $block,
-                sprintf('%s must take an environment variable name, not a value', $field),
-            );
+        foreach (['legacyDbServer', 'legacyDbUser', 'legacyDbPassword', 'legacyMediaRoot', "id: 'mappingPath'", "id: 'specsPath'", 'coreSettings'] as $removed) {
+            self::assertStringNotContainsString($removed, $template);
         }
+
+        self::assertStringContainsString('config/kunstmaan-migrator.php', $template);
+        self::assertStringContainsString('for row in effective', $template);
     }
 
     /**
@@ -110,50 +111,15 @@ final class SettingsSurfaceTest extends TestCase
 
     /**
      * The mapping owns the topology — which databases exist, where each one's
-     * uploads live, which locale writes to which site. The screen points at it
-     * and shows it; it does not offer to edit it.
+     * uploads live, which locale writes to which site. The Mapping screen and
+     * the wizard show it where it is edited; the settings screen no longer
+     * mirrors it at all.
      */
-    public function testTheEnvironmentsTableIsReadOnly(): void
+    public function testTheEnvironmentsAreNotOnTheSettingsScreen(): void
     {
         $template = $this->template();
 
-        self::assertStringContainsString("id: 'mappingPath'", $template);
-        self::assertStringContainsString('for name, env in environments', $template);
-
-        $start = strpos($template, '<h2>{{ "Environments"');
-        self::assertNotFalse($start);
-        $section = substr($template, $start);
-
-        foreach (['forms.textField', 'forms.lightswitch', 'forms.autosuggestField({\n  label: "Database'] as $editable) {
-            self::assertStringNotContainsString(
-                $editable,
-                substr($section, strpos($section, '<table')),
-                'the environments table must not offer editable fields',
-            );
-        }
-    }
-
-    /**
-     * One MySQL server holds every legacy database, so the credentials are a
-     * setting. WHICH database each environment reads is not — that comes from
-     * the mapping, per environment, and nothing in a run ever reads
-     * legacyDbDatabase. A field for it invited people to configure something
-     * with no effect.
-     */
-    public function testTheDatabaseNameIsNotAField(): void
-    {
-        self::assertStringNotContainsString("id: 'legacyDbDatabase'", $this->template());
-        self::assertStringNotContainsString(
-            'legacyDbDatabase',
-            (string) file_get_contents(dirname(__DIR__, 3) . '/src/run/EnvironmentPipeline.php'),
-            'a run resolves the database name from the mapping',
-        );
-    }
-
-    public function testTheCpSettingsScreenIsTurnedOn(): void
-    {
-        $plugin = (string) file_get_contents(dirname(__DIR__, 3) . '/src/Plugin.php');
-
-        self::assertStringContainsString('public bool $hasCpSettings = true;', $plugin);
+        self::assertStringNotContainsString('for name, env in environments', $template);
+        self::assertStringNotContainsString('"Environments"', $template);
     }
 }

@@ -179,7 +179,7 @@ final class SidecarLaneTest extends TestCase
         $out = [];
 
         (new Compiler(Mapping::fromFile($path), new Transforms(), $schema))
-            ->compile($this->db(), 'COM', static function (array $p) use (&$out): void {
+            ->compile($this->db(), 'COM', static function(array $p) use (&$out): void {
                 $out[] = $p;
             });
 

@@ -89,7 +89,7 @@ final class InMemoryElementWriter implements ElementWriter
     /** @return list<int> ids of the elements deleted, in call order */
     public function deletedIds(): array
     {
-        return array_map(static fn (array $row): int => (int) $row['element']->id, $this->deleted);
+        return array_map(static fn(array $row): int => (int) $row['element']->id, $this->deleted);
     }
 
     private function key(int $id, ?int $siteId): string

@@ -54,7 +54,7 @@ final class SurveyCommand extends Command
 
         if ($input->getOption('json')) {
             $output->writeln((string) json_encode(
-                array_map(static fn (Survey $s): array => $s->toArray(), $surveys),
+                array_map(static fn(Survey $s): array => $s->toArray(), $surveys),
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES,
             ));
 
@@ -77,7 +77,7 @@ final class SurveyCommand extends Command
         $io->section('Shape');
         $io->table(
             ['env', 'live pages', 'placements', 'live share', 'part classes', 'page types', 'locales'],
-            array_map(static fn (Survey $s): array => [
+            array_map(static fn(Survey $s): array => [
                 $s->environment,
                 number_format($s->livePages),
                 number_format($s->livePlacements),
@@ -93,16 +93,16 @@ final class SurveyCommand extends Command
         $keys = array_keys($surveys[0]->volumes);
         $io->table(
             ['env', ...$keys],
-            array_map(static fn (Survey $s): array => [
+            array_map(static fn(Survey $s): array => [
                 $s->environment,
                 ...array_map(
-                    static fn (string $k): string => $s->volumes[$k] === null ? '—' : number_format($s->volumes[$k]),
+                    static fn(string $k): string => $s->volumes[$k] === null ? '—' : number_format($s->volumes[$k]),
                     $keys,
                 ),
             ], $surveys),
         );
 
-        $withSidecars = array_filter($surveys, static fn (Survey $s): bool => $s->sidecarTables !== []);
+        $withSidecars = array_filter($surveys, static fn(Survey $s): bool => $s->sidecarTables !== []);
 
         if ($withSidecars !== []) {
             $io->section('Sidecar tables');

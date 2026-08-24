@@ -51,7 +51,7 @@ final class DoctorCommand extends Command
                 $db = LegacyDatabase::connect((string) $env, $database, $dsn);
                 $missing = array_filter(
                     ['kuma_nodes', 'kuma_node_translations', 'kuma_node_versions', 'kuma_page_part_refs'],
-                    static fn (string $t): bool => !$db->hasTable($t),
+                    static fn(string $t): bool => !$db->hasTable($t),
                 );
 
                 if ($missing !== []) {

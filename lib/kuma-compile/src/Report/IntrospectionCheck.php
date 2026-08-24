@@ -147,5 +147,4 @@ final class IntrospectionCheck
 
         return end($parts) ?: $class;
     }
-
 }

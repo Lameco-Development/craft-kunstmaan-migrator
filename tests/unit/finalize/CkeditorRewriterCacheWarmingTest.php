@@ -6,9 +6,9 @@ namespace lameco\kunstmaanmigrator\tests\unit\finalize;
 
 use Generator;
 use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
+use lameco\kunstmaanmigrator\load\MigrationStateStream;
 use lameco\kunstmaanmigrator\tests\support\FakeLegacyDb;
 use lameco\kunstmaanmigrator\tests\support\ThrowingLegacyDb;
-use lameco\kunstmaanmigrator\load\MigrationStateStream;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 

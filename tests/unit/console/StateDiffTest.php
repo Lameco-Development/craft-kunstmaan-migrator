@@ -19,7 +19,7 @@ final class StateDiffTest extends TestCase
     private function export(array ...$rows): array
     {
         return array_map(
-            static fn (array $row): array => ['sourceUid' => $row[0], 'entryId' => $row[1], 'targetType' => 'entry', 'alias_of' => null],
+            static fn(array $row): array => ['sourceUid' => $row[0], 'entryId' => $row[1], 'targetType' => 'entry', 'alias_of' => null],
             $rows,
         );
     }

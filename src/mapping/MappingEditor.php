@@ -106,7 +106,7 @@ final class MappingEditor
             $rows[] = MappingRow::fromSpec((string) $key, is_array($spec) ? $spec : []);
         }
 
-        usort($rows, static fn (MappingRow $a, MappingRow $b): int => $b->live <=> $a->live);
+        usort($rows, static fn(MappingRow $a, MappingRow $b): int => $b->live <=> $a->live);
 
         return $rows;
     }
@@ -207,7 +207,7 @@ final class MappingEditor
      */
     public function targetOptions(string $lane): array
     {
-        $option = static fn (string $handle): array => ['label' => $handle, 'value' => $handle];
+        $option = static fn(string $handle): array => ['label' => $handle, 'value' => $handle];
 
         if ($lane === 'parts') {
             return array_map($option, $this->availableBlocks());
@@ -227,7 +227,7 @@ final class MappingEditor
 
         $rest = array_filter(
             $this->catalogue->entryTypes(),
-            static fn (string $handle): bool => !isset($grouped[$handle]),
+            static fn(string $handle): bool => !isset($grouped[$handle]),
         );
 
         if ($rest !== []) {

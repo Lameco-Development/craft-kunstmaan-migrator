@@ -53,7 +53,7 @@ final class Suggester
 
             $blocks = array_values(array_filter(
                 $this->notes->blocksForPart((string) $part),
-                fn (string $block): bool => $this->schema->hasEntryType($block),
+                fn(string $block): bool => $this->schema->hasEntryType($block),
             ));
 
             if ($blocks === []) {
@@ -136,7 +136,7 @@ final class Suggester
         }
 
         $droppedColumns = $this->asColumns($dropped, $columns);
-        $consumed = array_map(static fn (string $e): string => trim((string) explode('|', $e)[0]), $partMap);
+        $consumed = array_map(static fn(string $e): string => trim((string) explode('|', $e)[0]), $partMap);
         $leftover = array_values(array_diff($columns, ['id'], $consumed, $droppedColumns));
 
         $patch = [
@@ -154,7 +154,7 @@ final class Suggester
         }
 
         if ($itemMap !== [] && $childField !== null && is_array($childSpec)) {
-            $childConsumed = array_map(static fn (string $e): string => trim((string) explode('|', $e)[0]), $itemMap);
+            $childConsumed = array_map(static fn(string $e): string => trim((string) explode('|', $e)[0]), $itemMap);
             $childLeftover = array_values(array_diff($childColumns, ['id', (string) ($childSpec['fk'] ?? '')], $childConsumed));
 
             $children = $spec['children'];
@@ -271,15 +271,15 @@ final class Suggester
         $relational = in_array($slot?->type, ['Entries', 'Categories', 'Users', 'Tags'], true);
 
         return match (true) {
-            str_ends_with($column, '_id') && $relational                      => $column . ' | ref',
-            str_ends_with($column, '_id') && $slot?->type === 'Assets'        => $column . ' | asset',
-            str_ends_with($column, '_id') && $slot !== null                   => $column,
-            in_array($field, ['content', 'text', 'quote'], true)              => $column . ' | ckeditor',
+            str_ends_with($column, '_id') && $relational => $column . ' | ref',
+            str_ends_with($column, '_id') && $slot?->type === 'Assets' => $column . ' | asset',
+            str_ends_with($column, '_id') && $slot !== null => $column,
+            in_array($field, ['content', 'text', 'quote'], true) => $column . ' | ckeditor',
             in_array($field, ['heading', 'label', 'eyebrow', 'tabLabel', 'paneTitle', 'personName'], true)
                                                                               => $column . ' | inlineHtml',
-            $field === 'colorScheme'                                          => $column . ' | colorScheme',
-            $field === 'titleLevel'                                           => $column . ' | titleLevel',
-            default                                                           => $column,
+            $field === 'colorScheme' => $column . ' | colorScheme',
+            $field === 'titleLevel' => $column . ' | titleLevel',
+            default => $column,
         };
     }
 }

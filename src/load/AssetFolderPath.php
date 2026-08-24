@@ -53,7 +53,7 @@ final class AssetFolderPath
             array_unshift($segments, $subfolder);
         }
 
-        return implode('/', array_filter($segments, static fn (string $s): bool => $s !== ''));
+        return implode('/', array_filter($segments, static fn(string $s): bool => $s !== ''));
     }
 
     /**

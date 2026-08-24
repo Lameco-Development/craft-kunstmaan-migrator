@@ -11,7 +11,6 @@ use craft\helpers\Console;
 use InvalidArgumentException;
 use lameco\kunstmaanmigrator\load\RedirectMigrationService;
 use lameco\kunstmaanmigrator\NeverProductionTrait;
-use lameco\kunstmaanmigrator\Plugin;
 use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
 use lameco\kunstmaanmigrator\payload\FixupService;
 use lameco\kunstmaanmigrator\payload\Payload;
@@ -19,6 +18,7 @@ use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
 use lameco\kunstmaanmigrator\payload\PayloadValidator;
 use lameco\kunstmaanmigrator\payload\RefResolver;
 use lameco\kunstmaanmigrator\payload\Violation;
+use lameco\kunstmaanmigrator\Plugin;
 use Throwable;
 use yii\console\ExitCode;
 
@@ -173,7 +173,7 @@ class LoadController extends Controller
             $this->payload,
             $refResolver,
             $retourAvailable,
-            static function (int $entryId, string $siteHandle): ?string {
+            static function(int $entryId, string $siteHandle): ?string {
                 $site = Craft::$app->sites->getSiteByHandle($siteHandle);
                 if ($site === null) {
                     return null;
@@ -186,7 +186,7 @@ class LoadController extends Controller
 
                 return '/' . ltrim($entry->uri, '/');
             },
-            static function (string $srcUrl, string $destUrl, int $httpCode, string $stateKey, array $extraMeta) use ($plugin): array {
+            static function(string $srcUrl, string $destUrl, int $httpCode, string $stateKey, array $extraMeta) use ($plugin): array {
                 $result = $plugin->redirectMigrationService->importOne($srcUrl, $destUrl, $httpCode, $stateKey, $extraMeta);
                 if (($result->counts['created'] ?? 0) > 0) {
                     return ['outcome' => 'created'];
