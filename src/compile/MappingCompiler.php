@@ -551,6 +551,77 @@ final class MappingCompiler extends Component
 
             $fieldsPerSection[$sectionKey] = ($fieldsPerSection[$sectionKey] ?? 0) + count($fields);
         }
+
+        // Flat-row nodeClasses — AbstractConfig subclasses (berkvens
+        // `Configuration`) folded into globalSettings by the scaffolder.
+        // They have no pageStructure entry (no `kuma_node` row exists
+        // for AbstractConfigs), so the pageStructure-driven loop above
+        // never visits them. Walk the accepted nodeClass rows directly,
+        // matching by `flatRow: true`, and build a minimal nodeClass
+        // entry that extract can consume. Fields are compiled from
+        // accepted `kind: column` rows whose `table` matches the
+        // AbstractConfig's source table.
+        foreach ($acceptedNodeClassByFqcn as $fqcn => $row) {
+            if (!is_string($fqcn) || isset($nodeClasses[$fqcn])) {
+                continue;
+            }
+            if (!(bool) ($row['flatRow'] ?? false)) {
+                continue;
+            }
+            $sourceTable = (string) ($row['sourceTable'] ?? '');
+            $sectionKey = (string) ($row['targetEntryType'] ?? '');
+            if ($sourceTable === '' || $sectionKey === '') {
+                continue;
+            }
+            $tableRows = array_values(array_filter(
+                $accepted,
+                static fn(array $r): bool => (string) ($r['table'] ?? '') === $sourceTable
+                    && (string) ($r['targetEntryType'] ?? '') === $sectionKey,
+            ));
+            $allowedHandles = $entryTypeFlatHandles[$sectionKey] ?? null;
+            $fields = [];
+            foreach ($tableRows as $r) {
+                $targetHandle = $this->targetHandleForCompiledRow($r, $sectionKey);
+                if ($targetHandle === '') {
+                    continue;
+                }
+                if ($allowedHandles !== null
+                    && !str_contains($targetHandle, '.')
+                    && !$this->isNativeEntryProperty($targetHandle)
+                    && !in_array($targetHandle, $allowedHandles, true)
+                ) {
+                    $warnings[] = sprintf(
+                        '%s (flatRow): targetHandle `%s` not a flat field on entry-type `%s` — dropped.',
+                        $fqcn,
+                        $targetHandle,
+                        $sectionKey,
+                    );
+                    continue;
+                }
+                $compiled = [
+                    'handler' => $this->handlerForCompiledRow($r, $targetHandle),
+                    'source'  => (string) ($r['column'] ?? $targetHandle),
+                ];
+                if (isset($r['handlerOptions']) && is_array($r['handlerOptions']) && $r['handlerOptions'] !== []) {
+                    $compiled['handlerOptions'] = $r['handlerOptions'];
+                }
+                $fields[$targetHandle] = $compiled;
+            }
+            ksort($fields);
+            $nodeClasses[$fqcn] = [
+                'sourceTable'         => $sourceTable,
+                'section'             => $sectionKey,
+                'fields'              => $fields,
+                'flatRow'             => true,
+                'pageBuilderHandle'   => '',
+                'pageBuilderContexts' => [],
+                'bodyColumn'          => '',
+                'headerBlock'         => null,
+                'bodyWrapBlock'       => null,
+                'joins'               => [],
+            ];
+            $fieldsPerSection[$sectionKey] = ($fieldsPerSection[$sectionKey] ?? 0) + count($fields);
+        }
         ksort($nodeClasses);
 
         // Sites: operator-curated; pass through unchanged.

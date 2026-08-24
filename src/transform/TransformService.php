@@ -191,17 +191,27 @@ class TransformService extends Component
                     $report,
                 );
 
+                // Title/slug propagate `null` (not `''`) so the load
+                // stage's firstNonEmpty check preserves whatever value
+                // was already set on the target entry by an earlier
+                // contributor. Critical for the merged `globalSettings`
+                // Single, where flat-row Configuration arrives after
+                // FooterPage's "Footer" title has already landed.
+                $rawTitle = $siteData['title'] ?? null;
+                $rawSlug = $siteData['slug'] ?? null;
                 $perSiteOut[$siteHandle] = [
                     'siteId'      => $siteId,
                     'locale'      => $locale,
                     'online'      => (bool) ($siteData['online'] ?? false),
-                    'title'       => (string) ($siteData['title'] ?? ''),
-                    'slug'        => (string) ($siteData['slug'] ?? ''),
+                    'title'       => is_string($rawTitle) ? $rawTitle : null,
+                    'slug'        => is_string($rawSlug) ? $rawSlug : null,
                     'postDate'    => $this->resolvePostDate($siteData, $nodeSpec),
                     'fieldValues' => $fieldValues,
                 ];
             }
 
+            $isFlatRow = (bool) ($extractedRow['flatRow'] ?? false);
+            $refIdFallback = (int) ($extractedRow['ref_id'] ?? 0);
             $payload = [
                 'kunstmaanSourceId' => (string) ($extractedRow['kunstmaanSourceId'] ?? ''),
                 'section'           => (string) ($sectionSpec['section'] ?? ''),
@@ -209,11 +219,18 @@ class TransformService extends Component
                 'kuma_node_id'      => (int) ($extractedRow['kuma_node_id'] ?? 0),
                 'kuma_parent_id'    => $extractedRow['kuma_parent_id'] ?? null,
                 'refIdsByLocale'    => (array) ($extractedRow['refIdsByLocale'] ?? []),
+                'flatRow'           => $isFlatRow,
+                'ref_id'            => $refIdFallback,
                 'perSite'           => $perSiteOut,
                 // CONTEXT D-48 in-process pipeline reshape — stateSource/stateKey carried in payload
                 // for Load stage idempotency + state-row writes (was implicit via on-disk filename in v1).
                 'stateSource'       => str_replace('\\', '_', trim($fqcn, '\\')),
-                'stateKey'          => (int) ($extractedRow['kuma_node_id'] ?? 0),
+                // Flat-row entities (AbstractConfigs) have no kuma_node;
+                // use the source row's primary key as the state key so
+                // re-runs find the same state record.
+                'stateKey'          => $isFlatRow
+                    ? $refIdFallback
+                    : (int) ($extractedRow['kuma_node_id'] ?? 0),
             ];
 
             $report['nodesTransformed']++;
@@ -443,6 +460,53 @@ class TransformService extends Component
         // into a single block payload (Craft 5 shape: `<matrix>['new1'] =
         // ['type' => <innerType>, 'fields' => [...]]`).
         $fieldValues = $this->collapseDottedPathTargets($fieldValues, $report);
+
+        // 1b) Page-rooted childCollections — when the source Page entity
+        // itself owns a OneToMany (e.g. HomePage->headerTabs), build the
+        // nested Matrix block payload directly into the page's
+        // `fieldValues` at the parent matrix-field handle. Mirrors the
+        // PagePart-rooted childCollection nest in step 2 below, but
+        // applied at the page-detail level rather than per-pagepart.
+        $pageChildCollections = is_array($siteData['pageChildCollections'] ?? null)
+            ? (array) $siteData['pageChildCollections']
+            : [];
+        if ($pageChildCollections !== []) {
+            $pageSpecs = (array) ($mapping['childCollections'][$fqcn] ?? []);
+            foreach ($pageChildCollections as $matrixField => $childRows) {
+                if (!is_string($matrixField) || $matrixField === '' || !is_array($childRows)) {
+                    continue;
+                }
+                $spec = (array) ($pageSpecs[$matrixField] ?? []);
+                $childBlockType = (string) ($spec['childBlockType'] ?? '');
+                if ($childBlockType === '') {
+                    continue;
+                }
+                $fieldSpecsForChild = (array) ($spec['fields'] ?? []);
+                $nested = [];
+                $childIndex = 1;
+                foreach ($childRows as $childRow) {
+                    if (!is_array($childRow)) {
+                        continue;
+                    }
+                    $resolvedChild = $this->resolveFieldSpecs(
+                        $fieldSpecsForChild,
+                        $childRow,
+                        $ctx,
+                        $report,
+                        $mapping,
+                    );
+                    $nested['new' . $childIndex] = [
+                        'type'    => $childBlockType,
+                        'enabled' => true,
+                        'fields'  => $resolvedChild,
+                    ];
+                    $childIndex++;
+                }
+                if ($nested !== []) {
+                    $fieldValues[$matrixField] = $nested;
+                }
+            }
+        }
 
         // 2) PageBuilder — pagePart + dataProvider blocks in Craft 5 native matrix shape.
         // Multi-matrix routing: when nodeSpec['pageBuilderRouting'] is set

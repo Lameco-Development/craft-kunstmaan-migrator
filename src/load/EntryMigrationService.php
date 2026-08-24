@@ -495,7 +495,17 @@ class EntryMigrationService extends Component
         // expiryDate, enabled, parentId, authorId} routes to native". The
         // strip at line ~520 then drops them from the custom-field hash so
         // they don't double-write.
-        $entry->title = (string) ($this->firstNonEmpty($data['title'] ?? null, $fieldValues['title'] ?? null) ?? '');
+        //
+        // Only overwrite when a non-empty value is available. The merged
+        // `globalSettings` Single receives multiple writes (FooterPage +
+        // HeaderPage + AbstractConfig); the first contributor sets the
+        // title, the later flat-row Configuration carries no title of its
+        // own, so the previously-assigned value MUST survive. Mirrors
+        // the slug branch's behavior below.
+        $resolvedTitle = $this->firstNonEmpty($data['title'] ?? null, $fieldValues['title'] ?? null);
+        if ($resolvedTitle !== null) {
+            $entry->title = (string) $resolvedTitle;
+        }
         // Only overwrite slug when a non-empty value is available. Singleton
         // sections (HomePage, ErrorPage, overview pages) have a meaningful
         // pre-existing slug that Kunstmaan doesn't expose; blanking it on

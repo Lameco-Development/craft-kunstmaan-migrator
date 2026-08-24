@@ -590,7 +590,14 @@ class MigrateController extends Controller
                     continue;
                 }
                 $fqcn = (string) ($payload['stateSource'] ?? '');
+                // Filename key — kuma_node_id for normal entities, ref_id
+                // for flat-row AbstractConfigs (no kuma_node). Either way
+                // this is the deterministic stable id for the transformed
+                // payload.
                 $nodeId = (int) ($payload['kuma_node_id'] ?? 0);
+                if ($nodeId <= 0) {
+                    $nodeId = (int) ($payload['ref_id'] ?? 0);
+                }
                 if ($fqcn === '' || $nodeId <= 0) {
                     continue;
                 }

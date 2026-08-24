@@ -287,6 +287,36 @@ class ExtractService extends Component
                 throw new \RuntimeException("ExtractService: cannot create output dir {$outDir}");
             }
 
+            // Flat-row branch — AbstractConfig subclasses (berkvens
+            // `Configuration`) live in a single-row table without a
+            // `kuma_node` entry. The scaffolder flags them with
+            // `flatRow: true` on the nodeClass; here we SELECT directly
+            // from the source table and emit one envelope per row,
+            // replicating the detail across every locale in `sites`
+            // (singleton configs are locale-agnostic in Kunstmaan).
+            // Child collections (OneToMany) are loaded via the existing
+            // `loadChildCollections` helper, which already keys on the
+            // parent's row id.
+            if ((bool) ($spec['flatRow'] ?? false)) {
+                // Locale set comes from the compiled mapping's sites: block
+                // (locale => siteHandle) — nothing passes $options['sites']
+                // in practice, and falling back to a single hardcoded locale
+                // would silently drop per-site blocks on multi-locale sites.
+                $extracted = $this->extractFlatRow(
+                    $fqcn,
+                    $sourceTable,
+                    $outDir,
+                    (array) ($mapping['childCollections'] ?? []),
+                    (array) ($mapping['sites'] ?? []),
+                    $report,
+                    $onProgress,
+                    $precountTotal,
+                    $limit,
+                );
+                $report['nodesExtracted'] += $extracted;
+                continue;
+            }
+
             // Stream one row per node for this FQCN. Per-locale ref_ids are resolved via
             // translationsFor() below — different locales point to different entity rows
             // (e.g. Karlijn NL is at employee_pages.id=28, EN at a different id).
@@ -352,6 +382,18 @@ class ExtractService extends Component
                         $this->pagePartAllowMapFor($fqcn, $mapping),
                         (array) ($mapping['childCollections'] ?? []),
                     );
+                    // Page-rooted childCollections: when the compiled mapping
+                    // declares the page entity itself owns a OneToMany
+                    // (e.g. HomePage->headerTabs), fetch those rows here
+                    // keyed by parent matrix-field handle. PagePart-rooted
+                    // childCollections already flow via `loadPageParts`;
+                    // this is the missing parallel for Page-level
+                    // collections. Mirrors `loadChildCollections` signature.
+                    $pageChildCollections = $this->loadChildCollections(
+                        (array) ($mapping['childCollections'] ?? []),
+                        $fqcn,
+                        $perLocaleRefId,
+                    );
 
                     $perSite[$lang] = [
                         'online'     => (bool) ($t['online'] ?? false),
@@ -372,6 +414,7 @@ class ExtractService extends Component
                         'refId'      => $perLocaleRefId,
                         'detail'     => $detail,
                         'pageParts'  => $pageParts,
+                        'pageChildCollections' => $pageChildCollections,
                     ];
                     $refIdsByLocale[$lang] = $perLocaleRefId;
                 }
@@ -589,6 +632,104 @@ class ExtractService extends Component
      *                              pre-8.5 behaviour (no `_rel:*` keys).
      * @return array<string, mixed>|null
      */
+    /**
+     * Extract a flat-row (single-row table) entity. Used for AbstractConfig
+     * subclasses (berkvens `Configuration`) folded into globalSettings —
+     * they have no `kuma_node` entry, so we SELECT directly from the
+     * source table and emit one envelope per row, replicating the detail
+     * across every locale in `sites` (singleton configs are
+     * locale-agnostic in Kunstmaan).
+     *
+     * The envelope's per-site block carries `title: null` so the load
+     * stage's `firstNonEmpty` check preserves whatever title was already
+     * set on the target entry by an earlier contributor (e.g. FooterPage
+     * writing "Footer" before Configuration's flat-row save).
+     *
+     * @param array<string, mixed> $childCollectionsByParentFqcn  `mapping.childCollections`
+     * @param array<string, mixed> $sites                          `{locale => siteHandle}` from options
+     * @param array<string, mixed> $report                         mutated in-place to record warnings
+     * @param (callable(int $done, int $total, string $fqcn): void)|null $onProgress
+     */
+    private function extractFlatRow(
+        string $fqcn,
+        string $sourceTable,
+        string $outDir,
+        array $childCollectionsByParentFqcn,
+        array $sites,
+        array &$report,
+        ?callable $onProgress,
+        int $precountTotal,
+        ?int $limit,
+    ): int {
+        if ($sourceTable === '') {
+            $report['warnings'][] = "extractFlatRow {$fqcn}: empty sourceTable — skipped";
+            return 0;
+        }
+        if (!preg_match('/^[a-zA-Z0-9_]+$/', $sourceTable)) {
+            throw new \RuntimeException("extractFlatRow: invalid sourceTable identifier {$sourceTable}");
+        }
+        $locales = array_keys($sites);
+        if ($locales === []) {
+            $locales = ['nl'];
+        }
+        $extracted = 0;
+        foreach ($this->legacyDb->streamQuery("SELECT * FROM `{$sourceTable}` ORDER BY id ASC", []) as $row) {
+            if ($limit !== null && $extracted >= $limit) {
+                break;
+            }
+            $rowId = (int) ($row['id'] ?? 0);
+            if ($rowId <= 0) {
+                continue;
+            }
+            $detail = $this->decodeSerializedColumns($row);
+            $pageChildCollections = $this->loadChildCollections(
+                $childCollectionsByParentFqcn,
+                $fqcn,
+                $rowId,
+            );
+            $perSite = [];
+            foreach ($locales as $locale) {
+                $locale = (string) $locale;
+                $perSite[$locale] = [
+                    'online'               => true,
+                    // null (not '') so the load stage's firstNonEmpty
+                    // preserves the existing entry title set by an
+                    // earlier contributor.
+                    'title'                => null,
+                    'slug'                 => null,
+                    'url'                  => '',
+                    'created'              => null,
+                    'refId'                => $rowId,
+                    'detail'               => $detail,
+                    'pageParts'            => [],
+                    'pageChildCollections' => $pageChildCollections,
+                ];
+            }
+            $payload = [
+                'kunstmaanSourceId' => $this->kunstmaanSourceId($fqcn, $rowId),
+                'fqcn'              => $fqcn,
+                'kuma_node_id'      => 0,
+                'kuma_parent_id'    => null,
+                'ref_id'            => $rowId,
+                'refIdsByLocale'    => array_fill_keys($locales, $rowId),
+                'sourceTable'       => $sourceTable,
+                'flatRow'           => true,
+                'perSite'           => $perSite,
+            ];
+            $outFile = $outDir . '/' . $rowId . '.json';
+            $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if ($json === false || file_put_contents($outFile, $json) === false) {
+                $report['warnings'][] = "extractFlatRow: write failed for {$outFile}";
+                continue;
+            }
+            $extracted++;
+            if ($onProgress !== null) {
+                $onProgress($report['nodesExtracted'] + $extracted, $precountTotal, $fqcn);
+            }
+        }
+        return $extracted;
+    }
+
     private function loadDetailRow(string $table, int $refId, string $entityFqcn = ''): ?array
     {
         // Defence-in-depth: repeat the identifier-whitelist check so this method is also safe when
