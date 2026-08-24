@@ -4,3 +4,4 @@
 /.phpunit.result.cache
 /storage/
 .DS_Store
+/phpunit.xml
