@@ -55,13 +55,13 @@
             "@php tools/check-coverage.php"
         ],
         "analyse": "vendor/bin/phpstan analyse --no-progress",
-    "check-cs": "vendor/bin/ecs check --ansi",
-    "fix-cs": "vendor/bin/ecs check --ansi --fix",
+        "check-cs": "vendor/bin/ecs check --ansi",
+        "fix-cs": "vendor/bin/ecs check --ansi --fix",
         "check": [
-    "@check-cs",
-    "@analyse",
-    "@test"
-  ]
+            "@check-cs",
+            "@analyse",
+            "@test"
+        ]
     },
     "extra": {
         "handle": "kunstmaan-migrator",
