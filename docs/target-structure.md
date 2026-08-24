@@ -74,13 +74,17 @@ worth having even if the later steps never happen.
 2. **`SourceUid`** — DONE (this change). One owner for the idempotency key,
    in `Lameco\KumaCompile\Payload\` — the first inhabitant of the future
    kernel package. All mint/parse sites delegate.
-3. **One legacy-DB layer.** Move `KunstmaanCoreTables` into
+3. **One legacy-DB layer** — DONE (PR #61). Move `KunstmaanCoreTables` into
    `lib/.../Legacy/` and make the lib readers use it; give the six write-half
    sidecar services their legacy reads through the lib reader (a thin
    Craft-side provider hands it the PDO) instead of a second Yii connection;
    delete `KunstmaanEnvReader`'s dead runtime path in favour of
    `CheckoutScanner`. Precondition: the WATCHED coverage tests for those
    services (they sit at 10–26%).
+   Landed with one deviation: the lib readers keep their heredoc literals;
+   `KunstmaanCoreTables` (now in lib/Legacy) is the greppable index. The
+   env-reader dead path was revived via `Settings::$legacySourcePath`
+   rather than deleted.
 4. **Grow the kernel.** Move `Payload`, `PayloadValidator` next to
    `SourceUid` (they are already Craft-free — only their namespace says
    otherwise); `docs/loader-contract.md` then documents the package it sits
