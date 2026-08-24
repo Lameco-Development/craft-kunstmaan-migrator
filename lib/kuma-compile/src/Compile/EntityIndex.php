@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Lameco\KumaCompile\Compile;
 
+use Lameco\KumaCompile\Payload\SourceUid;
+
 /**
  * Turns a legacy foreign key into the `sourceUid` of the entry it points at.
  *
@@ -18,7 +20,7 @@ namespace Lameco\KumaCompile\Compile;
  */
 final readonly class EntityIndex
 {
-    public const SHARED = 'shared';
+    public const SHARED = SourceUid::SHARED;
 
     /** The node tree is addressable as an entity without being declared as one. */
     public const NODES = 'kuma_nodes';
@@ -100,6 +102,6 @@ final readonly class EntityIndex
 
     public static function uid(string $environment, string $table, int $id): string
     {
-        return sprintf('kuma:%s:%s:%d', $environment, $table, $id);
+        return SourceUid::forRow($environment, $table, $id);
     }
 }

@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\console;
 
 use Craft;
+
 use craft\console\Controller;
 use craft\elements\Entry;
 use craft\helpers\App;
 use craft\helpers\Console;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\KumaCompile\Payload\SourceUid;
 use Lameco\Kunstmaanmigrator\load\ExplainContext;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use Lameco\Kunstmaanmigrator\payload\RefResolver;
@@ -545,7 +547,7 @@ class StateController extends Controller
      */
     private static function sourceUidRoundTrips(string $source, string $key): bool
     {
-        $parsed = RefResolver::parse(sprintf('kuma:%s:%s', $source, $key));
+        $parsed = RefResolver::parse(SourceUid::fromStateRow($source, $key));
 
         return $parsed !== null && $parsed['source'] === $source && $parsed['key'] === $key;
     }
@@ -562,7 +564,7 @@ class StateController extends Controller
         $aliasOf = $meta['alias_of'] ?? null;
 
         return [
-            'sourceUid' => sprintf('kuma:%s:%s', $source, $key),
+            'sourceUid' => SourceUid::fromStateRow($source, $key),
             'entryId' => isset($row['targetId']) && $row['targetId'] !== null ? (int) $row['targetId'] : null,
             'targetType' => (string) ($row['targetType'] ?? ''),
             'alias_of' => is_string($aliasOf) ? $aliasOf : null,

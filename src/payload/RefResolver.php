@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\payload;
 
+use Lameco\KumaCompile\Payload\SourceUid;
+
 use Lameco\Kunstmaanmigrator\load\MigrationStateReader;
 
 /**
@@ -25,23 +27,16 @@ use Lameco\Kunstmaanmigrator\load\MigrationStateReader;
  */
 final class RefResolver
 {
-    private const SOURCE_UID_PATTERN = '/^kuma:([A-Za-z0-9_-]+):([a-z0-9_]+):(\d+)$/D';
-
-    /**
-     * A form's sourceUid (`kuma:<ENV>:form:<Entity>:<id>`, minted by
-     * `FormCompiler`) carries one segment more than the entry grammar. Its
-     * state row is keyed differently too: `FormMigrationService` records
-     * `source = "form"`, `key = <the whole sourceUid>`.
-     */
-    private const FORM_UID_PATTERN = '/^kuma:[A-Za-z0-9_-]+:form:[A-Za-z0-9_]+:\d+$/D';
-
     public function __construct(private readonly MigrationStateReader $stateReader)
     {
     }
 
     public function resolve(string $sourceUid): ?int
     {
-        if (preg_match(self::FORM_UID_PATTERN, $sourceUid) === 1) {
+        // A form's sourceUid carries one segment more than the entry grammar
+        // and its state row is keyed differently: `FormMigrationService`
+        // records `source = "form"`, `key = <the whole sourceUid>`.
+        if (SourceUid::isForm($sourceUid)) {
             return $this->stateReader->getTargetId('form', $sourceUid);
         }
 
@@ -54,19 +49,15 @@ final class RefResolver
     }
 
     /**
-     * Pure grammar parser — the single source of truth for the `sourceUid`
-     * encoding, reused by `MigrationStateService::resolveSourceUid()` and
-     * `recordAlias()` (via static call) so the regex is defined in exactly
-     * one place.
+     * Pure grammar parser, reused by `MigrationStateService::resolveSourceUid()`
+     * and `recordAlias()` (via static call). The grammar itself is owned by
+     * `SourceUid`, next to the constructors that mint every uid — this is a
+     * write-half convenience alias, not a second definition.
      *
      * @return array{source: string, key: string}|null null when `$sourceUid` doesn't match the grammar
      */
     public static function parse(string $sourceUid): ?array
     {
-        if (preg_match(self::SOURCE_UID_PATTERN, $sourceUid, $m) !== 1) {
-            return null;
-        }
-
-        return ['source' => $m[1] . ':' . $m[2], 'key' => $m[3]];
+        return SourceUid::parse($sourceUid);
     }
 }
