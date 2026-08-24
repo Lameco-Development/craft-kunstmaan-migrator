@@ -25,6 +25,11 @@ class Settings extends Model
     public ?string $legacyDbUser         = null;
     public ?string $legacyDbPassword     = null;
     public string  $legacyDbCharset      = 'utf8mb4';
+    // Effectively inert: it feeds yii\db\Connection::$tablePrefix, which only
+    // rewrites {{%table}} placeholders — and every legacy query uses literal
+    // kuma_* names (Kunstmaan itself never prefixes). Kept for config-file
+    // compatibility; wire {{%}} quoting through KunstmaanCoreTables before
+    // relying on it.
     public string  $legacyDbTablePrefix  = '';
 
     // Anthropic key (D-14). Defaults to ANTHROPIC_API_KEY.

@@ -242,22 +242,30 @@ class Plugin extends BasePlugin
         // Use the `true` second arg to has() — it checks for a *registered* (vs
         // *instantiated*) component, which is the right check pre-first-access.
         if (!Craft::$app->has('legacyDb', true)) {
-            /** @var Settings $settings */
-            $settings = $this->getSettings();
-            Craft::$app->set('legacyDb', [
-                'class'       => Connection::class,
-                'dsn'         => sprintf(
-                    'mysql:host=%s;port=%d;dbname=%s',
-                    (string) $settings->legacyDbServer,
-                    $settings->legacyDbPort,
-                    (string) $settings->legacyDbDatabase,
-                ),
-                'username'    => $settings->legacyDbUser,
-                'password'    => $settings->legacyDbPassword,
-                'charset'     => $settings->legacyDbCharset,
-                'tablePrefix' => $settings->legacyDbTablePrefix,
-                'attributes'  => [PDO::ATTR_EMULATE_PREPARES => false],
-            ]);
+            // Closure definition: the connection config (and the Settings model
+            // it reads) is only built when something first uses the legacy DB —
+            // front-end requests never pay for it, while queue jobs triggered
+            // from any request type still find the component registered.
+            Craft::$app->set('legacyDb', function (): Connection {
+                /** @var Settings $settings */
+                $settings = Plugin::getInstance()->getSettings();
+                /** @var Connection $connection */
+                $connection = Craft::createObject([
+                    'class'       => Connection::class,
+                    'dsn'         => sprintf(
+                        'mysql:host=%s;port=%d;dbname=%s',
+                        (string) $settings->legacyDbServer,
+                        $settings->legacyDbPort,
+                        (string) $settings->legacyDbDatabase,
+                    ),
+                    'username'    => $settings->legacyDbUser,
+                    'password'    => $settings->legacyDbPassword,
+                    'charset'     => $settings->legacyDbCharset,
+                    'tablePrefix' => $settings->legacyDbTablePrefix,
+                    'attributes'  => [PDO::ATTR_EMULATE_PREPARES => false],
+                ]);
+                return $connection;
+            });
         }
 
         // D-03: console controllerNamespace points at the flat src/console/ directory.
@@ -568,13 +576,17 @@ class Plugin extends BasePlugin
                     return $out;
                 }
             }
-        } catch (\Throwable) {
-            // Mapping unreadable — fall through to localePreflight detection.
+        } catch (\Throwable $e) {
+            // Mapping unreadable — fall through to localePreflight detection,
+            // but leave a trace: a malformed mapping.yaml otherwise surfaces
+            // as a confusing empty-sites-map error much further downstream.
+            Craft::warning("resolveSitesMap: mapping.yaml unreadable, falling back to locale preflight: {$e->getMessage()}", 'kunstmaan-migrator');
         }
 
         try {
             $detected = $this->localePreflight->detect();
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Craft::warning("resolveSitesMap: locale preflight failed, sites map is empty: {$e->getMessage()}", 'kunstmaan-migrator');
             return [];
         }
 
