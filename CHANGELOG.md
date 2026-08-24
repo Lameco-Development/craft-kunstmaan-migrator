@@ -37,6 +37,21 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **⚠ One namespace, one root.** `Lameco\KumaCompile\*` is now
+  `Lameco\Kunstmaanmigrator\*` and lives under `src/` with everything else;
+  `lib/kuma-compile/` is gone. Kernel packages keep their CamelCase names
+  (`Payload`, `Mapping`, `Target`, `Compile`, `Report`, `Command`) and
+  `Legacy` is now `Source`. To make room, three Craft-side packages whose
+  lowercase names PHP would have treated as the same namespace moved to
+  their real homes: `payload\{PayloadEntrySaver,FixupService,RefResolver,
+  SaveResult}` → `load\`, `payload\CraftSchemaGateway` and
+  `compile\TargetModel` → `craft\`, `mapping\` → the kernel `Mapping\` for
+  the pure editor model, `craft\CraftTargetCatalogue`, and `editor\MappingEditor`.
+  The purity rule now keys on the package list rather than a directory, and
+  covers the kernel's tests (`tests/kernel`). The standalone CLI is
+  `bin/kuma-compile` (`vendor/bin/kuma-compile` in a consuming project, as
+  before). Anything that imported a `Lameco\KumaCompile\` class needs the
+  new name; the Craft commands and the binary are unchanged.
 - **The Run screen moved from Utilities into the plugin's own section** —
   one workflow, one nav area. Its production guard and confirmations came
   along unchanged; every screen and action now requires the plugin's section

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\run;
 
-use Lameco\KumaCompile\Legacy\Dsn;
+use Lameco\Kunstmaanmigrator\Source\Dsn;
 use PDO;
 use Throwable;
 

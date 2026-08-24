@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\queue\BaseJob;
-use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\RunLog;
 use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use RuntimeException;

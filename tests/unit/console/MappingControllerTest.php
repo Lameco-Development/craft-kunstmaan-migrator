@@ -86,7 +86,7 @@ final class MappingControllerTest extends TestCase
     public function testInitRefusesToOverwriteAnExistingMapping(): void
     {
         $source = (string) file_get_contents(
-            dirname(__DIR__, 3) . '/lib/kuma-compile/src/Mapping/MappingInit.php'
+            dirname(__DIR__, 3) . '/src/Mapping/MappingInit.php'
         );
 
         self::assertStringContainsString('refusing to overwrite a mapping', $source);

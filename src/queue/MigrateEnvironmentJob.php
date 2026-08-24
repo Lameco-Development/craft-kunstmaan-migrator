@@ -6,8 +6,8 @@ namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\helpers\Queue as QueueHelper;
 use craft\queue\BaseBatchedJob;
-use Lameco\KumaCompile\Compile\CompilerRun;
-use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Compile\CompilerRun;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Lameco\Kunstmaanmigrator\run\RunLog;
 use Lameco\Kunstmaanmigrator\run\RunSettings;

@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\finalize;
 
-use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 

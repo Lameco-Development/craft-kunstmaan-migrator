@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\console;
 
-use Lameco\KumaCompile\Payload\PayloadValidator;
-use Lameco\KumaCompile\Payload\SchemaGateway;
 use Lameco\Kunstmaanmigrator\console\LoadController;
+use Lameco\Kunstmaanmigrator\Payload\PayloadValidator;
+use Lameco\Kunstmaanmigrator\Payload\SchemaGateway;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionProperty;

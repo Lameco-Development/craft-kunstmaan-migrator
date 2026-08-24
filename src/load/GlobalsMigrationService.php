@@ -6,10 +6,10 @@ namespace Lameco\Kunstmaanmigrator\load;
 
 use Craft;
 use craft\elements\Entry;
-use Lameco\KumaCompile\Compile\GlobalsCompiler;
-use Lameco\KumaCompile\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
 use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
+use Lameco\Kunstmaanmigrator\Compile\GlobalsCompiler;
+use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\craft\NavigationGateway;

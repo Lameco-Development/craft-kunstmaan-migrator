@@ -6,7 +6,7 @@ namespace Lameco\Kunstmaanmigrator\run;
 
 use Craft;
 use craft\helpers\App;
-use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use Throwable;

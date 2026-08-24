@@ -6,12 +6,12 @@ inline so this document stands alone.
 
 ## The invariant worth keeping
 
-The valuable thing the `src/` / `lib/kuma-compile/` split protects is not "two
-directories" — it is:
+The valuable thing the old `src/` / `lib/kuma-compile/` split protected was
+never "two directories" — it is:
 
 > **Compilation is deterministic, Craft-schema-aware, and Craft-runtime-free.**
 
-`lib/` reads the legacy database, the mapping, and the Craft site's
+The kernel reads the legacy database, the mapping, and the Craft site's
 version-controlled project config, and emits payloads without ever touching a
 `craft\`/`yii\` symbol. `phpstan/LibPurityRule` turns that from a convention
 into a build failure. Everything below preserves this invariant; nothing below
@@ -115,14 +115,37 @@ worth having even if the later steps never happen.
    answers the *target-side* question — which Craft fields does a lane
    feed — which is `readiness`'s mirror, not this `coverage`. Renaming the
    CP page is a UI change and waits for its own pass.
-6. **Namespace consolidation.** Mechanical, last, optional: fold
-   `Lameco\KumaCompile\` into `Lameco\KunstmaanMigrator\{Payload,Source,
-   Mapping,Target,Compile}` and generalise the purity rule to package lists.
-   Only worth doing once 3–5 have made the packages real; renaming first
-   would relabel the current tangle.
+6. **Namespace consolidation** — DONE (this change). `Lameco\KumaCompile\`
+   folded into `Lameco\Kunstmaanmigrator\{Payload,Source,Mapping,Target,
+   Compile,Report,Command}` (the vendor casing step 1 settled on; `Report`
+   and `Command` are real packages the target list above omitted), the
+   files moved under `src/`, `lib/` deleted, the purity rule generalised to
+   a package list with `tests/kernel` in it.
 
-Steps 3–5 are refactors with behavioural risk and want the usual
-review-then-execute treatment. Step 6 is a rename.
+   What the doc did not foresee: PHP compares namespaces case-insensitively,
+   so the kernel's `Payload`, `Mapping` and `Compile` would have been the
+   *same* namespaces as the Craft-side `payload`, `mapping` and `compile`.
+   Those three moved to their target homes first — the saver, fixup and
+   ref resolver to `load\`; the schema gateway, `TargetModel` and
+   `CraftTargetCatalogue` to `craft\`; the pure editor model (row, field
+   expression, setup draft/step, the `TargetCatalogue` port) into the
+   kernel `Mapping\` as the layout above intends; `MappingEditor` to a
+   Craft-side `editor\`. The Craft-side packages keep lowercase names
+   (Craft's convention) and the kernel keeps CamelCase, which is also how
+   a reader tells the two halves apart at a glance.
+
+Steps 3–5 were refactors with behavioural risk and got the usual
+review-then-execute treatment. Step 6 was a rename.
+
+## What remains open
+
+- The Craft side is not yet the `Craft\`/`Load\`/`Operator\` trio of the
+  target layout: `adapters\`, `finalize\`, `run\`, `editor\` and `db\` are
+  real packages with real reasons, and Craft fixes `console\`,
+  `controllers\`, `queue\`, `migrations\` by convention. Folding them is
+  not mechanical and has no defect behind it yet.
+- The control panel's "Coverage" page shares a word with `coverage` and
+  answers `readiness`'s question (step 5, coverage).
 
 ## Explicitly rejected
 

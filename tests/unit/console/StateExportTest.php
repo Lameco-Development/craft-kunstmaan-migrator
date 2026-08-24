@@ -7,7 +7,7 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\console;
 use Generator;
 use Lameco\Kunstmaanmigrator\console\StateController;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
-use Lameco\Kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\load\RefResolver;
 use PHPUnit\Framework\TestCase;
 
 /**

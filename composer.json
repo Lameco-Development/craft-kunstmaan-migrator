@@ -34,14 +34,12 @@
     },
     "autoload": {
         "psr-4": {
-            "Lameco\\Kunstmaanmigrator\\": "src/",
-            "Lameco\\KumaCompile\\": "lib/kuma-compile/src/"
+            "Lameco\\Kunstmaanmigrator\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
             "Lameco\\Kunstmaanmigrator\\tests\\": "tests/",
-            "Lameco\\KumaCompile\\Tests\\": "lib/kuma-compile/tests/",
             "Lameco\\Kunstmaanmigrator\\phpstan\\": "phpstan/"
         }
     },
@@ -80,7 +78,7 @@
         }
     },
     "bin": [
-        "lib/kuma-compile/bin/kuma-compile"
+        "bin/kuma-compile"
     ],
     "support": {
         "issues": "https://github.com/Lameco-Development/craft-kunstmaan-migrator/issues",

@@ -6,7 +6,7 @@ namespace Lameco\Kunstmaanmigrator\tests\integration\load;
 
 use Lameco\Kunstmaanmigrator\console\LoadController;
 use Lameco\Kunstmaanmigrator\load\MigrationStateReader;
-use Lameco\Kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\load\RefResolver;
 use PHPUnit\Framework\TestCase;
 use yii\console\ExitCode;
 
