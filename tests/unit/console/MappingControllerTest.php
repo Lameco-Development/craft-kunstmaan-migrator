@@ -24,6 +24,19 @@ final class MappingControllerTest extends TestCase
 
         self::assertTrue($class->hasMethod('actionInit'), 'discovery must be reachable without the vendored binary');
         self::assertTrue($class->hasMethod('actionCheck'), 'validating a mapping must be reachable too');
+        self::assertTrue($class->hasMethod('actionCoverage'), 'measuring a mapping against the legacy site must be reachable too');
+    }
+
+    /**
+     * The migrate preflight refuses on coverage holes; the whole picture — and
+     * the client-facing document — must not require the vendored binary.
+     */
+    public function testCoverageHasTheRenderingsTheStandaloneCommandHas(): void
+    {
+        $controller = (new ReflectionClass(MappingController::class))->newInstanceWithoutConstructor();
+
+        self::assertContains('json', $controller->options('coverage'));
+        self::assertContains('markdown', $controller->options('coverage'));
     }
 
     /**

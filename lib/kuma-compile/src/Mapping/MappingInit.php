@@ -54,21 +54,11 @@ final class MappingInit
      */
     public static function connect(array $databases, Dsn $dsn): array
     {
-        $connections = [];
-
-        foreach ($databases as $name => $database) {
-            try {
-                $connections[$name] = LegacyDatabase::connect($name, $database, $dsn);
-            } catch (Throwable $e) {
-                throw new MappingException(
-                    sprintf('Cannot reach %s (%s): %s', $name, $database, $e->getMessage()),
-                    0,
-                    $e,
-                );
-            }
+        try {
+            return LegacyDatabase::connectAll($databases, $dsn);
+        } catch (Throwable $e) {
+            throw new MappingException($e->getMessage(), 0, $e);
         }
-
-        return $connections;
     }
 
     /**

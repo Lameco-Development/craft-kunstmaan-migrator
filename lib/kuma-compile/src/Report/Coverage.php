@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\KumaCompile\Report;
 
+use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Legacy\LiveSnapshot;
 use Lameco\KumaCompile\Mapping\Mapping;
 
@@ -29,6 +30,23 @@ final class Coverage
 
     public function __construct(private readonly Mapping $mapping)
     {
+    }
+
+    /**
+     * The measurement every surface takes: one snapshot per connected
+     * environment, folded into one picture of the corpus.
+     *
+     * @param iterable<LegacyDatabase> $connections
+     */
+    public static function measure(Mapping $mapping, iterable $connections): self
+    {
+        $coverage = new self($mapping);
+
+        foreach ($connections as $db) {
+            $coverage->ingest($db->snapshot());
+        }
+
+        return $coverage;
     }
 
     public function ingest(LiveSnapshot $snapshot): void
