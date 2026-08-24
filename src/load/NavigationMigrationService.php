@@ -92,15 +92,6 @@ class NavigationMigrationService extends Component implements MigrationAdapter
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
 
-
-    /**
-     * The legacy environment being migrated, e.g. `COM`.
-     *
-     * Entries are recorded in state as `<ENV>:kuma_nodes` keyed by node id. Without knowing
-     * the environment this service cannot find a single one of them.
-     */
-    public string $environment = '';
-
     /**
      * The seam at Craft's element writes. Wired in Plugin::init(); read
      * through elements() so no call site has to cope with "not wired yet".
@@ -184,11 +175,6 @@ class NavigationMigrationService extends Component implements MigrationAdapter
 
         $sites = $context->sites;
 
-        // Which environment is running arrives as a value now. It used to be a
-        // public property the pipeline wrote per environment, which is how a
-        // DE run once resolved its nodes against COM's state rows.
-        $this->environment = $context->name;
-
         if (!$this->navigation()->isAvailable()) {
             $report->warn('verbb/navigation not available; nav migration skipped.');
             return $report;
@@ -221,7 +207,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             // NodeMenu pass below still runs — that's the right path for
             // dewert and any site that drives its menu off the page tree.
             [$primarySiteId, $primarySiteHandle] = $this->primarySiteFacts();
-            $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $opts, $report);
+            $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $context->name, $opts, $report);
             return $report;
         }
 
@@ -290,6 +276,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
                         item: $item,
                         navId: (int) $navId,
                         siteId: $siteId,
+                        environment: $context->name,
                         opts: $opts,
                         report: $report,
                     );
@@ -320,7 +307,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         // typically use one or the other — but allowed). Internally
         // skipped when kuma_nodes is empty.
         [$primarySiteId, $primarySiteHandle] = $this->primarySiteFacts();
-        $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $opts, $report);
+        $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $context->name, $opts, $report);
 
         return $report;
     }
@@ -340,6 +327,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         array $item,
         int $navId,
         int $siteId,
+        string $environment,
         MigrationOptions $opts,
         MigrationReport $report,
     ): ?int {
@@ -393,7 +381,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
 
         $resolvedTitle = $titleOverride;
         if ($type === 'page_link' && $nodeTranslationId !== null) {
-            $entryId = $this->resolveEntryIdFromNodeTranslation($nodeTranslationId);
+            $entryId = $this->resolveEntryIdFromNodeTranslation($nodeTranslationId, $environment);
             if ($entryId === null) {
                 $report->incr('skipped');
                 $report->warn(sprintf(
@@ -407,7 +395,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             $node->type = Entry::class;
             $node->url = null;
             if ($resolvedTitle === null) {
-                $entry = Craft::$app->entries->getEntryById($entryId, $siteId);
+                $entry = $this->elements()->findById($entryId, Entry::class, $siteId);
                 $resolvedTitle = $entry !== null ? (string) $entry->title : null;
             }
         } else {
@@ -644,6 +632,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         SiteMap $sites,
         int $primarySiteId,
         string $primarySiteHandle,
+        string $environment,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
@@ -784,6 +773,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
                     fqcn: $fqcn,
                     navId: $navId,
                     primarySiteId: $primarySiteId,
+                    environment: $environment,
                     opts: $opts,
                     report: $report,
                 );
@@ -853,13 +843,14 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         string $fqcn,
         int $navId,
         int $primarySiteId,
+        string $environment,
         MigrationOptions $opts,
         MigrationReport $report,
     ): ?int {
         $stateKey = 'kuma_node:' . $kumaNodeId;
         $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
 
-        $entryId = $this->resolveEntryIdForNode($kumaNodeId, $refId, $fqcn);
+        $entryId = $this->resolveEntryIdForNode($kumaNodeId, $refId, $fqcn, $environment);
         if ($entryId === null) {
             $report->incr('skipped');
             // $stateSource until now, which is not a variable this method has.
@@ -985,7 +976,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      *   - the target entry hasn't been migrated yet (re-run after
      *     entry migration completes)
      */
-    private function resolveEntryIdFromNodeTranslation(int $nodeTranslationId): ?int
+    private function resolveEntryIdFromNodeTranslation(int $nodeTranslationId, string $environment): ?int
     {
         // Deliberately no catch: null means "no migrated entry yet — re-run
         // later", and the item loop's own catch reports a query failure as a
@@ -1006,6 +997,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             (int) $row['node_id'],
             (int) $row['ref_id'],
             (string) $row['ref_entity_name'],
+            $environment,
         );
     }
 
@@ -1020,11 +1012,11 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      *
      * The old key is still tried, so a host still carrying v1 state rows keeps working.
      */
-    private function resolveEntryIdForNode(int $kumaNodeId, int $refId, string $fqcn): ?int
+    private function resolveEntryIdForNode(int $kumaNodeId, int $refId, string $fqcn, string $environment): ?int
     {
-        if ($this->environment !== '' && $kumaNodeId > 0) {
+        if ($environment !== '' && $kumaNodeId > 0) {
             $entryId = $this->stateService->getTargetId(
-                sprintf('%s:kuma_nodes', $this->environment),
+                sprintf('%s:kuma_nodes', $environment),
                 (string) $kumaNodeId,
             );
 

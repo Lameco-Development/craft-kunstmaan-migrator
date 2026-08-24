@@ -43,27 +43,31 @@ final class FinalizePassSurfaceTest extends TestCase
     /**
      * Both are per-environment facts and the pass needs both: the database
      * answers `[NT<id>]`, the media roots let an image no payload pulled in be
-     * ingested on demand.
+     * ingested on demand. Opening the environment the way the pipeline does
+     * is the one construction that carries both.
      */
-    public function testThePassRepointsTheDatabaseAndTheMediaRootsTogether(): void
+    public function testThePassOpensEachEnvironmentTheWayThePipelineDoes(): void
     {
         $source = $this->source('src/finalize/FinalizePass.php');
 
-        self::assertStringContainsString('EnvironmentPipeline::pointLegacyDbAt(', $source);
-        self::assertStringContainsString('EnvironmentPipeline::applyMediaRoots(', $source);
+        self::assertStringContainsString('EnvironmentPipeline::open(', $source);
+        self::assertStringNotContainsString('applyMediaRoots', $source, 'media roots travel on the context, not on a property');
     }
 
     /**
      * The caches are keyed on bare legacy ids, which only mean something inside
      * one database. Resetting them belongs at the switch, not in each caller —
      * two of the three callers remembered and the entry-load pass did not.
+     * The rewriter's asset resolver is bound at the same switch, for the same
+     * reason: its media roots are the environment's.
      */
-    public function testSwitchingDatabaseDropsTheRewriterCaches(): void
+    public function testSwitchingEnvironmentDropsTheRewriterCachesAndRebindsItsResolver(): void
     {
         $source = $this->source('src/run/EnvironmentPipeline.php');
-        $body = substr($source, strpos($source, 'public static function pointLegacyDbAt'));
+        $body = substr($source, strpos($source, 'public static function adoptEnvironment'));
 
         self::assertStringContainsString('resetLookupCaches()', $body);
+        self::assertStringContainsString('resolverFor($context', $body);
     }
 
     public function testTheEnvironmentFilterIsHonoured(): void

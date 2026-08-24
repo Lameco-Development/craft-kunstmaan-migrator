@@ -18,6 +18,13 @@ final class SiteBinding
         public readonly string $handle,
         public readonly int $siteId,
         public readonly string $language,
+        /**
+         * Craft's own primary flag. The entry save picks its first site by this
+         * rather than by position in the mapping: the mapping's order is the
+         * operator's, and an `en` listed before `nl` once made every page fail
+         * with "Title cannot be blank" because the loader saved EN first.
+         */
+        public readonly bool $primary = false,
     ) {
     }
 }

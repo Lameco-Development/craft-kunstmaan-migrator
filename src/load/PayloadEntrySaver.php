@@ -10,6 +10,8 @@ use DateTimeImmutable;
 use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
 use Lameco\Kunstmaanmigrator\Payload\Payload;
 use Lameco\Kunstmaanmigrator\Payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use RuntimeException;
 
 /**
@@ -60,13 +62,13 @@ final class PayloadEntrySaver
         private readonly CkeditorRewriterService $ckeditorRewriter,
         ?callable $transactionRunner = null,
         /**
-         * Refresh an entry that already exists.
-         *
+         * The run's flags. `force` refreshes an entry that already exists:
          * EntryMigrationService short-circuits on a re-run unless told otherwise, which is
          * right for resuming an interrupted load and wrong for reloading after the payload
-         * changed. Without this the loader reports a save and writes nothing.
+         * changed. Without it the loader reports a save and writes nothing. `skipAssets`
+         * reaches the JIT asset lookups through here, which is the path every real run uses.
          */
-        private readonly bool $force = false,
+        private readonly MigrationOptions $options = new MigrationOptions(),
     ) {
         $this->refResolver = new RefResolver($stateService);
         $this->transactionRunner = $transactionRunner ?? static function(callable $fn) {
@@ -77,15 +79,20 @@ final class PayloadEntrySaver
     /** Whether an already-existing entry is refreshed rather than left untouched. */
     public function refreshesExisting(): bool
     {
-        return $this->force;
+        return $this->options->force;
     }
 
-    public function save(Payload $p): SaveResult
+    /**
+     * @param EnvironmentContext $env the environment the payload came from: its sites are
+     *   the ones written, its media roots the ones `_asset` nodes resolve against
+     * @param RunTally $tally where a loss this install cannot represent is counted
+     */
+    public function save(Payload $p, EnvironmentContext $env, RunTally $tally): SaveResult
     {
-        return ($this->transactionRunner)(fn(): SaveResult => $this->doSave($p));
+        return ($this->transactionRunner)(fn(): SaveResult => $this->doSave($p, $env, $tally));
     }
 
-    private function doSave(Payload $p): SaveResult
+    private function doSave(Payload $p, EnvironmentContext $env, RunTally $tally): SaveResult
     {
         $section = $this->gateway->sectionByHandle($p->section);
         if ($section === null) {
@@ -144,6 +151,7 @@ final class PayloadEntrySaver
                 'slug' => (string) ($site['slug'] ?? ''),
                 'fieldValues' => $this->resolveFieldValues(
                     $site['fieldValues'],
+                    $env,
                     (string) $handle,
                     $siteId,
                     $deferredRefs,
@@ -164,7 +172,10 @@ final class PayloadEntrySaver
             $stateSource,
             $stateKey,
             $perSite,
-            $this->force,
+            $env->sites,
+            $this->options->force,
+            null,
+            $tally,
         );
 
         // A Craft Address supports the primary site and no other, so an address on a payload
@@ -227,6 +238,7 @@ final class PayloadEntrySaver
      */
     private function resolveFieldValues(
         array $fieldValues,
+        EnvironmentContext $env,
         string $siteHandle,
         int $siteId,
         array &$deferredRefs,
@@ -240,6 +252,7 @@ final class PayloadEntrySaver
         foreach ($fieldValues as $fieldHandle => $value) {
             $resolved = $this->resolveNode(
                 $value,
+                $env,
                 (string) $fieldHandle,
                 $siteHandle,
                 $siteId,
@@ -275,6 +288,7 @@ final class PayloadEntrySaver
      */
     private function resolveNode(
         mixed $node,
+        EnvironmentContext $env,
         string $fieldHandle,
         string $siteHandle,
         int $siteId,
@@ -406,7 +420,7 @@ final class PayloadEntrySaver
         }
 
         if (array_key_exists('_asset', $node) && is_string($node['_asset'])) {
-            $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset']);
+            $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset'], $env, $this->options);
             if ($resolvedId <= 0) {
                 $unresolvedAssets[] = [
                     'field' => $fieldHandle,
@@ -432,6 +446,7 @@ final class PayloadEntrySaver
         foreach ($node as $key => $childValue) {
             $child = $this->resolveNode(
                 $childValue,
+                $env,
                 $fieldHandle,
                 $siteHandle,
                 $siteId,
@@ -500,7 +515,7 @@ final class PayloadEntrySaver
                 $address['ownerTitle'],
             );
 
-            if ($this->entryService->resaveEntryFieldForSite($entryId, $primary['handle'], $address['field'], $value)) {
+            if ($this->entryService->resaveEntryFieldForSite($entryId, (int) $primary['id'], $address['field'], $value)) {
                 $written[$address['field']] = true;
 
                 continue;
@@ -549,7 +564,8 @@ final class PayloadEntrySaver
         $key = 'new1';
 
         if ($existingEntryId !== null && $path === [$fieldHandle]) {
-            $current = $this->entryService->readEntryFieldValueForSite($existingEntryId, $siteHandle, $fieldHandle);
+            $siteId = (int) ($this->gateway->siteByHandle($siteHandle)['id'] ?? 0);
+            $current = $this->entryService->readEntryFieldValueForSite($existingEntryId, $siteId, $fieldHandle);
             $existingId = $current === null ? null : array_key_first($current);
 
             if (is_int($existingId) || (is_string($existingId) && ctype_digit($existingId))) {

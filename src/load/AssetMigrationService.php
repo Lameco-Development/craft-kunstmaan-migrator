@@ -13,6 +13,8 @@ use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\craft\EmbedGateway;
 use Lameco\Kunstmaanmigrator\craft\SpicywebEmbedGateway;
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use RuntimeException;
 use Throwable;
 use yii\base\Component;
@@ -73,27 +75,6 @@ class AssetMigrationService extends Component
     // literal rather than duplicating it.
     public const LEGACY_MEDIA_ROOT_ENV = 'LEGACY_MEDIA_PATH';
 
-    /**
-     * Media root for the environment currently being migrated.
-     *
-     * Each legacy site keeps its own uploads directory: on the first real corpus, the .com
-     * media resolved 1,045 of 1,046 references while .de resolved 163 of 438 and .lv none at
-     * all, because they are separate installs. A single global path can only ever be right
-     * for one of them, so the caller sets this per environment and the env var stays as the
-     * fallback for single-site migrations.
-     */
-    public ?string $legacyMediaRoot = null;
-
-    /**
-     * Additional roots tried, in order, when a reference is not under the primary one.
-     *
-     * Sites in a group share artwork: 163 of the .de references resolve only against the
-     * .com media directory, because that is where those files are actually hosted. Fetching
-     * a second copy would be inventing a file the source never had.
-     *
-     * @var list<string>
-     */
-    public array $legacyMediaFallbackRoots = [];
     private const STATE_SOURCE = 'media';
 
     /**
@@ -122,24 +103,6 @@ class AssetMigrationService extends Component
      * an unfiled file is a file to go and look at, not one to scatter.
      */
     public string $folderStrategy = 'year';
-
-    /**
-     * Legacy environment currently being migrated (`COM`, `DE`, …), or null for a
-     * single-source corpus.
-     *
-     * Only used by `legacy-tree`, and only when $prefixEnvironment is on: three legacy
-     * installs each ship a folder called `Media/Afbeeldingen`, and merging them into one
-     * Craft tree silently interleaves three clients' worth of files under one name.
-     */
-    public ?string $environmentName = null;
-
-    /**
-     * Root each environment's tree in its own segment.
-     *
-     * Set by the pipeline from the mapping's environment count: one source needs no prefix,
-     * more than one cannot do without it.
-     */
-    public bool $prefixEnvironment = false;
 
     /**
      * Resolved `kuma_folders` chains, keyed `{env}:{folderId}`.
@@ -171,15 +134,6 @@ class AssetMigrationService extends Component
         return $this->embeds ??= new SpicywebEmbedGateway();
     }
 
-    /**
-     * Skip the asset stage for this run.
-     *
-     * A property rather than only a `MigrationOptions` field because the two JIT entry points
-     * below build their own options — so `--skip-assets` threaded through the pipeline reached
-     * the batch path and silently missed the path every real run actually uses.
-     */
-    public bool $skipAssets = false;
-
     /** DI slot: LegacyDbService (read-only connection to Kunstmaan MySQL). */
     /**
      * The seam at Craft's element writes. Wired in Plugin::init(); read
@@ -200,20 +154,23 @@ class AssetMigrationService extends Component
      */
     public ?object $serializedDecoder = null;
 
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
+    }
+
     /**
-     * D-66 / D-68: per-asset RCA rows accumulated across one MigrateController
-     * run. Populated by ingestRow() catch blocks every time an asset failure is
-     * classified into the closed-set reason taxonomy. Read by
-     * MigrateController::writeReport when emitting the `## Asset RCA` REPORT.md
-     * section. Deliberately a property on the service (not threaded through
-     * MigrationReport) so neither ingestRow nor ingestReferenced/ingestBatch
-     * need a report-ref signature change — see plan 04-10 / Task 04 rationale.
+     * The two JIT lookups, bound to one environment and one run's options.
      *
-     * Each row: ['legacyId' => int, 'reason' => string, 'path' => string].
-     *
-     * @var list<array{legacyId: int, reason: string, path: string}>
+     * The CKEditor rewriter resolves media tokens by id and by URL as it goes
+     * and has no environment of its own; this is what it is handed instead of
+     * the service, so the media roots it resolves against are the ones of the
+     * environment whose text it is rewriting.
      */
-    public array $assetRcaRows = [];
+    public function resolverFor(EnvironmentContext $env, MigrationOptions $opts): AssetResolver
+    {
+        return new AssetResolver($this, $env, $opts);
+    }
 
     /**
      * JIT entry point (FH-03 default): materialise one asset by legacy
@@ -221,20 +178,12 @@ class AssetMigrationService extends Component
      * row is missing, the file cannot be located, or the asset is a remote
      * video (state row written but no Craft Asset element exists).
      *
-     * Called from CkeditorRewriterService::rewriteCurlyMediaTokens for
-     * `{{kuma:media:<id>}}` tokens.
-     *
      * Idempotent: if a state row already exists for this kuma_media id, the
-     * stored Craft asset id is returned without re-ingesting (unless force
-     * is set on the active MigrationOptions — but JIT calls always use the
-     * default options instance with force=false to keep per-entry cost low).
+     * stored Craft asset id is returned without re-ingesting. Only `skipAssets`
+     * is read off the options: a JIT call never forces, to keep per-entry cost
+     * low.
      */
-    private function elements(): ElementWriter
-    {
-        return $this->elementWriter ??= new CraftElementWriter();
-    }
-
-    public function resolveFromLegacyId(int $legacyId): int
+    public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
         // Fast path: state already has this media id → return its target id.
         $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, 'kuma_media:' . $legacyId, null);
@@ -242,8 +191,7 @@ class AssetMigrationService extends Component
             return (int) $existing;
         }
 
-        $opts = new MigrationOptions(skipAssets: $this->skipAssets);
-        $asset = $this->ingestOne($legacyId, $opts);
+        $asset = $this->ingestOne($legacyId, self::jitOptions($opts), $env);
         if ($asset instanceof Asset) {
             return (int) $asset->id;
         }
@@ -254,18 +202,44 @@ class AssetMigrationService extends Component
         return $resolved !== null ? (int) $resolved : 0;
     }
 
+    private static function jitOptions(?MigrationOptions $opts): MigrationOptions
+    {
+        return new MigrationOptions(skipAssets: $opts?->skipAssets ?? false);
+    }
+
+    /**
+     * The uploads directories to look in, most specific first.
+     *
+     * Each legacy site keeps its own uploads directory: on the first real corpus, the .com
+     * media resolved 1,045 of 1,046 references while .de resolved 163 of 438 and .lv none at
+     * all, because they are separate installs. The mapping states the roots per environment;
+     * the env var stays as the fallback for a single-site migration that names none.
+     *
+     * Sites in a group share artwork: 163 of the .de references resolve only against the
+     * .com media directory, because that is where those files are actually hosted. The
+     * fallback roots are tried in order rather than fetching a second copy.
+     *
+     * @return list<string>
+     */
+    private function mediaRoots(EnvironmentContext $env): array
+    {
+        $roots = $env->mediaRoots;
+
+        if ($roots === []) {
+            $fromEnv = (string) (App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '');
+            $roots = $fromEnv !== '' ? [$fromEnv] : [];
+        }
+
+        return array_values(array_filter($roots, static fn(string $root): bool => $root !== ''));
+    }
+
     /**
      * JIT fallback for raw CKEditor `/uploads/media/...` URLs that exist on
      * disk but no longer have a matching `kuma_media` row. This preserves live
      * editor content as the source of truth while keeping the state key distinct
      * from real `kuma_media:{id}` rows.
      */
-    private function mediaRoot(): string
-    {
-        return $this->legacyMediaRoot ?? (string) (App::env(self::LEGACY_MEDIA_ROOT_ENV) ?: '');
-    }
-
-    public function resolveFromLegacyUrl(string $legacyUrl): int
+    public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
         $path = parse_url($legacyUrl, PHP_URL_PATH);
         if (!is_string($path) || $path === '') {
@@ -283,12 +257,9 @@ class AssetMigrationService extends Component
         }
 
         $sourcePath = null;
+        $rootDir = '';
 
-        foreach ([$this->mediaRoot(), ...$this->legacyMediaFallbackRoots] as $rootDir) {
-            if ($rootDir === '') {
-                continue;
-            }
-
+        foreach ($this->mediaRoots($env) as $rootDir) {
             $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
 
             if ($sourcePath !== null) {
@@ -302,7 +273,7 @@ class AssetMigrationService extends Component
 
         $contentType = function_exists('mime_content_type') ? (string) @mime_content_type($sourcePath) : '';
         $fileSize = @filesize($sourcePath);
-        $opts = new MigrationOptions(skipAssets: $this->skipAssets);
+        $opts = self::jitOptions($opts);
         $counts = [];
         $syntheticId = (int) sprintf('%u', crc32($path));
         $asset = $this->ingestRow([
@@ -317,7 +288,7 @@ class AssetMigrationService extends Component
             // media by path rather than by id, this path ingests every asset, so the
             // strategy never applied to anything at all.
             'folder_id' => $this->legacyFolderIdForPath($path),
-        ], $rootDir, $opts, $counts, $stateKey);
+        ], $rootDir, $opts, $counts, $stateKey, $env);
 
         if ($asset instanceof Asset) {
             return (int) $asset->id;
@@ -341,11 +312,15 @@ class AssetMigrationService extends Component
      * @param list<int> $referencedIds in-scope kuma_media ids collected from
      *                                 transformed/extracted payload references
      */
-    public function ingestReferenced(MigrationOptions $opts, array $referencedIds = []): void
-    {
+    public function ingestReferenced(
+        MigrationOptions $opts,
+        EnvironmentContext $env,
+        RunTally $tally,
+        array $referencedIds = [],
+    ): void {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
-        $rootDir = $this->mediaRoot() ?: null;
+        $rootDir = $this->mediaRoots($env)[0] ?? null;
         if (!is_string($rootDir) || $rootDir === '' || !is_dir($rootDir)) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
@@ -401,7 +376,7 @@ class AssetMigrationService extends Component
 
             foreach ($rows as $row) {
                 try {
-                    $this->ingestRow($row, $rootDir, $opts, $counts);
+                    $this->ingestRow($row, $rootDir, $opts, $counts, null, $env);
                 } catch (Throwable $e) {
                     // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
                     $counts['failed'] = ($counts['failed'] ?? 0) + 1;
@@ -446,13 +421,7 @@ class AssetMigrationService extends Component
                         ),
                         'kunstmaanmigrator.rca',
                     );
-                    // Push into the per-run RCA collection so writeReport (D-68)
-                    // can render the `## Asset RCA` table without re-grepping logs.
-                    $this->assetRcaRows[] = [
-                        'legacyId' => (int) ($row['id'] ?? 0),
-                        'reason' => $reason,
-                        'path' => $relativePath,
-                    ];
+                    $tally->assetFailure((int) ($row['id'] ?? 0), $reason, $relativePath);
                 }
 
                 $done++;
@@ -494,7 +463,7 @@ class AssetMigrationService extends Component
      * encounter a media reference not captured by the scanner (fallback path)
      * and by the JIT entry point resolveFromLegacyId().
      */
-    public function ingestOne(int $kumaMediaId, MigrationOptions $opts): ?Asset
+    public function ingestOne(int $kumaMediaId, MigrationOptions $opts, EnvironmentContext $env): ?Asset
     {
         // Same failure mode as ingestReferenced: an unwired connection is a
         // warned miss, not an uncaught null-dereference three frames deep.
@@ -513,14 +482,15 @@ class AssetMigrationService extends Component
         if (!$row) {
             return null;
         }
-        $rootDir = $this->mediaRoot();
-        return $this->ingestRow($row, $rootDir, $opts, $counts);
+        $rootDir = $this->mediaRoots($env)[0] ?? '';
+        return $this->ingestRow($row, $rootDir, $opts, $counts, null, $env);
     }
 
     /**
      * @param array<string, mixed> $row    kuma_media row
      * @param array<string, int>   $counts local counter accumulator
      *                                     (MigrationReport VO deferred to Plan 03-13)
+     * @param EnvironmentContext|null $env names the folder segment under `legacy-tree`
      */
     private function ingestRow(
         array $row,
@@ -528,6 +498,7 @@ class AssetMigrationService extends Component
         MigrationOptions $opts,
         array &$counts,
         ?string $stateKey = null,
+        ?EnvironmentContext $env = null,
     ): ?Asset {
         $mediaId = (int) $row['id'];
         $key = $stateKey ?? 'kuma_media:' . $mediaId;
@@ -598,7 +569,7 @@ class AssetMigrationService extends Component
 
                 $volume = Craft::$app->volumes->getVolumeByHandle($this->targetVolume);
                 $folder = $volume !== null
-                    ? Craft::$app->assets->ensureFolderByFullPathAndVolume($this->targetFolderPath($row), $volume)
+                    ? Craft::$app->assets->ensureFolderByFullPathAndVolume($this->targetFolderPath($row, $env), $volume)
                     : null;
                 $assetId = $folder !== null ? $this->embedGateway()->createFromUrl($videoUrl, (int) $folder->id) : null;
 
@@ -695,7 +666,7 @@ class AssetMigrationService extends Component
             );
         }
 
-        $folderPath = $this->targetFolderPath($row);
+        $folderPath = $this->targetFolderPath($row, $env);
         $yearFolder = Craft::$app->assets->ensureFolderByFullPathAndVolume($folderPath, $volume);
 
         // Filename derived from the legacy URL (basename), then sanitized.
@@ -972,11 +943,11 @@ class AssetMigrationService extends Component
      *
      * @param int[] $ids
      */
-    public function ingestBatch(array $ids, MigrationOptions $opts): void
+    public function ingestBatch(array $ids, MigrationOptions $opts, EnvironmentContext $env, RunTally $tally): void
     {
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
 
-        $rootDir = $this->mediaRoot() ?: null;
+        $rootDir = $this->mediaRoots($env)[0] ?? null;
         if (!is_string($rootDir) || $rootDir === '' || !is_dir($rootDir)) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
@@ -1012,7 +983,7 @@ class AssetMigrationService extends Component
 
         foreach ($rows as $row) {
             try {
-                $this->ingestRow($row, $rootDir, $opts, $counts);
+                $this->ingestRow($row, $rootDir, $opts, $counts, null, $env);
             } catch (Throwable $e) {
                 // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
                 $counts['failed'] = ($counts['failed'] ?? 0) + 1;
@@ -1034,11 +1005,7 @@ class AssetMigrationService extends Component
                     ),
                     'kunstmaanmigrator.rca',
                 );
-                $this->assetRcaRows[] = [
-                    'legacyId' => (int) ($row['id'] ?? 0),
-                    'reason' => $reason,
-                    'path' => $relativePath,
-                ];
+                $tally->assetFailure((int) ($row['id'] ?? 0), $reason, $relativePath);
             }
         }
     }
@@ -1078,14 +1045,16 @@ class AssetMigrationService extends Component
      * Where this file lands inside the target volume.
      *
      * @param array<string, mixed> $row kuma_media row
+     * @param EnvironmentContext|null $env names the segment `legacy-tree` roots a
+     *   multi-source corpus under; null for a file with no environment behind it
      */
-    private function targetFolderPath(array $row): string
+    private function targetFolderPath(array $row, ?EnvironmentContext $env = null): string
     {
         $chain = null;
 
         if ($this->folderStrategy === AssetFolderPath::STRATEGY_LEGACY_TREE) {
             $folderId = isset($row['folder_id']) ? (int) $row['folder_id'] : 0;
-            $chain = $folderId > 0 ? $this->legacyFolderChain($folderId) : null;
+            $chain = $folderId > 0 ? $this->legacyFolderChain($folderId, $env?->name) : null;
         }
 
         return AssetFolderPath::compose(
@@ -1093,8 +1062,8 @@ class AssetMigrationService extends Component
             $this->targetSubfolder,
             $chain,
             AssetPathResolver::targetYear((string) ($row['created_at'] ?? '')),
-            $this->environmentName,
-            $this->prefixEnvironment,
+            $env?->name,
+            $env?->prefixEnvironment ?? false,
         );
     }
 
@@ -1138,9 +1107,9 @@ class AssetMigrationService extends Component
      *
      * Returns null when the chain cannot be walked, which the caller reads as "fall back".
      */
-    private function legacyFolderChain(int $folderId): ?string
+    private function legacyFolderChain(int $folderId, ?string $environment = null): ?string
     {
-        $cacheKey = ($this->environmentName ?? '-') . ':' . $folderId;
+        $cacheKey = ($environment ?? '-') . ':' . $folderId;
 
         if (array_key_exists($cacheKey, $this->folderPathCache)) {
             return $this->folderPathCache[$cacheKey];

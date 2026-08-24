@@ -207,15 +207,16 @@ class Plugin extends BasePlugin
      */
     private function wireServices(): void
     {
-        // CkeditorRewriterService deps (FIN-01 + FIN-02). assetResolver is typed
-        // ?object — AssetMigrationService satisfies the duck-typed surface.
+        // CkeditorRewriterService deps (FIN-01 + FIN-02). Its asset resolver is
+        // not wired here: which media roots a lookup searches is a fact about the
+        // environment being rewritten, so `EnvironmentPipeline::adoptEnvironment()`
+        // binds one per environment, alongside the connection and the caches.
         // The finalize pass shares the one rewriter, so its lazily-warmed caches are warmed once.
         $this->ckeditorFinalizeService->rewriter = $this->ckeditorRewriterService;
         $this->ckeditorFinalizeService->elementWriter = new CraftElementWriter();
 
         $this->ckeditorRewriterService->migrationState = $this->migrationStateService;
         $this->ckeditorRewriterService->legacyDb = $this->legacyDbService;
-        $this->ckeditorRewriterService->assetResolver = $this->assetMigrationService;
 
         // AssetMigrationService deps.
         $this->assetMigrationService->legacyDb = $this->legacyDbService;
@@ -238,14 +239,8 @@ class Plugin extends BasePlugin
         $this->assetMigrationService->skipAssetSizeValidation =
             (bool) ($this->getSettings()->skipAssetSizeValidation ?? false);
 
-        // $sites is the kuma_locale → Craft site handle map. It is deliberately empty here:
-        // locale → site is a per-environment fact (COM's `en` is comEnUs, LV's is comLvEn) and
-        // the mapping states it per environment, so MigrateController::applySites() fills it
-        // from there for the environment being run. Empty is tolerated at init() —
-        // saveEntryForSites() throws on first access if nothing has set it.
         $this->entryMigrationService->stateService = $this->migrationStateService;
         $this->entryMigrationService->elementWriter = new CraftElementWriter();
-        $this->entryMigrationService->sites = [];
 
         // Phase 4 Adapter wiring — D-54 / D-56 / D-57 / PATTERNS flag #7.
 

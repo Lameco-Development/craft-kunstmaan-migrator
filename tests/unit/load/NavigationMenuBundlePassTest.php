@@ -13,6 +13,7 @@ use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\NavigationMigrationService;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\tests\support\ConstructsNoElements;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryMigrationState;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryNavigationGateway;
@@ -30,10 +31,10 @@ use verbb\navigation\elements\Node as NavNode;
  * migrateAll() reads Craft's primary site and — on the save path — Craft's
  * own database, both through Craft::$app. The unit bootstrap never loads the
  * Craft helper class, so this file loads it once and stands in a plain object
- * for the three components the pass reads (sites, entries, db), restoring the
- * previous application after every test. Everything else runs through the
- * same seams the neighbouring nav tests use: the legacy database is a queue
- * of result sets, Craft's element writes an in-memory recorder, verbb an
+ * for the two components the pass reads (sites, db), restoring the previous
+ * application after every test. Everything else runs through the same seams
+ * the neighbouring nav tests use: the legacy database is a queue of result
+ * sets, Craft's element reads and writes an in-memory recorder, verbb an
  * in-memory gateway.
  *
  * What is pinned is the pass's judgement per kuma_menu_item row — which menus
@@ -72,8 +73,7 @@ final class NavigationMenuBundlePassTest extends TestCase
         \Craft::$app = $this->previousApp;
     }
 
-    /** @param array<int, string> $entryTitlesById */
-    private function installCraftApp(bool $dbThrows = false, array $entryTitlesById = []): void
+    private function installCraftApp(bool $dbThrows = false): void
     {
         $app = new \stdClass();
 
@@ -81,18 +81,6 @@ final class NavigationMenuBundlePassTest extends TestCase
             public function getPrimarySite(): object
             {
                 return (object) ['id' => 1, 'handle' => 'default'];
-            }
-        };
-
-        $app->entries = new class($entryTitlesById) {
-            /** @param array<int, string> $titles */
-            public function __construct(private readonly array $titles)
-            {
-            }
-
-            public function getEntryById(int $id, mixed $siteId = null): ?object
-            {
-                return isset($this->titles[$id]) ? (object) ['title' => $this->titles[$id]] : null;
             }
         };
 
@@ -312,7 +300,6 @@ final class NavigationMenuBundlePassTest extends TestCase
         $report = $svc->migrateAll(new MigrationOptions(), $this->context());
 
         self::assertSame([], $w->saved);
-        self::assertSame('COM', $svc->environment, 'the environment arrives from the context');
         $all = implode("\n", $report->warnings);
         self::assertStringContainsString('Could not read kuma_menu', $all);
         self::assertStringContainsString('No rows in kuma_menu', $all);
@@ -439,9 +426,14 @@ final class NavigationMenuBundlePassTest extends TestCase
 
     public function testAPageLinkPointsAtTheMigratedEntryAndBorrowsItsTitle(): void
     {
-        $this->installCraftApp(entryTitlesById: [500 => 'Over ons']);
         $state = new InMemoryMigrationState();
         $state->willResolve('COM:kuma_nodes', '7', 500);
+        $w = new InMemoryElementWriter();
+        /** @var Entry $overOns */
+        $overOns = (new \ReflectionClass(Entry::class))->newInstanceWithoutConstructor();
+        $overOns->id = 500;
+        $overOns->title = 'Over ons';
+        $w->willFind(500, $overOns, self::SITE_ID);
         $svc = $this->service(
             $this->legacyDb(
                 [
@@ -451,7 +443,7 @@ final class NavigationMenuBundlePassTest extends TestCase
                 ],
                 [['node_id' => 7, 'ref_id' => 3, 'ref_entity_name' => 'App\\Entity\\Pages\\ContentPage']],
             ),
-            $w = new InMemoryElementWriter(),
+            $w,
             new InMemoryNavigationGateway(['top' => self::NAV_ID]),
             $state,
         );
@@ -533,6 +525,8 @@ final class NavigationMenuBundlePassTest extends TestCase
     public function testARefusedSaveIsCountedAsFailedAndLeavesNoStateBehind(): void
     {
         $refusing = new class() implements ElementWriter {
+            use ConstructsNoElements;
+
             public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
             {
                 return false;
@@ -664,6 +658,8 @@ final class NavigationMenuBundlePassTest extends TestCase
     public function testALinkageLookupFailureIsReportedPerItem(): void
     {
         $writer = new class() implements ElementWriter {
+            use ConstructsNoElements;
+
             /** @var list<ElementInterface> */
             public array $saved = [];
 

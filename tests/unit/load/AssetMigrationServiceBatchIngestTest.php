@@ -7,6 +7,7 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
     use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
     use Lameco\Kunstmaanmigrator\load\MigrationOptions;
     use Lameco\Kunstmaanmigrator\load\MigrationStateService;
+    use Lameco\Kunstmaanmigrator\run\RunTally;
     use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
     use Lameco\Kunstmaanmigrator\tests\support\ThrowingLegacyDb;
     use PHPUnit\Framework\TestCase;
@@ -24,8 +25,32 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
     {
         private string $mediaRoot;
 
+        private ?string $mediaRootOverride = null;
+
+        private RunTally $tally;
+
+        /** @param list<int> $ids */
+        private function ingestReferenced(AssetMigrationService $service, MigrationOptions $opts, array $ids): void
+        {
+            $service->ingestReferenced($opts, $this->env(), $this->tally, $ids);
+        }
+
+        /** @param list<int> $ids */
+        private function ingestBatch(AssetMigrationService $service, array $ids, MigrationOptions $opts): void
+        {
+            $service->ingestBatch($ids, $opts, $this->env(), $this->tally);
+        }
+
+        private function env(): \Lameco\Kunstmaanmigrator\run\EnvironmentContext
+        {
+            return \Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory::make(
+                mediaRoots: [$this->mediaRootOverride ?? $this->mediaRoot],
+            );
+        }
+
         protected function setUp(): void
         {
+            $this->tally = new RunTally();
             $this->mediaRoot = sys_get_temp_dir() . '/kmig-batch-' . uniqid();
             mkdir($this->mediaRoot);
             file_put_contents($this->mediaRoot . '/pic.png', 'png-bytes');
@@ -40,21 +65,21 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
         public function testIngestReferencedBailsWhenTheMediaRootIsMissing(): void
         {
             $service = $this->service(new ThrowingLegacyDb());
-            $service->legacyMediaRoot = '/definitely/not/a/dir';
+            $this->mediaRootOverride = '/definitely/not/a/dir';
 
             // A DB query would throw — the root gate must run first.
-            $service->ingestReferenced(new MigrationOptions(dryRun: true), [1, 2]);
+            $this->ingestReferenced($service, new MigrationOptions(dryRun: true), [1, 2]);
 
-            self::assertSame([], $service->assetRcaRows);
+            self::assertSame([], $this->tally->assetFailures);
         }
 
         public function testIngestReferencedSurvivesABatchLookupFailure(): void
         {
             $service = $this->service(new ThrowingLegacyDb());
 
-            $service->ingestReferenced(new MigrationOptions(dryRun: true), [1, 2]);
+            $this->ingestReferenced($service, new MigrationOptions(dryRun: true), [1, 2]);
 
-            self::assertSame([], $service->assetRcaRows);
+            self::assertSame([], $this->tally->assetFailures);
         }
 
         public function testIngestReferencedNormalizesAndBindsTheReferencedIds(): void
@@ -62,7 +87,7 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
             $legacyDb = new RecordingBatchDb();
             $service = $this->service($legacyDb);
 
-            $service->ingestReferenced(new MigrationOptions(dryRun: true), [7, 3, 7, 0, -2]);
+            $this->ingestReferenced($service, new MigrationOptions(dryRun: true), [7, 3, 7, 0, -2]);
 
             self::assertCount(1, $legacyDb->calls);
             self::assertSame('SELECT * FROM kuma_media WHERE id IN (:kid3,:kid7)', $legacyDb->calls[0][0]);
@@ -79,14 +104,14 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
             $writer = new InMemoryElementWriter();
             $service->elementWriter = $writer;
 
-            $service->ingestReferenced(new MigrationOptions(dryRun: true, batchSize: 1), [11, 12]);
+            $this->ingestReferenced($service, new MigrationOptions(dryRun: true, batchSize: 1), [11, 12]);
 
             self::assertSame(
                 [
                     ['legacyId' => 11, 'reason' => 'filesystem_404', 'path' => 'img/a.png'],
                     ['legacyId' => 12, 'reason' => 'filesystem_404', 'path' => 'img/b.png'],
                 ],
-                $service->assetRcaRows,
+                $this->tally->assetFailures,
             );
             // batchSize=1: the element caches are flushed after every row.
             self::assertSame(2, $writer->cacheInvalidations);
@@ -96,9 +121,9 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
         {
             $legacyDb = new RecordingBatchDb();
             $service = $this->service($legacyDb);
-            $service->legacyMediaRoot = '/definitely/not/a/dir';
+            $this->mediaRootOverride = '/definitely/not/a/dir';
 
-            $service->ingestBatch([4], new MigrationOptions(dryRun: true));
+            $this->ingestBatch($service, [4], new MigrationOptions(dryRun: true));
 
             self::assertSame([], $legacyDb->calls);
         }
@@ -108,7 +133,7 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
             $legacyDb = new RecordingBatchDb();
             $service = $this->service($legacyDb);
 
-            $service->ingestBatch([], new MigrationOptions(dryRun: true));
+            $this->ingestBatch($service, [], new MigrationOptions(dryRun: true));
 
             self::assertSame([], $legacyDb->calls);
         }
@@ -117,9 +142,9 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
         {
             $service = $this->service(new ThrowingLegacyDb());
 
-            $service->ingestBatch([4], new MigrationOptions(dryRun: true));
+            $this->ingestBatch($service, [4], new MigrationOptions(dryRun: true));
 
-            self::assertSame([], $service->assetRcaRows);
+            self::assertSame([], $this->tally->assetFailures);
         }
 
         public function testIngestBatchQueriesTheIdsAndProcessesResolvableRows(): void
@@ -129,11 +154,11 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
             ]);
             $service = $this->service($legacyDb);
 
-            $service->ingestBatch([8], new MigrationOptions(dryRun: true));
+            $this->ingestBatch($service, [8], new MigrationOptions(dryRun: true));
 
             self::assertSame('SELECT * FROM kuma_media WHERE id IN (:kid8)', $legacyDb->calls[0][0]);
             self::assertSame([':kid8' => 8], $legacyDb->calls[0][1]);
-            self::assertSame([], $service->assetRcaRows);
+            self::assertSame([], $this->tally->assetFailures);
         }
 
         public function testIngestBatchAccumulatesRcaRowsWhenARowFails(): void
@@ -143,11 +168,11 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
             ]));
             $service->migrationState = new ThrowingBatchState('invalid mime');
 
-            $service->ingestBatch([21], new MigrationOptions(dryRun: true));
+            $this->ingestBatch($service, [21], new MigrationOptions(dryRun: true));
 
             self::assertSame(
                 [['legacyId' => 21, 'reason' => 'mime_mismatch', 'path' => 'x/y.pdf']],
-                $service->assetRcaRows,
+                $this->tally->assetFailures,
             );
         }
 
@@ -185,7 +210,6 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
         {
             $service = new AssetMigrationService();
             $service->legacyDb = $legacyDb;
-            $service->legacyMediaRoot = $this->mediaRoot;
             $service->migrationState = new NullBatchState();
 
             return $service;

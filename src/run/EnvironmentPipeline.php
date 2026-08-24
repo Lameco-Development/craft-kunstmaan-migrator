@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\run;
 
 use Craft;
-use craft\elements\Entry;
 use craft\helpers\App;
 use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
 use Lameco\Kunstmaanmigrator\Compile\Compiler;
@@ -23,7 +22,6 @@ use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use Lameco\Kunstmaanmigrator\Source\Dsn;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
-use yii\db\Connection;
 
 /**
  * One environment, start to finish: compile its legacy database, load what
@@ -41,7 +39,6 @@ use yii\db\Connection;
 final class EnvironmentPipeline
 {
     public function __construct(
-        private readonly Plugin $plugin,
         private readonly PayloadValidator $validator,
         private readonly ?PayloadEntrySaver $saver,
         private readonly Compiler $compiler,
@@ -64,7 +61,6 @@ final class EnvironmentPipeline
         $transforms = new Transforms($mapping->all()['transforms'] ?? []);
 
         return new self(
-            $plugin,
             new PayloadValidator($gateway),
             $settings->dryRun ? null : new PayloadEntrySaver(
                 $gateway,
@@ -73,7 +69,7 @@ final class EnvironmentPipeline
                 $plugin->assetMigrationService,
                 $plugin->ckeditorRewriterService,
                 null,
-                $settings->force,
+                self::optionsFor($settings),
             ),
             new Compiler($mapping, $transforms, new TargetModel($gateway), $settings->only),
             $transforms,
@@ -126,73 +122,63 @@ final class EnvironmentPipeline
         RunTally $tally,
         ?PayloadWriter $writer = null,
     ): void {
-        [$db, $siteMap] = $this->prepare($mapping, $env, $spec, $settings);
+        $context = $this->prepare($mapping, $env, $spec, $settings);
 
         $this->compiler->compile(
-            $db,
+            $context->legacy,
             $env,
-            function(array $raw) use ($settings, $tally, $writer): void {
-                $this->handlePayload($raw, $settings, $tally, $writer);
+            function(array $raw) use ($context, $settings, $tally, $writer): void {
+                $this->handlePayload($raw, $context, $settings, $tally, $writer);
             },
             $settings->limit,
         );
 
         if (!$settings->entriesOnly) {
-            $tally->adapters[$env] = $this->runAdapters(
-                new EnvironmentContext(
-                    name: $env,
-                    database: (string) $spec['database'],
-                    sites: $siteMap,
-                    mediaRoots: self::mediaRootsFrom($spec),
-                    mapping: $mapping,
-                    legacy: $db,
-                    only: $settings->only,
-                ),
-                $settings,
-            );
+            $tally->adapters[$env] = $this->runAdapters($context, $settings);
         }
     }
 
     /**
-     * Point every shared component at one environment — connection, site map,
-     * media roots, asset flags — and open the legacy database.
+     * Open one environment — connection, site map, media roots — as the value
+     * every pass of it takes.
      *
      * Extracted from `run()` for the batched queue path (#48): a batch job
      * rebuilds this in every process, compiles a window, and lets the process
      * end. Both callers prepare identically or the halves drift again.
      *
      * @param array<string, mixed> $spec the mapping's block for this environment
-     * @return array{0: LegacyDatabase, 1: SiteMap}
      */
-    public function prepare(Mapping $mapping, string $env, array $spec, RunSettings $settings): array
+    public function prepare(Mapping $mapping, string $env, array $spec, RunSettings $settings): EnvironmentContext
     {
-        $dsn = self::dsnFromSettings();
-        $db = LegacyDatabase::connect($env, (string) $spec['database'], $dsn);
+        return self::open($mapping, $env, $spec, $settings);
+    }
 
-        // The adapters and the media-token rewriter read the legacy database through
-        // LegacyDbService. Three environments are three databases, so it is repointed
-        // per environment — without this a DE run reads COM's tables and reports them
-        // as migrated. It adopts the SAME connection the compiler just opened: one
-        // environment, one PDO, both halves.
-        self::adoptLegacyDb($db);
+    /**
+     * The same opening, for a caller that has no pipeline — the finalize pass
+     * runs per environment after every pipeline has finished.
+     *
+     * @param array<string, mixed> $spec the mapping's block for this environment
+     */
+    public static function open(Mapping $mapping, string $env, array $spec, RunSettings $settings): EnvironmentContext
+    {
+        $db = LegacyDatabase::connect($env, (string) $spec['database'], self::dsnFromSettings());
 
         // Locale → site is per environment, not global. COM's `en` is comEnUs while LV's is
         // comLvEn, and one global map cannot hold both. The mapping states it per
         // environment, so it is the only source.
-        $siteMap = SiteMap::bind(
-            (array) ($spec['locales'] ?? []),
-            Craft::$app->sites->getAllSites(),
+        $context = new EnvironmentContext(
+            name: $env,
+            database: (string) $spec['database'],
+            sites: SiteMap::bind((array) ($spec['locales'] ?? []), Craft::$app->sites->getAllSites()),
+            mediaRoots: self::mediaRootsFrom($spec),
+            mapping: $mapping,
+            legacy: $db,
+            only: $settings->only,
         );
 
-        $this->plugin->entryMigrationService->sites = $siteMap->configured();
+        self::adoptEnvironment($context, self::optionsFor($settings));
 
-        self::applyMediaRoots($spec, $env, count($mapping->environments()) > 1);
-
-        // The JIT entry points build their own MigrationOptions, so the flag has to live on
-        // the service to reach them.
-        $this->plugin->assetMigrationService->skipAssets = $settings->skipAssets;
-
-        return [$db, $siteMap];
+        return $context;
     }
 
     /**
@@ -201,9 +187,14 @@ final class EnvironmentPipeline
      *
      * @param array<string, mixed> $raw
      */
-    public function processOne(array $raw, RunSettings $settings, RunTally $tally, ?PayloadWriter $writer = null): void
-    {
-        $this->handlePayload($raw, $settings, $tally, $writer);
+    public function processOne(
+        array $raw,
+        EnvironmentContext $context,
+        RunSettings $settings,
+        RunTally $tally,
+        ?PayloadWriter $writer = null,
+    ): void {
+        $this->handlePayload($raw, $context, $settings, $tally, $writer);
     }
 
     /**
@@ -217,8 +208,13 @@ final class EnvironmentPipeline
     }
 
     /** @param array<string, mixed> $raw */
-    private function handlePayload(array $raw, RunSettings $settings, RunTally $tally, ?PayloadWriter $writer): void
-    {
+    private function handlePayload(
+        array $raw,
+        EnvironmentContext $context,
+        RunSettings $settings,
+        RunTally $tally,
+        ?PayloadWriter $writer,
+    ): void {
         $tally->count('compiled');
         $writer?->write($raw);
 
@@ -240,7 +236,7 @@ final class EnvironmentPipeline
         }
 
         try {
-            $result = $this->saver->save($payload);
+            $result = $this->saver->save($payload, $context, $tally);
             $tally->count($result->created ? 'created' : ($settings->force ? 'updated' : 'skipped'));
 
             foreach ($result->unresolvedAssets as $unresolved) {
@@ -264,11 +260,7 @@ final class EnvironmentPipeline
      */
     private function runAdapters(EnvironmentContext $context, RunSettings $settings): array
     {
-        $opts = new MigrationOptions(
-            dryRun: $settings->dryRun,
-            force: $settings->force,
-            skipAssets: $settings->skipAssets,
-        );
+        $opts = self::optionsFor($settings);
         $out = [];
 
         // The registry, not a hard-coded four. A project that registers its own
@@ -298,12 +290,25 @@ final class EnvironmentPipeline
     }
 
     /**
-     * @param callable(): MigrationReport $run
-     * @return array<string, mixed>
+     * The run's flags as the load half reads them — one construction, so the
+     * saver, the adapters and the JIT asset lookups all honour the same
+     * `--skip-assets` and `--force`.
      */
+    private static function optionsFor(RunSettings $settings): MigrationOptions
+    {
+        return new MigrationOptions(
+            dryRun: $settings->dryRun,
+            force: $settings->force,
+            skipAssets: $settings->skipAssets,
+        );
+    }
+
     /**
      * An adapter that throws does not take the run with it: the others have already written
      * what they could, and a stack trace here would hide the counts for all of them.
+     *
+     * @param callable(): MigrationReport $run
+     * @return array<string, mixed>
      */
     private static function summarise(callable $run): array
     {
@@ -321,40 +326,12 @@ final class EnvironmentPipeline
     }
 
     /**
-     * Point the asset service at one environment's uploads directories.
+     * One environment's uploads directories, with `$VAR` and Craft aliases expanded.
      *
      * Each legacy site has its own uploads directory, so the media root travels
      * with the environment rather than being one global setting. The mapping
      * accepts either a single path or an ordered list — Enreach's DE
      * environment looks in its own directory first and falls back to COM's.
-     *
-     * Static and shared because the finalize pass needs the same roots for the
-     * same reason: resolving `/uploads/media/...` to an asset ingests the file
-     * from these directories when no payload pulled it in. It ran without them
-     * and rewrote 24 of 177 image references.
-     *
-     * @param array<string, mixed> $spec the mapping's block for this environment
-     * @param ?string $env  the environment's name, which `legacy-tree` roots its folders under
-     * @param bool $prefixEnvironment whether the corpus has more than one source
-     */
-    public static function applyMediaRoots(array $spec, ?string $env = null, bool $prefixEnvironment = false): void
-    {
-        $roots = self::mediaRootsFrom($spec);
-
-        $assets = Plugin::getInstance()?->assetMigrationService;
-
-        if ($assets === null) {
-            return;
-        }
-
-        $assets->legacyMediaRoot = $roots[0] ?? null;
-        $assets->legacyMediaFallbackRoots = array_slice($roots, 1);
-        $assets->environmentName = $env;
-        $assets->prefixEnvironment = $prefixEnvironment;
-    }
-
-    /**
-     * One environment's uploads directories, with `$VAR` and Craft aliases expanded.
      *
      * A mapping is committed and shared, so a media root written as an absolute
      * path is a path that exists on one machine — the same problem as a password
@@ -375,10 +352,10 @@ final class EnvironmentPipeline
     }
 
     /**
-     * Point Craft's `legacyDb` component at one environment's database.
-     *
-     * Overwrites the registration rather than the instance, so the next
-     * `Craft::$app->get('legacyDb')` builds a fresh connection.
+     * Point the two modules that still hold per-environment state at this
+     * environment: `LegacyDbService` adopts the compile half's connection —
+     * one environment, one PDO, both halves — and the CKEditor rewriter gets
+     * an asset resolver bound to this environment's media roots.
      *
      * The rewriter's lookup caches are dropped here rather than by each caller,
      * because they are keyed on bare legacy ids and a legacy id is only unique
@@ -390,21 +367,23 @@ final class EnvironmentPipeline
      * which runs the rewriter for every rich-text field of every environment,
      * did not. Switching the database and forgetting the caches is now
      * unexpressible: this is the one place that switches it.
+     *
+     * The rewriter is the last module the environment is written onto rather
+     * than handed to. Its entry points take HTML and a site, and every private
+     * lookup behind them reads the connection and the resolver off the
+     * instance; threading the environment through them is the follow-up this
+     * one place keeps contained.
      */
-    public static function pointLegacyDbAt(Dsn $dsn, string $database): void
-    {
-        self::adoptLegacyDb(LegacyDatabase::connect($database, $database, $dsn));
-    }
-
-    /**
-     * Hand LegacyDbService the compile half's connection — one environment,
-     * one PDO, both halves — and drop the rewriter caches: they are keyed on
-     * bare legacy ids, which only mean something inside one database.
-     */
-    public static function adoptLegacyDb(LegacyDatabase $db): void
+    public static function adoptEnvironment(EnvironmentContext $context, MigrationOptions $opts): void
     {
         $plugin = Plugin::getInstance();
-        $plugin?->legacyDbService->usePdo($db->pdo());
-        $plugin?->ckeditorRewriterService->resetLookupCaches();
+
+        if ($plugin === null || $context->legacy === null) {
+            return;
+        }
+
+        $plugin->legacyDbService->usePdo($context->legacy->pdo());
+        $plugin->ckeditorRewriterService->resetLookupCaches();
+        $plugin->ckeditorRewriterService->assetResolver = $plugin->assetMigrationService->resolverFor($context, $opts);
     }
 }

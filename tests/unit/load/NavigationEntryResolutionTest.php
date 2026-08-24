@@ -29,10 +29,9 @@ final class NavigationEntryResolutionTest extends TestCase
     /**
      * @param list<array<string, mixed>|\Throwable|null> $oneRows
      */
-    private function service(array $oneRows = [], string $environment = ''): NavigationMigrationService
+    private function service(array $oneRows = []): NavigationMigrationService
     {
         $svc = new NavigationMigrationService();
-        $svc->environment = $environment;
         $svc->stateService = new InMemoryMigrationState();
         $svc->legacyDb = new class($oneRows) extends LegacyDbService {
             /** @param list<array<string, mixed>|\Throwable|null> $oneRows */
@@ -81,32 +80,31 @@ final class NavigationEntryResolutionTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('translations gone');
-        $this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44);
+        $this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44, '');
     }
 
     public function testAMissingTranslationRowResolvesToNothing(): void
     {
         $svc = $this->service([null]);
 
-        self::assertNull($this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44));
+        self::assertNull($this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44, ''));
     }
 
     public function testATranslationWithoutALiveVersionResolvesToNothing(): void
     {
         $svc = $this->service([['node_id' => 7, 'ref_id' => null, 'ref_entity_name' => null]]);
 
-        self::assertNull($this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44));
+        self::assertNull($this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44, ''));
     }
 
     public function testATranslationResolvesThroughTheEnvironmentScopedNodeKey(): void
     {
         $svc = $this->service(
             [['node_id' => 7, 'ref_id' => 3, 'ref_entity_name' => 'App\\Entity\\Pages\\ContentPage']],
-            environment: 'COM',
         );
         $this->state($svc)->willResolve('COM:kuma_nodes', '7', 500);
 
-        self::assertSame(500, $this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44));
+        self::assertSame(500, $this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44, 'COM'));
     }
 
     // ------------------------------------------------------------------
@@ -115,23 +113,23 @@ final class NavigationEntryResolutionTest extends TestCase
 
     public function testTheV1PerFqcnStateKeyIsStillHonouredAsAFallback(): void
     {
-        $svc = $this->service(environment: 'COM');
+        $svc = $this->service();
         $this->state($svc)->willResolve('App_Entity_Pages_BlogPage', '3', 600);
 
         self::assertSame(
             600,
-            $this->invoke($svc, 'resolveEntryIdForNode', 7, 3, 'App\\Entity\\Pages\\BlogPage'),
+            $this->invoke($svc, 'resolveEntryIdForNode', 7, 3, 'App\\Entity\\Pages\\BlogPage', 'COM'),
             'a host still carrying v1 state rows keeps resolving',
         );
     }
 
     public function testTheEnvironmentKeyWinsOverTheV1Key(): void
     {
-        $svc = $this->service(environment: 'COM');
+        $svc = $this->service();
         $this->state($svc)->willResolve('COM:kuma_nodes', '7', 500);
         $this->state($svc)->willResolve('App_Entity_Pages_BlogPage', '3', 600);
 
-        self::assertSame(500, $this->invoke($svc, 'resolveEntryIdForNode', 7, 3, 'App\\Entity\\Pages\\BlogPage'));
+        self::assertSame(500, $this->invoke($svc, 'resolveEntryIdForNode', 7, 3, 'App\\Entity\\Pages\\BlogPage', 'COM'));
     }
 
     public function testWithoutAnEnvironmentOnlyTheV1KeyIsTried(): void
@@ -139,15 +137,15 @@ final class NavigationEntryResolutionTest extends TestCase
         $svc = $this->service();
         $this->state($svc)->willResolve('App_Entity_Pages_BlogPage', '3', 600);
 
-        self::assertSame(600, $this->invoke($svc, 'resolveEntryIdForNode', 7, 3, '\\App\\Entity\\Pages\\BlogPage'));
+        self::assertSame(600, $this->invoke($svc, 'resolveEntryIdForNode', 7, 3, '\\App\\Entity\\Pages\\BlogPage', ''));
     }
 
     public function testANodeWithNeitherFqcnNorRefIdResolvesToNothing(): void
     {
-        $svc = $this->service(environment: 'COM');
+        $svc = $this->service();
 
-        self::assertNull($this->invoke($svc, 'resolveEntryIdForNode', 7, 3, ''));
-        self::assertNull($this->invoke($svc, 'resolveEntryIdForNode', 7, 0, 'App\\Entity\\Pages\\BlogPage'));
+        self::assertNull($this->invoke($svc, 'resolveEntryIdForNode', 7, 3, '', 'COM'));
+        self::assertNull($this->invoke($svc, 'resolveEntryIdForNode', 7, 0, 'App\\Entity\\Pages\\BlogPage', 'COM'));
     }
 
     // ------------------------------------------------------------------

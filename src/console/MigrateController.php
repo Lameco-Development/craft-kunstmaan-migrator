@@ -405,11 +405,7 @@ final class MigrateController extends Controller
         $unresolvedAssets = count($tally->unresolvedAssets);
         $orphans = count($fixup['orphans'] ?? []);
 
-        // Per-locale block content the target's field configuration cannot hold. Accumulated on
-        // the service because the payload path builds no MigrationReport — without this the
-        // only trace is a line in the Craft log, which is exactly the "reporting is a side
-        // channel" problem one layer down.
-        $perSiteBlockLosses = $plugin->entryMigrationService->perSiteBlockLosses;
+        $perSiteBlockLosses = $tally->perSiteBlockLosses;
 
         $this->stdout(json_encode([
             'counts' => $tally->counts,
@@ -423,6 +419,7 @@ final class MigrateController extends Controller
             'unresolvedAssets' => $unresolvedAssets,
             'perSiteBlocksNotRepresentable' => count($perSiteBlockLosses),
             'perSiteBlockLossSample' => array_slice($perSiteBlockLosses, 0, 10),
+            'assetFailures' => count($tally->assetFailures),
             'unresolvedAssetSample' => array_slice(array_unique($tally->unresolvedAssets), 0, 5),
             'problems' => array_slice($tally->problems, 0, 40),
             'only' => $only,

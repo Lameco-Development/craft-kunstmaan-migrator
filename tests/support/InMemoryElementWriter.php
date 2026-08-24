@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\support;
 
+use Closure;
 use craft\base\ElementInterface;
+use craft\elements\Entry;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use ReflectionClass;
 
 /**
  * The second adapter, and the reason the seam is real rather than
@@ -20,6 +23,9 @@ final class InMemoryElementWriter implements ElementWriter
     /** @var list<array{element: ElementInterface, hardDelete: bool}> */
     public array $deleted = [];
 
+    /** @var list<array{sectionId: int, typeId: int, siteId: int}> */
+    public array $created = [];
+
     public int $cacheInvalidations = 0;
 
     /**
@@ -29,11 +35,59 @@ final class InMemoryElementWriter implements ElementWriter
      */
     public int $nextId = 900;
 
+    /**
+     * How a blank entry is built. Craft's constructor boots the application,
+     * so the default builds one without it; a test that needs the entry to
+     * answer for a field layout or a matrix value hands in its own stub.
+     *
+     * @var (Closure(int, int, int): Entry)|null sectionId, typeId, siteId
+     */
+    public ?Closure $entryFactory = null;
+
     /** @var array<string, ElementInterface> */
     private array $findable = [];
 
+    /** @var array<int, Entry> keyed by section id */
+    private array $singles = [];
+
+    /** @var array<int, array<int, true>> element id => site ids it has a row on */
+    private array $sitesOf = [];
+
     /** Elements this writer should refuse to save, by spl_object_id. */
     private array $refuse = [];
+
+    public function createEntry(int $sectionId, int $typeId, int $siteId): Entry
+    {
+        $this->created[] = ['sectionId' => $sectionId, 'typeId' => $typeId, 'siteId' => $siteId];
+
+        if ($this->entryFactory !== null) {
+            return ($this->entryFactory)($sectionId, $typeId, $siteId);
+        }
+
+        /** @var Entry $entry */
+        $entry = (new ReflectionClass(Entry::class))->newInstanceWithoutConstructor();
+        $entry->sectionId = $sectionId;
+        $entry->typeId = $typeId;
+        $entry->siteId = $siteId;
+
+        return $entry;
+    }
+
+    public function singleEntry(int $sectionId, int $siteId): ?Entry
+    {
+        return $this->singles[$sectionId] ?? null;
+    }
+
+    public function livesOnAnySite(int $elementId, array $siteIds): bool
+    {
+        foreach ($siteIds as $siteId) {
+            if (isset($this->sitesOf[$elementId][$siteId])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
     {
@@ -46,6 +100,10 @@ final class InMemoryElementWriter implements ElementWriter
         }
 
         $this->findable[$this->key((int) $element->id, null)] ??= $element;
+
+        if ($element->siteId !== null) {
+            $this->sitesOf[(int) $element->id][(int) $element->siteId] = true;
+        }
 
         $this->saved[] = [
             'element' => $element,
@@ -79,6 +137,34 @@ final class InMemoryElementWriter implements ElementWriter
     public function willFind(int $id, ElementInterface $element, ?int $siteId = null): void
     {
         $this->findable[$this->key($id, $siteId)] = $element;
+
+        if ($siteId !== null) {
+            $this->sitesOf[$id][$siteId] = true;
+        }
+    }
+
+    /**
+     * A site-scoped lookup answers only for the sites it was told about. The
+     * fallback to the unscoped element is what most tests want; a test about
+     * propagation needs the opposite — a site the entry was never written to
+     * must come back empty.
+     */
+    public function willFindOnlyOnKnownSites(int $id): void
+    {
+        unset($this->findable[$this->key($id, null)]);
+    }
+
+    public function willFindSingle(int $sectionId, Entry $entry): void
+    {
+        $this->singles[$sectionId] = $entry;
+    }
+
+    /** @param list<int> $siteIds */
+    public function willLiveOn(int $elementId, array $siteIds): void
+    {
+        foreach ($siteIds as $siteId) {
+            $this->sitesOf[$elementId][$siteId] = true;
+        }
     }
 
     public function willRefuse(ElementInterface $element): void
@@ -90,6 +176,12 @@ final class InMemoryElementWriter implements ElementWriter
     public function deletedIds(): array
     {
         return array_map(static fn(array $row): int => (int) $row['element']->id, $this->deleted);
+    }
+
+    /** @return list<int> ids of the elements saved, in call order */
+    public function savedIds(): array
+    {
+        return array_map(static fn(array $row): int => (int) $row['element']->id, $this->saved);
     }
 
     private function key(int $id, ?int $siteId): string

@@ -40,6 +40,13 @@ final class FixupService
     public function __construct(
         private readonly MigrationStateService $stateService,
         private readonly EntryMigrationService $entryService,
+        /**
+         * Handle => Craft site id. Defaults to Craft's own sites; a test hands
+         * in a map, which is the only reason this is a parameter.
+         *
+         * @var (\Closure(string): ?int)|null
+         */
+        private readonly ?\Closure $siteIdByHandle = null,
     ) {
         $this->refResolver = new RefResolver($stateService);
     }
@@ -160,11 +167,33 @@ final class FixupService
         }
         $seenContainers[$containerKey] = true;
 
-        if ($path === []) {
-            return $this->entryService->resaveEntryParentForSite($targetId, $site, $resolvedId);
+        $siteId = $this->siteIdFor($site);
+
+        if ($siteId === null) {
+            return false;
         }
 
-        return $this->patchNestedField($targetId, $site, $path, $resolvedId);
+        if ($path === []) {
+            return $this->entryService->resaveEntryParentForSite($targetId, $siteId, $resolvedId);
+        }
+
+        return $this->patchNestedField($targetId, $siteId, $path, $resolvedId);
+    }
+
+    /**
+     * The fixup pass runs once over the whole corpus, after every environment,
+     * so it has no site map to hand — a deferred ref names its site by handle
+     * and Craft answers for the id.
+     */
+    private function siteIdFor(string $handle): ?int
+    {
+        if ($this->siteIdByHandle !== null) {
+            return ($this->siteIdByHandle)($handle);
+        }
+
+        $id = Craft::$app->getSites()->getSiteByHandle($handle)?->id;
+
+        return $id === null ? null : (int) $id;
     }
 
     /**
@@ -182,7 +211,7 @@ final class FixupService
             return false;
         }
 
-        $siteId = Craft::$app->getSites()->getSiteByHandle($site)?->id;
+        $siteId = $this->siteIdFor($site);
 
         if ($siteId === null) {
             return false;
@@ -200,10 +229,10 @@ final class FixupService
 
         // A Link field at the top level of the entry is the whole value, not a path into one.
         if (count($path) === 1) {
-            return $this->entryService->resaveEntryFieldForSite($targetId, $site, $topField, $link);
+            return $this->entryService->resaveEntryFieldForSite($targetId, $siteId, $topField, $link);
         }
 
-        $current = $this->entryService->readEntryFieldValueForSite($targetId, $site, $topField) ?? [];
+        $current = $this->entryService->readEntryFieldValueForSite($targetId, $siteId, $topField) ?? [];
 
         try {
             $mutated = self::setAtPath([$topField => $current], $path, $link);
@@ -213,7 +242,7 @@ final class FixupService
             return false;
         }
 
-        return $this->entryService->resaveEntryFieldForSite($targetId, $site, $topField, (array) ($mutated[$topField] ?? []));
+        return $this->entryService->resaveEntryFieldForSite($targetId, $siteId, $topField, (array) ($mutated[$topField] ?? []));
     }
 
     /**
@@ -248,10 +277,10 @@ final class FixupService
     /**
      * @param list<int|string> $path non-empty; $path[0] is the top-level field handle.
      */
-    private function patchNestedField(int $targetId, string $site, array $path, int $resolvedId): bool
+    private function patchNestedField(int $targetId, int $siteId, array $path, int $resolvedId): bool
     {
         $topField = (string) $path[0];
-        $current = $this->entryService->readEntryFieldValueForSite($targetId, $site, $topField) ?? [];
+        $current = $this->entryService->readEntryFieldValueForSite($targetId, $siteId, $topField) ?? [];
 
         try {
             $mutated = self::appendAtPath([$topField => $current], $path, $resolvedId);
@@ -261,7 +290,7 @@ final class FixupService
             return false;
         }
 
-        return $this->entryService->resaveEntryFieldForSite($targetId, $site, $topField, (array) ($mutated[$topField] ?? []));
+        return $this->entryService->resaveEntryFieldForSite($targetId, $siteId, $topField, (array) ($mutated[$topField] ?? []));
     }
 
     /**

@@ -36,6 +36,26 @@ final class RunTally
     /** @var array<string, array<string, mixed>> */
     public array $adapters = [];
 
+    /**
+     * Per-locale block content the target's field configuration cannot hold,
+     * one message per entry+field.
+     *
+     * These lived on `EntryMigrationService` as a public accumulator that only
+     * the console read, so a queued run — the control panel's only path — lost
+     * the count `--fail-on-loss` gates on. On the tally, both callers see it.
+     *
+     * @var list<string>
+     */
+    public array $perSiteBlockLosses = [];
+
+    /**
+     * Per-asset failures classified into the closed reason set
+     * (filesystem_404 | mime_mismatch | too_large | deferred_unresolved).
+     *
+     * @var list<array{legacyId: int, reason: string, path: string}>
+     */
+    public array $assetFailures = [];
+
     public function count(string $bucket): void
     {
         $this->counts[$bucket] = ($this->counts[$bucket] ?? 0) + 1;
@@ -71,6 +91,16 @@ final class RunTally
     {
         $key = sprintf('%s on %s', $field, $site);
         $this->droppedAddresses[$key] = ($this->droppedAddresses[$key] ?? 0) + 1;
+    }
+
+    public function perSiteBlockLoss(string $message): void
+    {
+        $this->perSiteBlockLosses[] = $message;
+    }
+
+    public function assetFailure(int $legacyId, string $reason, string $path): void
+    {
+        $this->assetFailures[] = ['legacyId' => $legacyId, 'reason' => $reason, 'path' => $path];
     }
 
     public function hasFailures(): bool

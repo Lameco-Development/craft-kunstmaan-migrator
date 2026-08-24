@@ -8,6 +8,8 @@ use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -63,6 +65,8 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
 
         $service->ingestReferenced(
             new MigrationOptions(dryRun: true),
+            EnvironmentFactory::make(),
+            new RunTally(),
             [7, 3, 7],
         );
 
@@ -96,7 +100,7 @@ final class AssetMigrationServiceReferencedOnlyPreloadTest extends TestCase
             }
         };
 
-        $service->ingestReferenced(new MigrationOptions(dryRun: true), []);
+        $service->ingestReferenced(new MigrationOptions(dryRun: true), EnvironmentFactory::make(), new RunTally(), []);
 
         self::assertSame([], $legacyDb->queries);
     }
