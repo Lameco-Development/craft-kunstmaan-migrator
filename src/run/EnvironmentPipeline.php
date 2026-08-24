@@ -62,17 +62,45 @@ final class EnvironmentPipeline
 
         return new self(
             new PayloadValidator($gateway),
-            $settings->dryRun ? null : new PayloadEntrySaver(
-                $gateway,
-                $plugin->entryMigrationService,
-                $plugin->migrationStateService,
-                $plugin->assetMigrationService,
-                $plugin->ckeditorRewriterService,
-                null,
-                self::optionsFor($settings),
-            ),
+            $settings->dryRun ? null : self::saver($gateway, self::optionsFor($settings)),
             new Compiler($mapping, $transforms, new TargetModel($gateway), $settings->only),
             $transforms,
+        );
+    }
+
+    /**
+     * The one assembly of the saver. The standalone `load/entry` command
+     * used to build its own with the same seven arguments, which is the
+     * second assembly path the pipeline exists to rule out.
+     */
+    public static function saver(CraftSchemaGateway $gateway, MigrationOptions $options): PayloadEntrySaver
+    {
+        $plugin = Plugin::getInstance();
+
+        return new PayloadEntrySaver(
+            $gateway,
+            $plugin->entryMigrationService,
+            $plugin->migrationStateService,
+            $plugin->assetMigrationService,
+            $plugin->ckeditorRewriterService,
+            null,
+            $options,
+        );
+    }
+
+    /**
+     * What the compile half has to report, onto the tally both callers read.
+     *
+     * The compiler's skips and the transforms' losses accumulate per process:
+     * the console holds one pipeline for the whole run and folds once at the
+     * end; a queue batch is a fresh pipeline and folds after every batch.
+     */
+    public function foldCompileReport(RunTally $tally): void
+    {
+        $tally->absorbCompileReport(
+            $this->compiler->skipped(),
+            $this->transforms->losses(),
+            $this->transforms->lossCount(),
         );
     }
 
@@ -236,16 +264,7 @@ final class EnvironmentPipeline
         }
 
         try {
-            $result = $this->saver->save($payload, $context, $tally);
-            $tally->count($result->created ? 'created' : ($settings->force ? 'updated' : 'skipped'));
-
-            foreach ($result->unresolvedAssets as $unresolved) {
-                $tally->unresolvedAsset((string) ($unresolved['asset'] ?? '?'));
-            }
-
-            foreach ($result->droppedAddresses as $dropped) {
-                $tally->droppedAddress((string) $dropped['field'], (string) $dropped['site']);
-            }
+            $tally->absorb($this->saver->save($payload, $context, $tally), $this->saver->refreshesExisting());
         } catch (\Throwable $e) {
             $tally->count('failed');
             $tally->problem(sprintf('%s: %s', $payload->sourceUid, $e->getMessage()));

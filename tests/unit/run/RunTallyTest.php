@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
+use Lameco\Kunstmaanmigrator\load\SaveResult;
 use Lameco\Kunstmaanmigrator\run\RunSettings;
 use Lameco\Kunstmaanmigrator\run\RunTally;
 use PHPUnit\Framework\TestCase;
@@ -83,13 +84,69 @@ final class RunTallyTest extends TestCase
         );
     }
 
-    public function testUnresolvedAssetsKeepEveryOccurrenceSoTheyCanBeCounted(): void
+    /**
+     * `SaveResult` carries five things a save could not do cleanly. The pipeline
+     * used to read three of them and the standalone loader a different three, so
+     * a `migrate` run never reported an unresolvable media token and `load/entry`
+     * never reported a dropped address. One absorb, nothing dropped.
+     */
+    public function testAbsorbingASaveDropsNothing(): void
     {
         $tally = new RunTally();
-        $tally->unresolvedAsset('/uploads/media/a.png');
-        $tally->unresolvedAsset('/uploads/media/a.png');
+        $tally->absorb(new SaveResult(
+            sourceUid: 'kuma:COM:nt_page:7',
+            entryId: 70,
+            created: false,
+            deferredRefs: [['field' => 'related', 'site' => 'comEnUs', 'ref' => 'kuma:COM:nt_page:9', 'path' => []]],
+            unresolvedAssets: [['field' => 'hero', 'site' => 'comEnUs', 'path' => [], 'asset' => '/uploads/media/a.png']],
+            mediaTokenIssues: [['field' => 'body', 'site' => 'comEnUs', 'token' => '{{kuma:media:3}}', 'reason' => 'no such media']],
+            droppedAddresses: [['field' => 'visitorAddress', 'site' => 'comDeDe']],
+        ), refreshesExisting: true);
+
+        self::assertSame(1, $tally->counts['updated']);
+        self::assertSame([['sourceUid' => 'kuma:COM:nt_page:7', 'field' => 'related', 'site' => 'comEnUs', 'ref' => 'kuma:COM:nt_page:9', 'path' => []]], $tally->deferredRefs);
+        self::assertSame('/uploads/media/a.png', $tally->unresolvedAssets[0]['asset']);
+        self::assertSame('kuma:COM:nt_page:7', $tally->unresolvedAssets[0]['sourceUid']);
+        self::assertSame('{{kuma:media:3}}', $tally->mediaTokenIssues[0]['token']);
+        self::assertSame(['visitorAddress on comDeDe' => 1], $tally->droppedAddresses);
+    }
+
+    public function testANonCreatedEntryIsSkippedUnlessTheSaverRefreshes(): void
+    {
+        $tally = new RunTally();
+        $result = new SaveResult('kuma:COM:nt_page:7', 70, false, []);
+
+        $tally->absorb($result, refreshesExisting: false);
+        $tally->absorb($result, refreshesExisting: true);
+
+        self::assertSame(1, $tally->counts['skipped']);
+        self::assertSame(1, $tally->counts['updated']);
+    }
+
+    public function testUnresolvedAssetsKeepEveryOccurrenceAndOfferTheDistinctReferences(): void
+    {
+        $tally = new RunTally();
+        $hit = ['field' => 'hero', 'site' => 'comEnUs', 'path' => [], 'asset' => '/uploads/media/a.png'];
+        $tally->absorb(new SaveResult('kuma:COM:nt_page:1', 1, true, [], [$hit]), false);
+        $tally->absorb(new SaveResult('kuma:COM:nt_page:2', 2, true, [], [$hit]), false);
 
         self::assertCount(2, $tally->unresolvedAssets);
+        self::assertSame(['/uploads/media/a.png'], $tally->unresolvedAssetReferences());
+    }
+
+    /**
+     * The console folds once from its one pipeline; a queue batch is a fresh
+     * pipeline and folds after every batch — the sums must be the same.
+     */
+    public function testCompileReportsFoldAdditivelyAcrossBatches(): void
+    {
+        $tally = new RunTally();
+        $tally->absorbCompileReport(['not-in-mapping' => 2], ['ckeditor' => ['<table> -> dropped' => 1]], 1);
+        $tally->absorbCompileReport(['not-in-mapping' => 3, 'offline' => 1], ['ckeditor' => ['<table> -> dropped' => 2]], 2);
+
+        self::assertSame(['not-in-mapping' => 5, 'offline' => 1], $tally->skippedSources);
+        self::assertSame(['ckeditor' => ['<table> -> dropped' => 3]], $tally->losses);
+        self::assertSame(3, $tally->lossyConversions);
     }
 
     public function testSettingsCarryTheFlagsAJobCannotReadOffAController(): void
