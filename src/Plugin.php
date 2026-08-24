@@ -33,9 +33,7 @@ use Lameco\Kunstmaanmigrator\load\SeoMigrationService;
 use Lameco\Kunstmaanmigrator\load\TranslationMigrationService;
 use Lameco\Kunstmaanmigrator\mapping\SetupStep;
 use Lameco\Kunstmaanmigrator\models\Settings;
-use PDO;
 use yii\base\Event;
-use yii\db\Connection;
 
 /**
  * Kunstmaan Migrator plugin entrypoint.
@@ -151,34 +149,6 @@ class Plugin extends BasePlugin
     public function init(): void
     {
         parent::init();
-
-        // D-11: register the legacyDb Yii application component ONLY when the host has
-        // not already declared one. On v1.x→v2 swap-in hosts the existing config/app.php
-        // declaration wins (zero churn for operators); on greenfield hosts the plugin
-        // fills the gap from Settings (which falls back to CRAFT_LEGACY_DB_* env vars).
-        //
-        // Use the `true` second arg to has() — it checks for a *registered* (vs
-        // *instantiated*) component, which is the right check pre-first-access.
-        if (!Craft::$app->has('legacyDb', true)) {
-            $connection = $this->getSettings()->legacyConnection();
-            Craft::$app->set('legacyDb', [
-                'class' => Connection::class,
-                'dsn' => sprintf(
-                    'mysql:host=%s;port=%d;dbname=%s',
-                    $connection['host'],
-                    $connection['port'],
-                    // The database name is per environment and comes from the mapping;
-                    // this registration is only the fallback for commands that run
-                    // outside a migration.
-                    (string) App::parseEnv($this->getSettings()->legacyDbDatabase),
-                ),
-                'username' => $connection['user'],
-                'password' => $connection['password'],
-                'charset' => $connection['charset'],
-                'tablePrefix' => $connection['tablePrefix'],
-                'attributes' => [PDO::ATTR_EMULATE_PREPARES => false],
-            ]);
-        }
 
         // D-03: console controllerNamespace points at the flat src/console/ directory.
         $this->controllerNamespace = Craft::$app->request->getIsConsoleRequest()

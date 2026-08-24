@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\db;
 
-use Craft;
+use craft\helpers\App;
 use Generator;
+use Lameco\KumaCompile\Legacy\Dsn;
+use Lameco\KumaCompile\Legacy\KunstmaanCoreTables;
+use Lameco\Kunstmaanmigrator\Plugin;
+use PDO;
 use yii\base\Component;
-use yii\db\Connection;
 
 /**
  * Read-only accessor for the legacy Kunstmaan MySQL DB.
@@ -16,25 +19,64 @@ use yii\db\Connection;
  * call ever appears in this file. Any legacy-side mutation belongs in an ad-hoc dev
  * console, not in plugin code.
  *
- * The underlying `legacyDb` Yii application component is registered by `Plugin::init()`
- * (D-11) when the host hasn't already declared one in `config/app.php` — this service
- * resolves it via `Craft::$app->get('legacyDb')` on every call so test doubles can
- * replace the component without re-wiring this class.
+ * One access layer, one connection: during a migration run the pipeline hands
+ * this service the SAME PDO the compile half opened (`usePdo()`, called from
+ * `EnvironmentPipeline`), so both halves read one environment through one
+ * connection. Outside a run — doctor, JIT lookups from a console command —
+ * the connection is opened lazily from Settings, database name included,
+ * mirroring what the old `legacyDb` Yii application component did.
  */
 class LegacyDbService extends Component
 {
-    public function db(): Connection
+    private ?PDO $pdo = null;
+
+    /**
+     * Adopt the connection the compile half already holds. Per-environment:
+     * the pipeline calls this on every environment switch, so a DE run never
+     * reads COM's tables through a stale handle.
+     */
+    public function usePdo(PDO $pdo): void
     {
-        /** @var Connection $conn */
-        $conn = Craft::$app->get('legacyDb');
-        return $conn;
+        $this->pdo = $pdo;
+    }
+
+    public function pdo(): PDO
+    {
+        if ($this->pdo === null) {
+            $settings = Plugin::getInstance()->getSettings();
+            $connection = $settings->legacyConnection();
+            $dsn = new Dsn(
+                host: (string) $connection['host'],
+                port: (int) $connection['port'],
+                user: (string) $connection['user'],
+                password: (string) $connection['password'],
+                charset: (string) $connection['charset'],
+            );
+
+            // The database name is per environment and comes from the mapping;
+            // this lazy fallback serves commands that run outside a migration.
+            $this->pdo = new PDO(
+                $dsn->forDatabase((string) App::parseEnv($settings->legacyDbDatabase)),
+                $dsn->user,
+                $dsn->password,
+                [
+                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                    PDO::ATTR_EMULATE_PREPARES => false,
+                ],
+            );
+        }
+
+        return $this->pdo;
     }
 
     /** @param array<string, mixed> $params */
     public function queryOne(string $sql, array $params = []): ?array
     {
-        $row = $this->db()->createCommand($sql, $params)->queryOne();
-        return $row ?: null;
+        $stmt = $this->pdo()->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch();
+        return $row === false ? null : $row;
     }
 
     /**
@@ -43,13 +85,17 @@ class LegacyDbService extends Component
      */
     public function queryAll(string $sql, array $params = []): array
     {
-        return $this->db()->createCommand($sql, $params)->queryAll();
+        $stmt = $this->pdo()->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
     }
 
     /** @param array<string, mixed> $params */
     public function queryScalar(string $sql, array $params = []): mixed
     {
-        return $this->db()->createCommand($sql, $params)->queryScalar();
+        $stmt = $this->pdo()->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchColumn();
     }
 
     /**
@@ -58,13 +104,14 @@ class LegacyDbService extends Component
      */
     public function streamQuery(string $sql, array $params = []): Generator
     {
-        $reader = $this->db()->createCommand($sql, $params)->query();
+        $stmt = $this->pdo()->prepare($sql);
+        $stmt->execute($params);
         try {
-            foreach ($reader as $row) {
+            while (($row = $stmt->fetch()) !== false) {
                 yield $row;
             }
         } finally {
-            $reader->close();
+            $stmt->closeCursor();
         }
     }
 
@@ -166,13 +213,11 @@ class LegacyDbService extends Component
             $placeholders[] = $key;
         }
         $inClause = implode(',', $placeholders);
-        $rows = $this->db()
-            ->createCommand(
-                'SELECT object_class, locale, field, content FROM ' . KunstmaanCoreTables::EXT_TRANSLATIONS
-                . " WHERE object_class IN ($inClause) AND foreign_key = :foreignKey",
-                $namedParams,
-            )
-            ->queryAll();
+        $rows = $this->queryAll(
+            'SELECT object_class, locale, field, content FROM ' . KunstmaanCoreTables::EXT_TRANSLATIONS
+            . " WHERE object_class IN ($inClause) AND foreign_key = :foreignKey",
+            $namedParams,
+        );
         $result = [];
         foreach ($rows as $row) {
             $locale = (string) $row['locale'];
