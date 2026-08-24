@@ -222,6 +222,17 @@ final class PayloadValidatorTest extends TestCase
         self::assertSame('MISSING_TITLE', $violations[0]->code);
     }
 
+    public function testMissingTitleIsSkippedOnSinglePayloads(): void
+    {
+        // A `single` payload merges into the section's existing entry, whose
+        // title an earlier contributor set — no title travels with it.
+        $raw = $this->validPayloadArray();
+        unset($raw['sites']['en']['title']);
+        $raw['single'] = true;
+
+        self::assertSame([], $this->validator->validate(Payload::fromArray($raw)));
+    }
+
     public function testMissingTitleIsSkippedWhenEntryTypeHasTitleFormat(): void
     {
         $gateway = new FakeSchemaGateway();

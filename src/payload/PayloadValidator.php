@@ -94,7 +94,7 @@ final class PayloadValidator
                     array_push($violations, ...$this->validateBlockTypes($p, $handle, (string) $fieldHandle, $value));
                 }
 
-                if (!$entryType['hasTitleFormat'] && $data['enabled'] && !$this->hasNonEmptyString($data['title'])) {
+                if (!$entryType['hasTitleFormat'] && $data['enabled'] && !$this->hasNonEmptyString($data['title']) && !$p->single) {
                     $violations[] = $this->violation(
                         $p,
                         'MISSING_TITLE',

@@ -51,9 +51,10 @@ should become:
 | `section` | string | Target Craft section handle. |
 | `entryType` | string | Target Craft entry type handle within that section. |
 | `structural` | bool | Optional, default `false`. Marks a path-segment placeholder — see "Structural placeholders" below. The only payload permitted to be enabled on no site. |
+| `single` | bool | Optional, default `false`. A single-row config source (Kunstmaan `AbstractConfig`, mapped with `single: true` on the `entities:` lane) merging into the section's existing entry. Its sites may omit `title` entirely; the loader then leaves the entry's existing title untouched. Exempt from `MISSING_TITLE`. |
 | `sites` | object | Keyed by Craft site handle. Every site the entry should exist on. |
 | `sites.*.enabled` | bool | Whether the entry is enabled for this site. |
-| `sites.*.title` | string\|null | Native `Entry::$title`. May be omitted only when the entry type auto-generates its title (`hasTitleField: false` + a `titleFormat`). |
+| `sites.*.title` | string\|null | Native `Entry::$title`. May be omitted only when the entry type auto-generates its title (`hasTitleField: false` + a `titleFormat`), or on a `single` payload (the existing entry title survives). |
 | `sites.*.slug` | string\|null | Native `Entry::$slug`. |
 | `sites.*.parentRef` | string\|null | `sourceUid` of this site's parent entry (Structure sections). Resolved to a Craft entry id at load time — see "Two-pass `_ref` resolution" below. |
 | `sites.*.postDate` | string\|null | ISO 8601 datetime. |

@@ -49,7 +49,7 @@ final class Schema
         'unreviewed', 'contexts', 'postDate', 'manual', 'drop', 'todo', 'note', ];
 
     private const ENTITY_KEYS = ['live', 'table', 'section', 'entryType', 'title', 'softDelete', 'dedupe',
-        'map', 'ignore', 'unreviewed', 'todo', 'note', ];
+        'single', 'children', 'map', 'ignore', 'unreviewed', 'todo', 'note', ];
 
     private const REDIRECT_KEYS = ['live', 'table', 'map', 'defaultType', 'ignore', 'unreviewed', 'todo', 'note'];
 
@@ -404,13 +404,25 @@ final class Schema
             $errors[] = sprintf('entity `%s`: `dedupe:` is %s, not true or false', $name, get_debug_type($spec['dedupe']));
         }
 
+        if (array_key_exists('single', $spec) && !is_bool($spec['single'])) {
+            $errors[] = sprintf('entity `%s`: `single:` is %s, not true or false', $name, get_debug_type($spec['single']));
+        }
+
+        $this->checkChildren(sprintf('entity `%s`', $name), $spec, $errors);
+
         if (!$completeness) {
             return;
         }
 
-        foreach (['table', 'section', 'entryType', 'title'] as $required) {
-            if (($spec[$required] ?? '') === '') {
-                $errors[] = sprintf('entity `%s`: missing `%s:`', $name, $required);
+        // A `single: true` entity merges into the section's existing entry
+        // (Craft's auto-created Single); the title stays whatever an earlier
+        // contributor set, so the row needs no title column of its own.
+        $required = ($spec['single'] ?? false) === true
+            ? ['table', 'section', 'entryType']
+            : ['table', 'section', 'entryType', 'title'];
+        foreach ($required as $key) {
+            if (($spec[$key] ?? '') === '') {
+                $errors[] = sprintf('entity `%s`: missing `%s:`', $name, $key);
             }
         }
 
