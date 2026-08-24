@@ -92,9 +92,13 @@ worth having even if the later steps never happen.
 5. **One operator vocabulary** — doctor DONE (PR #63): `run\Diagnostics` is
    the superset doctor (it now includes the CLI doctor's mapping-state
    answers — conflicts, unreviewed, todos — via `mappingStateChecks()`), and
-   the two commands cross-reference each other. Remaining verbs: `init`,
-   `check`/`validate`, `coverage` — same treatment, one at a time. The
-   standalone binary stays — as an adapter, not an implementation.
+   the two commands cross-reference each other. init DONE (this change):
+   `Mapping\MappingInit` is the one skeleton engine — pair grammar, entity
+   ladder, overwrite refusal — and both commands are thin adapters over it;
+   the Craft command gained the `--introspection` support only the CLI had.
+   Remaining verbs: `check`/`validate`, `coverage` — same treatment, one at
+   a time. The standalone binary stays — as an adapter, not an
+   implementation.
 6. **Namespace consolidation.** Mechanical, last, optional: fold
    `Lameco\KumaCompile\` into `Lameco\KunstmaanMigrator\{Payload,Source,
    Mapping,Target,Compile}` and generalise the purity rule to package lists.

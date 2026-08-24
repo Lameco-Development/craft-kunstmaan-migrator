@@ -5,21 +5,26 @@ declare(strict_types=1);
 namespace Lameco\KumaCompile\Command;
 
 use Lameco\KumaCompile\Legacy\Dsn;
-use Lameco\KumaCompile\Legacy\EntityTableIndex;
-use Lameco\KumaCompile\Legacy\Introspection;
-use Lameco\KumaCompile\Legacy\LegacyDatabase;
-use Lameco\KumaCompile\Mapping\Skeleton;
+use Lameco\KumaCompile\Mapping\MappingException;
+use Lameco\KumaCompile\Mapping\MappingInit;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Throwable;
 
 #[AsCommand(
     name: 'init',
     description: 'Generate a mapping skeleton from the live legacy database',
 )]
+/**
+ * Thin adapter over `Mapping\MappingInit` — the same engine
+ * `./craft kunstmaan-migrator/mapping/init` runs. Use this one from a machine
+ * that has no Craft install; the DSN comes from the environment instead of
+ * plugin settings.
+ */
 final class InitCommand extends Command
 {
     protected function configure(): void
@@ -38,18 +43,13 @@ final class InitCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
-        $dsn = Dsn::fromEnvironment();
-        $databases = [];
 
-        foreach ((array) $input->getOption('env') as $pair) {
-            if (!str_contains((string) $pair, '=')) {
-                $io->error(sprintf('--env expects NAME=database, got `%s`', $pair));
+        try {
+            $databases = MappingInit::parsePairs(array_map(strval(...), (array) $input->getOption('env')));
+        } catch (MappingException $e) {
+            $io->error('--env ' . $e->getMessage());
 
-                return Command::INVALID;
-            }
-
-            [$name, $database] = explode('=', (string) $pair, 2);
-            $databases[$name] = LegacyDatabase::connect($name, $database, $dsn);
+            return Command::INVALID;
         }
 
         if ($databases === []) {
@@ -60,34 +60,39 @@ final class InitCommand extends Command
 
         $source = $input->getOption('source');
         $artifact = $input->getOption('introspection');
-        $introspection = $artifact !== null ? Introspection::fromFile((string) $artifact) : null;
-        $entities = match (true) {
-            $introspection !== null => EntityTableIndex::fromIntrospection($introspection),
-            $source !== null => EntityTableIndex::fromSource((string) $source),
-            default => EntityTableIndex::empty(),
-        };
 
-        if ($entities->isEmpty()) {
-            $io->warning('No --introspection or --source given: table names are left as TODO. Pass the artifact or the Kunstmaan checkout to fill them in.');
-        }
-
-        $yaml = (new Skeleton($entities, $introspection))->generate($databases);
-        $out = $input->getOption('out');
-
-        if ($out === null) {
-            $output->write($yaml);
-
-            return Command::SUCCESS;
-        }
-
-        if (is_file((string) $out)) {
-            $io->error(sprintf('%s already exists — refusing to overwrite a mapping.', $out));
+        try {
+            $connections = MappingInit::connect($databases, Dsn::fromEnvironment());
+            $result = MappingInit::skeleton(
+                $connections,
+                $source !== null ? (string) $source : null,
+                $artifact !== null ? (string) $artifact : null,
+            );
+        } catch (Throwable $e) {
+            $io->error($e->getMessage());
 
             return Command::FAILURE;
         }
 
-        @mkdir(dirname((string) $out), 0o775, true);
-        file_put_contents((string) $out, $yaml);
+        if ($result->tablesUnresolved) {
+            $io->warning('No --introspection or --source given: table names are left as TODO. Pass the artifact or the Kunstmaan checkout to fill them in.');
+        }
+
+        $out = $input->getOption('out');
+
+        if ($out === null) {
+            $output->write($result->yaml);
+
+            return Command::SUCCESS;
+        }
+
+        try {
+            MappingInit::write((string) $out, $result->yaml);
+        } catch (MappingException $e) {
+            $io->error($e->getMessage());
+
+            return Command::FAILURE;
+        }
 
         $io->success(sprintf('Wrote %s', $out));
         $io->text('Next: fill in the TODOs, then `kuma-compile validate` and `kuma-compile coverage`.');
