@@ -364,6 +364,19 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             ? (int) $item['node_translation_id']
             : null;
 
+        // A page_link points at a node translation by definition; a row where
+        // that FK is NULL is corrupt legacy data. Falling through to the url
+        // branch used to mint an enabled '#' node titled '(URL)' — a live dead
+        // menu item — with no warning.
+        if ($type === 'page_link' && $nodeTranslationId === null) {
+            $report->incr('skipped');
+            $report->warn(sprintf(
+                'kuma_menu_item id=%d is a page_link with no node_translation_id — corrupt legacy row; skipped instead of emitting a dead "#" node.',
+                $kumaItemId,
+            ));
+            return null;
+        }
+
         $node = null;
         if ($existingNodeId !== null) {
             $node = $this->elements()->findById($existingNodeId, NavNode::class, $siteId);
@@ -974,17 +987,17 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      */
     private function resolveEntryIdFromNodeTranslation(int $nodeTranslationId): ?int
     {
-        try {
-            $row = $this->legacyDb->queryOne(
-                'SELECT t.node_id, v.ref_id, v.ref_entity_name
-                 FROM ' . $this->nodeTranslationTableName . ' t
-                 JOIN ' . $this->nodeVersionTableName . ' v ON v.id = t.public_node_version_id
-                 WHERE t.id = :id',
-                [':id' => $nodeTranslationId],
-            );
-        } catch (Throwable) {
-            return null;
-        }
+        // Deliberately no catch: null means "no migrated entry yet — re-run
+        // later", and the item loop's own catch reports a query failure as a
+        // failure. Swallowing here made a legacy-DB outage read as operator
+        // guidance to re-run entry migration, which cannot help.
+        $row = $this->legacyDb->queryOne(
+            'SELECT t.node_id, v.ref_id, v.ref_entity_name
+             FROM ' . $this->nodeTranslationTableName . ' t
+             JOIN ' . $this->nodeVersionTableName . ' v ON v.id = t.public_node_version_id
+             WHERE t.id = :id',
+            [':id' => $nodeTranslationId],
+        );
         if ($row === null || empty($row['ref_id']) || empty($row['ref_entity_name'])) {
             return null;
         }

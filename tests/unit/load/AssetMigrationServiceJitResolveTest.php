@@ -6,6 +6,7 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -77,6 +78,19 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
 
         self::assertSame(0, $service->resolveFromLegacyId(5));
         self::assertSame([], $state->recorded);
+    }
+
+    public function testIngestOneWithoutAWiredConnectionIsAWarnedMissNotAFatal(): void
+    {
+        // Same failure mode as ingestReferenced: before the guard this was an
+        // uncaught null-dereference three frames into a CKEditor rewrite.
+        if (!class_exists(\Craft::class, false)) {
+            require dirname(__DIR__, 3) . '/vendor/craftcms/cms/src/Craft.php';
+        }
+
+        $service = new AssetMigrationService();
+
+        self::assertNull($service->ingestOne(5, new MigrationOptions()));
     }
 
     public function testResolveFromLegacyUrlRejectsUrlsOutsideTheMediaTree(): void

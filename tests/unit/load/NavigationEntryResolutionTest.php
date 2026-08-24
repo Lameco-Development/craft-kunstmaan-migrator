@@ -71,11 +71,17 @@ final class NavigationEntryResolutionTest extends TestCase
     // resolveEntryIdFromNodeTranslation
     // ------------------------------------------------------------------
 
-    public function testAnUnreadableTranslationTableResolvesToNothingRatherThanThrowing(): void
+    public function testAnUnreadableTranslationTableThrowsSoTheItemLoopReportsAFailure(): void
     {
+        // null means "no migrated entry yet — re-run later"; a legacy-DB
+        // outage swallowed into null used to hand the operator exactly that
+        // wrong guidance. The item loop's catch turns the throw into a
+        // per-item failure with the real message.
         $svc = $this->service([new RuntimeException('translations gone')]);
 
-        self::assertNull($this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44));
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('translations gone');
+        $this->invoke($svc, 'resolveEntryIdFromNodeTranslation', 44);
     }
 
     public function testAMissingTranslationRowResolvesToNothing(): void

@@ -788,14 +788,14 @@ class EntryMigrationService extends Component
             $dropped = array_diff_key($fieldValues, $validHandles);
             $fieldValues = array_intersect_key($fieldValues, $validHandles);
             foreach (array_keys($dropped) as $handle) {
-                Craft::warning(
-                    sprintf(
-                        'Dropped unknown field "%s" on entry type "%s" — not in the entry type\'s field layout. Clean up mapping.yaml.',
-                        $handle,
-                        $entry->getType()->handle,
-                    ),
-                    __METHOD__,
-                );
+                // Through the guarded helper: this is the one warning on the
+                // apply path that called Craft::warning() directly, fataling
+                // wherever the Craft alias is not loaded (unit tier, early CLI).
+                $this->warn(sprintf(
+                    'Dropped unknown field "%s" on entry type "%s" — not in the entry type\'s field layout. Clean up mapping.yaml.',
+                    $handle,
+                    $entry->getType()->handle,
+                ));
             }
         }
         $entry->setFieldValues($fieldValues);
