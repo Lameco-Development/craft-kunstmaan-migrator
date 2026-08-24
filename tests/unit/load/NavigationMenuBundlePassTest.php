@@ -544,6 +544,15 @@ final class NavigationMenuBundlePassTest extends TestCase
             public function invalidateCaches(): void
             {
             }
+
+            public function structureEntries(string $sectionHandle): iterable
+            {
+                return [];
+            }
+
+            public function updateSlugAndUri(ElementInterface $element): void
+            {
+            }
         };
         $svc = $this->service(
             $this->legacyDb([
@@ -683,6 +692,15 @@ final class NavigationMenuBundlePassTest extends TestCase
             }
 
             public function invalidateCaches(): void
+            {
+            }
+
+            public function structureEntries(string $sectionHandle): iterable
+            {
+                return [];
+            }
+
+            public function updateSlugAndUri(ElementInterface $element): void
             {
             }
         };

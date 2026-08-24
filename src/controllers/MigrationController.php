@@ -20,6 +20,7 @@ use Lameco\Kunstmaanmigrator\Mapping\MappingRow;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\queue\FinalizeJob;
 use Lameco\Kunstmaanmigrator\queue\MigrateEnvironmentJob;
+use Lameco\Kunstmaanmigrator\queue\RecomputeStructureUrisJob;
 use Lameco\Kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use Lameco\Kunstmaanmigrator\run\Diagnostics;
 use Lameco\Kunstmaanmigrator\run\RunPanel;
@@ -675,6 +676,12 @@ final class MigrationController extends Controller
             return $this->asJson(['ok' => true, 'queued' => ['finalize'], 'message' => 'Queued finalize.']);
         }
 
+        if ($pass === 'uris') {
+            Craft::$app->getQueue()->push(new RecomputeStructureUrisJob(['mappingPath' => $path]));
+
+            return $this->asJson(['ok' => true, 'queued' => ['uris'], 'message' => 'Queued URL settling.']);
+        }
+
         try {
             $environments = Mapping::fromFile($path)->environments();
         } catch (Throwable $e) {
@@ -700,7 +707,7 @@ final class MigrationController extends Controller
 
         // One job starts the chain (#48): each environment's last batch pushes
         // its adapter pass, each adapter pass pushes the next environment, and
-        // the corpus-wide fixup + finalize run only after the last one — an
+        // the corpus-wide fixup, finalize and URI passes run only after the last one — an
         // ordering the queue now enforces structurally, where FIFO used to
         // merely suggest it (#47) and the web runner proved it a suggestion.
         QueueHelper::push(job: new MigrateEnvironmentJob([
@@ -719,6 +726,7 @@ final class MigrationController extends Controller
         if ($pass === 'full') {
             $queued[] = 'fixup';
             $queued[] = 'finalize';
+            $queued[] = 'uris';
         }
 
         // What was queued, in words. "Queued LV, fixup, finalize." leaks two

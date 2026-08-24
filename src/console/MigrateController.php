@@ -9,9 +9,11 @@ use craft\console\Controller;
 use craft\helpers\Console;
 use craft\helpers\Queue as QueueHelper;
 use Lameco\Kunstmaanmigrator\Compile\PayloadWriter;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
+use Lameco\Kunstmaanmigrator\finalize\StructureUriPass;
 use Lameco\Kunstmaanmigrator\load\FixupService;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\MappingCheck;
@@ -137,15 +139,17 @@ final class MigrateController extends Controller
     public bool $skipAssets = false;
 
     /**
-     * Re-save the migrated sections when the run finishes.
+     * Also re-save the migrated sections when the run finishes, the way `resave/entries` does.
      *
-     * URIs are computed at save time from the parent's URI, so a subtree written before its
-     * ancestor's per-site slugs settle keeps a stale prefix. On the reference corpus that is
-     * the difference between 76.6% and 97.7% URL fidelity — which means a run without it is
-     * not finished, and leaving it to the README leaves a quarter of the site's URLs to
-     * whether the operator read one.
+     * Redundant for URIs since the run gained its own URI pass: URIs are computed at save time
+     * from the parent's URI, so a subtree written before its ancestor's per-site slugs settled
+     * kept a stale prefix — on the reference corpus the difference between 76.6% and 97.7% URL
+     * fidelity — and the re-save was the only thing that recomputed them. The URI pass now does
+     * that deterministically, parents first, without a full element save per entry. Off by
+     * default because a re-save is also the one write in the run that propagates: it creates
+     * rows on sites the payload never named. Kept for an operator comparing the two.
      */
-    public bool $resave = true;
+    public bool $resave = false;
 
     /**
      * Run anyway when the corpus has grown past the mapping.
@@ -277,9 +281,10 @@ final class MigrateController extends Controller
 
             // One job starts the chain (#48): each environment's last batch
             // pushes its adapters, each adapter pass pushes the next
-            // environment, and the corpus-wide fixup + finalize run only after
-            // the last — the same migration as an inline run, with the
-            // ordering enforced structurally instead of FIFO-hopeful (#47).
+            // environment, and the corpus-wide fixup, finalize and URI passes run only after
+            // the last, the URI pass last of all — the same migration as an
+            // inline run, with the ordering enforced structurally instead of
+            // FIFO-hopeful (#47).
             QueueHelper::push(job: new MigrateEnvironmentJob([
                 'mappingPath' => $this->mapping,
                 'environment' => $queued[0],
@@ -296,6 +301,7 @@ final class MigrateController extends Controller
             if (!$this->entriesOnly) {
                 $queued[] = 'fixup';
                 $queued[] = 'finalize';
+                $queued[] = 'uris';
             }
 
             $this->stdout(json_encode([
@@ -392,9 +398,19 @@ final class MigrateController extends Controller
             }
         }
 
-        // URIs are computed at save time, so a subtree written before its ancestor's per-site
-        // slugs settled keeps a stale prefix until something re-saves it. Part of the run, not
-        // a line in the README the operator may or may not have reached.
+        // A Structure entry's URI is its parent's plus its slug, rendered at save time — and
+        // the parent is not always written first. Settled here, parents first on every site,
+        // from committed state; see StructureUriPass. Part of the run, not a line in the
+        // README the operator may or may not have reached.
+        $uris = null;
+
+        if (!$this->entriesOnly && !$this->dryRun) {
+            RunLog::default()->track('uris', [], function(array &$extra) use ($mapping, &$uris): void {
+                $uris = (new StructureUriPass(new CraftElementWriter()))->run($mapping);
+                $extra['counts'] = $uris;
+            });
+        }
+
         $resave = null;
 
         if ($this->resave && !$this->dryRun) {
@@ -413,6 +429,7 @@ final class MigrateController extends Controller
             'counts' => $tally->counts,
             'fixup' => $fixup,
             'finalize' => $finalize,
+            'uris' => $uris,
             'resave' => $resave,
             'lossyConversions' => $lossCount,
             'losses' => $tally->losses,
@@ -457,11 +474,13 @@ final class MigrateController extends Controller
 
 
     /**
-     * Re-save every section the mapping writes into.
+     * Re-save every section the mapping writes into — what `--resave` asks for.
      *
-     * Craft computes a URI at save time from the parent's URI, so an entry written before its
-     * ancestors' per-site slugs settled carries a stale prefix until it is saved again. On the
-     * reference corpus this pass is worth 21 percentage points of URL fidelity.
+     * The URI pass has taken over the one job this did: Craft computes a URI at save time
+     * from the parent's URI, so an entry written before its ancestors' per-site slugs settled
+     * carried a stale prefix until it was saved again, and on the reference corpus that was
+     * worth 21 percentage points of URL fidelity. Kept so an operator can still measure the
+     * two against each other.
      *
      * Sections come from the mapping rather than a list, so a project that migrates into
      * something other than `pages` gets its own sections re-saved without editing anything.

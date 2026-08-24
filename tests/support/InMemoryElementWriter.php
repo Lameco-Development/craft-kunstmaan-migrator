@@ -29,6 +29,18 @@ final class InMemoryElementWriter implements ElementWriter
     public int $cacheInvalidations = 0;
 
     /**
+     * Every slug/URI recomputation asked for, in call order, with the sites
+     * the production adapter would have written — the site the element was
+     * loaded in plus every other site it has a row on.
+     *
+     * @var list<array{id: int, siteIds: list<int>}>
+     */
+    public array $urisUpdated = [];
+
+    /** @var array<string, list<Entry>> section handle => entries, parents first */
+    private array $structures = [];
+
+    /**
      * Craft stamps an id onto a new element as it saves it, and callers read
      * that id back to wire relationships. So does this — otherwise a pass that
      * saves and then links builds its map out of nulls.
@@ -132,6 +144,33 @@ final class InMemoryElementWriter implements ElementWriter
     public function invalidateCaches(): void
     {
         $this->cacheInvalidations++;
+    }
+
+    public function structureEntries(string $sectionHandle): iterable
+    {
+        return $this->structures[$sectionHandle] ?? [];
+    }
+
+    public function updateSlugAndUri(ElementInterface $element): void
+    {
+        $siteIds = array_keys($this->sitesOf[(int) $element->id] ?? []);
+
+        if ($element->siteId !== null && !in_array((int) $element->siteId, $siteIds, true)) {
+            array_unshift($siteIds, (int) $element->siteId);
+        }
+
+        $this->urisUpdated[] = ['id' => (int) $element->id, 'siteIds' => $siteIds];
+    }
+
+    /**
+     * What a Structure section holds, in the order the production adapter
+     * hands it out: parents before children.
+     *
+     * @param list<Entry> $entries
+     */
+    public function willWalk(string $sectionHandle, array $entries): void
+    {
+        $this->structures[$sectionHandle] = $entries;
     }
 
     public function willFind(int $id, ElementInterface $element, ?int $siteId = null): void

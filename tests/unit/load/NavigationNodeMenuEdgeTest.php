@@ -194,6 +194,15 @@ final class NavigationNodeMenuEdgeTest extends TestCase
             public function invalidateCaches(): void
             {
             }
+
+            public function structureEntries(string $sectionHandle): iterable
+            {
+                return [];
+            }
+
+            public function updateSlugAndUri(ElementInterface $element): void
+            {
+            }
         };
         $state = new InMemoryMigrationState();
         $this->entryExistsFor($state, 2, 500);
@@ -262,6 +271,15 @@ final class NavigationNodeMenuEdgeTest extends TestCase
             {
                 $this->inner->invalidateCaches();
             }
+
+            public function structureEntries(string $sectionHandle): iterable
+            {
+                return [];
+            }
+
+            public function updateSlugAndUri(ElementInterface $element): void
+            {
+            }
         };
         $state = new InMemoryMigrationState();
         $this->entryExistsFor($state, 2, 500);
@@ -308,6 +326,15 @@ final class NavigationNodeMenuEdgeTest extends TestCase
             }
 
             public function invalidateCaches(): void
+            {
+            }
+
+            public function structureEntries(string $sectionHandle): iterable
+            {
+                return [];
+            }
+
+            public function updateSlugAndUri(ElementInterface $element): void
             {
             }
         };

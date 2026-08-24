@@ -73,6 +73,21 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **The run settles Structure URIs itself.** A Structure entry's URI is its
+  parent's plus its slug, computed at save time, and the parent was not always
+  written first — entity-lane units precede every node, deferred `parentRef`s
+  are patched at the end of the corpus, and Craft's own descendant-URI
+  maintenance after a `resaving` save goes to the queue at default priority,
+  behind the whole 512 chain. `resave/entries` was the only thing recomputing
+  them, and it was an operator convention (76.6% to 97.7% URL fidelity on the
+  reference corpus). A `StructureUriPass` now walks every Structure section
+  the mapping writes into parents-first and recomputes each entry's URI on
+  every site through the `ElementWriter` seam (`structureEntries`,
+  `updateSlugAndUri`), straight into `elements_sites` — no element save, no
+  queue. Both callers run it: the console after finalize (reported under
+  `uris`), the queue chain as `RecomputeStructureUrisJob` after `FinalizeJob`,
+  and the run screen offers it as a recovery pass. `migrate --resave` is now
+  off by default and only there to compare against.
 - The mapping YAML is parsed once per request instead of per question (the
   coverage screen alone cost ~2N+4 full parses for N mapped entry types).
 - `RunLog::entries()` reads a bounded tail instead of the whole append-only

@@ -46,7 +46,7 @@ CRAFT_DB_OVERRIDE=<project>_bench php craft install/craft --interactive=0 ...
 git checkout -- config/project          # the installer wrote its own site name back out
 CRAFT_DB_OVERRIDE=<project>_bench php craft project-config/apply --force
 
-# 2. migrate. The run re-saves for you; --resave=0 turns that off, and you should not.
+# 2. migrate. The run settles URLs itself (the closing URI pass); no resave/entries needed.
 CRAFT_DB_OVERRIDE=<project>_bench php craft kunstmaan-migrator/migrate \
     --mapping=migration/mapping/<project>.yaml --legacy-env=COM --fail-on-loss
 

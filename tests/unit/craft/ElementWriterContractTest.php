@@ -98,7 +98,7 @@ final class ElementWriterContractTest extends TestCase
      */
     public function testBothAdaptersShareTheSameSignatures(): void
     {
-        foreach (['save', 'delete', 'findById', 'invalidateCaches'] as $method) {
+        foreach (['save', 'delete', 'findById', 'invalidateCaches', 'structureEntries', 'updateSlugAndUri'] as $method) {
             $interface = new ReflectionMethod(ElementWriter::class, $method);
 
             foreach ([CraftElementWriter::class, InMemoryElementWriter::class] as $adapter) {
@@ -111,6 +111,33 @@ final class ElementWriterContractTest extends TestCase
                 );
             }
         }
+    }
+
+    /**
+     * The walk order is the whole contract of structureEntries(): a child's
+     * URI is its parent's plus a slug, so a parent visited second leaves the
+     * child with the prefix it had. The production query cannot run here, so
+     * the order-by is pinned in its source.
+     */
+    public function testTheProductionWalkIsParentsFirstAndTouchesNoQueue(): void
+    {
+        $source = (string) file_get_contents((new \ReflectionClass(CraftElementWriter::class))->getFileName());
+
+        self::assertStringContainsString("orderBy(['structureelements.lft' => SORT_ASC])", $source);
+        self::assertStringContainsString('updateDescendants: false', $source);
+        self::assertStringContainsString('queue: false', $source);
+    }
+
+    public function testTheFakeRecordsEverySiteAUriUpdateWouldReach(): void
+    {
+        $writer = new InMemoryElementWriter();
+        $entry = $this->element(7);
+        $entry->siteId = 1;
+        $writer->willLiveOn(7, [1, 2, 3]);
+
+        $writer->updateSlugAndUri($entry);
+
+        self::assertSame([['id' => 7, 'siteIds' => [1, 2, 3]]], $writer->urisUpdated);
     }
 
     private function signature(ReflectionMethod $method): string
