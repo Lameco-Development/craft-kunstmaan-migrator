@@ -29,7 +29,7 @@ Read these before making non-trivial changes. The project follows the GSD workfl
 
 ## Architectural ground rules
 
-Don't casually reverse these.
+Don't casually reverse these. Each is recorded with its constraint in `docs/adr/` — read the record before proposing the alternative; reopen one only when its constraint has changed.
 
 - **The mapping owns the topology.** Which databases exist, where each one's uploads are, which legacy locale writes to which Craft site — all of it lives in the version-controlled mapping, next to the field mappings it travels with. A control-panel form is worse than a YAML file at exactly the parts a real corpus needs: an ordered media-root fallback chain, and a locale marked "deliberately not migrated, and here is why".
 - **The Settings screen states what config decided; it does not decide anything machine-level.** The connection, the mapping path and asset placement are `config/kunstmaan-migrator.php` + `.env` concerns — a form that wrote them into project config would ship one developer's local paths and credentials to everyone else. The `Settings` *model* still carries those properties (for the config file to populate), but the CP screen only offers the adapter on/off switches and each adapter's own settings — what genuinely varies per Kunstmaan install — plus a read-only summary of what's currently in force.
