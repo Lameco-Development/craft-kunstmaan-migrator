@@ -11,6 +11,7 @@ use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use Lameco\Kunstmaanmigrator\load\NavigationMigrationService;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\tests\support\ConstructsNoElements;
 use Lameco\Kunstmaanmigrator\tests\support\FakeLegacyDb;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryMigrationState;
@@ -77,6 +78,7 @@ final class NavigationNodeMenuEdgeTest extends TestCase
             $this->sites(),
             self::PRIMARY_SITE_ID,
             $primarySiteHandle,
+            'COM',
             new MigrationOptions(),
             $report,
         );
@@ -173,6 +175,8 @@ final class NavigationNodeMenuEdgeTest extends TestCase
     public function testARefusedNodeMenuSaveIsCountedAsFailed(): void
     {
         $refusing = new class() implements ElementWriter {
+            use ConstructsNoElements;
+
             public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
             {
                 return false;
@@ -227,6 +231,8 @@ final class NavigationNodeMenuEdgeTest extends TestCase
     public function testALinkageFailureIsReportedPerNodeAndSparesTheRest(): void
     {
         $writer = new class(new InMemoryElementWriter()) implements ElementWriter {
+            use ConstructsNoElements;
+
             public int $savesAllowed = 2;
 
             public function __construct(public readonly InMemoryElementWriter $inner)
@@ -277,6 +283,8 @@ final class NavigationNodeMenuEdgeTest extends TestCase
         // Saves succeed but nothing is findable afterwards — the shape of a
         // node deleted out from under the pass between its two halves.
         $writer = new class() implements ElementWriter {
+            use ConstructsNoElements;
+
             /** @var list<ElementInterface> */
             public array $saved = [];
 

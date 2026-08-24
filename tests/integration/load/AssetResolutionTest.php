@@ -9,11 +9,17 @@ use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\load\AssetPathResolver;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use Lameco\Kunstmaanmigrator\load\PayloadEntrySaver;
+use Lameco\Kunstmaanmigrator\load\SaveResult;
 use Lameco\Kunstmaanmigrator\Payload\Payload;
 use Lameco\Kunstmaanmigrator\Payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -157,8 +163,10 @@ final class AssetResolutionFakeEntryMigrationService extends EntryMigrationServi
         string $stateSource,
         string|int $stateKey,
         array $perSite,
+        SiteMap $sites,
         bool $force = false,
         ?MigrationReport $report = null,
+        ?RunTally $tally = null,
     ): Entry {
         $this->lastPerSite = $perSite;
 
@@ -201,7 +209,7 @@ final class FakeAssetMigrationService extends AssetMigrationService
     /** @var array<int, int> legacy kuma_media id → resolved Craft asset id */
     public array $resolvedLegacyIds = [];
 
-    public function resolveFromLegacyUrl(string $legacyUrl): int
+    public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
         if ($this->mediaRoot !== '' && AssetPathResolver::resolveLocal($legacyUrl, $this->mediaRoot) === null) {
             return 0;
@@ -210,7 +218,7 @@ final class FakeAssetMigrationService extends AssetMigrationService
         return $this->resolvedUrlIds[$legacyUrl] ?? 0;
     }
 
-    public function resolveFromLegacyId(int $legacyId): int
+    public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
         return $this->resolvedLegacyIds[$legacyId] ?? 0;
     }
@@ -234,6 +242,16 @@ final class AssetResolutionTest extends TestCase
     {
         array_map('unlink', glob($this->tempMediaRoot . '/*') ?: []);
         @rmdir($this->tempMediaRoot);
+    }
+
+    private function env(): EnvironmentContext
+    {
+        return EnvironmentFactory::make('COM', ['en' => 'en'], ['en' => [1, 'en-GB', true]]);
+    }
+
+    private function save(PayloadEntrySaver $saver, Payload $payload): SaveResult
+    {
+        return $saver->save($payload, $this->env(), new RunTally());
     }
 
     private function makeSaver(
@@ -288,7 +306,7 @@ final class AssetResolutionTest extends TestCase
             'sites' => ['en' => ['fieldValues' => ['media' => ['_asset' => '/uploads/media/present.jpg']]]],
         ]));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         // A relation field takes a list of element ids; a bare integer relates nothing.
         self::assertSame([501], $entryService->lastPerSite['en']['fieldValues']['media']);
@@ -309,7 +327,7 @@ final class AssetResolutionTest extends TestCase
             'sites' => ['en' => ['fieldValues' => ['media' => ['_asset' => '/uploads/media/missing.jpg']]]],
         ]));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         // Entry still saves — an unresolved asset is reported, not fatal.
         self::assertSame(1000, $result->entryId);
@@ -344,7 +362,7 @@ final class AssetResolutionTest extends TestCase
             ],
         ]));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         self::assertSame([[
             'field' => 'pageBuilder',
@@ -389,7 +407,7 @@ final class AssetResolutionTest extends TestCase
             ],
         ]));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         self::assertSame([], $result->unresolvedAssets);
         self::assertSame(

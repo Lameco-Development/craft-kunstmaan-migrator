@@ -8,18 +8,20 @@ use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
 /**
  * The two JIT entry points — resolveFromLegacyId() and resolveFromLegacyUrl()
  * — are what every real run actually uses (FH-03: JIT default). These tests
- * pin their decision logic ahead of the legacy-DB-reader refactor: the state
- * fast path, URL normalisation, the media-root ladder, and the skip contract.
+ * pin their decision logic: the state fast path, URL normalisation, the
+ * media-root ladder the environment carries, and the skip contract.
  *
  * Everything past folder/volume resolution needs a booted Craft, so the
- * ingest itself is cut off via $skipAssets — the branches up to that point
- * are the ones the refactor moves.
+ * ingest itself is cut off via `skipAssets` — the branches up to that point
+ * are the ones that matter here.
  */
 final class AssetMigrationServiceJitResolveTest extends TestCase
 {
@@ -40,6 +42,12 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
         @rmdir($this->mediaRoot);
     }
 
+    /** @param list<string> $roots */
+    private function env(array $roots = []): EnvironmentContext
+    {
+        return EnvironmentFactory::make('COM', mediaRoots: $roots);
+    }
+
     public function testResolveFromLegacyIdReturnsTheStateTargetWithoutTouchingTheLegacyDb(): void
     {
         $service = new AssetMigrationService();
@@ -48,7 +56,7 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
             'media|kuma_media:42' => ['targetId' => 123],
         ]);
 
-        self::assertSame(123, $service->resolveFromLegacyId(42));
+        self::assertSame(123, $service->resolveFromLegacyId(42, $this->env()));
     }
 
     public function testResolveFromLegacyIdReturnsZeroWhenTheMediaRowIsGone(): void
@@ -56,18 +64,15 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
         $service = new AssetMigrationService();
         $service->legacyDb = new JitLegacyDb(null);
         $service->migrationState = new JitStateMap();
-        $service->legacyMediaRoot = $this->mediaRoot;
 
-        self::assertSame(0, $service->resolveFromLegacyId(999));
+        self::assertSame(0, $service->resolveFromLegacyId(999, $this->env([$this->mediaRoot])));
         self::assertStringContainsString('FROM kuma_media WHERE id = :id', $service->legacyDb->queryOneCalls[0][0]);
         self::assertSame([':id' => 999], $service->legacyDb->queryOneCalls[0][1]);
     }
 
-    public function testResolveFromLegacyIdHonoursTheSkipAssetsProperty(): void
+    public function testResolveFromLegacyIdHonoursSkipAssets(): void
     {
         $service = new AssetMigrationService();
-        $service->skipAssets = true;
-        $service->legacyMediaRoot = $this->mediaRoot;
         $service->legacyDb = new JitLegacyDb([
             'id' => 5,
             'url' => '/uploads/media/pics/one.png',
@@ -76,7 +81,28 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
         $state = new JitStateMap();
         $service->migrationState = $state;
 
-        self::assertSame(0, $service->resolveFromLegacyId(5));
+        self::assertSame(0, $service->resolveFromLegacyId(5, $this->env([$this->mediaRoot]), new MigrationOptions(skipAssets: true)));
+        self::assertSame([], $state->recorded);
+    }
+
+    public function testTheBoundResolverCarriesTheEnvironmentAndTheRunsOptions(): void
+    {
+        // What the CKEditor rewriter is handed: the same two lookups, with the
+        // environment and options fixed at the point the environment was opened.
+        $service = new AssetMigrationService();
+        $service->legacyDb = new JitLegacyDb([
+            'id' => 5,
+            'url' => '/uploads/media/pics/one.png',
+            'content_type' => 'image/png',
+        ]);
+        $state = new JitStateMap(['media|kuma_media:42' => ['targetId' => 123]]);
+        $service->migrationState = $state;
+
+        $resolver = $service->resolverFor($this->env([$this->mediaRoot]), new MigrationOptions(skipAssets: true));
+
+        self::assertSame(123, $resolver->resolveFromLegacyId(42));
+        self::assertSame(0, $resolver->resolveFromLegacyId(5), 'skipAssets travels with the resolver');
+        self::assertSame(0, $resolver->resolveFromLegacyUrl('/uploads/media/pics/one.png'));
         self::assertSame([], $state->recorded);
     }
 
@@ -90,17 +116,17 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
 
         $service = new AssetMigrationService();
 
-        self::assertNull($service->ingestOne(5, new MigrationOptions()));
+        self::assertNull($service->ingestOne(5, new MigrationOptions(), $this->env()));
     }
 
     public function testResolveFromLegacyUrlRejectsUrlsOutsideTheMediaTree(): void
     {
         $service = new AssetMigrationService();
 
-        self::assertSame(0, $service->resolveFromLegacyUrl(''));
-        self::assertSame(0, $service->resolveFromLegacyUrl('/other/file.png'));
-        self::assertSame(0, $service->resolveFromLegacyUrl('https://x.test/random.png'));
-        self::assertSame(0, $service->resolveFromLegacyUrl('/uploads/media'));
+        self::assertSame(0, $service->resolveFromLegacyUrl('', $this->env()));
+        self::assertSame(0, $service->resolveFromLegacyUrl('/other/file.png', $this->env()));
+        self::assertSame(0, $service->resolveFromLegacyUrl('https://x.test/random.png', $this->env()));
+        self::assertSame(0, $service->resolveFromLegacyUrl('/uploads/media', $this->env()));
     }
 
     public function testResolveFromLegacyUrlStripsHostAndQueryBeforeTheStateLookup(): void
@@ -112,17 +138,16 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
 
         self::assertSame(
             77,
-            $service->resolveFromLegacyUrl('https://old.example/uploads/media/pics/one.png?v=3#frag'),
+            $service->resolveFromLegacyUrl('https://old.example/uploads/media/pics/one.png?v=3#frag', $this->env()),
         );
     }
 
     public function testResolveFromLegacyUrlReturnsZeroWhenNoRootHoldsTheFile(): void
     {
         $service = new AssetMigrationService();
-        $service->legacyMediaRoot = $this->mediaRoot;
         $service->migrationState = new JitStateMap();
 
-        self::assertSame(0, $service->resolveFromLegacyUrl('/uploads/media/pics/missing.png'));
+        self::assertSame(0, $service->resolveFromLegacyUrl('/uploads/media/pics/missing.png', $this->env([$this->mediaRoot])));
     }
 
     public function testResolveFromLegacyUrlWalksTheFallbackRootsForTheFile(): void
@@ -132,33 +157,32 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
 
         try {
             $service = new AssetMigrationService();
-            $service->legacyMediaRoot = $emptyRoot;
-            $service->legacyMediaFallbackRoots = [$this->mediaRoot];
-            // The file resolves against the fallback root and reaches
-            // ingestRow, whose skip-assets guard then bails — the resolution
-            // itself (the part the refactor moves) is what runs here.
-            $service->skipAssets = true;
             $state = new JitStateMap();
             $service->migrationState = $state;
 
-            self::assertSame(0, $service->resolveFromLegacyUrl('/uploads/media/pics/one.png'));
+            // The file resolves against the fallback root and reaches
+            // ingestRow, whose skip-assets guard then bails — the resolution
+            // itself is what runs here.
+            self::assertSame(0, $service->resolveFromLegacyUrl(
+                '/uploads/media/pics/one.png',
+                $this->env([$emptyRoot, $this->mediaRoot]),
+                new MigrationOptions(skipAssets: true),
+            ));
             self::assertSame([], $state->recorded);
         } finally {
             @rmdir($emptyRoot);
         }
     }
 
-    public function testTheConfiguredMediaRootWinsOverTheEnvVar(): void
+    public function testTheEnvironmentsMediaRootsWinOverTheEnvVar(): void
     {
         putenv(AssetMigrationService::LEGACY_MEDIA_ROOT_ENV . '=/from-env');
 
         $service = new AssetMigrationService();
-        $mediaRoot = new ReflectionMethod($service, 'mediaRoot');
+        $mediaRoots = new ReflectionMethod($service, 'mediaRoots');
 
-        self::assertSame('/from-env', $mediaRoot->invoke($service));
-
-        $service->legacyMediaRoot = '/from-prop';
-        self::assertSame('/from-prop', $mediaRoot->invoke($service));
+        self::assertSame(['/from-env'], $mediaRoots->invoke($service, $this->env()));
+        self::assertSame(['/from-mapping', '/fallback'], $mediaRoots->invoke($service, $this->env(['/from-mapping', '/fallback'])));
     }
 }
 

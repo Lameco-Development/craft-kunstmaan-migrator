@@ -11,6 +11,8 @@ use craft\fields\PlainText;
 use craft\models\FieldLayout;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\tests\support\ConstructsNoElements;
+use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
@@ -110,7 +112,7 @@ final class EntryMigrationServiceWipeGuardsTest extends TestCase
         $writer = new InMemoryElementWriter();
         $entry = WipeStubEntry::make(siteId: 1, fieldValues: []);
 
-        $this->callPrivate($this->service($writer), 'wipeBlocksOnUnpayloadedSites', $entry, []);
+        $this->callPrivate($this->service($writer), 'wipeBlocksOnUnpayloadedSites', $entry, [], EnvironmentFactory::sites());
 
         self::assertSame([], $writer->deleted);
     }
@@ -298,6 +300,8 @@ final class WipeStubFieldLayout extends FieldLayout
  */
 final class RefusingDeleteWriter implements ElementWriter
 {
+    use ConstructsNoElements;
+
     /** @var list<int> */
     public array $attemptedIds = [];
 

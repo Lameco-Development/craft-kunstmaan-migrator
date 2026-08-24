@@ -8,6 +8,7 @@ use craft\helpers\Queue as QueueHelper;
 use craft\queue\BaseBatchedJob;
 use Lameco\Kunstmaanmigrator\Compile\CompilerRun;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Lameco\Kunstmaanmigrator\run\RunLog;
 use Lameco\Kunstmaanmigrator\run\RunSettings;
@@ -68,12 +69,26 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
 
     public int $problems = 0;
 
+    /**
+     * Per-locale block content the target cannot hold, and per-asset failures —
+     * the two counts `--fail-on-loss` gates on. They lived on singletons the
+     * console read after its loop, so a queued run lost them; now every batch
+     * folds its tally into the job.
+     */
+    public int $perSiteBlockLosses = 0;
+
+    /** @var list<string> the first ten, for the run log */
+    public array $perSiteBlockLossSample = [];
+
+    public int $assetFailures = 0;
+
     public int $batchSize = 50;
 
     private ?EnvironmentPipeline $pipeline = null;
     private ?CompilerRun $compilerRun = null;
     private ?RunSettings $settings = null;
     private ?RunTally $tally = null;
+    private ?EnvironmentContext $context = null;
 
     protected function loadData(): \craft\base\Batchable
     {
@@ -123,10 +138,10 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
         $this->tally = new RunTally();
         $this->pipeline = EnvironmentPipeline::build($mapping, $this->settings);
 
-        [$db] = $this->pipeline->prepare($mapping, $this->environment, (array) $spec, $this->settings);
+        $this->context = $this->pipeline->prepare($mapping, $this->environment, (array) $spec, $this->settings);
 
         $compiler = $this->pipeline->compiler();
-        $run = $compiler->begin($db, $this->environment);
+        $run = $compiler->begin($this->context->legacy, $this->environment);
         $this->compilerRun = $run;
 
         $units = [];
@@ -162,7 +177,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
     {
         $compiler = $this->pipeline->compiler();
         $emit = function(array $raw): void {
-            $this->pipeline->processOne($raw, $this->settings, $this->tally);
+            $this->pipeline->processOne($raw, $this->context, $this->settings, $this->tally);
         };
 
         try {
@@ -215,6 +230,13 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
         }
 
         $this->problems += count($this->tally->problems);
+        $this->perSiteBlockLosses += count($this->tally->perSiteBlockLosses);
+        $this->perSiteBlockLossSample = array_slice(
+            [...$this->perSiteBlockLossSample, ...$this->tally->perSiteBlockLosses],
+            0,
+            10,
+        );
+        $this->assetFailures += count($this->tally->assetFailures);
     }
 
     protected function after(): void
@@ -231,6 +253,9 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             'force' => $this->force,
             'counts' => $this->counts,
             'problems' => $this->problems,
+            'perSiteBlocksNotRepresentable' => $this->perSiteBlockLosses,
+            'perSiteBlockLossSample' => $this->perSiteBlockLossSample,
+            'assetFailures' => $this->assetFailures,
         ]);
 
         QueueHelper::push(job: new RunAdaptersJob([

@@ -36,6 +36,16 @@ use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 final class EnvironmentContext
 {
     /**
+     * Whether this environment's assets are filed under their own segment.
+     *
+     * Three legacy installs each ship a folder called `Media/Afbeeldingen`;
+     * merging them into one Craft tree interleaves three clients' files under
+     * one name. One source needs no prefix, more than one cannot do without
+     * it — so the default is read off the mapping's environment count.
+     */
+    public readonly bool $prefixEnvironment;
+
+    /**
      * @param string        $name       the mapping's key for this environment, e.g. 'COM'
      * @param string        $database   the legacy database it reads
      * @param SiteMap       $sites      legacy locale => Craft site, for this environment only
@@ -43,6 +53,7 @@ final class EnvironmentContext
      * @param Mapping|null  $mapping    for a lane that compiles from the mapping
      * @param LegacyDatabase|null $legacy an open connection, for a lane that reads tables
      * @param list<string>|null $only    restrict to these entities, mirroring --only
+     * @param bool|null     $prefixEnvironment null derives it from the mapping's environment count
      */
     public function __construct(
         public readonly string $name,
@@ -52,7 +63,27 @@ final class EnvironmentContext
         public readonly ?Mapping $mapping = null,
         public readonly ?LegacyDatabase $legacy = null,
         public readonly ?array $only = null,
+        ?bool $prefixEnvironment = null,
     ) {
+        $this->prefixEnvironment = $prefixEnvironment ?? count($mapping?->environments() ?? []) > 1;
+    }
+
+    /** The uploads directory this environment's files come from, or null when the mapping names none. */
+    public function mediaRoot(): ?string
+    {
+        return $this->mediaRoots[0] ?? null;
+    }
+
+    /**
+     * Roots tried in order when a file is not under the primary one — sites in
+     * a group share artwork, and fetching a second copy would invent a file the
+     * source never had.
+     *
+     * @return list<string>
+     */
+    public function fallbackMediaRoots(): array
+    {
+        return array_slice($this->mediaRoots, 1);
     }
 
     /**

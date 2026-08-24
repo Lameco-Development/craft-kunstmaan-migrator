@@ -328,11 +328,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
             // all sites that have no Kunstmaan SEO row.
             $seoRow = $seoByLocale[$locale] ?? null;
 
-            $entry = Entry::find()
-                ->id($entryId)
-                ->siteId($siteId)
-                ->status(null)
-                ->one();
+            $entry = $this->elements()->findById($entryId, Entry::class, $siteId);
             if ($entry === null) {
                 // Site disabled for this entry — skip silently.
                 continue;

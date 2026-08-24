@@ -11,6 +11,8 @@ use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
 use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
 use Lameco\Kunstmaanmigrator\Compile\RedirectCompiler;
 use Lameco\Kunstmaanmigrator\console\LoadController;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
@@ -72,6 +74,14 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
+
+    /** The seam at Craft's element reads; read through elements() so an unwired slot is not a precondition. */
+    public ?ElementWriter $elementWriter = null;
+
+    private function elements(): ElementWriter
+    {
+        return $this->elementWriter ??= new CraftElementWriter();
+    }
 
 
 
@@ -164,14 +174,14 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             $records,
             new RefResolver(Plugin::getInstance()->migrationStateService),
             self::isRetourAvailable(),
-            static function(int $entryId, string $siteHandle): ?string {
-                $site = Craft::$app->getSites()->getSiteByHandle($siteHandle);
+            function(int $entryId, string $siteHandle) use ($context): ?string {
+                $siteId = $context->sites->siteIdForHandle($siteHandle);
 
-                if ($site === null) {
+                if ($siteId === null) {
                     return null;
                 }
 
-                $entry = Entry::find()->id($entryId)->siteId((int) $site->id)->status(null)->one();
+                $entry = $this->elements()->findById($entryId, Entry::class, $siteId);
 
                 return $entry === null || $entry->uri === null ? null : '/' . ltrim($entry->uri, '/');
             },
@@ -386,16 +396,14 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             return null;
         }
 
-        // v2 reshape: iterate $this->sites instead of hardcoded 'default'/'en' (PATTERNS flag #4).
-        // Map kuma-locale → Craft-handle. If the URL carried a kuma-lang prefix, prefer that
-        // site; otherwise walk all configured Craft sites and return the first non-null match.
-        $sites = Craft::$app->sites;
-
+        // If the URL carried a kuma-lang prefix, prefer that site; otherwise walk
+        // every configured site and return the first non-null match. The map is
+        // the environment's SiteMap — this used to read `Craft::$app->sites`,
+        // which has no `handleForLocale()`, so the lookup threw on every call.
         $candidateHandles = [];
         if ($lang !== null && $sites->handleForLocale($lang) !== null) {
             $candidateHandles[] = (string) $sites->handleForLocale($lang);
         }
-        // Fallback: walk every configured Craft handle in the sites map.
         foreach ($sites->handles() as $handle) {
             if (!in_array($handle, $candidateHandles, true)) {
                 $candidateHandles[] = $handle;
@@ -403,11 +411,11 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
 
         foreach ($candidateHandles as $handle) {
-            $site = $sites->getSiteByHandle((string) $handle);
-            if ($site === null) {
+            $siteId = $sites->siteIdForHandle((string) $handle);
+            if ($siteId === null) {
                 continue;
             }
-            $entry = Entry::find()->id($entryId)->siteId((int) $site->id)->status(null)->one();
+            $entry = $this->elements()->findById($entryId, Entry::class, $siteId);
             if ($entry !== null && $entry->uri !== null) {
                 return '/' . ltrim($entry->uri, '/');
             }
@@ -567,7 +575,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             }
 
             try {
-                $this->emitSectionMoveForNode((int) $sourceKey, $entryId, $locales, $prefixLocale, $context->name, $opts, $report);
+                $this->emitSectionMoveForNode((int) $sourceKey, $entryId, $context->sites, $prefixLocale, $context->name, $opts, $report);
             } catch (\Throwable $e) {
                 $report->incr('failed');
                 $report->warn(sprintf('section move failed for %s:%s — %s', $source, $sourceKey, $e->getMessage()));
@@ -575,11 +583,10 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
     }
 
-    /** @param array<string, string> $locales kuma locale => Craft site handle */
     private function emitSectionMoveForNode(
         int $nodeId,
         int $entryId,
-        array $locales,
+        SiteMap $sites,
         bool $prefixLocale,
         string $environment,
         MigrationOptions $opts,
@@ -591,20 +598,20 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             return;
         }
 
-        foreach ($locales as $lang => $handle) {
+        foreach ($sites->configured() as $lang => $handle) {
             $legacyUrl = $legacyUrls[$lang] ?? null;
 
             if ($legacyUrl === null) {
                 continue;
             }
 
-            $site = Craft::$app->getSites()->getSiteByHandle((string) $handle);
+            $siteId = $sites->siteIdForHandle((string) $handle);
 
-            if ($site === null) {
+            if ($siteId === null) {
                 continue;
             }
 
-            $entry = Entry::find()->id($entryId)->siteId((int) $site->id)->status(null)->one();
+            $entry = $this->elements()->findById($entryId, Entry::class, $siteId);
 
             if ($entry === null || $entry->uri === null || !$entry->enabled || !$entry->getEnabledForSite()) {
                 continue;

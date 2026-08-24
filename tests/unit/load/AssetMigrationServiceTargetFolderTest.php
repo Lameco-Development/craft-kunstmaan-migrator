@@ -7,6 +7,8 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use Lameco\Kunstmaanmigrator\load\AssetFolderPath;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
@@ -58,10 +60,11 @@ final class AssetMigrationServiceTargetFolderTest extends TestCase
         $service = $this->legacyTreeService([
             5 => ['id' => 5, 'parent_id' => 0, 'name' => 'Media'],
         ]);
-        $service->environmentName = 'DE';
-        $service->prefixEnvironment = true;
 
-        self::assertSame('migrated/DE/Media', $this->path($service, ['folder_id' => 5]));
+        self::assertSame(
+            'migrated/DE/Media',
+            $this->path($service, ['folder_id' => 5], EnvironmentFactory::make('DE', prefixEnvironment: true)),
+        );
     }
 
     public function testASingleSourceCorpusOmitsTheEnvironmentSegment(): void
@@ -69,10 +72,11 @@ final class AssetMigrationServiceTargetFolderTest extends TestCase
         $service = $this->legacyTreeService([
             5 => ['id' => 5, 'parent_id' => 0, 'name' => 'Media'],
         ]);
-        $service->environmentName = 'DE';
-        $service->prefixEnvironment = false;
 
-        self::assertSame('migrated/Media', $this->path($service, ['folder_id' => 5]));
+        self::assertSame(
+            'migrated/Media',
+            $this->path($service, ['folder_id' => 5], EnvironmentFactory::make('DE', prefixEnvironment: false)),
+        );
     }
 
     public function testTheChainIsWalkedOncePerFolderPerRun(): void
@@ -96,10 +100,8 @@ final class AssetMigrationServiceTargetFolderTest extends TestCase
             5 => ['id' => 5, 'parent_id' => 0, 'name' => 'Media'],
         ]);
 
-        $service->environmentName = 'COM';
-        $this->path($service, ['folder_id' => 5]);
-        $service->environmentName = 'DE';
-        $this->path($service, ['folder_id' => 5]);
+        $this->path($service, ['folder_id' => 5], EnvironmentFactory::make('COM'));
+        $this->path($service, ['folder_id' => 5], EnvironmentFactory::make('DE'));
 
         /** @var FolderChainDb $legacyDb */
         $legacyDb = $service->legacyDb;
@@ -194,9 +196,9 @@ final class AssetMigrationServiceTargetFolderTest extends TestCase
     }
 
     /** @param array<string, mixed> $row */
-    private function path(AssetMigrationService $service, array $row): string
+    private function path(AssetMigrationService $service, array $row, ?EnvironmentContext $env = null): string
     {
-        return (string) (new ReflectionMethod($service, 'targetFolderPath'))->invoke($service, $row);
+        return (string) (new ReflectionMethod($service, 'targetFolderPath'))->invoke($service, $row, $env);
     }
 }
 

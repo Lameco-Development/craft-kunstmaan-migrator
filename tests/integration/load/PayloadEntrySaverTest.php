@@ -9,12 +9,18 @@ use Lameco\Kunstmaanmigrator\console\LoadController;
 use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use Lameco\Kunstmaanmigrator\load\PayloadEntrySaver;
+use Lameco\Kunstmaanmigrator\load\SaveResult;
 use Lameco\Kunstmaanmigrator\Payload\Payload;
 use Lameco\Kunstmaanmigrator\Payload\PayloadValidator;
 use Lameco\Kunstmaanmigrator\Payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use RuntimeException;
@@ -196,17 +202,17 @@ final class FakeEntryMigrationService extends EntryMigrationService
      */
     public array $currentFieldValues = [];
 
-    public function readEntryFieldValueForSite(int $entryId, string $siteHandle, string $fieldHandle): ?array
+    public function readEntryFieldValueForSite(int $entryId, int $siteId, string $fieldHandle): ?array
     {
-        return $this->currentFieldValues[sprintf('%d|%s|%s', $entryId, $siteHandle, $fieldHandle)] ?? null;
+        return $this->currentFieldValues[sprintf('%d|%d|%s', $entryId, $siteId, $fieldHandle)] ?? null;
     }
 
-    /** @var list<array{entryId: int, site: string, field: string, value: array<array-key, mixed>}> */
+    /** @var list<array{entryId: int, site: int, field: string, value: array<array-key, mixed>}> */
     public array $resaved = [];
 
-    public function resaveEntryFieldForSite(int $entryId, string $siteHandle, string $fieldHandle, array $value): bool
+    public function resaveEntryFieldForSite(int $entryId, int $siteId, string $fieldHandle, array $value): bool
     {
-        $this->resaved[] = ['entryId' => $entryId, 'site' => $siteHandle, 'field' => $fieldHandle, 'value' => $value];
+        $this->resaved[] = ['entryId' => $entryId, 'site' => $siteId, 'field' => $fieldHandle, 'value' => $value];
 
         return true;
     }
@@ -217,8 +223,10 @@ final class FakeEntryMigrationService extends EntryMigrationService
         string $stateSource,
         string|int $stateKey,
         array $perSite,
+        SiteMap $sites,
         bool $force = false,
         ?MigrationReport $report = null,
+        ?RunTally $tally = null,
     ): Entry {
         if ($this->throwForStateKey !== null && (string) $stateKey === $this->throwForStateKey) {
             throw new RuntimeException('simulated save failure for stateKey ' . $stateKey);
@@ -248,6 +256,17 @@ final class FakeEntryMigrationService extends EntryMigrationService
 
 final class PayloadEntrySaverTest extends TestCase
 {
+    /** The fake gateway knows one site, `en` = 1, and it is the primary. */
+    private function env(): EnvironmentContext
+    {
+        return EnvironmentFactory::make('COM', ['en' => 'en'], ['en' => [1, 'en-GB', true]]);
+    }
+
+    private function save(PayloadEntrySaver $saver, Payload $payload): SaveResult
+    {
+        return $saver->save($payload, $this->env(), new RunTally());
+    }
+
     private function makeSaver(
         EntryMigrationService $entryService,
         MigrationStateService $stateService,
@@ -320,8 +339,8 @@ final class PayloadEntrySaverTest extends TestCase
 
         $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:143'));
 
-        $first = $saver->save($payload);
-        $second = $saver->save($payload);
+        $first = $this->save($saver, $payload);
+        $second = $this->save($saver, $payload);
 
         self::assertSame($first->entryId, $second->entryId);
         self::assertTrue($first->created, 'First save of a never-before-seen sourceUid must be reported as created.');
@@ -341,11 +360,11 @@ final class PayloadEntrySaverTest extends TestCase
 
         $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:143'));
 
-        $saver->save($payload);
+        $this->save($saver, $payload);
         $afterFirst = $entryService->lastPerSite;
         $rowsAfterFirst = $state->rowCount();
 
-        $saver->save($payload);
+        $this->save($saver, $payload);
         $afterSecond = $entryService->lastPerSite;
 
         self::assertNotSame([], $afterFirst, 'the fixture wrote nothing — the check would pass vacuously');
@@ -374,7 +393,7 @@ final class PayloadEntrySaverTest extends TestCase
             ],
         ]));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         $expectedDeferred = [[
             'field' => 'relatedPages',
@@ -428,7 +447,7 @@ final class PayloadEntrySaverTest extends TestCase
 
         $payload = Payload::fromArray($this->payloadWithNestedRef('kuma:COM:nt_page:300'));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         self::assertSame([], $result->deferredRefs, 'A resolvable nested ref must not be recorded as pending.');
         self::assertSame(
@@ -447,7 +466,7 @@ final class PayloadEntrySaverTest extends TestCase
 
         $payload = Payload::fromArray($this->payloadWithNestedRef('kuma:COM:nt_page:301'));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         // Entry still saves — fail-forward at the field level, not the payload level.
         self::assertCount(1, $result->deferredRefs);
@@ -479,7 +498,7 @@ final class PayloadEntrySaverTest extends TestCase
             'aliases' => ['kuma:DE:nt_page:87'],
         ]));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         self::assertSame($result->entryId, $state->resolveSourceUid('kuma:COM:nt_page:143'));
         self::assertSame($result->entryId, $state->resolveSourceUid('kuma:DE:nt_page:87'));
@@ -505,7 +524,7 @@ final class PayloadEntrySaverTest extends TestCase
         ]);
         $path = $this->writeTempNdjson([$valid, $mutant]);
 
-        $report = LoadController::buildLiveReport($path, $validator, $saver);
+        $report = LoadController::buildLiveReport($path, $validator, $saver, $this->env());
 
         self::assertSame(0, $report['saved']);
         self::assertNotSame([], $report['violations']);
@@ -529,7 +548,7 @@ final class PayloadEntrySaverTest extends TestCase
         $two = $this->payloadArray('kuma:COM:nt_page:2');
         $path = $this->writeTempNdjson([$one, $two]);
 
-        $report = LoadController::buildLiveReport($path, $validator, $saver);
+        $report = LoadController::buildLiveReport($path, $validator, $saver, $this->env());
 
         self::assertSame(2, $report['saved']);
         self::assertSame([], $report['violations']);
@@ -552,7 +571,7 @@ final class PayloadEntrySaverTest extends TestCase
         $boom = $this->payloadArray('kuma:COM:nt_page:2');
         $path = $this->writeTempNdjson([$ok, $boom]);
 
-        $report = LoadController::buildLiveReport($path, $validator, $saver);
+        $report = LoadController::buildLiveReport($path, $validator, $saver, $this->env());
 
         self::assertSame(1, $report['saved']);
         self::assertCount(1, $report['failed']);
@@ -571,7 +590,7 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
         $assetService = new class() extends AssetMigrationService {
-            public function resolveFromLegacyUrl(string $legacyUrl): int
+            public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
             {
                 return 0; // every _asset in this test is genuinely missing
             }
@@ -584,7 +603,7 @@ final class PayloadEntrySaverTest extends TestCase
         ]);
         $path = $this->writeTempNdjson([$payload]);
 
-        $report = LoadController::buildLiveReport($path, $validator, $saver);
+        $report = LoadController::buildLiveReport($path, $validator, $saver, $this->env());
 
         self::assertSame(1, $report['saved'], 'An unresolved asset is reported, not fatal — the entry still saves.');
         self::assertSame(ExitCode::OK, LoadController::exitCodeFor($report), 'Unresolved assets do not flip the exit code, matching deferred _ref semantics.');
@@ -612,13 +631,13 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
         $assetService = new class() extends AssetMigrationService {
-            public function resolveFromLegacyId(int $legacyId): int
+            public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
             {
                 return $legacyId === 5 ? 501 : 0;
             }
         };
         $ckeditorRewriter = new CkeditorRewriterService();
-        $ckeditorRewriter->assetResolver = $assetService;
+        $ckeditorRewriter->assetResolver = $assetService->resolverFor($this->env(), new MigrationOptions());
         $saver = $this->makeSaver($entryService, $state, $assetService, $ckeditorRewriter);
 
         $html = '<p>See {{kuma:media:5}}. <a href="[NT80]">next</a> <span class="kma-foo">x</span> <img src="/uploads/media/x.jpg"></p>';
@@ -626,7 +645,7 @@ final class PayloadEntrySaverTest extends TestCase
             'sites' => ['en' => ['fieldValues' => ['body' => $html]]],
         ]));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
         $rewritten = $entryService->lastPerSite['en']['fieldValues']['body'];
 
         self::assertStringContainsString('{asset:501@1:url}', $rewritten);
@@ -646,7 +665,7 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
         $assetService = new class() extends AssetMigrationService {
-            public function resolveFromLegacyId(int $legacyId): int
+            public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
             {
                 return 0; // genuinely unresolvable
             }
@@ -665,7 +684,7 @@ final class PayloadEntrySaverTest extends TestCase
             ],
         ]));
 
-        $result = $saver->save($payload);
+        $result = $this->save($saver, $payload);
 
         self::assertCount(1, $result->mediaTokenIssues);
         $issue = $result->mediaTokenIssues[0];
@@ -693,7 +712,7 @@ final class PayloadEntrySaverTest extends TestCase
             'refIds' => ['en' => 1, 'lv' => 19, 'ru' => 20],
         ];
 
-        $saver->save(Payload::fromArray($raw));
+        $this->save($saver, Payload::fromArray($raw));
 
         $meta = $state->get('LV:kuma_nodes', '2')['meta'] ?? [];
         self::assertSame('App\\Entity\\Pages\\ContentPage', $meta['legacyClass'] ?? null);
@@ -708,7 +727,7 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService->stateService = $state;
         $saver = $this->makeSaver($entryService, $state);
 
-        $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:1', [
+        $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:1', [
             'sites' => ['en' => ['fieldValues' => [
                 'partnerAddress' => ['_address' => ['addressLine1' => 'Schlossvorstadt 4', 'countryCode' => 'DE']],
             ]]],
@@ -733,12 +752,12 @@ final class PayloadEntrySaverTest extends TestCase
         $state->record('DE:partner_pages', '1', 'entry', 777);
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
-        $entryService->currentFieldValues['777|en|partnerAddress'] = [
+        $entryService->currentFieldValues['777|1|partnerAddress'] = [
             4242 => ['addressLine1' => 'Schlossvorstadt 3', 'countryCode' => 'DE'],
         ];
         $saver = $this->makeSaver($entryService, $state);
 
-        $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:1', [
+        $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:1', [
             'sites' => ['en' => ['fieldValues' => [
                 'partnerAddress' => ['_address' => ['addressLine1' => 'Schlossvorstadt 4', 'countryCode' => 'DE']],
             ]]],
@@ -771,7 +790,7 @@ final class PayloadEntrySaverTest extends TestCase
             ],
         ]);
 
-        $saver->save(Payload::fromArray($payload));
+        $this->save($saver, Payload::fromArray($payload));
 
         self::assertArrayHasKey('partnerAddress', $entryService->lastPerSite['en']['fieldValues']);
         self::assertArrayNotHasKey(
@@ -791,14 +810,14 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService->stateService = $state;
         $saver = $this->makeSaver($entryService, $state);
 
-        $result = $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:10', [
+        $result = $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:10', [
             'sites' => ['de' => ['fieldValues' => [
                 'partnerAddress' => ['_address' => ['addressLine1' => 'Holzhausenstr. 87', 'title' => 'Hauptsitz']],
             ]]],
         ])));
 
         self::assertCount(1, $entryService->resaved, 'The address is written once, against the primary site.');
-        self::assertSame('en', $entryService->resaved[0]['site']);
+        self::assertSame(1, $entryService->resaved[0]['site']);
         self::assertSame('partnerAddress', $entryService->resaved[0]['field']);
         self::assertSame(
             ['new1' => ['addressLine1' => 'Holzhausenstr. 87', 'title' => 'Hauptsitz']],
@@ -814,7 +833,7 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService->stateService = $state;
         $saver = $this->makeSaver($entryService, $state);
 
-        $result = $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:11', [
+        $result = $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:11', [
             'sites' => ['de' => ['fieldValues' => [
                 'partnerBranches' => [[
                     'type' => 'partnerBranch',
@@ -837,7 +856,7 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService->stateService = $state;
         $saver = $this->makeSaver($entryService, $state);
 
-        $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:3', [
+        $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:3', [
             'sites' => ['en' => ['fieldValues' => [
                 'partnerAddress' => ['_address' => ['title' => 'Hauptsitz', 'addressLine1' => 'Schlossvorstadt 4']],
             ]]],
@@ -860,7 +879,7 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService->stateService = $state;
         $saver = $this->makeSaver($entryService, $state);
 
-        $saver->save(Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:2', [
+        $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:2', [
             'sites' => ['en' => ['fieldValues' => [
                 'partnerBranches' => [[
                     'type' => 'partnerBranch',

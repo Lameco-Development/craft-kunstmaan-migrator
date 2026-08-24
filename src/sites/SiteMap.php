@@ -31,11 +31,13 @@ final class SiteMap
      * @param array<string, string> $configured locale => Craft site handle, in order
      * @param list<SiteBinding>     $bindings   only locales with a resolved Craft site
      * @param list<string>          $unboundCraftHandles Craft sites no locale claims
+     * @param array<string, int>    $craftSiteIds every Craft site's id by handle, bound or not
      */
     private function __construct(
         private readonly array $configured,
         private readonly array $bindings,
         private readonly array $unboundCraftHandles,
+        private readonly array $craftSiteIds,
     ) {
     }
 
@@ -67,8 +69,10 @@ final class SiteMap
         // comBrPt — bound one of them and silently dropped the other from
         // every pass keyed by locale.
         $byHandle = [];
+        $craftSiteIds = [];
         foreach ($craftSites as $site) {
             $byHandle[(string) $site->handle] = $site;
+            $craftSiteIds[(string) $site->handle] = (int) $site->id;
         }
 
         $bindings = [];
@@ -90,6 +94,7 @@ final class SiteMap
                 handle: $handle,
                 siteId: (int) $site->id,
                 language: (string) $site->language,
+                primary: (bool) ($site->primary ?? false),
             );
         }
 
@@ -100,7 +105,67 @@ final class SiteMap
             }
         }
 
-        return new self($configured, $bindings, $unbound);
+        return new self($configured, $bindings, $unbound, $craftSiteIds);
+    }
+
+    /**
+     * The Craft sites this environment writes to, one per site, configured order.
+     *
+     * `bindings()` is keyed by locale, so a site two locales share — `br` and
+     * `pt` both on comBrPt — appears twice there. A save visits each site once.
+     *
+     * @return list<SiteBinding>
+     */
+    public function targets(): array
+    {
+        $seen = [];
+        $out = [];
+        foreach ($this->bindings as $binding) {
+            if (isset($seen[$binding->siteId])) {
+                continue;
+            }
+            $seen[$binding->siteId] = true;
+            $out[] = $binding;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Craft's primary site, when one of the configured locales binds to it.
+     *
+     * Null when none does — the caller decides whether the first target is an
+     * acceptable stand-in, because the answer differs per pass.
+     */
+    public function primary(): ?SiteBinding
+    {
+        foreach ($this->bindings as $binding) {
+            if ($binding->primary) {
+                return $binding;
+            }
+        }
+
+        return null;
+    }
+
+    /** The Craft site id behind a handle — bound or not — or null when Craft has no such site. */
+    public function siteIdForHandle(?string $handle): ?int
+    {
+        return $handle === null ? null : ($this->craftSiteIds[$handle] ?? null);
+    }
+
+    /**
+     * Every Craft site's id, whether or not a locale claims it.
+     *
+     * A pass that prunes what propagation left behind has to look on every
+     * site, not only the ones this environment writes — that is where the
+     * artefacts are.
+     *
+     * @return list<int>
+     */
+    public function craftSiteIds(): array
+    {
+        return array_values($this->craftSiteIds);
     }
 
     /** @return array<string, string> locale => handle, verbatim and in order */

@@ -11,6 +11,7 @@ use craft\fields\PlainText;
 use craft\models\FieldLayout;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
@@ -23,10 +24,18 @@ use ReflectionMethod;
  */
 final class EntryMigrationServicePerSiteBlockLossTest extends TestCase
 {
+    /** Where the loss is counted — the run's, so console and queue both see it. */
+    private RunTally $tally;
+
+    protected function setUp(): void
+    {
+        $this->tally = new RunTally();
+    }
+
     private function report(EntryMigrationService $svc, Entry $entry, array $perSite, ?MigrationReport $report): void
     {
         (new ReflectionMethod(EntryMigrationService::class, 'reportUnrepresentablePerSiteBlocks'))
-            ->invoke($svc, $entry, $perSite, $report, 'App_Entity_Pages_TextPage', '5');
+            ->invoke($svc, $entry, $perSite, $report, 'App_Entity_Pages_TextPage', '5', $this->tally);
     }
 
     /** @param list<string> $refs */
@@ -49,9 +58,9 @@ final class EntryMigrationServicePerSiteBlockLossTest extends TestCase
             'en' => $this->siteData(['Text:1', 'Text:3']),
         ], $report);
 
-        self::assertCount(1, $svc->perSiteBlockLosses);
-        self::assertStringContainsString('field "pageBuilder"', $svc->perSiteBlockLosses[0]);
-        self::assertStringContainsString('2 locales', $svc->perSiteBlockLosses[0]);
+        self::assertCount(1, $this->tally->perSiteBlockLosses);
+        self::assertStringContainsString('field "pageBuilder"', $this->tally->perSiteBlockLosses[0]);
+        self::assertStringContainsString('2 locales', $this->tally->perSiteBlockLosses[0]);
         self::assertSame(1, $report->counts['fallback.perSiteBlocksNotRepresentable'] ?? 0);
     }
 
@@ -66,7 +75,7 @@ final class EntryMigrationServicePerSiteBlockLossTest extends TestCase
             'en' => $this->siteData(['Text:1', 'Text:2']),
         ], null);
 
-        self::assertSame([], $svc->perSiteBlockLosses);
+        self::assertSame([], $this->tally->perSiteBlockLosses);
     }
 
     public function testASingleLocaleCanNeverDiverge(): void
@@ -76,7 +85,7 @@ final class EntryMigrationServicePerSiteBlockLossTest extends TestCase
 
         $this->report($svc, $entry, ['default' => $this->siteData(['Text:1'])], null);
 
-        self::assertSame([], $svc->perSiteBlockLosses);
+        self::assertSame([], $this->tally->perSiteBlockLosses);
     }
 
     public function testAPerSiteBlockSetRepresentsDivergentLocalesFine(): void
@@ -91,7 +100,7 @@ final class EntryMigrationServicePerSiteBlockLossTest extends TestCase
             'en' => $this->siteData(['Text:2']),
         ], null);
 
-        self::assertSame([], $svc->perSiteBlockLosses);
+        self::assertSame([], $this->tally->perSiteBlockLosses);
     }
 
     public function testAFieldTheLayoutCannotResolveToAMatrixIsNotJudged(): void
@@ -105,7 +114,7 @@ final class EntryMigrationServicePerSiteBlockLossTest extends TestCase
             'en' => $this->siteData(['Text:2']),
         ], null);
 
-        self::assertSame([], $svc->perSiteBlockLosses);
+        self::assertSame([], $this->tally->perSiteBlockLosses);
     }
 }
 

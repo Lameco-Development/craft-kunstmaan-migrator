@@ -7,7 +7,6 @@ namespace Lameco\Kunstmaanmigrator\queue;
 use craft\helpers\Queue as QueueHelper;
 use craft\queue\BaseJob;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
-use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Lameco\Kunstmaanmigrator\run\RunLog;
 use Lameco\Kunstmaanmigrator\run\RunSettings;
@@ -60,21 +59,10 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
 
         if (!$this->entriesOnly) {
             $pipeline = EnvironmentPipeline::build($mapping, $settings);
-            [$db, $siteMap] = $pipeline->prepare($mapping, $this->environment, (array) $spec, $settings);
+            $context = $pipeline->prepare($mapping, $this->environment, (array) $spec, $settings);
 
-            RunLog::default()->track('adapters', ['environment' => $this->environment], function(array &$extra) use ($pipeline, $mapping, $db, $siteMap, $settings, $spec): void {
-                $extra['adapters'] = $pipeline->runAdaptersFor(
-                    new EnvironmentContext(
-                        name: $this->environment,
-                        database: (string) $spec['database'],
-                        sites: $siteMap,
-                        mediaRoots: EnvironmentPipeline::mediaRootsFrom((array) $spec),
-                        mapping: $mapping,
-                        legacy: $db,
-                        only: $settings->only,
-                    ),
-                    $settings,
-                );
+            RunLog::default()->track('adapters', ['environment' => $this->environment], function(array &$extra) use ($pipeline, $context, $settings): void {
+                $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings);
             });
         }
 

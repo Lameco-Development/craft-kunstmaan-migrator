@@ -11,6 +11,7 @@ use craft\helpers\Console;
 use InvalidArgumentException;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\load\FixupService;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\PayloadEntrySaver;
 use Lameco\Kunstmaanmigrator\load\RedirectMigrationService;
 use Lameco\Kunstmaanmigrator\load\RefResolver;
@@ -18,7 +19,10 @@ use Lameco\Kunstmaanmigrator\Payload\Payload;
 use Lameco\Kunstmaanmigrator\Payload\PayloadValidator;
 use Lameco\Kunstmaanmigrator\Payload\Violation;
 use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use Throwable;
 use yii\console\ExitCode;
 
@@ -117,12 +121,34 @@ class LoadController extends Controller
             $plugin->assetMigrationService,
             $plugin->ckeditorRewriterService,
             null,
-            $this->force,
+            new MigrationOptions(force: $this->force),
         );
-        $report = self::buildLiveReport($this->payload, $validator, $saver);
+        $report = self::buildLiveReport($this->payload, $validator, $saver, self::everySiteContext());
         $this->stdout(json_encode($report, JSON_UNESCAPED_SLASHES) . PHP_EOL);
 
         return self::exitCodeFor($report);
+    }
+
+    /**
+     * A payload file names its sites by Craft handle and comes from no
+     * particular environment of the mapping, so the loader offers every Craft
+     * site under its own handle and the payload picks the ones it writes.
+     * Media roots fall back to LEGACY_MEDIA_PATH the way a single-site
+     * migration's always have.
+     */
+    private static function everySiteContext(): EnvironmentContext
+    {
+        $handles = [];
+
+        foreach (Craft::$app->sites->getAllSites() as $site) {
+            $handles[(string) $site->handle] = (string) $site->handle;
+        }
+
+        return new EnvironmentContext(
+            name: 'payload',
+            database: '',
+            sites: SiteMap::bind($handles, Craft::$app->sites->getAllSites()),
+        );
     }
 
     /**
@@ -421,8 +447,14 @@ class LoadController extends Controller
      *
      * @return array{processed: int, violations: list<array{sourceUid: string, code: string, message: string}>, saved: int, failed: list<array{sourceUid: string, error: string}>, unresolvedAssets: list<array<string, mixed>>, mediaTokenIssues: list<array<string, mixed>>}
      */
-    public static function buildLiveReport(string $path, PayloadValidator $validator, PayloadEntrySaver $saver): array
-    {
+    public static function buildLiveReport(
+        string $path,
+        PayloadValidator $validator,
+        PayloadEntrySaver $saver,
+        EnvironmentContext $context,
+        ?RunTally $tally = null,
+    ): array {
+        $tally ??= new RunTally();
         $records = self::readRecords($path);
         $violations = [];
         $payloads = [];
@@ -461,7 +493,7 @@ class LoadController extends Controller
         if ($violations === []) {
             foreach ($payloads as $p) {
                 try {
-                    $result = $saver->save($p);
+                    $result = $saver->save($p, $context, $tally);
                     $saved++;
 
                     // "saved" alone hid the case this whole flag exists for: an existing

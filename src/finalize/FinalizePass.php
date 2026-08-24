@@ -9,6 +9,7 @@ use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\run\RunSettings;
 
 /**
  * The finalize pass over every environment the mapping declares.
@@ -27,7 +28,7 @@ use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
  * pass they ran could rewrite a link and not an image. Between them the COM
  * corpus rewrote 863 links and 24 of 177 images.
  *
- * One loop, one set of per-environment state, three callers.
+ * One loop, one environment opened the way the pipeline opens it, three callers.
  */
 final class FinalizePass
 {
@@ -42,7 +43,7 @@ final class FinalizePass
     ): MigrationReport {
         $plugin = Plugin::getInstance();
         $report = new MigrationReport();
-        $dsn = EnvironmentPipeline::dsnFromSettings();
+        $settings = new RunSettings(dryRun: $dryRun);
 
         $environments = $mapping->environments();
 
@@ -58,12 +59,10 @@ final class FinalizePass
         $done = 0;
 
         foreach ($environments as $name => $spec) {
-            $spec = (array) $spec;
-
-            // Repointing also drops the rewriter's lookup caches, which are keyed
-            // on legacy ids that only mean anything inside one database.
-            EnvironmentPipeline::pointLegacyDbAt($dsn, (string) ($spec['database'] ?? ''));
-            EnvironmentPipeline::applyMediaRoots($spec, (string) $name, count($environments) > 1);
+            // The database answers `[NT<id>]`; the media roots let an image no
+            // payload pulled in be ingested on demand. Opening the environment
+            // the way the pipeline does is what keeps both together.
+            EnvironmentPipeline::open($mapping, (string) $name, (array) $spec, $settings);
 
             $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $dryRun), $report);
 

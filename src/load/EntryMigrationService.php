@@ -10,10 +10,10 @@ use craft\base\ElementInterface;
 use craft\elements\Entry;
 use craft\enums\PropagationMethod;
 use craft\fields\Matrix;
-use craft\models\Section;
-use craft\models\Site;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use RuntimeException;
 use yii\base\Component;
 
@@ -25,15 +25,11 @@ use yii\base\Component;
  * non-primary-site save), and Pitfall 3 (matrix block UID persistence
  * across re-runs).
  *
- * Generic surface (CORE-06):
- *
- *   `public array $sites` is a legacy-locale → Craft-site-handle map,
- *   populated via Plugin.php fallback-config dict (Plan 07) or the
- *   config file (Plan 09). A small bilingual site might use
- *   `['nl' => 'default', 'en' => 'en']`; a larger multilingual site can use
- *   any number of locales. The loop iterates
- *   `array_values($this->sites)` (handles only) preserving first-write =
- *   canonical save. Callers supply per-site data keyed by the same handles.
+ * Which Craft sites an entry is written to is a fact about the environment
+ * being migrated — COM's `en` is comEnUs while LV's is comLvEn — so it arrives
+ * per call as the environment's `SiteMap`, never as a property. The map's
+ * configured order is the save order; Craft's primary flag on a binding picks
+ * the site that is saved first.
  *
  * API:
  *   public function saveEntryForSites(
@@ -42,9 +38,10 @@ use yii\base\Component;
  *       string $stateSource,
  *       string|int $stateKey,
  *       array $perSite,
+ *       SiteMap $sites,
  *   ): \craft\elements\Entry
  *
- * $perSite is keyed by Craft site handle (the values from `$sites`).
+ * $perSite is keyed by Craft site handle (the handles the SiteMap binds).
  * Each value:
  *   [
  *       'enabled'     => bool,
@@ -55,8 +52,7 @@ use yii\base\Component;
  *       'postDate'    => ?\DateTimeInterface,
  *   ]
  *
- * Returns the primary-site (first `array_values($sites)`) Entry instance
- * (for follow-on SEO/redirect writes).
+ * Returns the primary-site Entry instance (for follow-on SEO/redirect writes).
  *
  * Security note (T-04-05-03): This service intentionally passes
  * propagateChanges=false to every saveElement() call and always re-loads the
@@ -67,34 +63,6 @@ use yii\base\Component;
  */
 class EntryMigrationService extends Component
 {
-    /**
-     * kuma_locale (string) → Craft site handle (string).
-     * Populated by Plugin::init() (Plan 03-14) via Plugin::resolveSitesMap(),
-     * which reads only the operator-curated Settings::$localeMap (v2 loader
-     * prune — locale auto-detection was analyze-stage machinery, removed).
-     * Empty default — saveEntryForSites() throws if accessed while empty.
-     *
-     * Example: `['nl' => 'default', 'en' => 'en']`
-     *
-     * Handle order determines primary-first save ordering — first handle is
-     * canonical, others reload-before-save.
-     *
-     * @var array<string, string>
-     */
-    /**
-     * Per-locale block content this Craft install cannot represent, one message per entry+field.
-     *
-     * A public accumulator rather than a `MigrationReport`, because the payload path builds no
-     * report — the saver never makes one, so `$report` is null for every real run and the
-     * warning reached the log and nothing else. Read by `MigrateController` after the run, the
-     * same way `AssetMigrationService::$assetRcaRows` is.
-     *
-     * @var list<string>
-     */
-    public array $perSiteBlockLosses = [];
-
-    public array $sites = [];
-
     /**
      * MigrationStateService — sibling-DI wired in Plugin::init() (Plan 03-14).
      */
@@ -111,39 +79,39 @@ class EntryMigrationService extends Component
      */
     public ?ElementWriter $elementWriter = null;
 
-    /** @var array<string, Site> cached Site instances by handle */
-    private array $siteCache = [];
-
     // --------------------------------------------------------------------------
     // Public API
     // --------------------------------------------------------------------------
 
-    /**
-     * Save or update an Entry across every site in `$this->sites` in one call.
-     *
-     * @param array<string, array{enabled: bool, title: ?string, slug: string, fieldValues: array, parentId: ?int}> $perSite
-     * @throws RuntimeException on unknown site handle or primary-site save failure
-     */
     private function elements(): ElementWriter
     {
         return $this->elementWriter ??= new CraftElementWriter();
     }
 
+    /**
+     * Save or update an Entry across every site the environment binds, in one call.
+     *
+     * @param array<string, array{enabled: bool, title: ?string, slug: string, fieldValues: array, parentId: ?int}> $perSite
+     * @param SiteMap $sites the environment's sites; configured order is save order
+     * @param RunTally|null $tally where a loss this install cannot represent is counted
+     * @throws RuntimeException on unknown site handle or primary-site save failure
+     */
     public function saveEntryForSites(
         int $sectionId,
         int $typeId,
         string $stateSource,
         string|int $stateKey,
         array $perSite,
+        SiteMap $sites,
         bool $force = false,
         ?MigrationReport $report = null,
+        ?RunTally $tally = null,
     ): Entry {
-        // Resolve the configured site handles (values of $this->sites).
-        $configuredHandles = array_values($this->sites);
+        $configuredHandles = $sites->handles();
         if ($configuredHandles === []) {
             throw new RuntimeException(
-                'EntryMigrationService: $sites is empty — populate via Plugin setComponents '
-                . 'with a locale→siteHandle map (e.g., [\'nl\' => \'default\']).',
+                'EntryMigrationService: the site map is empty — the mapping declares no locales '
+                . 'for this environment (e.g. locales: { nl: default }).',
             );
         }
 
@@ -160,44 +128,25 @@ class EntryMigrationService extends Component
             }
         }
 
-        // Resolve every configured handle to a Craft Site — skip any that don't
-        // exist on this install. (Plan 09 config validator will throw earlier.)
-        /** @var list<Site> $sites */
-        $sites = [];
-        foreach ($configuredHandles as $handle) {
-            $site = $this->getSiteByHandle($handle);
-            if ($site !== null) {
-                $sites[] = $site;
-            }
-        }
-        if ($sites === []) {
+        // Only the handles Craft actually has a site for; the map already
+        // dropped the rest when it was bound.
+        $targets = $sites->targets();
+        if ($targets === []) {
             throw new RuntimeException(
                 'EntryMigrationService: none of the configured site handles resolve to '
                 . 'a Craft site. Configured: ' . implode(', ', $configuredHandles),
             );
         }
 
-        // Phase 8.7 — pick Craft's actual primary site from the configured set,
-        // not array-position 0. Previously $sites[0] depended on the operator's
-        // ordering of mapping.yaml's `sites:` block — when that block ordered
-        // `en: en` before `nl: default` (e.g. after an analyze run rewrote it),
-        // the loader treated EN as primary and called applyPerSiteData with
-        // an empty payload (the transform only populates perSite[<primary>] for
-        // online translations). Result: every page failed with "Title cannot be
-        // blank." Selecting by Craft's `primary` flag is order-agnostic.
-        $primarySite = null;
-        foreach ($sites as $s) {
-            if ($s->primary) {
-                $primarySite = $s;
-                break;
-            }
-        }
-        if ($primarySite === null) {
-            // None of the configured handles resolved to Craft's primary site —
-            // fall back to first-resolved (legacy behavior). Operator setup is
-            // unusual; leave it loud-but-running rather than throwing.
-            $primarySite = $sites[0];
-        }
+        // Craft's primary site from the configured set, not array-position 0:
+        // the mapping's `locales:` order is the operator's, and an `en` listed
+        // before `nl` once made the loader save EN first with an empty payload
+        // (the transform only populates perSite[<primary>] for online
+        // translations) — every page failed with "Title cannot be blank."
+        //
+        // No configured locale on Craft's primary site is an unusual setup;
+        // the first target stands in, loud-but-running rather than throwing.
+        $primarySite = $sites->primary() ?? $targets[0];
 
         // ------------------------------------------------------------------ 1
         // Look up existing entry via state table
@@ -206,11 +155,7 @@ class EntryMigrationService extends Component
         $entry = null;
 
         if ($existingId !== null) {
-            $entry = Entry::find()
-                ->id($existingId)
-                ->siteId($primarySite->id)
-                ->status(null)
-                ->one();
+            $entry = $this->elements()->findById($existingId, Entry::class, $primarySite->siteId);
 
             // Idempotent re-run: if the entry already exists and the caller
             // didn't pass force=true, short-circuit. Saves the per-site
@@ -226,39 +171,16 @@ class EntryMigrationService extends Component
         // ------------------------------------------------------------------ 2
         // Construct fresh entry when not found
         // ------------------------------------------------------------------ 2
-        if ($entry === null) {
-            // Single-section sections: Craft auto-creates exactly one entry when
-            // the section is applied via project-config; its URI is the magic
-            // '__home__' value. Creating a second entry fails validation with
-            // "Could not generate a unique URI based on the URI format." Reuse
-            // the existing auto-created entry (subsequent runs re-use via the
-            // state-table lookup above). Single-section migrations land here on
-            // first run because no state row has been recorded yet.
-            $section = Craft::$app->getEntries()->getSectionById($sectionId);
-            if ($section !== null && $section->type === Section::TYPE_SINGLE) {
-                $existingSingle = Entry::find()
-                    ->sectionId($sectionId)
-                    ->siteId($primarySite->id)
-                    ->status(null)
-                    ->one();
-                if ($existingSingle !== null) {
-                    $entry = $existingSingle;
-                }
-            }
-
-            if ($entry === null) {
-                $entry = new Entry();
-                $entry->sectionId = $sectionId;
-                $entry->typeId = $typeId;
-                $entry->siteId = $primarySite->id;
-            }
-        }
+        // A Single's one entry is reused rather than created beside — a second
+        // fails URI validation. Subsequent runs find it through the state row.
+        $entry ??= $this->elements()->singleEntry($sectionId, $primarySite->siteId)
+            ?? $this->elements()->createEntry($sectionId, $typeId, $primarySite->siteId);
 
         // ------------------------------------------------------------------ 3
         // Pre-seed per-site enablement map BEFORE the first save (DEC-06)
         // ------------------------------------------------------------------ 3
         $enabledMap = [];
-        foreach ($sites as $site) {
+        foreach ($targets as $site) {
             // A site the payload says nothing about is LEFT OUT of the map, not set to false.
             //
             // The section is `propagationMethod: custom`, and Craft decides propagation with
@@ -282,7 +204,7 @@ class EntryMigrationService extends Component
             // but earlier mapping docs referred to `enabled`. Read both so
             // the loader tolerates either key without a breaking change.
             $siteData = $perSite[$site->handle];
-            $enabledMap[$site->id] = (bool) ($siteData['enabled'] ?? $siteData['online'] ?? false);
+            $enabledMap[$site->siteId] = (bool) ($siteData['enabled'] ?? $siteData['online'] ?? false);
         }
 
         // The entry is always created *in* the primary site (`$entry->siteId` above), so a row
@@ -293,7 +215,7 @@ class EntryMigrationService extends Component
         //
         // One disabled row per entry, on the primary site only — not one per configured locale.
         if (!isset($perSite[$primarySite->handle])) {
-            $enabledMap[$primarySite->id] = false;
+            $enabledMap[$primarySite->siteId] = false;
         }
 
         $entry->setEnabledForSite($enabledMap);
@@ -371,6 +293,7 @@ class EntryMigrationService extends Component
             $report,
             $stateSource,
             (string) $stateKey,
+            $tally,
         );
         $this->applyPerSiteData(
             $entry,
@@ -423,8 +346,8 @@ class EntryMigrationService extends Component
         // Pitfall 2. Each site save stays independent; a per-site failure is
         // a warning, not fatal — don't abort the whole migration.
         // ------------------------------------------------------------------ 7
-        foreach ($sites as $site) {
-            if ($site->id === $primarySite->id) {
+        foreach ($targets as $site) {
+            if ($site->siteId === $primarySite->siteId) {
                 continue;
             }
             if (!isset($perSite[$site->handle])) {
@@ -436,12 +359,7 @@ class EntryMigrationService extends Component
             );
 
             // Critical: re-load scoped to siteId (Pitfall 2)
-            /** @var Entry|null $localised */
-            $localised = Entry::find()
-                ->id($entry->id)
-                ->siteId($site->id)
-                ->status(null)
-                ->one();
+            $localised = $this->elements()->findById((int) $entry->id, Entry::class, $site->siteId);
 
             if ($localised === null) {
                 continue;
@@ -476,16 +394,13 @@ class EntryMigrationService extends Component
             // Critical: propagateChanges=false (Pitfall 2)
             $localised->resaving = true;
             if (!$this->elements()->save($localised)) {
-                Craft::warning(
-                    sprintf(
-                        'EntryMigrationService: site "%s" save failed for %s:%s — %s',
-                        $site->handle,
-                        $stateSource,
-                        $stateKey,
-                        json_encode($localised->getErrors()),
-                    ),
-                    __METHOD__,
-                );
+                $this->warn(sprintf(
+                    'site "%s" save failed for %s:%s — %s',
+                    $site->handle,
+                    $stateSource,
+                    $stateKey,
+                    json_encode($localised->getErrors()),
+                ));
                 continue;
             }
 
@@ -512,7 +427,7 @@ class EntryMigrationService extends Component
         // A site with no payload has no content by definition, so anything found there is a
         // propagation artefact and is removed.
         // ------------------------------------------------------------------ 7b
-        $this->wipeBlocksOnUnpayloadedSites($entry, $perSite);
+        $this->wipeBlocksOnUnpayloadedSites($entry, $perSite, $sites);
 
         // ------------------------------------------------------------------ 8
         // Persist the accumulated block UID map to state so the NEXT re-run
@@ -543,9 +458,9 @@ class EntryMigrationService extends Component
      * Returns null when the entry/site doesn't resolve or the field has no
      * array-shaped value yet (caller treats it as an empty container).
      */
-    public function readEntryFieldValueForSite(int $entryId, string $siteHandle, string $fieldHandle): ?array
+    public function readEntryFieldValueForSite(int $entryId, int $siteId, string $fieldHandle): ?array
     {
-        $entry = $this->loadEntryForSite($entryId, $siteHandle);
+        $entry = $this->loadEntryForSite($entryId, $siteId);
         if ($entry === null) {
             return null;
         }
@@ -568,9 +483,9 @@ class EntryMigrationService extends Component
      * than rebuilding it from scratch) is what keeps block identity stable
      * across this re-save.
      */
-    public function resaveEntryFieldForSite(int $entryId, string $siteHandle, string $fieldHandle, array $value): bool
+    public function resaveEntryFieldForSite(int $entryId, int $siteId, string $fieldHandle, array $value): bool
     {
-        $entry = $this->loadEntryForSite($entryId, $siteHandle);
+        $entry = $this->loadEntryForSite($entryId, $siteId);
         if ($entry === null) {
             return false;
         }
@@ -585,9 +500,9 @@ class EntryMigrationService extends Component
      * Set/patch the parent link for one entry/site — the `path === []` case
      * (an unresolved `parentRef`) — and re-save the same way.
      */
-    public function resaveEntryParentForSite(int $entryId, string $siteHandle, int $parentId): bool
+    public function resaveEntryParentForSite(int $entryId, int $siteId, int $parentId): bool
     {
-        $entry = $this->loadEntryForSite($entryId, $siteHandle);
+        $entry = $this->loadEntryForSite($entryId, $siteId);
         if ($entry === null) {
             return false;
         }
@@ -598,14 +513,9 @@ class EntryMigrationService extends Component
         return (bool) $this->elements()->save($entry);
     }
 
-    private function loadEntryForSite(int $entryId, string $siteHandle): ?Entry
+    private function loadEntryForSite(int $entryId, int $siteId): ?Entry
     {
-        $site = Craft::$app->sites->getSiteByHandle($siteHandle);
-        if ($site === null) {
-            return null;
-        }
-
-        return Entry::find()->id($entryId)->siteId($site->id)->status(null)->one();
+        return $this->elements()->findById($entryId, Entry::class, $siteId);
     }
 
     // --------------------------------------------------------------------------
@@ -1138,6 +1048,7 @@ class EntryMigrationService extends Component
         ?MigrationReport $report,
         string $stateSource,
         string $stateKey,
+        ?RunTally $tally = null,
     ): void {
         // sourceRefs per matrix handle per site, from the payload the compiler produced.
         $refsByField = [];
@@ -1173,14 +1084,14 @@ class EntryMigrationService extends Component
                 continue;
             }
 
-            $this->perSiteBlockLosses[] = sprintf(
+            $tally?->perSiteBlockLoss(sprintf(
                 '%s:%s field "%s": %d locales carry different legacy parts, but the field '
                 . 'propagates one block set to all sites — only the last locale written survives.',
                 $stateSource,
                 $stateKey,
                 $fieldHandle,
                 count($perSiteRefs),
-            );
+            ));
 
             $this->recordFallback(
                 $report,
@@ -1492,15 +1403,15 @@ class EntryMigrationService extends Component
      *
      * @param array<string, mixed> $perSite the payload's per-site data, keyed by site handle
      */
-    private function wipeBlocksOnUnpayloadedSites(Entry $entry, array $perSite): void
+    private function wipeBlocksOnUnpayloadedSites(Entry $entry, array $perSite, SiteMap $sites): void
     {
         $keep = [];
 
         foreach (array_keys($perSite) as $handle) {
-            $site = $this->getSiteByHandle((string) $handle);
+            $siteId = $sites->siteIdForHandle((string) $handle);
 
-            if ($site !== null) {
-                $keep[$site->id] = true;
+            if ($siteId !== null) {
+                $keep[$siteId] = true;
             }
         }
 
@@ -1508,17 +1419,14 @@ class EntryMigrationService extends Component
             return;
         }
 
-        foreach (Craft::$app->sites->getAllSites() as $site) {
-            if (isset($keep[$site->id])) {
+        // Every Craft site, not only this environment's: propagation does not
+        // stop at the mapping, so neither can the pruning.
+        foreach ($sites->craftSiteIds() as $siteId) {
+            if (isset($keep[$siteId])) {
                 continue;
             }
 
-            /** @var Entry|null $localised */
-            $localised = Entry::find()
-                ->id($entry->id)
-                ->siteId($site->id)
-                ->status(null)
-                ->one();
+            $localised = $this->elements()->findById((int) $entry->id, Entry::class, $siteId);
 
             if ($localised === null) {
                 continue;
@@ -1557,11 +1465,7 @@ class EntryMigrationService extends Component
             return false;
         }
 
-        return (new \craft\db\Query())
-            ->from(\craft\db\Table::ELEMENTS_SITES)
-            ->where(['elementId' => $block->id])
-            ->andWhere(['siteId' => array_keys($keep)])
-            ->exists();
+        return $this->elements()->livesOnAnySite((int) $block->id, array_keys($keep));
     }
 
     /**
@@ -1614,22 +1518,5 @@ class EntryMigrationService extends Component
         }
 
         return $out;
-    }
-
-    /**
-     * Resolve a Craft site by handle with per-instance caching. Returns null
-     * when the handle doesn't exist on this install (caller decides whether
-     * that's fatal).
-     */
-    private function getSiteByHandle(string $handle): ?Site
-    {
-        if (isset($this->siteCache[$handle])) {
-            return $this->siteCache[$handle];
-        }
-        $site = Craft::$app->sites->getSiteByHandle($handle);
-        if ($site !== null) {
-            $this->siteCache[$handle] = $site;
-        }
-        return $site;
     }
 }

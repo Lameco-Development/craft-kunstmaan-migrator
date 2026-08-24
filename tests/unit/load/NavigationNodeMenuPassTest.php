@@ -81,6 +81,7 @@ final class NavigationNodeMenuPassTest extends TestCase
             $this->sites(),
             self::PRIMARY_SITE_ID,
             'default',
+            'COM',
             new MigrationOptions(dryRun: $dryRun),
             $report,
         );

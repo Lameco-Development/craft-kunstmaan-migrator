@@ -6,6 +6,10 @@ namespace Lameco\Kunstmaanmigrator\craft;
 
 use Craft;
 use craft\base\ElementInterface;
+use craft\db\Query;
+use craft\db\Table;
+use craft\elements\Entry;
+use craft\models\Section;
 use Throwable;
 use yii\db\Exception as DbException;
 
@@ -29,6 +33,40 @@ final class CraftElementWriter implements ElementWriter
      * operator's open browser tab creates.
      */
     private const RETRYABLE = ['1020', '1213', '40001'];
+
+    public function createEntry(int $sectionId, int $typeId, int $siteId): Entry
+    {
+        $entry = new Entry();
+        $entry->sectionId = $sectionId;
+        $entry->typeId = $typeId;
+        $entry->siteId = $siteId;
+
+        return $entry;
+    }
+
+    public function singleEntry(int $sectionId, int $siteId): ?Entry
+    {
+        $section = Craft::$app->getEntries()->getSectionById($sectionId);
+
+        if ($section === null || $section->type !== Section::TYPE_SINGLE) {
+            return null;
+        }
+
+        return Entry::find()->sectionId($sectionId)->siteId($siteId)->status(null)->one();
+    }
+
+    public function livesOnAnySite(int $elementId, array $siteIds): bool
+    {
+        if ($siteIds === []) {
+            return false;
+        }
+
+        return (new Query())
+            ->from(Table::ELEMENTS_SITES)
+            ->where(['elementId' => $elementId])
+            ->andWhere(['siteId' => $siteIds])
+            ->exists();
+    }
 
     public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
     {

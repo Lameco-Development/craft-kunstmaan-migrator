@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\craft;
 
 use craft\base\ElementInterface;
+use craft\elements\Entry;
 
 /**
  * The write half's one seam at Craft.
@@ -20,11 +21,43 @@ use craft\base\ElementInterface;
  * lookups, two deletes and two cache invalidations. Nothing else from Craft's
  * elements service belongs here until something needs it.
  *
+ * The second pass over the write half found what still kept `saveEntryForSites()`
+ * off this seam was not reads — ten of thirteen were `findById()` already — but
+ * construction: `new Entry()`, the Single-section lookup, and one raw query on
+ * `elements_sites`. Those three are the rest of the surface.
+ *
  * Two adapters make it a real seam rather than a hypothetical one:
  * CraftElementWriter in production, InMemoryElementWriter in tests.
  */
 interface ElementWriter
 {
+    /**
+     * A blank entry for a section, entry type and site — the element Craft
+     * would build with `new Entry()`, which boots the application to do it.
+     */
+    public function createEntry(int $sectionId, int $typeId, int $siteId): Entry;
+
+    /**
+     * The one entry a Single section already owns on a site, or null when the
+     * section is not a Single (or has none yet).
+     *
+     * Craft auto-creates a Single's entry when the section is applied from
+     * project config; creating a second fails URI validation, so a migration
+     * into a Single writes over the existing one.
+     */
+    public function singleEntry(int $sectionId, int $siteId): ?Entry;
+
+    /**
+     * Whether an element has a row on any of these sites.
+     *
+     * The question block reconciliation asks before deleting a nested entry
+     * found on a site the payload never wrote: one nested entry is one row per
+     * site it exists on, and deleting the copy on an unpayloaded site takes the
+     * payloaded site's content with it.
+     *
+     * @param list<int> $siteIds
+     */
+    public function livesOnAnySite(int $elementId, array $siteIds): bool;
     /**
      * Saves an element, returning false rather than throwing when Craft
      * refuses it — callers read `$element->getErrors()` for the reason.
