@@ -7,12 +7,12 @@ it.
 
 Implemented by:
 
-- `src/payload/Payload.php` — `Payload::fromArray()` parses the shape below.
-- `src/payload/PayloadValidator.php` — checks a parsed `Payload` against the
-  live Craft schema and the `sourceUid` grammar.
-- `src/payload/Violation.php` — one failed rule.
-- `src/payload/SchemaGateway.php` / `CraftSchemaGateway.php` — the Craft
-  schema lookups the validator needs, behind a fakeable interface.
+- `lib/kuma-compile/src/Payload/Payload.php` — `Payload::fromArray()` parses the
+  shape below. The kernel package: it also owns `SourceUid` (the grammar) and
+  `PayloadValidator`/`Violation`, and depends on nothing.
+- `lib/kuma-compile/src/Payload/SchemaGateway.php` — the schema lookups the
+  validator needs, as a port; `src/payload/CraftSchemaGateway.php` is the
+  Craft-backed adapter.
 
 ## Payload shape
 

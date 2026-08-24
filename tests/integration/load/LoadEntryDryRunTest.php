@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\integration\load;
 
+use Lameco\KumaCompile\Payload\PayloadValidator;
+use Lameco\KumaCompile\Payload\SchemaGateway;
 use Lameco\Kunstmaanmigrator\console\LoadController;
-use Lameco\Kunstmaanmigrator\payload\PayloadValidator;
-use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 use PHPUnit\Framework\TestCase;
 use yii\console\ExitCode;
 

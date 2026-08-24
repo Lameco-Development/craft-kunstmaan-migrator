@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\compile;
 
+use Lameco\KumaCompile\Payload\SchemaGateway;
 use Lameco\Kunstmaanmigrator\compile\TargetModel;
-use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 

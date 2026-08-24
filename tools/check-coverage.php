@@ -22,9 +22,9 @@ const THRESHOLD = 70.0;
 // A named module that no longer exists is now a hard failure. A stale gate is worse than no gate,
 // because it reads as coverage that is not there.
 const MODULES = [
-    'src/payload/PayloadValidator.php',
+    'lib/kuma-compile/src/Payload/PayloadValidator.php',
     'src/payload/RefResolver.php',
-    'src/payload/Payload.php',
+    'lib/kuma-compile/src/Payload/Payload.php',
     'src/finalize/CkeditorRewriterService.php',
 
     // Graduated from WATCHED on a measured 94.1%. It sits above the threshold

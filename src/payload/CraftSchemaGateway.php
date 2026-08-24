@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\payload;
 
 use Craft;
+
 use craft\fieldlayoutelements\CustomField;
 use craft\fields\Matrix;
+use Lameco\KumaCompile\Payload\SchemaGateway;
 
 /**
  * Production `SchemaGateway` — thin read-only wrapper over

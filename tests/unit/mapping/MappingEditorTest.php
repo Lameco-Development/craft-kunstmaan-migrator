@@ -4,12 +4,12 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\mapping;
 
+use Lameco\KumaCompile\Payload\SchemaGateway;
 use Lameco\Kunstmaanmigrator\compile\TargetModel;
 use Lameco\Kunstmaanmigrator\mapping\MappingEditor;
 use Lameco\Kunstmaanmigrator\mapping\MappingEditorException;
 use Lameco\Kunstmaanmigrator\mapping\MappingRow;
 use Lameco\Kunstmaanmigrator\mapping\TargetCatalogue;
-use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryTargetCatalogue;
 use Lameco\Kunstmaanmigrator\tests\support\SettingsFactory;
 use PHPUnit\Framework\TestCase;

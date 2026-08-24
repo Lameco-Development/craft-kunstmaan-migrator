@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Lameco\Kunstmaanmigrator\payload;
+namespace Lameco\KumaCompile\Payload;
 
 /**
  * Read-side Craft schema lookups `PayloadValidator` needs to check a payload
