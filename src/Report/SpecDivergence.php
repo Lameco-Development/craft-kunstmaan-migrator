@@ -34,18 +34,18 @@ final class SpecDivergence
     {
         $out = [];
 
-        foreach ($this->mapping->pages() as $page => $spec) {
-            if (is_array($spec) && !isset($spec['manual']) && isset($spec['entryType'])) {
-                $out = [...$out, ...$this->against('page', (string) $page, (string) $spec['entryType'], $spec)];
+        foreach ($this->mapping->pageRows() as $page => $row) {
+            if ($row->compiles()) {
+                $out = [...$out, ...$this->against('page', $page, (string) $row->entryType(), $row->spec)];
             }
         }
 
-        foreach ($this->mapping->parts() as $part => $spec) {
-            if (!is_array($spec) || !isset($spec['block']) || isset($spec['drop']) || isset($spec['manual'])) {
+        foreach ($this->mapping->partRows() as $part => $row) {
+            if (!$row->compilesToBlocks() || $row->block() === null) {
                 continue;
             }
 
-            $out = [...$out, ...$this->against('part', (string) $part, (string) $spec['block'], $spec)];
+            $out = [...$out, ...$this->against('part', $part, $row->block(), $row->spec)];
         }
 
         // Several notes can name the same column; the disagreement is one fact, not three.

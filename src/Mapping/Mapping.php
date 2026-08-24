@@ -8,12 +8,37 @@ use Symfony\Component\Yaml\Tag\TaggedValue;
 use Symfony\Component\Yaml\Yaml;
 
 /**
- * A parsed mapping file. Read-only; every accessor returns plain arrays so the
- * rest of the tool never reaches back into the YAML structure by hand.
+ * A parsed mapping file. Read-only.
+ *
+ * Two views of the same tree. The typed one — `partRows()`, `pageRows()`,
+ * `entityRows()`, `sidecarRows()`, and the lane-wide facts `defaultContexts()`,
+ * `forms()`, `structuralEntryType()`, `transforms()` — is what the kernel reads:
+ * a row knows its own disposition, target and fallbacks, so no consumer parses
+ * the row grammar again. The raw lane accessors (`pages()`, `parts()`, ...)
+ * return the YAML shape unchanged and stay for the Craft side and the schema;
+ * `all()` is for schema checks and the document editor only.
  */
 final class Mapping
 {
+    /**
+     * Where blocks land when neither the page nor `defaults:` says. The compiler's
+     * fallback, so the checks that predict what the compiler does share it.
+     */
+    public const DEFAULT_CONTEXTS = ['main' => ['field' => 'commonPageBuilder']];
+
     private const LANES = ['parts', 'forms', 'globals', 'redirects'];
+
+    /** @var array<string, PartRow>|null */
+    private ?array $partRows = null;
+
+    /** @var array<string, PageRow>|null */
+    private ?array $pageRows = null;
+
+    /** @var array<string, EntityRow>|null */
+    private ?array $entityRows = null;
+
+    /** @var array<string, SidecarRow>|null */
+    private ?array $sidecarRows = null;
 
     /** @param array<string, mixed> $data */
     private function __construct(
@@ -69,10 +94,127 @@ final class Mapping
         return $data;
     }
 
-    /** @return array<string, mixed> the raw parsed tree; for schema checks only */
+    /**
+     * The raw parsed tree; for schema checks and the document editor only. A
+     * kernel consumer wanting a lane-wide fact reads `defaultContexts()`,
+     * `forms()`, `structuralEntryType()` or `transforms()` instead.
+     *
+     * @return array<string, mixed>
+     */
     public function all(): array
     {
         return $this->data;
+    }
+
+    /** @return array<string, PartRow> pagepart class => row */
+    public function partRows(): array
+    {
+        if ($this->partRows === null) {
+            $this->partRows = [];
+
+            foreach ($this->parts() as $class => $spec) {
+                $this->partRows[(string) $class] = PartRow::fromSpec((string) $class, $spec);
+            }
+        }
+
+        return $this->partRows;
+    }
+
+    public function partRow(string $class): ?PartRow
+    {
+        return $this->partRows()[$class] ?? null;
+    }
+
+    /** @return array<string, PageRow> page entity => row */
+    public function pageRows(): array
+    {
+        if ($this->pageRows === null) {
+            $this->pageRows = [];
+            $defaults = $this->defaultContexts();
+
+            foreach ($this->pages() as $entity => $spec) {
+                $this->pageRows[(string) $entity] = PageRow::fromSpec((string) $entity, $spec, $defaults);
+            }
+        }
+
+        return $this->pageRows;
+    }
+
+    public function pageRow(string $entity): ?PageRow
+    {
+        return $this->pageRows()[$entity] ?? null;
+    }
+
+    /** @return array<string, EntityRow> entity name => row */
+    public function entityRows(): array
+    {
+        if ($this->entityRows === null) {
+            $this->entityRows = [];
+
+            foreach ($this->entities() as $name => $spec) {
+                $this->entityRows[(string) $name] = EntityRow::fromSpec((string) $name, $spec);
+            }
+        }
+
+        return $this->entityRows;
+    }
+
+    public function entityRow(string $name): ?EntityRow
+    {
+        return $this->entityRows()[$name] ?? null;
+    }
+
+    /** @return array<string, SidecarRow> sidecar name => row */
+    public function sidecarRows(): array
+    {
+        if ($this->sidecarRows === null) {
+            $this->sidecarRows = [];
+
+            foreach ($this->sidecars() as $name => $spec) {
+                $this->sidecarRows[(string) $name] = SidecarRow::fromSpec((string) $name, $spec);
+            }
+        }
+
+        return $this->sidecarRows;
+    }
+
+    /**
+     * `defaults.contexts`, normalised (every context has a `field`), or
+     * `DEFAULT_CONTEXTS` when the mapping declares none. A page's own
+     * `contexts:` overrides this per page — read `PageRow::contexts()`.
+     *
+     * @return array<string, array<string, mixed>> context => target
+     */
+    public function defaultContexts(): array
+    {
+        $declared = $this->data['defaults']['contexts'] ?? null;
+
+        return PageRow::normaliseContexts(is_array($declared) ? $declared : self::DEFAULT_CONTEXTS);
+    }
+
+    /** The entry type a path-segment placeholder is emitted as; null means the segment has nowhere to go. */
+    public function structuralEntryType(): ?string
+    {
+        $entryType = $this->data['defaults']['structuralEntryType'] ?? null;
+
+        return is_string($entryType) && $entryType !== '' ? $entryType : null;
+    }
+
+    /**
+     * The `transforms:` block — the configured transform table `Compile\Transforms` is built from.
+     *
+     * @return array<string, mixed>
+     */
+    public function transforms(): array
+    {
+        $transforms = $this->data['transforms'] ?? [];
+
+        return is_array($transforms) ? $transforms : [];
+    }
+
+    public function forms(): FormsLane
+    {
+        return FormsLane::fromSpec($this->data['forms'] ?? null);
     }
 
     /** @return list<array<string, mixed>> */
@@ -111,13 +253,21 @@ final class Mapping
         return $databases;
     }
 
-    /** @return array<string, array<string, mixed>> */
+    /**
+     * The `pages:` lane as the file holds it. Kernel code reads `pageRows()`.
+     *
+     * @return array<string, array<string, mixed>>
+     */
     public function pages(): array
     {
         return $this->data['pages'] ?? [];
     }
 
-    /** @return array<string, array<string, mixed>> */
+    /**
+     * The `parts:` lane as the file holds it. Kernel code reads `partRows()`.
+     *
+     * @return array<string, array<string, mixed>>
+     */
     public function parts(): array
     {
         return $this->data['parts'] ?? [];
@@ -131,6 +281,8 @@ final class Mapping
      * The name differs per site; the column signature does not, which is what makes this a
      * lane rather than a special case: any table carrying that pair can be named here and
      * joined to every page it decorates.
+     *
+     * As the file holds it; kernel code reads `sidecarRows()`.
      *
      * @return array<string, array<string, mixed>> sidecar name => spec
      */
@@ -146,6 +298,8 @@ final class Mapping
      * vendors, certification levels — and every page FK into one of them is a relation with
      * nowhere to point until the table itself has been migrated. This lane is what gives
      * those rows a Craft identity, and `ref(<Entity>)` is how a page reaches it.
+     *
+     * As the file holds it; kernel code reads `entityRows()`.
      *
      * @return array<string, array<string, mixed>> entity name => spec
      */
@@ -220,13 +374,8 @@ final class Mapping
     {
         $accounted = [];
 
-        foreach ($this->parts() as $class => $spec) {
-            $accounted[$class] = match (true) {
-                ($spec['consumedBy'] ?? null) === 'sequence' => 'sequence',
-                isset($spec['drop']) => 'dropped',
-                isset($spec['manual']) => 'manual',
-                default => 'blocks',
-            };
+        foreach ($this->partRows() as $class => $row) {
+            $accounted[$class] = $row->disposition();
         }
 
         foreach (array_keys($this->formFields()) as $class) {
@@ -253,8 +402,8 @@ final class Mapping
     {
         $accounted = [];
 
-        foreach ($this->pages() as $entity => $spec) {
-            $accounted[$entity] = isset($spec['manual']) ? 'manual' : 'pages';
+        foreach ($this->pageRows() as $entity => $row) {
+            $accounted[$entity] = $row->disposition();
         }
 
         foreach (array_keys($this->data['redirects'] ?? []) as $entity) {

@@ -68,7 +68,7 @@ final class CompileCommand extends Command
             }
         }
 
-        $transforms = new Transforms($mapping->all()['transforms'] ?? []);
+        $transforms = new Transforms($mapping->transforms());
         $compiler = new Compiler($mapping, $transforms, $schema);
         $dsn = Dsn::fromEnvironment();
         $only = $input->getOption('env');

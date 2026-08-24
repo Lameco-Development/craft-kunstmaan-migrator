@@ -38,25 +38,24 @@ final class BlockPlacement
      */
     public function rejections(array $livePairs): array
     {
-        $defaults = $this->mapping->all()['defaults']['contexts'] ?? [];
         $out = [];
 
         foreach ($livePairs as $page => $parts) {
-            $spec = $this->mapping->pages()[$page] ?? null;
+            $row = $this->mapping->pageRow((string) $page);
 
-            if (!is_array($spec) || isset($spec['manual']) || isset($spec['unmapped'])) {
+            if ($row === null || !$row->compiles()) {
                 continue;
             }
 
-            $entryType = (string) ($spec['entryType'] ?? '');
+            $entryType = (string) $row->entryType();
 
-            if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
+            if (!$this->schema->hasEntryType($entryType)) {
                 continue;
             }
 
             foreach ($parts as $part => $placements) {
-                foreach ($this->blocksOf($part) as $block) {
-                    $field = $this->rejectedBy($entryType, $block, $spec['contexts'] ?? $defaults);
+                foreach ($this->blocksOf((string) $part) as $block) {
+                    $field = $this->rejectedBy($entryType, $block, $row->contextFields());
 
                     if ($field !== null) {
                         $out[] = [
@@ -83,15 +82,14 @@ final class BlockPlacement
      * A page can stream into more than one context field, and one of them accepting the block is
      * enough for the content to land. Only a block every hosting field rejects is lost.
      *
-     * @param array<string, mixed> $contexts
+     * @param list<string> $fields the page's context fields
      */
-    private function rejectedBy(string $entryType, string $block, array $contexts): ?string
+    private function rejectedBy(string $entryType, string $block, array $fields): ?string
     {
         $rejecting = null;
 
-        foreach ($contexts as $target) {
-            $field = is_array($target) ? (string) ($target['field'] ?? '') : '';
-            $slot = $field !== '' ? $this->schema->slot($entryType, $field) : null;
+        foreach ($fields as $field) {
+            $slot = $this->schema->slot($entryType, $field);
 
             // A field that is not there is `pagesWithNoBlockField()`'s finding, not this one.
             // Reporting it here too would double-count the same placements.
@@ -112,28 +110,8 @@ final class BlockPlacement
     /** @return list<string> */
     private function blocksOf(string $part): array
     {
-        $spec = $this->mapping->parts()[$part] ?? null;
+        $row = $this->mapping->partRow($part);
 
-        if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
-            return [];
-        }
-
-        if (($spec['consumedBy'] ?? null) === 'sequence') {
-            return [];
-        }
-
-        $blocks = [];
-
-        if (isset($spec['block']) && is_string($spec['block'])) {
-            $blocks[] = $spec['block'];
-        }
-
-        foreach ($spec['switch'] ?? [] as $case) {
-            if (isset($case['block']) && is_string($case['block'])) {
-                $blocks[] = $case['block'];
-            }
-        }
-
-        return array_values(array_unique($blocks));
+        return $row !== null && $row->compilesToBlocks() ? $row->blocks() : [];
     }
 }

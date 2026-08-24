@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Report;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\PartRow;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Lameco\Kunstmaanmigrator\Source\LiveSnapshot;
 
@@ -177,20 +178,18 @@ final class Coverage
             ];
         }
 
-        foreach ($this->mapping->parts() as $class => $spec) {
-            if (!is_array($spec)) {
-                continue;
-            }
+        $kinds = [PartRow::DROPPED => 'pagepart, dropped', PartRow::MANUAL => 'pagepart, rebuilt by hand'];
 
-            foreach ([['drop', 'pagepart, dropped'], ['manual', 'pagepart, rebuilt by hand']] as [$key, $kind]) {
-                if (isset($spec[$key])) {
-                    $out[] = [
-                        'subject' => (string) $class,
-                        'kind' => $kind,
-                        'reason' => is_string($spec[$key]) ? $spec[$key] : 'no reason given',
-                        'placements' => $this->partPlacements[$class] ?? 0,
-                    ];
-                }
+        foreach ($this->mapping->partRows() as $class => $row) {
+            $kind = $kinds[$row->disposition()] ?? null;
+
+            if ($kind !== null) {
+                $out[] = [
+                    'subject' => $class,
+                    'kind' => $kind,
+                    'reason' => $row->reason() ?? 'no reason given',
+                    'placements' => $this->partPlacements[$class] ?? 0,
+                ];
             }
         }
 

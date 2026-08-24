@@ -6,6 +6,8 @@ namespace Lameco\Kunstmaanmigrator\Report;
 
 use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\PageRow;
+use Lameco\Kunstmaanmigrator\Mapping\PartRow;
 use Lameco\Kunstmaanmigrator\Target\TargetSchema;
 
 /**
@@ -45,7 +47,7 @@ final class Readiness
         private readonly Mapping $mapping,
         private readonly TargetSchema $schema,
     ) {
-        $this->transforms = new Transforms($this->mapping->all()['transforms'] ?? []);
+        $this->transforms = new Transforms($this->mapping->transforms());
     }
 
     /** @return list<Requirement> */
@@ -89,24 +91,20 @@ final class Readiness
     {
         $out = [];
 
-        foreach ($this->mapping->entities() as $entity => $spec) {
-            if (!is_array($spec) || isset($spec['manual']) || isset($spec['drop'])) {
-                continue;
-            }
+        foreach ($this->mapping->entityRows() as $entity => $row) {
+            $entryType = $row->entryType();
 
-            $entryType = (string) ($spec['entryType'] ?? '');
-
-            if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
+            if ($entryType === null || !$this->schema->hasEntryType($entryType)) {
                 continue;
             }
 
             $out = [...$out, ...$this->against(
                 lane: 'entities',
-                subject: (string) $entity,
+                subject: $entity,
                 entryType: $entryType,
-                map: $spec['map'] ?? [],
+                map: $row->map(),
                 extra: [],
-            live: null,
+                live: null,
             )];
         }
 
@@ -118,24 +116,20 @@ final class Readiness
     {
         $out = [];
 
-        foreach ($this->mapping->pages() as $page => $spec) {
-            if (!is_array($spec) || isset($spec['manual'])) {
-                continue;
-            }
+        foreach ($this->mapping->pageRows() as $page => $row) {
+            $entryType = $row->entryType();
 
-            $entryType = (string) ($spec['entryType'] ?? '');
-
-            if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
+            if (!$row->compiles() || !$this->schema->hasEntryType((string) $entryType)) {
                 continue;
             }
 
             $out = [...$out, ...$this->against(
                 lane: 'pages',
-                subject: (string) $page,
-                entryType: $entryType,
-                map: $spec['map'] ?? [],
-                extra: $this->contextFields($spec) + $this->sidecarFields(),
-                live: isset($spec['live']) ? (int) $spec['live'] : null,
+                subject: $page,
+                entryType: (string) $entryType,
+                map: $row->map(),
+                extra: $this->contextFields($row) + $this->sidecarFields(),
+                live: $row->live(),
             )];
         }
 
@@ -146,21 +140,17 @@ final class Readiness
     private function fromParts(): array
     {
         $out = [];
-        $emit = $this->mapping->all()['forms']['emit'] ?? [];
+        $forms = $this->mapping->forms();
 
-        foreach ($this->mapping->parts() as $part => $spec) {
-            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
+        foreach ($this->mapping->partRows() as $part => $row) {
+            if (!$row->compilesToBlocks()) {
                 continue;
             }
 
-            if (($spec['consumedBy'] ?? null) === 'sequence') {
-                continue;
-            }
+            $live = $row->live();
+            $map = $row->map();
 
-            $live = isset($spec['live']) ? (int) $spec['live'] : null;
-            $map = $spec['map'] ?? [];
-
-            foreach ($this->blocksOf($spec) as $block) {
+            foreach ($row->blocks() as $block) {
                 if (!$this->schema->hasEntryType($block)) {
                     continue;
                 }
@@ -169,29 +159,29 @@ final class Readiness
 
                 // The forms lane emits its own block and fills the form relation itself, so a
                 // part targeting that block is not responsible for the field.
-                if ($block === ($emit['block'] ?? null) && isset($emit['field'])) {
-                    $extra[(string) $emit['field']] = 'forms';
+                if ($block === $forms->emitBlock && $forms->emitField !== null) {
+                    $extra[$forms->emitField] = 'forms';
                 }
 
-                foreach ($spec['promote'] ?? [] as $promo) {
+                foreach ($row->promote() as $promo) {
                     if (isset($promo['relation'])) {
                         $extra[(string) $promo['relation']] = 'promote';
                     }
                 }
 
-                foreach (array_keys($spec['children'] ?? []) as $field) {
+                foreach (array_keys($row->children()) as $field) {
                     $extra[(string) $field] = 'children';
                 }
 
-                foreach ($this->absorbedFields($spec, $block) as $field) {
+                foreach ($this->absorbedFields($row, $block) as $field) {
                     $extra[$field] ??= 'sequence';
                 }
 
-                $out = [...$out, ...$this->against('parts', (string) $part, $block, $map, $extra, $live)];
-                $out = [...$out, ...$this->nested((string) $part, $block, $spec, $live)];
+                $out = [...$out, ...$this->against('parts', $part, $block, $map, $extra, $live)];
+                $out = [...$out, ...$this->nested($row, $block)];
             }
 
-            $out = [...$out, ...$this->promoted((string) $part, $spec, $live)];
+            $out = [...$out, ...$this->promoted($row)];
         }
 
         return $out;
@@ -201,14 +191,14 @@ final class Readiness
      * Nested Matrix entry types, reached two ways: declared as a `children:` collection, or
      * addressed inline by a `field[0].sub` path in the parent map.
      *
-     * @param array<string, mixed> $spec
      * @return list<Requirement>
      */
-    private function nested(string $part, string $block, array $spec, ?int $live): array
+    private function nested(PartRow $part, string $block): array
     {
         $out = [];
+        $children = $part->children();
 
-        foreach ($spec['children'] ?? [] as $field => $child) {
+        foreach ($children as $field => $child) {
             $type = $this->schema->nestedTypeOf($block, (string) $field);
 
             if ($type === null) {
@@ -217,17 +207,17 @@ final class Readiness
 
             $out = [...$out, ...$this->against(
                 lane: 'parts',
-                subject: $part,
+                subject: $part->name,
                 entryType: $type,
                 map: $child['map'] ?? [],
-                extra: $this->absorbedInto($spec, (string) $field, $type),
-                live: $live,
+                extra: $this->absorbedInto($part, (string) $field, $type),
+                live: $part->live(),
                 label: sprintf('%s.%s[]', $block, $field),
             )];
         }
 
-        foreach ($this->inlineNestedMaps($spec['map'] ?? []) as $field => $map) {
-            if (isset($spec['children'][$field])) {
+        foreach ($this->inlineNestedMaps($part->map()) as $field => $map) {
+            if (isset($children[$field])) {
                 continue;
             }
 
@@ -239,11 +229,11 @@ final class Readiness
 
             $out = [...$out, ...$this->against(
                 lane: 'parts',
-                subject: $part,
+                subject: $part->name,
                 entryType: $type,
                 map: $map,
-                extra: $this->absorbedInto($spec, $field, $type),
-                live: $live,
+                extra: $this->absorbedInto($part, $field, $type),
+                live: $part->live(),
                 label: sprintf('%s.%s[]', $block, $field),
             )];
         }
@@ -251,15 +241,12 @@ final class Readiness
         return $out;
     }
 
-    /**
-     * @param array<string, mixed> $spec
-     * @return list<Requirement>
-     */
-    private function promoted(string $part, array $spec, ?int $live): array
+    /** @return list<Requirement> */
+    private function promoted(PartRow $part): array
     {
         $out = [];
 
-        foreach ($spec['promote'] ?? [] as $table => $promo) {
+        foreach ($part->promote() as $table => $promo) {
             $entryType = (string) ($promo['entryType'] ?? '');
 
             if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
@@ -268,11 +255,11 @@ final class Readiness
 
             $out = [...$out, ...$this->against(
                 lane: 'promote',
-                subject: $part,
+                subject: $part->name,
                 entryType: $entryType,
                 map: $promo['map'] ?? [],
                 extra: [],
-                live: $live,
+                live: $part->live(),
                 label: sprintf('%s (from %s)', $entryType, $table),
             )];
         }
@@ -386,18 +373,14 @@ final class Readiness
      * the page's `map:`. Without this every page entry type reads as never filling its own page
      * builder, which is the one field on it that always is filled.
      *
-     * @param array<string, mixed> $spec
      * @return array<string, string>
      */
-    private function contextFields(array $spec): array
+    private function contextFields(PageRow $page): array
     {
-        $contexts = $spec['contexts'] ?? $this->mapping->all()['defaults']['contexts'] ?? [];
         $fields = self::ADAPTER_FIELDS;
 
-        foreach ($contexts as $target) {
-            if (is_array($target) && isset($target['field'])) {
-                $fields[(string) $target['field']] = 'blocks';
-            }
+        foreach ($page->contextFields() as $field) {
+            $fields[$field] = 'blocks';
         }
 
         return $fields;
@@ -415,17 +398,17 @@ final class Readiness
     {
         $fields = [];
 
-        foreach ($this->mapping->sidecars() as $spec) {
-            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
+        foreach ($this->mapping->sidecarRows() as $sidecar) {
+            if (!$sidecar->isMigrated()) {
                 continue;
             }
 
-            foreach (array_keys($spec['map'] ?? []) as $key) {
+            foreach (array_keys($sidecar->map()) as $key) {
                 $root = (string) preg_split('/[\[.]/', (string) $key)[0];
                 $fields[$root] ??= 'sidecars';
             }
 
-            foreach (array_keys($spec['children'] ?? []) as $field) {
+            foreach (array_keys($sidecar->children()) as $field) {
                 $fields[(string) $field] ??= 'sidecars';
             }
         }
@@ -437,12 +420,11 @@ final class Readiness
      * Fields the heading-absorb rules write onto a block, when this part accepts absorption and
      * the heading lands at block level rather than inside a nested row.
      *
-     * @param array<string, mixed> $spec
      * @return list<string>
      */
-    private function absorbedFields(array $spec, string $block): array
+    private function absorbedFields(PartRow $part, string $block): array
     {
-        if (($spec['absorbInto'] ?? null) !== null) {
+        if ($part->refusesAbsorption() || $part->absorbInto() !== null) {
             return [];
         }
 
@@ -463,14 +445,13 @@ final class Readiness
      * The same, for a part that declares `absorbInto: <field>[0]` — the heading lands on the
      * nested row rather than on the block.
      *
-     * @param array<string, mixed> $spec
      * @return array<string, string>
      */
-    private function absorbedInto(array $spec, string $field, string $nestedType): array
+    private function absorbedInto(PartRow $part, string $field, string $nestedType): array
     {
-        $into = $spec['absorbInto'] ?? null;
+        $into = $part->absorbInto();
 
-        if (!is_string($into) || $this->fieldOfPath($into) !== $field) {
+        if ($into === null || $this->fieldOfPath($into) !== $field) {
             return [];
         }
 
@@ -513,24 +494,6 @@ final class Readiness
         }
 
         return $grouped;
-    }
-
-    /** @param array<string, mixed> $spec @return list<string> */
-    private function blocksOf(array $spec): array
-    {
-        $blocks = [];
-
-        if (isset($spec['block']) && is_string($spec['block'])) {
-            $blocks[] = $spec['block'];
-        }
-
-        foreach ($spec['switch'] ?? [] as $case) {
-            if (isset($case['block']) && is_string($case['block'])) {
-                $blocks[] = $case['block'];
-            }
-        }
-
-        return array_values(array_unique($blocks));
     }
 
     private function fieldOfPath(string $path): string

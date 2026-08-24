@@ -24,31 +24,33 @@ final class TargetCheck
     {
         $errors = [];
 
-        foreach ($mapping->pages() as $name => $spec) {
-            if (!is_array($spec) || isset($spec['manual'])) {
+        foreach ($mapping->pageRows() as $name => $page) {
+            if (!$page->isMigrated()) {
                 continue;
             }
 
-            $section = (string) ($spec['section'] ?? '');
-            $entryType = (string) ($spec['entryType'] ?? '');
+            // The section is checked as the compiler will use it — `pages` when the row
+            // does not say — so a missing default section fails here, not at the loader.
+            $section = $page->section();
+            $entryType = $page->entryType();
 
-            if ($section !== '' && !$this->schema->hasSection($section)) {
+            if (!$this->schema->hasSection($section)) {
                 $errors[] = sprintf('page `%s`: no section `%s` in Craft', $name, $section);
             }
 
-            if ($entryType !== '' && !$this->schema->hasEntryType($entryType)) {
+            if ($entryType === null) {
+                continue;
+            }
+
+            if (!$this->schema->hasEntryType($entryType)) {
                 $errors[] = sprintf('page `%s`: no entry type `%s` in Craft', $name, $entryType);
 
                 continue;
             }
 
-            if ($entryType === '') {
-                continue;
-            }
-
             // A page's own columns land in real fields too, so they need the same check the
             // parts get. Without it a page map is free to name fields that do not exist.
-            foreach (array_keys($spec['map'] ?? []) as $target) {
+            foreach (array_keys($page->map()) as $target) {
                 if ($this->schema->slot($entryType, (string) $target) === null) {
                     $errors[] = sprintf(
                         'page `%s`: entry type `%s` has no field `%s`',
@@ -59,22 +61,18 @@ final class TargetCheck
                 }
             }
 
-            $this->checkChildren(sprintf('page `%s`', $name), $entryType, $spec, $errors);
+            $this->checkChildren(sprintf('page `%s`', $name), $entryType, $page->children(), $errors);
         }
 
-        foreach ($mapping->entities() as $name => $spec) {
-            if (!is_array($spec)) {
-                continue;
-            }
+        foreach ($mapping->entityRows() as $name => $entity) {
+            $section = $entity->section();
+            $entryType = $entity->entryType();
 
-            $section = (string) ($spec['section'] ?? '');
-            $entryType = (string) ($spec['entryType'] ?? '');
-
-            if ($section !== '' && !$this->schema->hasSection($section)) {
+            if ($section !== null && !$this->schema->hasSection($section)) {
                 $errors[] = sprintf('entity `%s`: no section `%s` in Craft', $name, $section);
             }
 
-            if ($entryType === '') {
+            if ($entryType === null) {
                 continue;
             }
 
@@ -84,7 +82,7 @@ final class TargetCheck
                 continue;
             }
 
-            foreach (array_keys($spec['map'] ?? []) as $target) {
+            foreach (array_keys($entity->map()) as $target) {
                 if ($this->schema->slot($entryType, (string) $target) === null) {
                     $errors[] = sprintf(
                         'entity `%s`: entry type `%s` has no field `%s`',
@@ -96,14 +94,10 @@ final class TargetCheck
             }
         }
 
-        foreach ($mapping->parts() as $name => $spec) {
-            if (!is_array($spec) || isset($spec['drop'], $spec['manual'])) {
-                continue;
-            }
+        foreach ($mapping->partRows() as $name => $part) {
+            $block = $part->block();
 
-            $block = $spec['block'] ?? null;
-
-            if (!is_string($block) || $block === '') {
+            if ($block === null || !$part->compilesToBlocks()) {
                 continue;
             }
 
@@ -113,7 +107,7 @@ final class TargetCheck
                 continue;
             }
 
-            foreach (array_keys($spec['map'] ?? []) as $target) {
+            foreach (array_keys($part->map()) as $target) {
                 $error = $this->checkPath($block, (string) $target);
 
                 if ($error !== null) {
@@ -121,9 +115,9 @@ final class TargetCheck
                 }
             }
 
-            $this->checkChildren(sprintf('part `%s`', $name), $block, $spec, $errors);
+            $this->checkChildren(sprintf('part `%s`', $name), $block, $part->children(), $errors);
 
-            foreach ($spec['promote'] ?? [] as $table => $promo) {
+            foreach ($part->promote() as $table => $promo) {
                 foreach ([['section', 'hasSection'], ['entryType', 'hasEntryType']] as [$key, $method]) {
                     $value = (string) ($promo[$key] ?? '');
 
@@ -153,18 +147,18 @@ final class TargetCheck
     {
         $warnings = [];
 
-        foreach ($mapping->parts() as $name => $spec) {
-            $block = $spec['block'] ?? null;
+        foreach ($mapping->partRows() as $name => $part) {
+            $block = $part->block();
 
-            if (!is_string($block) || !$this->schema->hasEntryType($block)) {
+            if ($block === null || !$this->schema->hasEntryType($block)) {
                 continue;
             }
 
             $supplied = array_map(
                 static fn(string $p): string => explode('.', str_replace(['[0]'], '', $p))[0],
-                array_keys($spec['map'] ?? []),
+                array_map(strval(...), array_keys($part->map())),
             );
-            $supplied = array_merge($supplied, array_keys($spec['children'] ?? []));
+            $supplied = array_merge($supplied, array_map(strval(...), array_keys($part->children())));
 
             foreach ($this->schema->requiredFields($block) as $required) {
                 if (!in_array($required, $supplied, true)) {
@@ -194,36 +188,26 @@ final class TargetCheck
      */
     public function pagesWithNoBlockField(Mapping $mapping): array
     {
-        $defaults = $mapping->all()['defaults']['contexts'] ?? [];
         $warnings = [];
 
-        foreach ($mapping->pages() as $name => $spec) {
-            if (!is_array($spec) || isset($spec['manual']) || isset($spec['unmapped'])) {
+        foreach ($mapping->pageRows() as $name => $page) {
+            $entryType = $page->entryType();
+
+            if (!$page->compiles() || !$this->schema->hasEntryType((string) $entryType)) {
                 continue;
             }
 
-            $entryType = (string) ($spec['entryType'] ?? '');
-
-            if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
-                continue;
-            }
-
-            $missing = [];
-
-            foreach (($spec['contexts'] ?? $defaults) as $target) {
-                $field = is_array($target) ? (string) ($target['field'] ?? '') : '';
-
-                if ($field !== '' && $this->schema->slot($entryType, $field) === null) {
-                    $missing[$field] = true;
-                }
-            }
+            $missing = array_values(array_filter(
+                $page->contextFields(),
+                fn(string $field): bool => $this->schema->slot((string) $entryType, $field) === null,
+            ));
 
             if ($missing !== []) {
                 $warnings[] = sprintf(
                     'page `%s` streams blocks into `%s`, which `%s` does not have — every part on'
                     . ' these pages is dropped',
                     $name,
-                    implode('`, `', array_keys($missing)),
+                    implode('`, `', $missing),
                     $entryType,
                 );
             }
@@ -258,12 +242,12 @@ final class TargetCheck
 
         $errors = [];
 
-        foreach ($mapping->parts() as $name => $spec) {
-            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual']) || ($spec['consumedBy'] ?? null) === 'sequence') {
+        foreach ($mapping->partRows() as $name => $part) {
+            if (!$part->compilesToBlocks()) {
                 continue;
             }
 
-            foreach ($this->blocksOf($spec) as $block) {
+            foreach ($part->blocks() as $block) {
                 if (!$this->schema->hasEntryType($block) || $this->acceptedSomewhere($block, $hosts)) {
                     continue;
                 }
@@ -282,30 +266,23 @@ final class TargetCheck
     /**
      * `<page entry type>.<context field>` pairs a compiled block can be written into.
      *
-     * `contexts:` names the field, per page or from `defaults:`; the compiler falls back to
-     * `pageBuilder` when neither does, so this does too.
+     * `PageRow::contextFields()` names them the way the compiler will read them.
      *
      * @return list<array{0: string, 1: string}>
      */
     private function hostingFields(Mapping $mapping): array
     {
-        $defaults = $mapping->all()['defaults']['contexts'] ?? ['main' => ['field' => 'commonPageBuilder']];
         $hosts = [];
 
-        foreach ($mapping->pages() as $spec) {
-            if (!is_array($spec) || isset($spec['manual']) || isset($spec['unmapped'])) {
+        foreach ($mapping->pageRows() as $page) {
+            $entryType = $page->entryType();
+
+            if (!$page->compiles() || !$this->schema->hasEntryType((string) $entryType)) {
                 continue;
             }
 
-            $entryType = (string) ($spec['entryType'] ?? '');
-
-            if ($entryType === '' || !$this->schema->hasEntryType($entryType)) {
-                continue;
-            }
-
-            foreach (($spec['contexts'] ?? $defaults) as $target) {
-                $field = is_array($target) ? (string) ($target['field'] ?? 'pageBuilder') : 'pageBuilder';
-                $hosts[$entryType . '.' . $field] = [$entryType, $field];
+            foreach ($page->contextFields() as $field) {
+                $hosts[$entryType . '.' . $field] = [(string) $entryType, $field];
             }
         }
 
@@ -328,35 +305,16 @@ final class TargetCheck
         return false;
     }
 
-    /** @param array<string, mixed> $spec @return list<string> */
-    private function blocksOf(array $spec): array
-    {
-        $blocks = [];
-
-        if (isset($spec['block']) && is_string($spec['block'])) {
-            $blocks[] = $spec['block'];
-        }
-
-        foreach ($spec['switch'] ?? [] as $case) {
-            if (isset($case['block']) && is_string($case['block'])) {
-                $blocks[] = $case['block'];
-            }
-        }
-
-        return array_values(array_unique($blocks));
-    }
-
-    /** `heading`, `contentColumns[0].heading` — check each hop exists. */
     /**
      * A child collection has to land in a Matrix, and its columns in fields the nested entry
      * type actually has — whether the owner is a Page Builder block or a page entry type.
      *
-     * @param array<string, mixed> $spec
+     * @param array<string, array<string, mixed>> $children the row's `children:`
      * @param list<string> $errors
      */
-    private function checkChildren(string $subject, string $owner, array $spec, array &$errors): void
+    private function checkChildren(string $subject, string $owner, array $children, array &$errors): void
     {
-        foreach ($spec['children'] ?? [] as $field => $child) {
+        foreach ($children as $field => $child) {
             $slot = $this->schema->slot($owner, (string) $field);
 
             if ($slot === null) {
@@ -381,6 +339,7 @@ final class TargetCheck
         }
     }
 
+    /** `heading`, `contentColumns[0].heading` — check each hop exists. */
     private function checkPath(string $block, string $path): ?string
     {
         if (preg_match('/^(\w+)\[(\d+)\]\.(\w+)$/', $path, $m) === 1) {
