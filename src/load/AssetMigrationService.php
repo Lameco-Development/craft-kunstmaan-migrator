@@ -312,6 +312,11 @@ class AssetMigrationService extends Component
             'content_type' => $contentType !== '' ? $contentType : 'application/octet-stream',
             'created_at' => date('Y-m-d H:i:s', (int) (filemtime($sourcePath) ?: time())),
             'filesize' => $fileSize !== false ? $fileSize : null,
+            // Without this the synthetic row carries no folder, so `legacy-tree` finds no
+            // chain and degrades to a year bucket. On a corpus whose rich text references
+            // media by path rather than by id, this path ingests every asset, so the
+            // strategy never applied to anything at all.
+            'folder_id' => $this->legacyFolderIdForPath($path),
         ], $rootDir, $opts, $counts, $stateKey);
 
         if ($asset instanceof Asset) {
@@ -1084,6 +1089,36 @@ class AssetMigrationService extends Component
             $this->environmentName,
             $this->prefixEnvironment,
         );
+    }
+
+    /**
+     * The `kuma_folders` id for a file the rewriter found by path.
+     *
+     * `resolveFromLegacyUrl()` exists for files that survive on disk with no `kuma_media`
+     * row behind them, and it builds its row from the filesystem alone. Most of the URLs it
+     * is handed do still have a row — `kuma_media.url` stores exactly the `/uploads/media/…`
+     * path that rich text references — and that row is the only place the folder is
+     * recorded. Looking it up costs one indexed read and is what lets `legacy-tree` place
+     * the file; a genuinely orphaned file returns 0 and keeps the year-bucket fallback.
+     */
+    private function legacyFolderIdForPath(string $path): int
+    {
+        if ($this->folderStrategy !== AssetFolderPath::STRATEGY_LEGACY_TREE || $this->legacyDb === null) {
+            return 0;
+        }
+
+        try {
+            $row = $this->legacyDb->queryOne(
+                'SELECT folder_id FROM kuma_media WHERE url = :url LIMIT 1',
+                [':url' => $path],
+            );
+        } catch (Throwable $e) {
+            Craft::warning("Folder lookup failed for {$path}: {$e->getMessage()}", __METHOD__);
+
+            return 0;
+        }
+
+        return (int) ($row['folder_id'] ?? 0);
     }
 
     /**
