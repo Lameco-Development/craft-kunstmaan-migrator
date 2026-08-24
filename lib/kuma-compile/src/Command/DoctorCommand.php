@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\KumaCompile\Command;
 
 use Lameco\KumaCompile\Legacy\Dsn;
+use Lameco\KumaCompile\Legacy\KunstmaanCoreTables;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -18,6 +19,15 @@ use Symfony\Component\Console\Style\SymfonyStyle;
     name: 'doctor',
     description: 'Preflight: mapping parses, every environment is reachable, no conflict is still open',
 )]
+/**
+ * The compile-scope doctor — everything checkable without a Craft install.
+ *
+ * `./craft kunstmaan-migrator/doctor` asks a superset of these questions:
+ * the Craft-side `run\Diagnostics` reads the same mapping-state answers
+ * (conflicts, unreviewed, todos) and adds the install checks this binary
+ * cannot see (state table, adapters, production guard). Use this one while
+ * authoring a mapping; use the Craft one before a run.
+ */
 final class DoctorCommand extends Command
 {
     protected function configure(): void
@@ -50,7 +60,12 @@ final class DoctorCommand extends Command
             try {
                 $db = LegacyDatabase::connect((string) $env, $database, $dsn);
                 $missing = array_filter(
-                    ['kuma_nodes', 'kuma_node_translations', 'kuma_node_versions', 'kuma_page_part_refs'],
+                    [
+                        KunstmaanCoreTables::NODES,
+                        KunstmaanCoreTables::NODE_TRANSLATIONS,
+                        KunstmaanCoreTables::NODE_VERSIONS,
+                        KunstmaanCoreTables::PAGE_PART_REFS,
+                    ],
                     static fn(string $t): bool => !$db->hasTable($t),
                 );
 

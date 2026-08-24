@@ -89,10 +89,12 @@ worth having even if the later steps never happen.
    `SourceUid` (they are already Craft-free — only their namespace says
    otherwise); `docs/loader-contract.md` then documents the package it sits
    beside.
-5. **One operator vocabulary.** Fold the standalone CLI's verbs and the Craft
-   console's into single services with two thin adapters each, `doctor`
-   first (it exists twice with different check sets today). The standalone
-   binary stays — as an adapter, not an implementation.
+5. **One operator vocabulary** — doctor DONE (PR #63): `run\Diagnostics` is
+   the superset doctor (it now includes the CLI doctor's mapping-state
+   answers — conflicts, unreviewed, todos — via `mappingStateChecks()`), and
+   the two commands cross-reference each other. Remaining verbs: `init`,
+   `check`/`validate`, `coverage` — same treatment, one at a time. The
+   standalone binary stays — as an adapter, not an implementation.
 6. **Namespace consolidation.** Mechanical, last, optional: fold
    `Lameco\KumaCompile\` into `Lameco\KunstmaanMigrator\{Payload,Source,
    Mapping,Target,Compile}` and generalise the purity rule to package lists.

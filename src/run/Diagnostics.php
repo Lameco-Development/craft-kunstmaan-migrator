@@ -20,8 +20,13 @@ use Throwable;
  *
  * The checks were private methods on DoctorController, which meant the only
  * way to ask "is this install ready" was to open a terminal. They answer the
- * same six questions wherever they are asked from, so they live here and both
+ * same questions wherever they are asked from, so they live here and both
  * the console command and the control panel read them.
+ *
+ * This is the superset doctor: it includes the mapping-state answers the
+ * standalone `kuma-compile doctor` gives (conflicts, unreviewed, todos —
+ * see mappingStateChecks()) plus the install checks only a booted Craft can
+ * answer. The two commands agree wherever their scopes overlap.
  *
  * @phpstan-type Check array{check: string, ok: bool, detail: string}
  */
@@ -299,8 +304,10 @@ final class Diagnostics
             return [$this->result('mapping', false, sprintf('Mapping is unreadable: %s', $e->getMessage()))];
         }
 
+        $mapping = Mapping::fromFile($path);
         $checks = [$this->result('mapping', true, sprintf('%s declares %d environment(s).', $path, count($environments)))];
-        $checks[] = $this->checkBlockPropagation(Mapping::fromFile($path));
+        $checks[] = $this->checkBlockPropagation($mapping);
+        array_push($checks, ...self::mappingStateChecks($mapping));
 
         try {
             $readiness = (new MappingPreflight(
@@ -398,6 +405,58 @@ final class Diagnostics
     /**
      * @return array{check: string, ok: bool, detail: string}
      */
+    /**
+     * The mapping-state half of the CLI's `kuma-compile doctor`, answered here
+     * too so the two doctors agree where their scopes overlap: a mapping that
+     * still contradicts itself is not a program, and the unreviewed backlog is
+     * what people forget between authoring and running. Todos are visible but
+     * never blocking — same rule as the CLI.
+     *
+     * Public and static so it is testable with nothing but a Mapping.
+     *
+     * @return list<Check>
+     */
+    public static function mappingStateChecks(Mapping $mapping): array
+    {
+        $checks = [];
+
+        $conflicts = $mapping->openConflicts();
+        $checks[] = [
+            'check' => 'mapping_conflicts',
+            'ok' => $conflicts === [],
+            'detail' => $conflicts === []
+                ? 'No open conflicts.'
+                : sprintf(
+                    '%d unresolved conflict(s): %s — resolve each by setting conflict.status: decided on the reading you keep.',
+                    count($conflicts),
+                    implode(', ', array_map(static fn($c): string => $c->subject, $conflicts)),
+                ),
+        ];
+
+        $unreviewed = $mapping->unreviewed();
+        $checks[] = [
+            'check' => 'mapping_unreviewed',
+            'ok' => $unreviewed === [],
+            'detail' => $unreviewed === []
+                ? 'No unreviewed columns.'
+                : sprintf(
+                    '%d subject(s) with unreviewed columns: %s.',
+                    count($unreviewed),
+                    implode(', ', array_slice(array_keys($unreviewed), 0, 8)),
+                ),
+        ];
+
+        if ($todos = $mapping->todos()) {
+            $checks[] = [
+                'check' => 'mapping_todos',
+                'ok' => true,
+                'detail' => sprintf('%d open todo(s), not blocking: %s', count($todos), strtok((string) reset($todos), "\n")),
+            ];
+        }
+
+        return $checks;
+    }
+
     private function result(string $check, bool $ok, string $detail): array
     {
         return ['check' => $check, 'ok' => $ok, 'detail' => $detail];
