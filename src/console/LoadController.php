@@ -20,6 +20,7 @@ use Lameco\Kunstmaanmigrator\Payload\PayloadValidator;
 use Lameco\Kunstmaanmigrator\Payload\Violation;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
@@ -113,16 +114,7 @@ class LoadController extends Controller
             return self::exitCodeFor($report);
         }
 
-        $plugin = Plugin::getInstance();
-        $saver = new PayloadEntrySaver(
-            $gateway,
-            $plugin->entryMigrationService,
-            $plugin->migrationStateService,
-            $plugin->assetMigrationService,
-            $plugin->ckeditorRewriterService,
-            null,
-            new MigrationOptions(force: $this->force),
-        );
+        $saver = EnvironmentPipeline::saver($gateway, new MigrationOptions(force: $this->force));
         $report = self::buildLiveReport($this->payload, $validator, $saver, self::everySiteContext());
         $this->stdout(json_encode($report, JSON_UNESCAPED_SLASHES) . PHP_EOL);
 
@@ -445,7 +437,11 @@ class LoadController extends Controller
      * exception for one payload is recorded in `failed[]` and the loop
      * continues rather than aborting the run.
      *
-     * @return array{processed: int, violations: list<array{sourceUid: string, code: string, message: string}>, saved: int, failed: list<array{sourceUid: string, error: string}>, unresolvedAssets: list<array<string, mixed>>, mediaTokenIssues: list<array<string, mixed>>}
+     * Everything a save reports reaches this report through `RunTally::absorb()`,
+     * the same way it reaches a `migrate` run — the two used to read different
+     * halves of `SaveResult`.
+     *
+     * @return array{processed: int, violations: list<array{sourceUid: string, code: string, message: string}>, saved: int, created: int, updated: int, skipped: int, failed: list<array{sourceUid: string, error: string}>, unresolvedAssets: list<array<string, mixed>>, mediaTokenIssues: list<array<string, mixed>>, deferredRefs: list<array<string, mixed>>, droppedAddresses: array<string, int>}
      */
     public static function buildLiveReport(
         string $path,
@@ -483,35 +479,16 @@ class LoadController extends Controller
         }
 
         $saved = 0;
-        $created = 0;
-        $updated = 0;
-        $skipped = 0;
         $failed = [];
-        $unresolvedAssets = [];
-        $mediaTokenIssues = [];
 
         if ($violations === []) {
             foreach ($payloads as $p) {
                 try {
-                    $result = $saver->save($p, $context, $tally);
+                    // "saved" alone hid the case --force exists for: an existing entry
+                    // short-circuiting, reported as a success while nothing was written.
+                    // The tally splits created / updated / skipped so a no-op is visible.
+                    $tally->absorb($saver->save($p, $context, $tally), $saver->refreshesExisting());
                     $saved++;
-
-                    // "saved" alone hid the case this whole flag exists for: an existing
-                    // entry short-circuiting, reported as a success while nothing was
-                    // written. Split the count so a no-op is visible.
-                    if ($result->created) {
-                        $created++;
-                    } elseif ($saver->refreshesExisting()) {
-                        $updated++;
-                    } else {
-                        $skipped++;
-                    }
-                    foreach ($result->unresolvedAssets as $entry) {
-                        $unresolvedAssets[] = ['sourceUid' => $p->sourceUid] + $entry;
-                    }
-                    foreach ($result->mediaTokenIssues as $entry) {
-                        $mediaTokenIssues[] = ['sourceUid' => $p->sourceUid] + $entry;
-                    }
                 } catch (Throwable $e) {
                     $failed[] = ['sourceUid' => $p->sourceUid, 'error' => $e->getMessage()];
                 }
@@ -522,12 +499,14 @@ class LoadController extends Controller
             'processed' => count($records),
             'violations' => $violations,
             'saved' => $saved,
-            'created' => $created,
-            'updated' => $updated,
-            'skipped' => $skipped,
+            'created' => $tally->counts['created'],
+            'updated' => $tally->counts['updated'],
+            'skipped' => $tally->counts['skipped'],
             'failed' => $failed,
-            'unresolvedAssets' => $unresolvedAssets,
-            'mediaTokenIssues' => $mediaTokenIssues,
+            'unresolvedAssets' => $tally->unresolvedAssets,
+            'mediaTokenIssues' => $tally->mediaTokenIssues,
+            'deferredRefs' => $tally->deferredRefs,
+            'droppedAddresses' => $tally->droppedAddresses,
         ];
     }
 

@@ -82,6 +82,23 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
 
     public int $assetFailures = 0;
 
+    /**
+     * What the compile half reported, folded per batch. The console read these
+     * off its one pipeline at the end of the run; a batch is a fresh pipeline,
+     * so without the fold a queued run had no skip reasons and no loss counts.
+     *
+     * @var array<string, int>
+     */
+    public array $skippedSources = [];
+
+    public int $lossyConversions = 0;
+
+    public int $unresolvedAssets = 0;
+
+    public int $mediaTokenIssues = 0;
+
+    public int $deferredRefs = 0;
+
     public int $batchSize = 50;
 
     private ?EnvironmentPipeline $pipeline = null;
@@ -225,10 +242,20 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
 
     protected function afterBatch(): void
     {
+        $this->pipeline->foldCompileReport($this->tally);
+
         foreach ($this->tally->counts as $name => $count) {
             $this->counts[$name] = ($this->counts[$name] ?? 0) + $count;
         }
 
+        foreach ($this->tally->skippedSources as $source => $count) {
+            $this->skippedSources[$source] = ($this->skippedSources[$source] ?? 0) + $count;
+        }
+
+        $this->lossyConversions += $this->tally->lossyConversions;
+        $this->unresolvedAssets += count($this->tally->unresolvedAssets);
+        $this->mediaTokenIssues += count($this->tally->mediaTokenIssues);
+        $this->deferredRefs += count($this->tally->deferredRefs);
         $this->problems += count($this->tally->problems);
         $this->perSiteBlockLosses += count($this->tally->perSiteBlockLosses);
         $this->perSiteBlockLossSample = array_slice(
@@ -253,6 +280,11 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             'force' => $this->force,
             'counts' => $this->counts,
             'problems' => $this->problems,
+            'lossyConversions' => $this->lossyConversions,
+            'skippedSources' => $this->skippedSources,
+            'unresolvedAssets' => $this->unresolvedAssets,
+            'mediaTokenIssues' => $this->mediaTokenIssues,
+            'deferredRefs' => $this->deferredRefs,
             'perSiteBlocksNotRepresentable' => $this->perSiteBlockLosses,
             'perSiteBlockLossSample' => $this->perSiteBlockLossSample,
             'assetFailures' => $this->assetFailures,

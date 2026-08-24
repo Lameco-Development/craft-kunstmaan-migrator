@@ -401,7 +401,9 @@ final class MigrateController extends Controller
             $resave = $this->resaveSections($mapping);
         }
 
-        $lossCount = $pipeline->transforms()->lossCount();
+        $pipeline->foldCompileReport($tally);
+
+        $lossCount = $tally->lossyConversions;
         $unresolvedAssets = count($tally->unresolvedAssets);
         $orphans = count($fixup['orphans'] ?? []);
 
@@ -413,14 +415,17 @@ final class MigrateController extends Controller
             'finalize' => $finalize,
             'resave' => $resave,
             'lossyConversions' => $lossCount,
-            'losses' => $pipeline->transforms()->losses(),
-            'skippedSources' => $pipeline->compiler()->skipped(),
+            'losses' => $tally->losses,
+            'skippedSources' => $tally->skippedSources,
             'droppedAddresses' => $tally->droppedAddresses,
             'unresolvedAssets' => $unresolvedAssets,
+            'mediaTokenIssues' => count($tally->mediaTokenIssues),
+            'mediaTokenIssueSample' => array_slice($tally->mediaTokenIssues, 0, 5),
+            'deferredRefs' => count($tally->deferredRefs),
             'perSiteBlocksNotRepresentable' => count($perSiteBlockLosses),
             'perSiteBlockLossSample' => array_slice($perSiteBlockLosses, 0, 10),
             'assetFailures' => count($tally->assetFailures),
-            'unresolvedAssetSample' => array_slice(array_unique($tally->unresolvedAssets), 0, 5),
+            'unresolvedAssetSample' => array_slice($tally->unresolvedAssetReferences(), 0, 5),
             'problems' => array_slice($tally->problems, 0, 40),
             'only' => $only,
             'adapters' => $tally->adapters,
