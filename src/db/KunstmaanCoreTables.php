@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\db;
+namespace Lameco\Kunstmaanmigrator\db;
 
 /**
  * Kunstmaan core table-name constants.

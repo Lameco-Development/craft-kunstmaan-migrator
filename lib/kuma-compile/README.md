@@ -55,26 +55,27 @@ You do not hand-write one. `init` discovers the inventory; you supply the half a
 cannot know — which Craft block each legacy part becomes.
 
 ```bash
-composer install
+# The CLI ships with the plugin: `vendor/bin/kuma-compile` in a consuming
+# project, or `php lib/kuma-compile/bin/kuma-compile` from this repo.
 export KUMA_DB_USER=root KUMA_DB_PASSWORD=secret   # KUMA_DB_HOST / KUMA_DB_PORT optional
 
 # 1. Generate the skeleton from the live database(s)
-./bin/kuma-compile init \
+vendor/bin/kuma-compile init \
   --env=COM=legacy_com --env=DE=legacy_de \
   --source=/path/to/kunstmaan-checkout \
   --out=migration/mapping/site.yaml
 
 # 2. Fill in the TODOs, checking as you go
-./bin/kuma-compile validate migration/mapping/site.yaml
+vendor/bin/kuma-compile validate migration/mapping/site.yaml
 
 # 3. Once it validates, check nothing live is unaccounted for
-./bin/kuma-compile coverage migration/mapping/site.yaml
+vendor/bin/kuma-compile coverage migration/mapping/site.yaml
 
 # 4. Check every required Craft field has something to put in it
-./bin/kuma-compile readiness migration/mapping/site.yaml --craft=/path/to/craft
+vendor/bin/kuma-compile readiness migration/mapping/site.yaml --craft=/path/to/craft
 
 # 5. Preflight before compiling
-./bin/kuma-compile doctor migration/mapping/site.yaml
+vendor/bin/kuma-compile doctor migration/mapping/site.yaml
 ```
 
 `init` writes out every live pagepart class and page type ordered by volume, real table
@@ -306,7 +307,7 @@ It needs a real legacy database, so it skips unless one is configured:
 ```bash
 KUMA_TEST_MAPPING=migration/mapping/site.yaml \
 KUMA_TEST_CRAFT=/path/to/craft \
-KUMA_DB_PASSWORD=… vendor/bin/phpunit
+KUMA_DB_PASSWORD=… vendor/bin/phpunit --testsuite Compile
 ```
 
 That makes it a check you run against a corpus rather than a unit test, which is the only honest
@@ -316,9 +317,11 @@ in the Kunstmaan Migrator repo.
 
 ## Status
 
-Pre-alpha. `init`, `validate`, `doctor`, `coverage`, `readiness` and `compile` are implemented for the
-page-builder, sequence, entities and redirects lanes. The forms and globals lanes are read and
-reported but not yet emitted — their targets are still undecided in the first real mapping.
+Released as part of `lameco/craft-kunstmaan-migrator` — this directory versions and ships with
+the plugin (it was a standalone repo until 2026-08-21). `init`, `validate`, `doctor`, `coverage`,
+`readiness` and `compile` cover the page-builder, sequence, entities (including `single:` config
+rows) and redirects lanes; the forms and globals lanes are compiled by `FormCompiler` /
+`GlobalsCompiler`, driven from the plugin's adapter services.
 
 `promote:` is the same: validated against the target, never compiled. Every run counts each
 declared promotion it did not emit, so a clean coverage report does not read as "this migrated"

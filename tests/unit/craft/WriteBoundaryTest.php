@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\craft;
+namespace Lameco\Kunstmaanmigrator\tests\unit\craft;
 
 use PHPUnit\Framework\TestCase;
 use RecursiveDirectoryIterator;

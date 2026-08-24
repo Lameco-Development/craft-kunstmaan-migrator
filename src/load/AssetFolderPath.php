@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 /**
  * Where a migrated asset lands inside the target volume.

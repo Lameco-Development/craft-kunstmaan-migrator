@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\queue;
+namespace Lameco\Kunstmaanmigrator\tests\unit\queue;
 
 use craft\queue\BaseBatchedJob;
-use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
-use lameco\kunstmaanmigrator\queue\RunAdaptersJob;
+use Lameco\Kunstmaanmigrator\queue\MigrateEnvironmentJob;
+use Lameco\Kunstmaanmigrator\queue\RunAdaptersJob;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 

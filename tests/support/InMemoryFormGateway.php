@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\support;
+namespace Lameco\Kunstmaanmigrator\tests\support;
 
-use lameco\kunstmaanmigrator\craft\FormGateway;
+use Lameco\Kunstmaanmigrator\craft\FormGateway;
 
 /**
  * The second adapter: whatever the test says Formie did.

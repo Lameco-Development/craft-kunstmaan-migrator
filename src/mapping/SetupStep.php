@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\mapping;
+namespace Lameco\Kunstmaanmigrator\mapping;
 
 /**
  * The steps of setting a migration up, in order.

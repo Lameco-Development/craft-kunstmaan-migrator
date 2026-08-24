@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Craft;
 use craft\elements\Asset;
 use craft\helpers\App;
 use craft\helpers\Console;
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
-use lameco\kunstmaanmigrator\craft\EmbedGateway;
-use lameco\kunstmaanmigrator\craft\SpicywebEmbedGateway;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\EmbedGateway;
+use Lameco\Kunstmaanmigrator\craft\SpicywebEmbedGateway;
+use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use RuntimeException;
 use Throwable;
 use yii\base\Component;

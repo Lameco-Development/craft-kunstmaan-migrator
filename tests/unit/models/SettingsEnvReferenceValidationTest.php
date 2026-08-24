@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\models;
+namespace Lameco\Kunstmaanmigrator\tests\unit\models;
 
-use lameco\kunstmaanmigrator\models\Settings;
-use lameco\kunstmaanmigrator\tests\support\SettingsFactory;
+use Lameco\Kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\tests\support\SettingsFactory;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 

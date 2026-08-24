@@ -1,0 +1,13 @@
+# Keep the Packagist dist tarball to what a consuming project needs.
+/.github            export-ignore
+/.planning          export-ignore
+/tests              export-ignore
+/lib/kuma-compile/tests export-ignore
+/tools              export-ignore
+/phpstan            export-ignore
+/phpstan.neon.dist  export-ignore
+/phpunit.xml.dist   export-ignore
+/ecs.php            export-ignore
+/.gitattributes     export-ignore
+/.gitignore         export-ignore
+/CLAUDE.md          export-ignore

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\run;
+namespace Lameco\Kunstmaanmigrator\run;
 
 /**
  * The two things a preflight has to go outside for.

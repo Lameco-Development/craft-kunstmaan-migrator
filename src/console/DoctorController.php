@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\console;
+namespace Lameco\Kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
-use lameco\kunstmaanmigrator\load\AssetMigrationService;
-use lameco\kunstmaanmigrator\NeverProductionTrait;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\run\Diagnostics;
+use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\run\Diagnostics;
+use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use yii\console\ExitCode;
 
 /**

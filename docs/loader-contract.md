@@ -228,9 +228,9 @@ Implemented by `PayloadEntrySaver`'s `fieldValues` walk (same recursive pass
 that resolves `_ref`, extended in Task 8), driving two existing, independent
 collaborators — neither requires the other to be configured:
 
-- `lameco\kunstmaanmigrator\load\AssetMigrationService::resolveFromLegacyUrl(string): int`
+- `Lameco\Kunstmaanmigrator\load\AssetMigrationService::resolveFromLegacyUrl(string): int`
   — resolves `_asset`.
-- `lameco\kunstmaanmigrator\finalize\CkeditorRewriterService::rewriteCurlyMediaTokens()`
+- `Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService::rewriteCurlyMediaTokens()`
   (which lazily delegates to `AssetMigrationService::resolveFromLegacyId(int): int`
   via its `assetResolver` slot) — resolves `{{kuma:media:<id>}}`.
 

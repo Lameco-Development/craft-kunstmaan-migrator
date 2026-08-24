@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\support;
+namespace Lameco\Kunstmaanmigrator\tests\support;
 
-use lameco\kunstmaanmigrator\craft\NavigationGateway;
+use Lameco\Kunstmaanmigrator\craft\NavigationGateway;
 use verbb\navigation\elements\Node as NavNode;
 
 /**

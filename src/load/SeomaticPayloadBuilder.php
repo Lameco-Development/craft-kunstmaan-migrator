@@ -1,6 +1,6 @@
 <?php
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Closure;
 use yii\base\Component;

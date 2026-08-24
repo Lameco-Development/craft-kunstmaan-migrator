@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\queue;
+namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\base\Batchable;
 

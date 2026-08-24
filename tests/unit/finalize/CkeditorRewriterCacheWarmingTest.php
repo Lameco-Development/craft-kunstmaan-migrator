@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\finalize;
+namespace Lameco\Kunstmaanmigrator\tests\unit\finalize;
 
 use Generator;
-use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
-use lameco\kunstmaanmigrator\load\MigrationStateStream;
-use lameco\kunstmaanmigrator\tests\support\FakeLegacyDb;
-use lameco\kunstmaanmigrator\tests\support\ThrowingLegacyDb;
+use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
+use Lameco\Kunstmaanmigrator\load\MigrationStateStream;
+use Lameco\Kunstmaanmigrator\tests\support\FakeLegacyDb;
+use Lameco\Kunstmaanmigrator\tests\support\ThrowingLegacyDb;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 

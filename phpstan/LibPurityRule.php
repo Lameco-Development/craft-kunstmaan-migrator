@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\phpstan;
+namespace Lameco\Kunstmaanmigrator\phpstan;
 
 use PhpParser\Node;
 use PhpParser\Node\Expr;
@@ -25,7 +25,7 @@ use PHPStan\Rules\RuleErrorBuilder;
  */
 final class LibPurityRule implements Rule
 {
-    private const FORBIDDEN = ['Craft', 'craft\\', 'yii\\', 'lameco\\kunstmaanmigrator\\'];
+    private const FORBIDDEN = ['Craft', 'craft\\', 'yii\\', 'Lameco\\Kunstmaanmigrator\\'];
 
     public function getNodeType(): string
     {

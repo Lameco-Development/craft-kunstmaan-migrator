@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\support;
+namespace Lameco\Kunstmaanmigrator\tests\support;
 
-use lameco\kunstmaanmigrator\mapping\TargetCatalogue;
+use Lameco\Kunstmaanmigrator\mapping\TargetCatalogue;
 
 /** The second adapter: whatever the test says this install offers. */
 final class InMemoryTargetCatalogue implements TargetCatalogue

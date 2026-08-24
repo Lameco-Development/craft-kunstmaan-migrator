@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\load;
+namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
 use craft\elements\Entry;
 use craft\models\FieldLayout;
-use lameco\kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 

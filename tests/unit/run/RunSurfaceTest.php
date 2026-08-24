@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\run;
+namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
-use lameco\kunstmaanmigrator\controllers\MigrationController;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\ProductionGuard;
+use Lameco\Kunstmaanmigrator\controllers\MigrationController;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -77,9 +77,9 @@ final class RunSurfaceTest extends TestCase
     {
         $plugin = (string) file_get_contents($this->root() . '/src/Plugin.php');
 
-        self::assertStringContainsString("'lameco\\\\kunstmaanmigrator\\\\controllers'", $plugin);
+        self::assertStringContainsString("'Lameco\\\\Kunstmaanmigrator\\\\controllers'", $plugin);
         self::assertSame(
-            'lameco\kunstmaanmigrator\controllers',
+            'Lameco\Kunstmaanmigrator\controllers',
             (new ReflectionClass(MigrationController::class))->getNamespaceName(),
         );
     }

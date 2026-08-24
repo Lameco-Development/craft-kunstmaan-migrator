@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 /**
  * Whether a set of per-locale block payloads can coexist in one shared block set.

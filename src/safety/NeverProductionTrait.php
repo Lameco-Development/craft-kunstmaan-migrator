@@ -1,6 +1,8 @@
 <?php
 
-namespace lameco\kunstmaanmigrator;
+declare(strict_types=1);
+
+namespace Lameco\Kunstmaanmigrator\safety;
 
 use craft\helpers\Console;
 use yii\console\ExitCode;

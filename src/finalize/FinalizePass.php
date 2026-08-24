@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\finalize;
+namespace Lameco\Kunstmaanmigrator\finalize;
 
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 
 /**
  * The finalize pass over every environment the mapping declares.

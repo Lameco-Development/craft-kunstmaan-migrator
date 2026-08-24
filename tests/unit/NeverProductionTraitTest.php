@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit;
+namespace Lameco\Kunstmaanmigrator\tests\unit;
 
 use craft\helpers\Console;
-use lameco\kunstmaanmigrator\NeverProductionTrait;
+use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use PHPUnit\Framework\TestCase;
 use yii\console\ExitCode;
 

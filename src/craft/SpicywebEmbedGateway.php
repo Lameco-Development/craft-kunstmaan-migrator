@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\craft;
+namespace Lameco\Kunstmaanmigrator\craft;
 
 use Craft;
 use Throwable;

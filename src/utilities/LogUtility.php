@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\utilities;
+namespace Lameco\Kunstmaanmigrator\utilities;
 
 use Craft;
 use craft\base\Utility;
-use lameco\kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\run\RunLog;
 
 /**
  * The run history, where Craft keeps its other logs.

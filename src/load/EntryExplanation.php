@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 /**
  * One migrated entry, reconciled against the legacy node it came from.

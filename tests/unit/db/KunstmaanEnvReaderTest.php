@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\db;
+namespace Lameco\Kunstmaanmigrator\tests\unit\db;
 
-use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
+use Lameco\Kunstmaanmigrator\db\KunstmaanEnvReader;
 use PHPUnit\Framework\TestCase;
 
 /**

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\load;
+namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
-use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
+use Lameco\Kunstmaanmigrator\load\SeomaticPayloadBuilder;
 use PHPUnit\Framework\TestCase;
 
 /**

@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\run;
+namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
-use lameco\kunstmaanmigrator\run\RunSettings;
-use lameco\kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\run\RunSettings;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use PHPUnit\Framework\TestCase;
 
 /**

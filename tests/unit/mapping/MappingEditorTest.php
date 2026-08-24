@@ -2,16 +2,16 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\mapping;
+namespace Lameco\Kunstmaanmigrator\tests\unit\mapping;
 
-use lameco\kunstmaanmigrator\compile\TargetModel;
-use lameco\kunstmaanmigrator\mapping\MappingEditor;
-use lameco\kunstmaanmigrator\mapping\MappingEditorException;
-use lameco\kunstmaanmigrator\mapping\MappingRow;
-use lameco\kunstmaanmigrator\mapping\TargetCatalogue;
-use lameco\kunstmaanmigrator\payload\SchemaGateway;
-use lameco\kunstmaanmigrator\tests\support\InMemoryTargetCatalogue;
-use lameco\kunstmaanmigrator\tests\support\SettingsFactory;
+use Lameco\Kunstmaanmigrator\compile\TargetModel;
+use Lameco\Kunstmaanmigrator\mapping\MappingEditor;
+use Lameco\Kunstmaanmigrator\mapping\MappingEditorException;
+use Lameco\Kunstmaanmigrator\mapping\MappingRow;
+use Lameco\Kunstmaanmigrator\mapping\TargetCatalogue;
+use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryTargetCatalogue;
+use Lameco\Kunstmaanmigrator\tests\support\SettingsFactory;
 use PHPUnit\Framework\TestCase;
 
 /**

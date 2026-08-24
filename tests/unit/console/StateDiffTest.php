@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\console;
+namespace Lameco\Kunstmaanmigrator\tests\unit\console;
 
-use lameco\kunstmaanmigrator\console\StateController;
+use Lameco\Kunstmaanmigrator\console\StateController;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 

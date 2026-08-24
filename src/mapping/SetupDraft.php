@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\mapping;
+namespace Lameco\Kunstmaanmigrator\mapping;
 
 /**
  * What the operator has chosen so far, carried between the wizard's steps.

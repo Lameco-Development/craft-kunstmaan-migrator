@@ -3,7 +3,13 @@ parameters:
     paths:
         - src
         - lib/kuma-compile/src
+        # The lib's tests must stay as Craft-free as the lib itself —
+        # LibPurityRule only sees what PHPStan analyses.
+        - lib/kuma-compile/tests
         - phpstan
+    excludePaths:
+        # Fixture entities carry Doctrine attributes the plugin doesn't ship.
+        - lib/kuma-compile/tests/fixtures
     bootstrapFiles:
         - vendor/autoload.php
     scanFiles:
@@ -24,5 +30,5 @@ parameters:
 # The lib boundary, held mechanically rather than by taste.
 services:
     -
-        class: lameco\kunstmaanmigrator\phpstan\LibPurityRule
+        class: Lameco\Kunstmaanmigrator\phpstan\LibPurityRule
         tags: [phpstan.rules.rule]

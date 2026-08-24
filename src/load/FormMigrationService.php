@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Lameco\KumaCompile\Compile\FormCompiler;
 use Lameco\KumaCompile\Compile\Transforms;
-use lameco\kunstmaanmigrator\adapters\GatedAdapter;
-use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
-use lameco\kunstmaanmigrator\craft\FormGateway;
-use lameco\kunstmaanmigrator\craft\VerbbFormieGateway;
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
+use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
+use Lameco\Kunstmaanmigrator\craft\FormGateway;
+use Lameco\Kunstmaanmigrator\craft\VerbbFormieGateway;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Throwable;
 use yii\base\Component;
 

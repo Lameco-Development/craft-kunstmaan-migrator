@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\models;
+namespace Lameco\Kunstmaanmigrator\tests\unit\models;
 
-use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
-use lameco\kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\db\KunstmaanEnvReader;
+use Lameco\Kunstmaanmigrator\models\Settings;
 use PHPUnit\Framework\TestCase;
 
 /**

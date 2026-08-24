@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\console;
+namespace Lameco\Kunstmaanmigrator\console;
 
 /**
  * One export: the rows that round-trip, and the count of those that did not.

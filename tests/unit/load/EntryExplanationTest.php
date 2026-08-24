@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\load;
+namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
-use lameco\kunstmaanmigrator\load\EntryExplanation;
+use Lameco\Kunstmaanmigrator\load\EntryExplanation;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 

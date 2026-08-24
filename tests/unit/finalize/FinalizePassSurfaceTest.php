@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\finalize;
+namespace Lameco\Kunstmaanmigrator\tests\unit\finalize;
 
-use lameco\kunstmaanmigrator\finalize\FinalizePass;
+use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 

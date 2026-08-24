@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\sites;
+namespace Lameco\Kunstmaanmigrator\sites;
 
 /**
  * One legacy locale bound to one Craft site.

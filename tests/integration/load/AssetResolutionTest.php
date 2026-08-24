@@ -2,18 +2,18 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\integration\load;
+namespace Lameco\Kunstmaanmigrator\tests\integration\load;
 
 use craft\elements\Entry;
-use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
-use lameco\kunstmaanmigrator\load\AssetMigrationService;
-use lameco\kunstmaanmigrator\load\AssetPathResolver;
-use lameco\kunstmaanmigrator\load\EntryMigrationService;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\load\MigrationStateService;
-use lameco\kunstmaanmigrator\payload\Payload;
-use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
-use lameco\kunstmaanmigrator\payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
+use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
+use Lameco\Kunstmaanmigrator\load\AssetPathResolver;
+use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\payload\Payload;
+use Lameco\Kunstmaanmigrator\payload\PayloadEntrySaver;
+use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 

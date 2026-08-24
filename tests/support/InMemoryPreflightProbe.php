@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\support;
+namespace Lameco\Kunstmaanmigrator\tests\support;
 
-use lameco\kunstmaanmigrator\run\PreflightProbe;
+use Lameco\Kunstmaanmigrator\run\PreflightProbe;
 
 /**
  * The second adapter: whatever the test says is out there.

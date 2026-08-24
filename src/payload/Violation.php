@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\payload;
+namespace Lameco\Kunstmaanmigrator\payload;
 
 /**
  * One failed rule from `PayloadValidator::validate()`. See

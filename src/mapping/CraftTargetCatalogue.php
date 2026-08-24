@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\mapping;
+namespace Lameco\Kunstmaanmigrator\mapping;
 
 use Craft;
 

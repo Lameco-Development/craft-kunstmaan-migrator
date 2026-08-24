@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\queue;
+namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\queue\BaseJob;
-use lameco\kunstmaanmigrator\payload\FixupService;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\ProductionGuard;
-use lameco\kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\payload\FixupService;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use RuntimeException;
 use yii\queue\RetryableJobInterface;
 

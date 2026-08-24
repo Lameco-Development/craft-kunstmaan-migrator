@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Craft;
 use craft\base\Element;
@@ -12,8 +12,8 @@ use craft\enums\PropagationMethod;
 use craft\fields\Matrix;
 use craft\models\Section;
 use craft\models\Site;
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use RuntimeException;
 use yii\base\Component;
 

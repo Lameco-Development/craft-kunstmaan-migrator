@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\console;
+namespace Lameco\Kunstmaanmigrator\console;
 
 use craft\console\Controller;
 use craft\helpers\Console;
@@ -11,10 +11,10 @@ use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\MappingCheck;
 use Lameco\KumaCompile\Mapping\Skeleton;
-use lameco\kunstmaanmigrator\compile\TargetModel;
-use lameco\kunstmaanmigrator\NeverProductionTrait;
-use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\compile\TargetModel;
+use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use Throwable;
 use yii\console\ExitCode;
 

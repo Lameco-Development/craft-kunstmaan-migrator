@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\run;
+namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
-use lameco\kunstmaanmigrator\run\BlockPropagation;
+use Lameco\Kunstmaanmigrator\run\BlockPropagation;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 

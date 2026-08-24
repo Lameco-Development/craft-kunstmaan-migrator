@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\run;
+namespace Lameco\Kunstmaanmigrator\run;
 
-use lameco\kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
 
 /**
  * Whether the mapping's environments are actually migratable, before anyone

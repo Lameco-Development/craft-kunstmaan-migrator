@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\console;
+namespace Lameco\Kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
@@ -16,18 +16,18 @@ use Lameco\KumaCompile\Mapping\Schema;
 use Lameco\KumaCompile\Report\BlockPlacement;
 use Lameco\KumaCompile\Report\Coverage;
 use Lameco\KumaCompile\Target\TargetSchema;
-use lameco\kunstmaanmigrator\compile\TargetModel;
-use lameco\kunstmaanmigrator\finalize\FinalizePass;
-use lameco\kunstmaanmigrator\NeverProductionTrait;
-use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
-use lameco\kunstmaanmigrator\payload\FixupService;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
-use lameco\kunstmaanmigrator\run\RunLog;
-use lameco\kunstmaanmigrator\run\RunOutcome;
-use lameco\kunstmaanmigrator\run\RunSettings;
-use lameco\kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\compile\TargetModel;
+use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
+use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\payload\FixupService;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\queue\MigrateEnvironmentJob;
+use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\run\RunOutcome;
+use Lameco\Kunstmaanmigrator\run\RunSettings;
+use Lameco\Kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use yii\console\ExitCode;
 
 /**

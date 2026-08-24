@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\run;
+namespace Lameco\Kunstmaanmigrator\run;
 
 use Craft;
 use craft\elements\Entry;
@@ -13,16 +13,16 @@ use Lameco\KumaCompile\Compile\Transforms;
 use Lameco\KumaCompile\Legacy\Dsn;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\compile\TargetModel;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
-use lameco\kunstmaanmigrator\payload\Payload;
-use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
-use lameco\kunstmaanmigrator\payload\PayloadValidator;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
+use Lameco\Kunstmaanmigrator\compile\TargetModel;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\payload\Payload;
+use Lameco\Kunstmaanmigrator\payload\PayloadEntrySaver;
+use Lameco\Kunstmaanmigrator\payload\PayloadValidator;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use yii\db\Connection;
 
 /**

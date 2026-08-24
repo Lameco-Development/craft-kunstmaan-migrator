@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\adapters;
+namespace Lameco\Kunstmaanmigrator\adapters;
 
-use lameco\kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\Plugin;
 use yii\base\Component;
 use yii\base\Event;
 

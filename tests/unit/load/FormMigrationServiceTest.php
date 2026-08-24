@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\load;
+namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
-use lameco\kunstmaanmigrator\craft\FormGateway;
-use lameco\kunstmaanmigrator\load\FormMigrationService;
-use lameco\kunstmaanmigrator\tests\support\InMemoryFormGateway;
+use Lameco\Kunstmaanmigrator\craft\FormGateway;
+use Lameco\Kunstmaanmigrator\load\FormMigrationService;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryFormGateway;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 

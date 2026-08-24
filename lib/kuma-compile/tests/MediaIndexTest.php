@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\compile;
+namespace Lameco\KumaCompile\Tests;
 
 use Lameco\KumaCompile\Legacy\MediaIndex;
 use PDO;

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\run;
+namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
 use PHPUnit\Framework\TestCase;
 

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\run;
+namespace Lameco\Kunstmaanmigrator\run;
 
 /**
  * The flags one migration run was started with.

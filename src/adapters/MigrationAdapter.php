@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\adapters;
+namespace Lameco\Kunstmaanmigrator\adapters;
 
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 
 /**
  * A pass that runs after an environment's entries exist.

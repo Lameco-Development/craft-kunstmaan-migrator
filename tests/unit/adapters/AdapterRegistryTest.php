@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\adapters;
+namespace Lameco\Kunstmaanmigrator\tests\unit\adapters;
 
-use lameco\kunstmaanmigrator\adapters\Adapter;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\adapters\RegisterAdaptersEvent;
-use lameco\kunstmaanmigrator\models\Settings;
-use lameco\kunstmaanmigrator\tests\support\SettingsFactory;
+use Lameco\Kunstmaanmigrator\adapters\Adapter;
+use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
+use Lameco\Kunstmaanmigrator\adapters\RegisterAdaptersEvent;
+use Lameco\Kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\tests\support\SettingsFactory;
 use PHPUnit\Framework\TestCase;
 
 /**

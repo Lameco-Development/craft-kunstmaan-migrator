@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\compile;
+namespace Lameco\Kunstmaanmigrator\tests\unit\compile;
 
-use lameco\kunstmaanmigrator\compile\TargetModel;
-use lameco\kunstmaanmigrator\payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\compile\TargetModel;
+use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 

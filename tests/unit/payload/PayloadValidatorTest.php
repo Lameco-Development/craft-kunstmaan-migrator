@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\payload;
+namespace Lameco\Kunstmaanmigrator\tests\unit\payload;
 
 use InvalidArgumentException;
-use lameco\kunstmaanmigrator\payload\Payload;
-use lameco\kunstmaanmigrator\payload\PayloadValidator;
-use lameco\kunstmaanmigrator\payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\payload\Payload;
+use Lameco\Kunstmaanmigrator\payload\PayloadValidator;
+use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -370,7 +370,7 @@ final class PayloadValidatorTest extends TestCase
         $raw['sites']['en']['enabled'] = false;
         $raw['sites']['en']['title'] = null;
         $violations = $this->validator->validate(Payload::fromArray($raw));
-        $codes = array_map(static fn(\lameco\kunstmaanmigrator\payload\Violation $v): string => $v->code, $violations);
+        $codes = array_map(static fn(\Lameco\Kunstmaanmigrator\payload\Violation $v): string => $v->code, $violations);
         self::assertNotContains('MISSING_TITLE', $codes);
         self::assertContains('NO_ENABLED_SITE', $codes);
     }

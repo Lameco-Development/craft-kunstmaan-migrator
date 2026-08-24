@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\web;
+namespace Lameco\Kunstmaanmigrator\web;
 
 use craft\web\AssetBundle;
 use craft\web\assets\cp\CpAsset;

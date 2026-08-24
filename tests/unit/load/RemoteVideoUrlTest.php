@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\load;
+namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
-use lameco\kunstmaanmigrator\load\RemoteVideoUrl;
+use Lameco\Kunstmaanmigrator\load\RemoteVideoUrl;
 use PHPUnit\Framework\TestCase;
 
 /**
