@@ -10,14 +10,14 @@ use craft\console\Controller;
 use craft\elements\Entry;
 use craft\helpers\App;
 use craft\helpers\Console;
-use Lameco\KumaCompile\Legacy\LegacyDatabase;
-use Lameco\KumaCompile\Mapping\Mapping;
-use Lameco\KumaCompile\Payload\SourceUid;
 use Lameco\Kunstmaanmigrator\load\ExplainContext;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
-use Lameco\Kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\load\RefResolver;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Payload\SourceUid;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use yii\console\ExitCode;
 
 /**

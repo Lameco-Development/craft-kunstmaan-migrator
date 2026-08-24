@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\run;
 
-use Lameco\KumaCompile\Legacy\LegacyDatabase;
-use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 
 /**
  * Which environment is running, as a value.

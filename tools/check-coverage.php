@@ -22,15 +22,15 @@ const THRESHOLD = 70.0;
 // A named module that no longer exists is now a hard failure. A stale gate is worse than no gate,
 // because it reads as coverage that is not there.
 const MODULES = [
-    'lib/kuma-compile/src/Payload/PayloadValidator.php',
-    'src/payload/RefResolver.php',
-    'lib/kuma-compile/src/Payload/Payload.php',
+    'src/Payload/PayloadValidator.php',
+    'src/load/RefResolver.php',
+    'src/Payload/Payload.php',
     'src/finalize/CkeditorRewriterService.php',
 
     // Graduated from WATCHED on a measured 94.1%. It sits above the threshold
     // because the ElementWriter seam made it reachable — which is the argument
     // for doing the same to the three below.
-    'src/payload/PayloadEntrySaver.php',
+    'src/load/PayloadEntrySaver.php',
 ];
 
 /**
@@ -63,9 +63,9 @@ const WATCHED = [
     // The compile half decides what every entry becomes; until these carry a
     // measured number they are reported here, on the same graduation path the
     // write-half modules are on.
-    'lib/kuma-compile/src/Compile/Compiler.php',
-    'lib/kuma-compile/src/Mapping/Schema.php',
-    'lib/kuma-compile/src/Compile/EntityIndex.php',
+    'src/Compile/Compiler.php',
+    'src/Mapping/Schema.php',
+    'src/Compile/EntityIndex.php',
 ];
 
 const HANDLERS_PREFIX = 'src/fields/handlers/';

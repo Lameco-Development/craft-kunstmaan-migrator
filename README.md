@@ -37,7 +37,8 @@ kuma_* legacy MySQL  ──►  kuma-compile  ──►  payloads  ──►  lo
     environment)         builds blocks        per payload   SEO, redirects, nav
 ```
 
-The compile half lives in `lib/kuma-compile/` and is Craft-schema-aware but
+The compile half is the kernel — the CamelCase packages under `src/` (`Payload`,
+`Source`, `Mapping`, `Target`, `Compile`, `Report`, `Command`) — and is Craft-schema-aware but
 Craft-runtime-free — it reads the legacy database, the mapping, and the Craft
 site's version-controlled project config, and emits payloads without ever
 touching a `craft\`/`yii\` symbol (enforced by `phpstan/LibPurityRule`). The write half
@@ -106,10 +107,10 @@ with its live page count — and leaves you the half a machine cannot know: whic
 Craft block each legacy part becomes.
 
 ```bash
-php lib/kuma-compile/bin/kuma-compile init --help
+php bin/kuma-compile init --help
 ```
 
-The grammar is validated by `lib/kuma-compile/src/Mapping/Schema.php`, which is
+The grammar is validated by `src/Mapping/Schema.php`, which is
 the authority on what a mapping may contain.
 
 ## Authoring the mapping

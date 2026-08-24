@@ -6,10 +6,10 @@ Guidance for Claude Code working in this repo.
 
 `lameco/craft-kunstmaan-migrator` — a Craft 5 plugin that migrates a legacy Kunstmaan (Symfony) site into Craft. Public, on Packagist.
 
-PHP 8.3+, Craft CMS 5, composer type `craft-plugin`. Two PSR-4 roots:
+PHP 8.3+, Craft CMS 5, composer type `craft-plugin`. One PSR-4 root, `Lameco\Kunstmaanmigrator\` → `src/`, packaged by contract with an enforced dependency direction:
 
-- `Lameco\Kunstmaanmigrator\` → `src/` — the write half. Owns the Craft side: payload validation against the live schema, the idempotent state table, entry/asset writes, the adapters, both operator surfaces.
-- `Lameco\KumaCompile\` → `lib/kuma-compile/` — the compile half. Reads the legacy database and the mapping and emits payloads; **Craft-schema-aware but Craft-runtime-free**: it parses Craft project config (`Target/CraftSchema`) to model targets, but never touches a `craft\`/`yii\` symbol — enforced by `phpstan/LibPurityRule`. It was a separate repo on one laptop until 2026-08-21; the namespace was kept on the merge so that boundary stays legible. Standalone CLI: `php lib/kuma-compile/bin/kuma-compile list`.
+- **The kernel** (CamelCase packages): `Payload\` (the payload VO, `SourceUid`, the validator — depends on nothing), `Source\` (legacy Kunstmaan access), `Mapping\` (the program: schema, document, skeleton, editor model), `Target\` (Craft's content model read from project config, plus the `TargetSchema` port), `Compile\` (Source + Mapping + Target → Payload), `Report\` (coverage, readiness, survey), `Command\` (the standalone `bin/kuma-compile` adapters). **Craft-schema-aware but Craft-runtime-free**: it parses Craft project config (`Target\CraftSchema`) to model targets, but never names a `craft\`/`yii\` symbol nor a Craft-side package — enforced by `phpstan/LibPurityRule`, by package list, `tests/kernel` included. It was a separate repo (`Lameco\KumaCompile\`, then `lib/kuma-compile/`) until the 2026-08-24 consolidation. Standalone CLI: `php bin/kuma-compile list`.
+- **The Craft side** (lowercase packages, Craft's convention): `craft\` (the gateways — every Craft coupling behind a seam with an in-memory twin — plus `TargetModel`, the live `TargetSchema`), `load\` (Payload → Craft: the saver, the state table, the migration services), `adapters\`, `finalize\`, `run\` (the pipeline, diagnostics, run panel), `editor\` (the CP mapping editor), `safety\`, and Craft's own `console\`, `controllers\`, `queue\`, `models\`, `migrations\`, `utilities\`, `web\`.
 
 Deterministic throughout — no AI at run time. Dev/staging only; `NeverProductionTrait` and `ProductionGuard` hard-block `CRAFT_ENVIRONMENT=production` on every command, job and control-panel action.
 

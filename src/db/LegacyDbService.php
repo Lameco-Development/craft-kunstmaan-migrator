@@ -6,9 +6,9 @@ namespace Lameco\Kunstmaanmigrator\db;
 
 use craft\helpers\App;
 use Generator;
-use Lameco\KumaCompile\Legacy\Dsn;
-use Lameco\KumaCompile\Legacy\KunstmaanCoreTables;
 use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\Source\Dsn;
+use Lameco\Kunstmaanmigrator\Source\KunstmaanCoreTables;
 use PDO;
 use yii\base\Component;
 

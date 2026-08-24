@@ -9,8 +9,6 @@ return static function(ECSConfig $ecsConfig): void {
     $ecsConfig->paths([
         __DIR__ . '/src',
         __DIR__ . '/tests',
-        __DIR__ . '/lib/kuma-compile/src',
-        __DIR__ . '/lib/kuma-compile/tests',
         __FILE__,
     ]);
 

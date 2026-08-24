@@ -31,7 +31,7 @@ use Lameco\Kunstmaanmigrator\load\RedirectMigrationService;
 use Lameco\Kunstmaanmigrator\load\SeomaticPayloadBuilder;
 use Lameco\Kunstmaanmigrator\load\SeoMigrationService;
 use Lameco\Kunstmaanmigrator\load\TranslationMigrationService;
-use Lameco\Kunstmaanmigrator\mapping\SetupStep;
+use Lameco\Kunstmaanmigrator\Mapping\SetupStep;
 use Lameco\Kunstmaanmigrator\models\Settings;
 use yii\base\Event;
 
@@ -39,8 +39,8 @@ use yii\base\Event;
  * Kunstmaan Migrator plugin entrypoint.
  *
  * Reads a legacy Kunstmaan database, compiles it against a mapping, and writes
- * it into Craft. The compile half lives in `lib/kuma-compile/` and knows nothing
- * about Craft; this half owns the writing, the state table that makes it
+ * it into Craft. The compile half is the kernel (the CamelCase packages) and
+ * knows nothing about Craft; this half owns the writing, the state table that makes it
  * idempotent, the adapters that follow the entries, and the two operator
  * surfaces — a console command and a control-panel utility, both running the
  * same EnvironmentPipeline.

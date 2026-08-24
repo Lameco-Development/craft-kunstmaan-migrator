@@ -2,14 +2,13 @@ parameters:
     level: 1
     paths:
         - src
-        - lib/kuma-compile/src
-        # The lib's tests must stay as Craft-free as the lib itself —
-        # LibPurityRule only sees what PHPStan analyses.
-        - lib/kuma-compile/tests
+        # The kernel's tests are a pure package too — LibPurityRule only
+        # sees what PHPStan analyses.
+        - tests/kernel
         - phpstan
     excludePaths:
         # Fixture entities carry Doctrine attributes the plugin doesn't ship.
-        - lib/kuma-compile/tests/fixtures
+        - tests/kernel/fixtures
     bootstrapFiles:
         - vendor/autoload.php
     scanFiles:
@@ -27,7 +26,7 @@ parameters:
         - vendor/verbb/formie/src
         - vendor/spicyweb/craft-embedded-assets/src
 
-# The lib boundary, held mechanically rather than by taste.
+# The kernel boundary, held mechanically rather than by taste — by package, not by path.
 services:
     -
         class: Lameco\Kunstmaanmigrator\phpstan\LibPurityRule

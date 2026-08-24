@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\load;
 
-use Lameco\KumaCompile\Compile\FormCompiler;
-use Lameco\KumaCompile\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
 use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
+use Lameco\Kunstmaanmigrator\Compile\FormCompiler;
+use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\craft\FormGateway;
 use Lameco\Kunstmaanmigrator\craft\VerbbFormieGateway;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;

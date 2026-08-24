@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
-use Lameco\KumaCompile\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\Diagnostics;
 use PHPUnit\Framework\TestCase;
 

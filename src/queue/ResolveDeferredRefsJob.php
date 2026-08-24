@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\queue\BaseJob;
-use Lameco\Kunstmaanmigrator\payload\FixupService;
+use Lameco\Kunstmaanmigrator\load\FixupService;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\RunLog;
 use Lameco\Kunstmaanmigrator\safety\ProductionGuard;

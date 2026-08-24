@@ -2,7 +2,6 @@
 /.github            export-ignore
 /.planning          export-ignore
 /tests              export-ignore
-/lib/kuma-compile/tests export-ignore
 /tools              export-ignore
 /phpstan            export-ignore
 /phpstan.neon.dist  export-ignore

@@ -6,11 +6,11 @@ namespace Lameco\Kunstmaanmigrator\run;
 
 use Craft;
 use craft\helpers\App;
-use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
-use Lameco\Kunstmaanmigrator\compile\TargetModel;
+use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
-use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use Throwable;

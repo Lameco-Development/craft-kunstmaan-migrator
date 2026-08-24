@@ -18,7 +18,7 @@
              about Craft. Kept as its own suite because it needs no Craft bootstrap and runs in
              a fraction of a second, which is worth protecting. -->
         <testsuite name="Compile">
-            <directory>lib/kuma-compile/tests</directory>
+            <directory>tests/kernel</directory>
         </testsuite>
     </testsuites>
     <source>
@@ -31,11 +31,16 @@
             <directory>src/db</directory>
             <directory>src/finalize</directory>
             <directory>src/load</directory>
-            <directory>src/payload</directory>
             <directory>src/queue</directory>
             <directory>src/run</directory>
             <directory>src/sites</directory>
-            <directory>lib/kuma-compile/src</directory>
+            <directory>src/Payload</directory>
+            <directory>src/Source</directory>
+            <directory>src/Mapping</directory>
+            <directory>src/Target</directory>
+            <directory>src/Compile</directory>
+            <directory>src/Report</directory>
+            <directory>src/Command</directory>
         </include>
     </source>
     <coverage>
