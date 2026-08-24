@@ -121,7 +121,7 @@ class EntryMigrationService extends Component
     /**
      * Save or update an Entry across every site in `$this->sites` in one call.
      *
-     * @param array<string, array{enabled: bool, title: string, slug: string, fieldValues: array, parentId: ?int}> $perSite
+     * @param array<string, array{enabled: bool, title: ?string, slug: string, fieldValues: array, parentId: ?int}> $perSite
      * @throws RuntimeException on unknown site handle or primary-site save failure
      */
     private function elements(): ElementWriter
@@ -640,7 +640,14 @@ class EntryMigrationService extends Component
         // expiryDate, enabled, parentId, authorId} routes to native". The
         // strip at line ~520 then drops them from the custom-field hash so
         // they don't double-write.
-        $entry->title = (string) ($this->firstNonEmpty($data['title'] ?? null, $fieldValues['title'] ?? null) ?? '');
+        // Only overwrite the title when a value is available — same rule as the
+        // slug branch below. A merged Single receives multiple contributors
+        // (a page entity plus a `single:` config row); the config row carries
+        // no title of its own and must not blank the one already set.
+        $resolvedTitle = $this->firstNonEmpty($data['title'] ?? null, $fieldValues['title'] ?? null);
+        if ($resolvedTitle !== null) {
+            $entry->title = (string) $resolvedTitle;
+        }
         // Only overwrite slug when a non-empty value is available. Singleton
         // sections (HomePage, ErrorPage, overview pages) have a meaningful
         // pre-existing slug that Kunstmaan doesn't expose; blanking it on

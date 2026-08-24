@@ -137,7 +137,10 @@ final class PayloadEntrySaver
 
             $perSite[$handle] = [
                 'enabled' => $site['enabled'],
-                'title' => (string) ($site['title'] ?? ''),
+                // null stays null — the loader only overwrites the entry title
+                // when a value is present, so a `single:` payload leaves an
+                // earlier contributor's title in place.
+                'title' => $site['title'],
                 'slug' => (string) ($site['slug'] ?? ''),
                 'fieldValues' => $this->resolveFieldValues(
                     $site['fieldValues'],

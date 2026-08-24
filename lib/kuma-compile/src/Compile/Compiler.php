@@ -432,12 +432,15 @@ final class Compiler
         callable $emit,
     ): void {
         $dedupe = ($spec['dedupe'] ?? false) === true;
+        $single = ($spec['single'] ?? false) === true;
         $titleColumn = (string) ($spec['title'] ?? 'title');
         $title = trim((string) ($row[$titleColumn] ?? ''));
 
         // Craft's title is required on every one of these entry types, and an entry
-        // with no title is a row nobody can find again.
-        if ($title === '') {
+        // with no title is a row nobody can find again. A `single:` row is the
+        // exception: it merges into the section's existing entry, whose title an
+        // earlier contributor already set, so it carries no title of its own.
+        if ($title === '' && !$single) {
             $this->skip(sprintf('%s: row %s has no `%s`', $name, (string) ($row['id'] ?? '?'), $titleColumn));
 
             return;
@@ -460,18 +463,37 @@ final class Compiler
         }
 
         $fields = $builder->fieldsFrom($spec['map'] ?? [], $row, $name, (string) $spec['entryType']);
-        $site = ['enabled' => true, 'title' => $title];
+        $fields += $builder->childrenOf(
+            $spec['children'] ?? [],
+            (string) $spec['entryType'],
+            (int) $row['id'],
+            $name,
+            true,
+        );
+
+        // No `title` key at all when the row has none — an absent key reaches the
+        // loader as null and leaves the existing entry title in place, where an
+        // empty string would clear it.
+        $site = ['enabled' => true];
+        if ($title !== '') {
+            $site['title'] = $title;
+        }
 
         if ($fields !== []) {
             $site['fieldValues'] = $fields;
         }
 
-        $emit([
+        $payload = [
             'sourceUid' => $uid,
             'section' => (string) $spec['section'],
             'entryType' => (string) $spec['entryType'],
             'sites' => array_fill_keys($sites, $site),
-        ]);
+        ];
+        if ($single) {
+            $payload['single'] = true;
+        }
+
+        $emit($payload);
 
         $this->entries++;
     }

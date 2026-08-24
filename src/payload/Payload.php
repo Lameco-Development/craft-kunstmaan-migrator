@@ -40,6 +40,14 @@ final class Payload
          * nowhere; see `PayloadValidator::NO_ENABLED_SITE`.
          */
         public readonly bool $structural = false,
+        /**
+         * A single-row config source (Kunstmaan `AbstractConfig`) merging into the
+         * section's existing entry — Craft's auto-created Single, or whichever
+         * contributor saved first. Its sites may carry no title at all: the title
+         * an earlier contributor set must survive, so `PayloadValidator` exempts
+         * this one shape from `MISSING_TITLE`.
+         */
+        public readonly bool $single = false,
     ) {
     }
 
@@ -56,6 +64,7 @@ final class Payload
             sites: self::readSites($raw),
             legacy: self::readLegacy($raw),
             structural: (bool) ($raw['structural'] ?? false),
+            single: (bool) ($raw['single'] ?? false),
         );
     }
 

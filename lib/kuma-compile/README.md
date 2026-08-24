@@ -268,6 +268,13 @@ them makes 28 entries where the site has 14 categories — while the blog catego
 categories into one entry. The mapping states which, per entity, and a missing `dedupe:` is an
 error.
 
+`single: true` covers the other kind of non-node table: a one-row config source (Kunstmaan
+`AbstractConfig` — a phone number, an address, a logo) merging into the section's existing entry.
+A `single:` row needs no `title:` — the entry it merges into already has one, set by whichever
+contributor saved first, and the compiled payload omits the title key entirely so the loader
+leaves it untouched. `children:` works on an entity the same way it does on a page or a pagepart:
+a table hanging off the row by foreign key becomes nested Matrix blocks in the named field.
+
 ## Field expressions
 
 Beyond `column | transform`, a `map:` value can be:
