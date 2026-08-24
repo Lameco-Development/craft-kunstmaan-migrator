@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\queue;
+namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\queue\BaseJob;
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\finalize\FinalizePass;
-use lameco\kunstmaanmigrator\ProductionGuard;
-use lameco\kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
+use Lameco\Kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use RuntimeException;
 use yii\queue\RetryableJobInterface;
 

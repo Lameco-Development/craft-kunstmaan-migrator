@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator;
+namespace Lameco\Kunstmaanmigrator\safety;
 
 use craft\helpers\App;
 

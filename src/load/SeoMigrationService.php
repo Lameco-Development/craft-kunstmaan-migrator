@@ -1,16 +1,16 @@
 <?php
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Craft;
 use craft\elements\Entry;
-use lameco\kunstmaanmigrator\adapters\GatedAdapter;
-use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
-use lameco\kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
+use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use yii\base\Component;
 use yii\db\Query;
 

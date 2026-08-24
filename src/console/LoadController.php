@@ -2,23 +2,23 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\console;
+namespace Lameco\Kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
 use craft\elements\Entry;
 use craft\helpers\Console;
 use InvalidArgumentException;
-use lameco\kunstmaanmigrator\load\RedirectMigrationService;
-use lameco\kunstmaanmigrator\NeverProductionTrait;
-use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
-use lameco\kunstmaanmigrator\payload\FixupService;
-use lameco\kunstmaanmigrator\payload\Payload;
-use lameco\kunstmaanmigrator\payload\PayloadEntrySaver;
-use lameco\kunstmaanmigrator\payload\PayloadValidator;
-use lameco\kunstmaanmigrator\payload\RefResolver;
-use lameco\kunstmaanmigrator\payload\Violation;
-use lameco\kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\load\RedirectMigrationService;
+use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\payload\FixupService;
+use Lameco\Kunstmaanmigrator\payload\Payload;
+use Lameco\Kunstmaanmigrator\payload\PayloadEntrySaver;
+use Lameco\Kunstmaanmigrator\payload\PayloadValidator;
+use Lameco\Kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\payload\Violation;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use Throwable;
 use yii\console\ExitCode;
 

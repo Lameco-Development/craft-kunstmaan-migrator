@@ -2,16 +2,16 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\queue;
+namespace Lameco\Kunstmaanmigrator\tests\unit\queue;
 
-use lameco\kunstmaanmigrator\console\DoctorController;
-use lameco\kunstmaanmigrator\console\LoadController;
-use lameco\kunstmaanmigrator\console\StateController;
-use lameco\kunstmaanmigrator\controllers\MigrationController;
-use lameco\kunstmaanmigrator\ProductionGuard;
-use lameco\kunstmaanmigrator\queue\FinalizeJob;
-use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
-use lameco\kunstmaanmigrator\queue\ResolveDeferredRefsJob;
+use Lameco\Kunstmaanmigrator\console\DoctorController;
+use Lameco\Kunstmaanmigrator\console\LoadController;
+use Lameco\Kunstmaanmigrator\console\StateController;
+use Lameco\Kunstmaanmigrator\controllers\MigrationController;
+use Lameco\Kunstmaanmigrator\queue\FinalizeJob;
+use Lameco\Kunstmaanmigrator\queue\MigrateEnvironmentJob;
+use Lameco\Kunstmaanmigrator\queue\ResolveDeferredRefsJob;
+use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use RuntimeException;
@@ -195,7 +195,7 @@ final class MigrationPassCoverageTest extends TestCase
 
         self::assertStringContainsString(
             'ProductionGuard::isProduction()',
-            $this->source('src/NeverProductionTrait.php'),
+            $this->source('src/safety/NeverProductionTrait.php'),
             'the console refusal reads the same predicate the checks do',
         );
         self::assertStringContainsString(

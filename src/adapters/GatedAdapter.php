@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\adapters;
+namespace Lameco\Kunstmaanmigrator\adapters;
 
-use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\craft\CraftPluginRegistry;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\Plugin;
 
 /**
  * The gate prologue every adapter opens with, written once.

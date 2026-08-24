@@ -2,20 +2,20 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Craft;
 use craft\base\Element;
 use craft\elements\Entry;
 use Lameco\KumaCompile\Compile\RedirectCompiler;
-use lameco\kunstmaanmigrator\adapters\GatedAdapter;
-use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
-use lameco\kunstmaanmigrator\console\LoadController;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\payload\RefResolver;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
-use lameco\kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
+use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
+use Lameco\Kunstmaanmigrator\console\LoadController;
+use Lameco\Kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use nystudio107\retour\Retour;
 use yii\base\Component;
 

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator;
+namespace Lameco\Kunstmaanmigrator;
 
 use Craft;
 use craft\base\Model;
@@ -12,27 +12,27 @@ use craft\events\RegisterUrlRulesEvent;
 use craft\helpers\App;
 use craft\services\Utilities;
 use craft\web\UrlManager;
-use lameco\kunstmaanmigrator\adapters\AdapterGate;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\CraftPluginRegistry;
-use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
-use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\finalize\CkeditorFinalizeService;
-use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
-use lameco\kunstmaanmigrator\load\AssetMigrationService;
-use lameco\kunstmaanmigrator\load\EntryMigrationService;
-use lameco\kunstmaanmigrator\load\FormMigrationService;
-use lameco\kunstmaanmigrator\load\GlobalsMigrationService;
-use lameco\kunstmaanmigrator\load\MigrationStateService;
-use lameco\kunstmaanmigrator\load\NavigationMigrationService;
-use lameco\kunstmaanmigrator\load\RedirectMigrationService;
-use lameco\kunstmaanmigrator\load\SeomaticPayloadBuilder;
-use lameco\kunstmaanmigrator\load\SeoMigrationService;
-use lameco\kunstmaanmigrator\load\TranslationMigrationService;
-use lameco\kunstmaanmigrator\mapping\SetupStep;
-use lameco\kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\adapters\AdapterGate;
+use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\CraftPluginRegistry;
+use Lameco\Kunstmaanmigrator\craft\VerbbNavigationGateway;
+use Lameco\Kunstmaanmigrator\db\KunstmaanEnvReader;
+use Lameco\Kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\finalize\CkeditorFinalizeService;
+use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
+use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
+use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\load\FormMigrationService;
+use Lameco\Kunstmaanmigrator\load\GlobalsMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\load\NavigationMigrationService;
+use Lameco\Kunstmaanmigrator\load\RedirectMigrationService;
+use Lameco\Kunstmaanmigrator\load\SeomaticPayloadBuilder;
+use Lameco\Kunstmaanmigrator\load\SeoMigrationService;
+use Lameco\Kunstmaanmigrator\load\TranslationMigrationService;
+use Lameco\Kunstmaanmigrator\mapping\SetupStep;
+use Lameco\Kunstmaanmigrator\models\Settings;
 use PDO;
 use yii\base\Event;
 use yii\db\Connection;
@@ -182,8 +182,8 @@ class Plugin extends BasePlugin
 
         // D-03: console controllerNamespace points at the flat src/console/ directory.
         $this->controllerNamespace = Craft::$app->request->getIsConsoleRequest()
-            ? 'lameco\\kunstmaanmigrator\\console'
-            : 'lameco\\kunstmaanmigrator\\controllers';
+            ? 'Lameco\\Kunstmaanmigrator\\console'
+            : 'Lameco\\Kunstmaanmigrator\\controllers';
 
         // The mapping editor's own URLs. Two screens rather than a panel inside
         // the utility, because a mapping is sixty rows and each one is a form —
@@ -212,7 +212,7 @@ class Plugin extends BasePlugin
             Utilities::class,
             Utilities::EVENT_REGISTER_UTILITIES,
             static function(RegisterComponentTypesEvent $event): void {
-                $event->types[] = \lameco\kunstmaanmigrator\utilities\LogUtility::class;
+                $event->types[] = \Lameco\Kunstmaanmigrator\utilities\LogUtility::class;
             },
         );
 

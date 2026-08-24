@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\craft;
+namespace Lameco\Kunstmaanmigrator\tests\unit\craft;
 
 use craft\elements\Entry;
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
-use lameco\kunstmaanmigrator\tests\support\InMemoryElementWriter;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 use ReflectionNamedType;

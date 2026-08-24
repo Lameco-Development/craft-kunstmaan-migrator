@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\payload;
+namespace Lameco\Kunstmaanmigrator\payload;
 
 use Craft;
 use DateTimeImmutable;
-use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
-use lameco\kunstmaanmigrator\load\AssetMigrationService;
-use lameco\kunstmaanmigrator\load\EntryMigrationService;
-use lameco\kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
+use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
+use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use RuntimeException;
 
 /**

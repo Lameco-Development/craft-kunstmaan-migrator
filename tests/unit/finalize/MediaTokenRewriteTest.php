@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\finalize;
+namespace Lameco\Kunstmaanmigrator\tests\unit\finalize;
 
-use lameco\kunstmaanmigrator\finalize\CkeditorRewriterService;
+use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
 use PHPUnit\Framework\TestCase;
 
 /**

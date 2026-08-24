@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\run;
+namespace Lameco\Kunstmaanmigrator\run;
 
 use Craft;
 use craft\helpers\App;
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\compile\TargetModel;
-use lameco\kunstmaanmigrator\load\AssetMigrationService;
-use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\ProductionGuard;
+use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
+use Lameco\Kunstmaanmigrator\compile\TargetModel;
+use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
+use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use Throwable;
 
 /**

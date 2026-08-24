@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\models;
+namespace Lameco\Kunstmaanmigrator\tests\unit\models;
 
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
+use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
 use PHPUnit\Framework\TestCase;
 
 /**

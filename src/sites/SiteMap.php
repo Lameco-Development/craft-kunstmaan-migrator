@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\sites;
+namespace Lameco\Kunstmaanmigrator\sites;
 
 /**
  * Which Craft site each legacy locale writes to, for one environment.

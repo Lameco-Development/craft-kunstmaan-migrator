@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\compile;
+namespace Lameco\Kunstmaanmigrator\compile;
 
 use Lameco\KumaCompile\Target\Slot;
 use Lameco\KumaCompile\Target\TargetSchema;
-use lameco\kunstmaanmigrator\payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 
 /**
  * The `TargetSchema` a migration run answers from: the live Craft site.

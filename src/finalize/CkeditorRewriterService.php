@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\finalize;
+namespace Lameco\Kunstmaanmigrator\finalize;
 
 use Craft;
-use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\load\MigrationStateStream;
+use Lameco\Kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\load\MigrationStateStream;
 use yii\base\Component;
 
 /**

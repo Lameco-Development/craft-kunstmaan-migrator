@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\adapters;
+namespace Lameco\Kunstmaanmigrator\tests\unit\adapters;
 
-use lameco\kunstmaanmigrator\adapters\Adapter;
-use lameco\kunstmaanmigrator\adapters\AdapterGate;
-use lameco\kunstmaanmigrator\adapters\GateStatus;
-use lameco\kunstmaanmigrator\models\Settings;
-use lameco\kunstmaanmigrator\tests\support\InMemoryPluginRegistry;
-use lameco\kunstmaanmigrator\tests\support\SettingsFactory;
+use Lameco\Kunstmaanmigrator\adapters\Adapter;
+use Lameco\Kunstmaanmigrator\adapters\AdapterGate;
+use Lameco\Kunstmaanmigrator\adapters\GateStatus;
+use Lameco\Kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryPluginRegistry;
+use Lameco\Kunstmaanmigrator\tests\support\SettingsFactory;
 use PHPUnit\Framework\TestCase;
 
 /**

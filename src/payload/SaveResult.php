@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\payload;
+namespace Lameco\Kunstmaanmigrator\payload;
 
 /**
  * Outcome of one `PayloadEntrySaver::save()` call.

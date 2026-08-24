@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\integration;
+namespace Lameco\Kunstmaanmigrator\tests\integration;
 
-use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\models\Settings;
-use lameco\kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\Plugin;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 

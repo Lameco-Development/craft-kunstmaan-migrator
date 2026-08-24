@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\adapters;
+namespace Lameco\Kunstmaanmigrator\adapters;
 
-use lameco\kunstmaanmigrator\craft\PluginRegistry;
-use lameco\kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\craft\PluginRegistry;
+use Lameco\Kunstmaanmigrator\models\Settings;
 
 /**
  * Decides whether one adapter runs.

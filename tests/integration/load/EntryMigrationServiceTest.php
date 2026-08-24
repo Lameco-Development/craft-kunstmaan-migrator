@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\integration\load;
+namespace Lameco\Kunstmaanmigrator\tests\integration\load;
 
-use lameco\kunstmaanmigrator\load\EntryMigrationService;
-use lameco\kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 

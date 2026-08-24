@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\console;
+namespace Lameco\Kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
@@ -11,11 +11,11 @@ use craft\helpers\App;
 use craft\helpers\Console;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
-use lameco\kunstmaanmigrator\load\ExplainContext;
-use lameco\kunstmaanmigrator\load\MigrationStateService;
-use lameco\kunstmaanmigrator\payload\RefResolver;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\load\ExplainContext;
+use Lameco\Kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use yii\console\ExitCode;
 
 /**

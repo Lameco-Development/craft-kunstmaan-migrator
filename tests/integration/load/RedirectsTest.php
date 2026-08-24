@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\integration\load;
+namespace Lameco\Kunstmaanmigrator\tests\integration\load;
 
-use lameco\kunstmaanmigrator\console\LoadController;
-use lameco\kunstmaanmigrator\load\MigrationStateReader;
-use lameco\kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\console\LoadController;
+use Lameco\Kunstmaanmigrator\load\MigrationStateReader;
+use Lameco\Kunstmaanmigrator\payload\RefResolver;
 use PHPUnit\Framework\TestCase;
 use yii\console\ExitCode;
 

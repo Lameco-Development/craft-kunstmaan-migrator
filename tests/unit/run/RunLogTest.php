@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\run;
+namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
-use lameco\kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\run\RunLog;
 use PHPUnit\Framework\TestCase;
 
 /**

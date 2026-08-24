@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\console;
+namespace Lameco\Kunstmaanmigrator\tests\unit\console;
 
-use lameco\kunstmaanmigrator\console\LoadController;
-use lameco\kunstmaanmigrator\payload\PayloadValidator;
-use lameco\kunstmaanmigrator\payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\console\LoadController;
+use Lameco\Kunstmaanmigrator\payload\PayloadValidator;
+use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionProperty;
@@ -161,7 +161,7 @@ final class LoadControllerTest extends TestCase
     public function testUsesNeverProductionTrait(): void
     {
         self::assertContains(
-            \lameco\kunstmaanmigrator\NeverProductionTrait::class,
+            \Lameco\Kunstmaanmigrator\safety\NeverProductionTrait::class,
             class_uses(LoadController::class),
         );
     }

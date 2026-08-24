@@ -37,8 +37,10 @@ kuma_* legacy MySQL  ──►  kuma-compile  ──►  payloads  ──►  lo
     environment)         builds blocks        per payload   SEO, redirects, nav
 ```
 
-The compile half lives in `lib/kuma-compile/` and knows nothing about Craft —
-it reads the legacy database and the mapping and emits payloads. The write half
+The compile half lives in `lib/kuma-compile/` and is Craft-schema-aware but
+Craft-runtime-free — it reads the legacy database, the mapping, and the Craft
+site's version-controlled project config, and emits payloads without ever
+touching a `craft\`/`yii\` symbol (enforced by `phpstan/LibPurityRule`). The write half
 validates each payload against the *live* Craft schema, saves it as an
 idempotent upsert keyed on `sourceUid`, and parks references it cannot resolve
 yet for a second pass.

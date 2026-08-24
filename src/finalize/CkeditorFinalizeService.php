@@ -2,16 +2,16 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\finalize;
+namespace Lameco\Kunstmaanmigrator\finalize;
 
 use Craft;
 use craft\ckeditor\Field as CkeditorField;
 use craft\db\Query;
 use craft\elements\Entry;
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
-use lameco\kunstmaanmigrator\load\MigrationOptions;
-use lameco\kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Throwable;
 
 /**

@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\payload;
+namespace Lameco\Kunstmaanmigrator\payload;
 
 use Craft;
-use lameco\kunstmaanmigrator\load\EntryMigrationService;
-use lameco\kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use RuntimeException;
 use Throwable;
 

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\support;
+namespace Lameco\Kunstmaanmigrator\tests\support;
 
-use lameco\kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\models\Settings;
 use ReflectionClass;
 
 /**

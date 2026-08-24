@@ -2,19 +2,19 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Craft;
 use craft\elements\Entry;
 use Lameco\KumaCompile\Compile\GlobalsCompiler;
 use Lameco\KumaCompile\Compile\Transforms;
-use lameco\kunstmaanmigrator\adapters\GatedAdapter;
-use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
-use lameco\kunstmaanmigrator\craft\CraftElementWriter;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
-use lameco\kunstmaanmigrator\craft\NavigationGateway;
-use lameco\kunstmaanmigrator\craft\VerbbNavigationGateway;
-use lameco\kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
+use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\NavigationGateway;
+use Lameco\Kunstmaanmigrator\craft\VerbbNavigationGateway;
+use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Throwable;
 use verbb\navigation\elements\Node as NavNode;
 use yii\base\Component;

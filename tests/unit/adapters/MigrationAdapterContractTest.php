@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\adapters;
+namespace Lameco\Kunstmaanmigrator\tests\unit\adapters;
 
-use lameco\kunstmaanmigrator\adapters\Adapter;
-use lameco\kunstmaanmigrator\adapters\AdapterRegistry;
-use lameco\kunstmaanmigrator\adapters\MigrationAdapter;
-use lameco\kunstmaanmigrator\load\NavigationMigrationService;
-use lameco\kunstmaanmigrator\load\RedirectMigrationService;
-use lameco\kunstmaanmigrator\load\SeoMigrationService;
-use lameco\kunstmaanmigrator\load\TranslationMigrationService;
+use Lameco\Kunstmaanmigrator\adapters\Adapter;
+use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
+use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
+use Lameco\Kunstmaanmigrator\load\NavigationMigrationService;
+use Lameco\Kunstmaanmigrator\load\RedirectMigrationService;
+use Lameco\Kunstmaanmigrator\load\SeoMigrationService;
+use Lameco\Kunstmaanmigrator\load\TranslationMigrationService;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -68,10 +68,10 @@ final class MigrationAdapterContractTest extends TestCase
             }
 
             public function migrateAll(
-                \lameco\kunstmaanmigrator\load\MigrationOptions $opts,
-                \lameco\kunstmaanmigrator\run\EnvironmentContext $context,
-            ): \lameco\kunstmaanmigrator\load\MigrationReport {
-                return new \lameco\kunstmaanmigrator\load\MigrationReport();
+                \Lameco\Kunstmaanmigrator\load\MigrationOptions $opts,
+                \Lameco\Kunstmaanmigrator\run\EnvironmentContext $context,
+            ): \Lameco\Kunstmaanmigrator\load\MigrationReport {
+                return new \Lameco\Kunstmaanmigrator\load\MigrationReport();
             }
         };
 

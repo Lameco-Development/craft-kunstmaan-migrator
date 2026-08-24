@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\support;
+namespace Lameco\Kunstmaanmigrator\tests\support;
 
-use lameco\kunstmaanmigrator\craft\EmbedGateway;
+use Lameco\Kunstmaanmigrator\craft\EmbedGateway;
 
 /**
  * The second adapter: whatever the test says an embed provider returned.

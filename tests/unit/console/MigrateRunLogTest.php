@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\console;
+namespace Lameco\Kunstmaanmigrator\tests\unit\console;
 
-use lameco\kunstmaanmigrator\console\MigrateController;
+use Lameco\Kunstmaanmigrator\console\MigrateController;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 

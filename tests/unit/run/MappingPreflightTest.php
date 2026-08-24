@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\run;
+namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
-use lameco\kunstmaanmigrator\run\MappingPreflight;
-use lameco\kunstmaanmigrator\tests\support\InMemoryPreflightProbe;
+use Lameco\Kunstmaanmigrator\run\MappingPreflight;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryPreflightProbe;
 use PHPUnit\Framework\TestCase;
 
 /**

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\sites;
+namespace Lameco\Kunstmaanmigrator\tests\unit\sites;
 
-use lameco\kunstmaanmigrator\sites\SiteMap;
+use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use PHPUnit\Framework\TestCase;
 
 /**

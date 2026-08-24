@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\db;
+namespace Lameco\Kunstmaanmigrator\db;
 
 use Craft;
-use lameco\kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\Plugin;
 use Symfony\Component\Dotenv\Dotenv;
 use Throwable;
 use yii\base\Component;

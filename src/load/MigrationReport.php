@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Throwable;
 
@@ -13,7 +13,7 @@ use Throwable;
  * Redirect, Navigation, Translation) and AssetMigrationService's batch
  * ingest path — each accumulates incr/warn calls into one report per run.
  *
- * Greenfield-from-v1 VO: the v1 plugin's `lameco\kunstmaanmigrator\models\MigrationReport`
+ * Greenfield-from-v1 VO: the v1 plugin's `Lameco\Kunstmaanmigrator\models\MigrationReport`
  * carried per-run counters + warnings; this file rebuilds the same minimal surface in v2's
  * flattened layout and adds the D-50 `recordFailure(...)` schema (last-5-frames stack
  * excerpt) which v1 did not expose explicitly.

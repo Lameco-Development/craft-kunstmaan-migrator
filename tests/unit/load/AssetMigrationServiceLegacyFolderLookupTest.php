@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\load;
+namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
-use lameco\kunstmaanmigrator\db\LegacyDbService;
-use lameco\kunstmaanmigrator\load\AssetFolderPath;
-use lameco\kunstmaanmigrator\load\AssetMigrationService;
+use Lameco\Kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\load\AssetFolderPath;
+use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 

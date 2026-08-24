@@ -34,15 +34,15 @@
     },
     "autoload": {
         "psr-4": {
-            "lameco\\kunstmaanmigrator\\": "src/",
+            "Lameco\\Kunstmaanmigrator\\": "src/",
             "Lameco\\KumaCompile\\": "lib/kuma-compile/src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "lameco\\kunstmaanmigrator\\tests\\": "tests/",
+            "Lameco\\Kunstmaanmigrator\\tests\\": "tests/",
             "Lameco\\KumaCompile\\Tests\\": "lib/kuma-compile/tests/",
-            "lameco\\kunstmaanmigrator\\phpstan\\": "phpstan/"
+            "Lameco\\Kunstmaanmigrator\\phpstan\\": "phpstan/"
         }
     },
     "scripts": {
@@ -66,7 +66,7 @@
     "extra": {
         "handle": "kunstmaan-migrator",
         "name": "Laméco Kunstmaan Migrator",
-        "class": "lameco\\kunstmaanmigrator\\Plugin",
+        "class": "Lameco\\Kunstmaanmigrator\\Plugin",
         "schemaVersion": "1.1.0",
         "developer": "Laméco",
         "documentationUrl": "https://github.com/Lameco-Development/craft-kunstmaan-migrator#readme",

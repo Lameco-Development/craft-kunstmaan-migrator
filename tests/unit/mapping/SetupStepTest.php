@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\mapping;
+namespace Lameco\Kunstmaanmigrator\tests\unit\mapping;
 
-use lameco\kunstmaanmigrator\mapping\SetupStep;
+use Lameco\Kunstmaanmigrator\mapping\SetupStep;
 use PHPUnit\Framework\TestCase;
 
 /**

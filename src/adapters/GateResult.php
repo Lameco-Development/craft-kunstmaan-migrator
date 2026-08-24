@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\adapters;
+namespace Lameco\Kunstmaanmigrator\adapters;
 
 final class GateResult
 {

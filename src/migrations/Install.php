@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\migrations;
+namespace Lameco\Kunstmaanmigrator\migrations;
 
 use Craft;
 use craft\db\Migration;

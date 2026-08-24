@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\payload;
+namespace Lameco\Kunstmaanmigrator\tests\unit\payload;
 
-use lameco\kunstmaanmigrator\load\MigrationStateReader;
-use lameco\kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\load\MigrationStateReader;
+use Lameco\Kunstmaanmigrator\payload\RefResolver;
 use PHPUnit\Framework\TestCase;
 
 /**

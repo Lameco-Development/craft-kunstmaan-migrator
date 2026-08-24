@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\run;
+namespace Lameco\Kunstmaanmigrator\run;
 
 /**
  * Whether the target's page-builder Matrix fields can hold what a multi-locale corpus is

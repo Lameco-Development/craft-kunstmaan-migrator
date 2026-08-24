@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\support;
+namespace Lameco\Kunstmaanmigrator\tests\support;
 
 use craft\base\ElementInterface;
-use lameco\kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 
 /**
  * The second adapter, and the reason the seam is real rather than

@@ -8,8 +8,8 @@ Guidance for Claude Code working in this repo.
 
 PHP 8.3+, Craft CMS 5, composer type `craft-plugin`. Two PSR-4 roots:
 
-- `lameco\kunstmaanmigrator\` → `src/` — the write half. Owns the Craft side: payload validation against the live schema, the idempotent state table, entry/asset writes, the adapters, both operator surfaces.
-- `Lameco\KumaCompile\` → `lib/kuma-compile/` — the compile half. Reads the legacy database and the mapping and emits payloads; **knows nothing about Craft**. It was a separate repo on one laptop until 2026-08-21; the namespace was kept on the merge so that boundary stays legible. Standalone CLI: `php lib/kuma-compile/bin/kuma-compile list`.
+- `Lameco\Kunstmaanmigrator\` → `src/` — the write half. Owns the Craft side: payload validation against the live schema, the idempotent state table, entry/asset writes, the adapters, both operator surfaces.
+- `Lameco\KumaCompile\` → `lib/kuma-compile/` — the compile half. Reads the legacy database and the mapping and emits payloads; **Craft-schema-aware but Craft-runtime-free**: it parses Craft project config (`Target/CraftSchema`) to model targets, but never touches a `craft\`/`yii\` symbol — enforced by `phpstan/LibPurityRule`. It was a separate repo on one laptop until 2026-08-21; the namespace was kept on the merge so that boundary stays legible. Standalone CLI: `php lib/kuma-compile/bin/kuma-compile list`.
 
 Deterministic throughout — no AI at run time. Dev/staging only; `NeverProductionTrait` and `ProductionGuard` hard-block `CRAFT_ENVIRONMENT=production` on every command, job and control-panel action.
 

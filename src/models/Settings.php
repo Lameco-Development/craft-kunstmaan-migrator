@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\models;
+namespace Lameco\Kunstmaanmigrator\models;
 
 use craft\base\Model;
 use craft\behaviors\EnvAttributeParserBehavior;
 use craft\helpers\App;
-use lameco\kunstmaanmigrator\adapters\Adapter;
-use lameco\kunstmaanmigrator\adapters\AdapterSetting;
-use lameco\kunstmaanmigrator\db\KunstmaanEnvReader;
-use lameco\kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\adapters\Adapter;
+use Lameco\Kunstmaanmigrator\adapters\AdapterSetting;
+use Lameco\Kunstmaanmigrator\db\KunstmaanEnvReader;
+use Lameco\Kunstmaanmigrator\Plugin;
 
 /**
  * Plugin Settings — shared seam between env vars and config/kunstmaan-migrator.php.

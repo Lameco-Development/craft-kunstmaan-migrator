@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\payload;
+namespace Lameco\Kunstmaanmigrator\payload;
 
-use lameco\kunstmaanmigrator\load\MigrationStateReader;
+use Lameco\Kunstmaanmigrator\load\MigrationStateReader;
 
 /**
  * Resolves a `sourceUid` (grammar: `kuma:<ENV>:<table>:<id>`, see

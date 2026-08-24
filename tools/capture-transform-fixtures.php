@@ -46,8 +46,8 @@ if (!is_file($craftBootstrap)) {
 }
 require $craftBootstrap;
 
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\filter\MigrationFilters;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\filter\MigrationFilters;
 
 // --- Target entity types (D-02 — narrow corpus) ---
 // Operator: edit this list to match the FQCN simple-names actually present in

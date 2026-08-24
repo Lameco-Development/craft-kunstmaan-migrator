@@ -60,6 +60,12 @@ const WATCHED = [
     'src/load/EntryMigrationService.php',
     'src/load/AssetMigrationService.php',
     'src/load/NavigationMigrationService.php',
+    // The compile half decides what every entry becomes; until these carry a
+    // measured number they are reported here, on the same graduation path the
+    // write-half modules are on.
+    'lib/kuma-compile/src/Compile/Compiler.php',
+    'lib/kuma-compile/src/Mapping/Schema.php',
+    'lib/kuma-compile/src/Compile/EntityIndex.php',
 ];
 
 const HANDLERS_PREFIX = 'src/fields/handlers/';

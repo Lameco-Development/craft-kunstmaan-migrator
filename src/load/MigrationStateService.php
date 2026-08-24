@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\load;
+namespace Lameco\Kunstmaanmigrator\load;
 
 use Craft;
 use craft\db\Connection;
@@ -10,7 +10,7 @@ use craft\db\Query;
 use craft\helpers\Db;
 use DateTime;
 use Generator;
-use lameco\kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\payload\RefResolver;
 use RuntimeException;
 use Throwable;
 use yii\base\Component;

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\support;
+namespace Lameco\Kunstmaanmigrator\tests\support;
 
-use lameco\kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 
 /**
  * @internal

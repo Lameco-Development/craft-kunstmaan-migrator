@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\console;
+namespace Lameco\Kunstmaanmigrator\tests\unit\console;
 
-use lameco\kunstmaanmigrator\console\DoctorController;
-use lameco\kunstmaanmigrator\NeverProductionTrait;
-use lameco\kunstmaanmigrator\run\Diagnostics;
+use Lameco\Kunstmaanmigrator\console\DoctorController;
+use Lameco\Kunstmaanmigrator\run\Diagnostics;
+use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;

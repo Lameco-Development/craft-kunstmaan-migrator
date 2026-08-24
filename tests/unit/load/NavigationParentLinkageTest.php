@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\load;
+namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
-use lameco\kunstmaanmigrator\load\MigrationReport;
-use lameco\kunstmaanmigrator\load\NavigationMigrationService;
-use lameco\kunstmaanmigrator\tests\support\FakeLegacyDb;
-use lameco\kunstmaanmigrator\tests\support\InMemoryElementWriter;
-use lameco\kunstmaanmigrator\tests\support\InMemoryNavigationGateway;
-use lameco\kunstmaanmigrator\tests\support\ThrowingLegacyDb;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\load\NavigationMigrationService;
+use Lameco\Kunstmaanmigrator\tests\support\FakeLegacyDb;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryNavigationGateway;
+use Lameco\Kunstmaanmigrator\tests\support\ThrowingLegacyDb;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 use verbb\navigation\elements\Node as NavNode;

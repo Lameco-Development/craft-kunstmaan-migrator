@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\queue;
+namespace Lameco\Kunstmaanmigrator\tests\unit\queue;
 
-use lameco\kunstmaanmigrator\queue\MigrateEnvironmentJob;
+use Lameco\Kunstmaanmigrator\queue\MigrateEnvironmentJob;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use RuntimeException;

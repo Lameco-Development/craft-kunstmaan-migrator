@@ -571,7 +571,7 @@ as the payload contract between the two repos.
   `./craft kunstmaan-migrator/...`, including the install command
   (`./craft plugin/install kunstmaan-migrator`). The composer package name
   (`lameco/craft-kunstmaan-migrator`) and the PSR-4 namespace
-  (`lameco\kunstmaanmigrator\`) are unchanged — only the plugin handle and
+  (`Lameco\Kunstmaanmigrator\`) are unchanged — only the plugin handle and
   human-facing name move.
 - **`analyze` / `map` / `compile` / `verify` / `migrate` and the mapping.yaml
   workflow are removed** from this plugin entirely, along with the CP

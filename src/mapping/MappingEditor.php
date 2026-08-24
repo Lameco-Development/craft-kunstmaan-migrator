@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\mapping;
+namespace Lameco\Kunstmaanmigrator\mapping;
 
 use craft\helpers\App;
 use Lameco\KumaCompile\Compile\Transforms;
@@ -10,11 +10,11 @@ use Lameco\KumaCompile\Legacy\LegacyCatalogue;
 use Lameco\KumaCompile\Mapping\FieldProvenance;
 use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Mapping\Schema;
-use lameco\kunstmaanmigrator\compile\TargetModel;
-use lameco\kunstmaanmigrator\models\Settings;
-use lameco\kunstmaanmigrator\payload\CraftSchemaGateway;
-use lameco\kunstmaanmigrator\payload\SchemaGateway;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\compile\TargetModel;
+use Lameco\Kunstmaanmigrator\models\Settings;
+use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Throwable;
 
 /**

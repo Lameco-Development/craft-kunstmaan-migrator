@@ -14,7 +14,7 @@
  * Phase 4.1 / CFG-05: advanced fields stripped from the CP Settings page
  * and documented here as the canonical override surface.
  *
- * @see lameco\kunstmaanmigrator\models\Settings — source of truth for defaults.
+ * @see Lameco\Kunstmaanmigrator\models\Settings — source of truth for defaults.
  */
 
 return [

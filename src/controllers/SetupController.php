@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\controllers;
+namespace Lameco\Kunstmaanmigrator\controllers;
 
 use Craft;
 use craft\helpers\App;
@@ -17,12 +17,12 @@ use Lameco\KumaCompile\Legacy\LegacyCatalogue;
 use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\MappingDocument;
 use Lameco\KumaCompile\Mapping\Skeleton;
-use lameco\kunstmaanmigrator\mapping\MappingEditor;
-use lameco\kunstmaanmigrator\mapping\SetupDraft;
-use lameco\kunstmaanmigrator\mapping\SetupStep;
-use lameco\kunstmaanmigrator\Plugin;
-use lameco\kunstmaanmigrator\ProductionGuard;
-use lameco\kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\mapping\MappingEditor;
+use Lameco\Kunstmaanmigrator\mapping\SetupDraft;
+use Lameco\Kunstmaanmigrator\mapping\SetupStep;
+use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use Symfony\Component\Yaml\Tag\TaggedValue;
 use Throwable;
 use yii\web\BadRequestHttpException;

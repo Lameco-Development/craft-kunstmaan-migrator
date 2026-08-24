@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\integration;
+namespace Lameco\Kunstmaanmigrator\tests\integration;
 
-use lameco\kunstmaanmigrator\console\DoctorController;
-use lameco\kunstmaanmigrator\console\LoadController;
-use lameco\kunstmaanmigrator\console\StateController;
-use lameco\kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\console\DoctorController;
+use Lameco\Kunstmaanmigrator\console\LoadController;
+use Lameco\Kunstmaanmigrator\console\StateController;
+use Lameco\Kunstmaanmigrator\Plugin;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionMethod;
@@ -71,9 +71,9 @@ final class PluginConsoleRegistrationTest extends TestCase
         $source = $this->pluginSource();
 
         self::assertStringContainsString(
-            "'lameco\\\\kunstmaanmigrator\\\\console'",
+            "'Lameco\\\\Kunstmaanmigrator\\\\console'",
             $source,
-            'Console requests must resolve controllers under lameco\\kunstmaanmigrator\\console.',
+            'Console requests must resolve controllers under Lameco\\Kunstmaanmigrator\\console.',
         );
     }
 

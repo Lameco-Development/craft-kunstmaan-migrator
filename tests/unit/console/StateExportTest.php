@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace lameco\kunstmaanmigrator\tests\unit\console;
+namespace Lameco\Kunstmaanmigrator\tests\unit\console;
 
 use Generator;
-use lameco\kunstmaanmigrator\console\StateController;
-use lameco\kunstmaanmigrator\load\MigrationStateService;
-use lameco\kunstmaanmigrator\payload\RefResolver;
+use Lameco\Kunstmaanmigrator\console\StateController;
+use Lameco\Kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\payload\RefResolver;
 use PHPUnit\Framework\TestCase;
 
 /**
