@@ -94,6 +94,12 @@ final class LegacyDatabase
     /** @return list<string> */
     public function tables(): array
     {
+        if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+            return $this->pdo
+                ->query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+                ->fetchAll(PDO::FETCH_COLUMN);
+        }
+
         return $this->pdo->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN);
     }
 

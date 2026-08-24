@@ -49,18 +49,24 @@ final class MappingControllerTest extends TestCase
 
         self::assertContains('environments', $controller->options('init'));
         self::assertContains('source', $controller->options('init'));
+        self::assertContains('introspection', $controller->options('init'));
     }
 
     /**
      * The mapping is the migration. An accidental `init` over a finished one is
-     * hours of decisions gone, so it refuses rather than overwrites.
+     * hours of decisions gone, so it refuses rather than overwrites — a rule
+     * that lives in the shared engine, so the vendored binary refuses too.
      */
     public function testInitRefusesToOverwriteAnExistingMapping(): void
     {
         $source = (string) file_get_contents(
-            dirname(__DIR__, 3) . '/src/console/MappingController.php'
+            dirname(__DIR__, 3) . '/lib/kuma-compile/src/Mapping/MappingInit.php'
         );
 
         self::assertStringContainsString('refusing to overwrite a mapping', $source);
+        self::assertStringContainsString(
+            'MappingInit::write',
+            (string) file_get_contents(dirname(__DIR__, 3) . '/src/console/MappingController.php'),
+        );
     }
 }

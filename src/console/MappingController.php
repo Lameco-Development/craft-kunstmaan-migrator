@@ -6,11 +6,10 @@ namespace Lameco\Kunstmaanmigrator\console;
 
 use craft\console\Controller;
 use craft\helpers\Console;
-use Lameco\KumaCompile\Legacy\EntityTableIndex;
-use Lameco\KumaCompile\Legacy\LegacyDatabase;
 use Lameco\KumaCompile\Mapping\Mapping;
 use Lameco\KumaCompile\Mapping\MappingCheck;
-use Lameco\KumaCompile\Mapping\Skeleton;
+use Lameco\KumaCompile\Mapping\MappingException;
+use Lameco\KumaCompile\Mapping\MappingInit;
 use Lameco\Kunstmaanmigrator\compile\TargetModel;
 use Lameco\Kunstmaanmigrator\payload\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
@@ -29,7 +28,9 @@ use yii\console\ExitCode;
  *
  * The binary stays: the compile half genuinely runs without Craft, and being
  * able to point it at a legacy database from a machine that has no Craft
- * install is worth keeping.
+ * install is worth keeping. Both surfaces are thin adapters over
+ * `Mapping\MappingInit` — same grammar, same skeleton, same refusals; only
+ * option syntax and the DSN source differ.
  */
 final class MappingController extends Controller
 {
@@ -48,6 +49,13 @@ final class MappingController extends Controller
 
     /** The Kunstmaan checkout, so entity classes can be resolved to real table names. */
     public ?string $source = null;
+
+    /**
+     * Introspection artifact from `kuma-compile introspect` — exact entity
+     * tables and child-collection ownership from booted Doctrine metadata,
+     * instead of the static --source scan. Wins over --source when both are given.
+     */
+    public ?string $introspection = null;
 
     /** Where to write. Prints to stdout when omitted. */
     public ?string $out = null;
@@ -73,7 +81,7 @@ final class MappingController extends Controller
     public function options($actionID): array
     {
         return array_merge(parent::options($actionID), match ($actionID) {
-            'init' => ['environments', 'source', 'out'],
+            'init' => ['environments', 'source', 'introspection', 'out'],
             default => [],
         });
     }
@@ -91,24 +99,14 @@ final class MappingController extends Controller
      */
     public function actionInit(): int
     {
-        $databases = [];
+        try {
+            $databases = MappingInit::parsePairs(
+                array_values(array_filter(array_map(trim(...), explode(',', $this->environments)))),
+            );
+        } catch (MappingException $e) {
+            $this->stderr(sprintf("--environments %s\n", $e->getMessage()), Console::FG_RED);
 
-        foreach (array_filter(array_map(trim(...), explode(',', $this->environments))) as $pair) {
-            if (!str_contains($pair, '=')) {
-                $this->stderr(sprintf("--environments expects NAME=database, got `%s`\n", $pair), Console::FG_RED);
-
-                return ExitCode::USAGE;
-            }
-
-            [$name, $database] = explode('=', $pair, 2);
-
-            try {
-                $databases[$name] = LegacyDatabase::connect($name, $database, EnvironmentPipeline::dsnFromSettings());
-            } catch (Throwable $e) {
-                $this->stderr(sprintf("Cannot reach %s (%s): %s\n", $name, $database, $e->getMessage()), Console::FG_RED);
-
-                return ExitCode::UNAVAILABLE;
-            }
+            return ExitCode::USAGE;
         }
 
         if ($databases === []) {
@@ -117,35 +115,35 @@ final class MappingController extends Controller
             return ExitCode::USAGE;
         }
 
-        $entities = $this->source !== null
-            ? EntityTableIndex::fromSource($this->source)
-            : EntityTableIndex::empty();
+        try {
+            $connections = MappingInit::connect($databases, EnvironmentPipeline::dsnFromSettings());
+            $result = MappingInit::skeleton($connections, $this->source, $this->introspection);
+        } catch (Throwable $e) {
+            $this->stderr($e->getMessage() . "\n", Console::FG_RED);
 
-        if ($entities->isEmpty()) {
+            return ExitCode::UNAVAILABLE;
+        }
+
+        if ($result->tablesUnresolved) {
             $this->stderr(
-                "No --source given: table names are left as TODO. Pass the Kunstmaan checkout to fill them in.\n",
+                "No --introspection or --source given: table names are left as TODO. Pass the artifact or the Kunstmaan checkout to fill them in.\n",
                 Console::FG_YELLOW,
             );
         }
 
-        $yaml = (new Skeleton($entities))->generate($databases);
-
         if ($this->out === null) {
-            $this->stdout($yaml);
+            $this->stdout($result->yaml);
 
             return ExitCode::OK;
         }
 
-        // Refusing rather than overwriting: the mapping is the migration, and
-        // an accidental `init` over a finished one is hours of decisions gone.
-        if (is_file($this->out)) {
-            $this->stderr(sprintf("%s already exists — refusing to overwrite a mapping.\n", $this->out), Console::FG_RED);
+        try {
+            MappingInit::write($this->out, $result->yaml);
+        } catch (MappingException $e) {
+            $this->stderr($e->getMessage() . "\n", Console::FG_RED);
 
             return ExitCode::UNSPECIFIED_ERROR;
         }
-
-        @mkdir(dirname($this->out), 0o775, true);
-        file_put_contents($this->out, $yaml);
 
         $this->stdout(sprintf("Wrote %s\n", $this->out), Console::FG_GREEN);
         $this->stdout("Next: fill it in — Utilities → Kunstmaan Migrator, or the file directly — then `mapping/check`.\n");
