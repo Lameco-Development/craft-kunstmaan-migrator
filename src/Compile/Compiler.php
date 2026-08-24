@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Compile;
 
+use Lameco\Kunstmaanmigrator\Mapping\EntityRow;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
-
+use Lameco\Kunstmaanmigrator\Mapping\PageRow;
 use Lameco\Kunstmaanmigrator\Payload\SourceUid;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Lameco\Kunstmaanmigrator\Source\MediaIndex;
@@ -112,7 +113,6 @@ final class Compiler
         $sequencer = new SequenceEngine($this->mapping->sequence(), $this->mapping->parts(), $parts, $builder, $this->schema);
 
         $locales = ($this->mapping->environments()[$environment] ?? [])['locales'] ?? [];
-        $contexts = $this->mapping->all()['defaults']['contexts'] ?? ['main' => ['field' => 'commonPageBuilder']];
 
         // The Craft section each live node's entry lands in — the only thing a structure
         // parent may be checked against, since Craft cannot parent across sections.
@@ -160,8 +160,7 @@ final class Compiler
             $builder,
             $sequencer,
             $locales,
-            $this->mapping->pages(),
-            $contexts,
+            $this->mapping->pageRows(),
             $parentable,
             $ancestry,
             $nodesById,
@@ -187,9 +186,9 @@ final class Compiler
             return;
         }
 
-        $spec = $run->pageSpecs[$node['entity']] ?? null;
+        $page = $run->pageRows[$node['entity']] ?? null;
 
-        if ($spec === null || isset($spec['manual']) || !isset($spec['entryType'])) {
+        if ($page === null || !$page->compiles()) {
             $this->skip($node['entity']);
 
             return;
@@ -208,8 +207,7 @@ final class Compiler
 
             $sites[$site] = $this->site(
                 $translation, $node, $run->parts, $run->builder, $run->sequencer,
-                $run->contexts, $run->parentable, $run->environment, $spec,
-                (string) $spec['entryType'],
+                $run->parentable, $run->environment, $page,
             );
         }
 
@@ -228,12 +226,12 @@ final class Compiler
         // with no published mapped locale at all is not a page here — if it still owns a
         // path segment, the structural lane above emits it, and reviving it as an entry
         // enabled nowhere is what `NO_ENABLED_SITE` is there to catch.
-        $sites += $this->offlineSites($node, $run->ancestry, $run->parentable, $run->locales, $run->environment, $spec, $sites);
+        $sites += $this->offlineSites($node, $run->ancestry, $run->parentable, $run->locales, $run->environment, $page, $sites);
 
         $emit([
             'sourceUid' => $this->uid($run->environment, $node['nodeId']),
-            'section' => (string) ($spec['section'] ?? 'pages'),
-            'entryType' => (string) $spec['entryType'],
+            'section' => $page->section(),
+            'entryType' => (string) $page->entryType(),
             'sites' => $sites,
             // What the SEO pass needs to find its rows. `kuma_seo` is keyed on the fully
             // qualified page class and the *per-locale* entity row id — a node's
@@ -326,9 +324,9 @@ final class Compiler
         callable $emit,
         ?int $limit,
     ): void {
-        $specs = $this->mapping->entities();
+        $entities = $this->mapping->entityRows();
 
-        if ($specs === []) {
+        if ($entities === []) {
             return;
         }
 
@@ -339,23 +337,17 @@ final class Compiler
             return;
         }
 
-        foreach ($specs as $name => $spec) {
-            if (!$this->wanted((string) $name)) {
+        foreach ($entities as $name => $entity) {
+            if (!$this->wanted($name) || !$entity->compiles()) {
                 continue;
             }
 
-            if (!is_array($spec) || ($spec['table'] ?? '') === '' || ($spec['entryType'] ?? '') === '') {
-                continue;
-            }
-
-            $table = (string) $spec['table'];
-
-            foreach ($reader->rows($table, isset($spec['softDelete']) ? (string) $spec['softDelete'] : null) as $row) {
+            foreach ($reader->rows((string) $entity->table(), $entity->softDelete()) as $row) {
                 if ($limit !== null && $this->entries >= $limit) {
                     return;
                 }
 
-                $this->compileEntityRow((string) $name, $spec, $row, $builder, $environment, $sites, $emit);
+                $this->compileEntityRow($entity, $row, $builder, $environment, $sites, $emit);
             }
         }
     }
@@ -373,19 +365,12 @@ final class Compiler
         $reader = new \Lameco\Kunstmaanmigrator\Source\TaxonomyReader($run->pdo);
         $counts = [];
 
-        foreach ($this->mapping->entities() as $name => $spec) {
-            if (!$this->wanted((string) $name)) {
+        foreach ($this->mapping->entityRows() as $name => $entity) {
+            if (!$this->wanted($name) || !$entity->compiles()) {
                 continue;
             }
 
-            if (!is_array($spec) || ($spec['table'] ?? '') === '' || ($spec['entryType'] ?? '') === '') {
-                continue;
-            }
-
-            $counts[(string) $name] = count($reader->rows(
-                (string) $spec['table'],
-                isset($spec['softDelete']) ? (string) $spec['softDelete'] : null,
-            ));
+            $counts[$name] = count($reader->rows((string) $entity->table(), $entity->softDelete()));
         }
 
         return $counts;
@@ -399,9 +384,9 @@ final class Compiler
      */
     public function compileEntitySlice(CompilerRun $run, string $lane, int $offset, int $limit, callable $emit): void
     {
-        $spec = $this->mapping->entities()[$lane] ?? null;
+        $entity = $this->mapping->entityRow($lane);
 
-        if (!is_array($spec) || ($spec['table'] ?? '') === '' || ($spec['entryType'] ?? '') === '') {
+        if ($entity === null || !$entity->compiles()) {
             return;
         }
 
@@ -412,30 +397,30 @@ final class Compiler
         }
 
         $reader = new \Lameco\Kunstmaanmigrator\Source\TaxonomyReader($run->pdo);
-        $rows = $reader->rows((string) $spec['table'], isset($spec['softDelete']) ? (string) $spec['softDelete'] : null);
+        $rows = $reader->rows((string) $entity->table(), $entity->softDelete());
 
         foreach (array_slice($rows, $offset, $limit) as $row) {
-            $this->compileEntityRow($lane, $spec, $row, $run->builder, $run->environment, $sites, $emit);
+            $this->compileEntityRow($entity, $row, $run->builder, $run->environment, $sites, $emit);
         }
     }
 
     /**
-     * @param array<string, mixed> $spec
      * @param array<string, mixed> $row
      * @param list<string> $sites
      */
     private function compileEntityRow(
-        string $name,
-        array $spec,
+        EntityRow $entity,
         array $row,
         BlockBuilder $builder,
         string $environment,
         array $sites,
         callable $emit,
     ): void {
-        $dedupe = ($spec['dedupe'] ?? false) === true;
-        $single = ($spec['single'] ?? false) === true;
-        $titleColumn = (string) ($spec['title'] ?? 'title');
+        $name = $entity->name;
+        $entryType = (string) $entity->entryType();
+        $dedupe = $entity->dedupe();
+        $single = $entity->single();
+        $titleColumn = $entity->titleColumn();
         $title = trim((string) ($row[$titleColumn] ?? ''));
 
         // Craft's title is required on every one of these entry types, and an entry
@@ -450,7 +435,7 @@ final class Compiler
 
         $uid = EntityIndex::uid(
             $dedupe ? EntityIndex::SHARED : $environment,
-            (string) $spec['table'],
+            (string) $entity->table(),
             (int) $row['id'],
         );
 
@@ -464,14 +449,8 @@ final class Compiler
             $this->sharedTitles[$uid] = $title;
         }
 
-        $fields = $builder->fieldsFrom($spec['map'] ?? [], $row, $name, (string) $spec['entryType']);
-        $fields += $builder->childrenOf(
-            $spec['children'] ?? [],
-            (string) $spec['entryType'],
-            (int) $row['id'],
-            $name,
-            true,
-        );
+        $fields = $builder->fieldsFrom($entity->map(), $row, $name, $entryType);
+        $fields += $builder->childrenOf($entity->children(), $entryType, (int) $row['id'], $name, true);
 
         // No `title` key at all when the row has none — an absent key reaches the
         // loader as null and leaves the existing entry title in place, where an
@@ -487,8 +466,8 @@ final class Compiler
 
         $payload = [
             'sourceUid' => $uid,
-            'section' => (string) $spec['section'],
-            'entryType' => (string) $spec['entryType'],
+            'section' => (string) $entity->section(),
+            'entryType' => $entryType,
             'sites' => array_fill_keys($sites, $site),
         ];
         if ($single) {
@@ -524,12 +503,11 @@ final class Compiler
         PartReader $parts,
         BlockBuilder $builder,
         SequenceEngine $sequencer,
-        array $contexts,
         array $parentable,
         string $environment,
-        array $pageSpec,
-        string $entryType,
+        PageRow $page,
     ): array {
+        $entryType = (string) $page->entryType();
         $site = [
             'enabled' => true,
             'title' => $translation['title'],
@@ -544,7 +522,7 @@ final class Compiler
         if ($parentId !== null) {
             $parentSection = $parentable[$parentId] ?? null;
 
-            if ($parentSection !== null && $parentSection === ($pageSpec['section'] ?? 'pages')) {
+            if ($parentSection !== null && $parentSection === $page->section()) {
                 $site['parentRef'] = $this->uid($environment, $parentId);
             } elseif ($parentSection === null) {
                 // A hierarchy edge that leads nowhere re-roots this page and shortens its
@@ -557,12 +535,12 @@ final class Compiler
         // A page entity's own columns are content: the summary, the category, the overview
         // image, and — for editorial types — the publication date. Reading only the node
         // gives an entry that looks migrated and is missing most of itself.
-        $pageRow = isset($pageSpec['table'])
-            ? $parts->row((string) $pageSpec['table'], $translation['entityId'])
+        $pageRow = $page->table() !== null
+            ? $parts->row($page->table(), $translation['entityId'])
             : null;
 
         $pageFields = $pageRow !== null
-            ? $builder->fieldsFrom($pageSpec['map'] ?? [], $pageRow, $translation['entity'], $entryType)
+            ? $builder->fieldsFrom($page->map(), $pageRow, $translation['entity'], $entryType)
             : [];
 
         // A page entity can own collections too. Partner branches, contact persons and awards
@@ -570,7 +548,7 @@ final class Compiler
         // Matrixes — the same relationship a pagepart's `children:` describes, one level up.
         if ($pageRow !== null) {
             $pageFields += $builder->childrenOf(
-                $pageSpec['children'] ?? [],
+                $page->children(),
                 $entryType,
                 $translation['entityId'],
                 $translation['entity'],
@@ -589,8 +567,8 @@ final class Compiler
         // 434 blog posts — several by months.
         $postDate = $translation['created'];
 
-        if ($pageRow !== null && isset($pageSpec['postDate'])) {
-            $postDate = $pageRow[(string) $pageSpec['postDate']] ?? $postDate;
+        if ($pageRow !== null && $page->postDate() !== null) {
+            $postDate = $pageRow[$page->postDate()] ?? $postDate;
         }
 
         if ($postDate !== null) {
@@ -600,10 +578,10 @@ final class Compiler
         $builderBlocks = [];
         $prependedBlocks = [];
 
-        foreach ($contexts as $context => $target) {
-            $sequence = $parts->sequence($translation['entity'], $translation['entityId'], (string) $context);
+        foreach ($page->contexts() as $context => $target) {
+            $sequence = $parts->sequence($translation['entity'], $translation['entityId'], $context);
 
-            $field = (string) ($target['field'] ?? 'pageBuilder');
+            $field = (string) $target['field'];
 
             // Some entry types have no Page Builder at all — casePage and partnerPage carry
             // their own structured fields instead. Emitting one anyway makes Craft reject the
@@ -645,15 +623,14 @@ final class Compiler
 
         $builderBlocks = array_merge($prependedBlocks, $builderBlocks);
 
-        $formBlock = $this->formBlockFor($parts, $translation, $entryType, $contexts, $environment);
+        $formBlock = $this->formBlockFor($parts, $translation, $page, $environment);
 
         if ($formBlock !== null) {
             $builderBlocks[] = $formBlock;
         }
 
         if ($builderBlocks !== []) {
-            $field = $this->builderField($contexts);
-            $pageFields[$field] = $builderBlocks;
+            $pageFields[$page->builderField()] = $builderBlocks;
         }
 
         if ($pageFields !== []) {
@@ -661,14 +638,6 @@ final class Compiler
         }
 
         return $site;
-    }
-
-    /** @param array<string, mixed> $contexts */
-    private function builderField(array $contexts): string
-    {
-        $first = $contexts !== [] ? reset($contexts) : null;
-
-        return (string) (is_array($first) ? ($first['field'] ?? 'pageBuilder') : 'pageBuilder');
     }
 
     /**
@@ -682,32 +651,30 @@ final class Compiler
      * the target does not exist yet.
      *
      * @param array<string, mixed> $translation
-     * @param array<string, mixed> $contexts
      * @return array{type:string, fields:array<string,mixed>}|null
      */
     private function formBlockFor(
         PartReader $parts,
         array $translation,
-        string $entryType,
-        array $contexts,
+        PageRow $page,
         string $environment,
     ): ?array {
-        $spec = $this->mapping->all()['forms'] ?? null;
+        $forms = $this->mapping->forms();
         $fieldSpecs = $this->mapping->formFields();
 
-        if (!is_array($spec) || $fieldSpecs === []) {
+        if (!$forms->declared || $fieldSpecs === []) {
             return null;
         }
 
-        $context = (string) ($spec['context'] ?? 'form');
-        $sequence = $parts->sequence((string) $translation['entity'], (int) $translation['entityId'], $context);
+        $sequence = $parts->sequence((string) $translation['entity'], (int) $translation['entityId'], $forms->context);
         $mappable = array_filter($sequence, static fn(array $ref): bool => isset($fieldSpecs[$ref['part']]));
 
         if ($mappable === []) {
             return null;
         }
 
-        $field = $this->builderField($contexts);
+        $entryType = (string) $page->entryType();
+        $field = $page->builderField();
         $slot = $this->schema?->slot($entryType, $field);
 
         if ($slot === null || !$slot->isMatrix()) {
@@ -774,13 +741,13 @@ final class Compiler
 
             // A block synthesised by a sequence rule still needs a stable identity, or a
             // re-run appends a second copy of it. The head part it came from is that identity.
-            $headSpec = $this->mapping->parts()[$emission['part']] ?? [];
+            $headTable = $this->mapping->partRow($emission['part'])?->table();
 
-            if (isset($headSpec['table'])) {
+            if ($headTable !== null) {
                 $nested['_sourcePartRef'] = sprintf(
                     '%s:%s:%d',
                     $environment,
-                    $headSpec['table'],
+                    $headTable,
                     $emission['id'],
                 );
             }
@@ -788,17 +755,21 @@ final class Compiler
             return ['type' => (string) $emitted['block'], 'fields' => $nested];
         }
 
-        $spec = $this->mapping->parts()[$emission['part']] ?? null;
+        $part = $this->mapping->partRow($emission['part']);
 
-        if ($spec === null || isset($spec['drop'], $spec['manual']) || !isset($spec['block'])) {
-            if ($spec === null || !isset($spec['block'])) {
-                $this->skip($emission['part']);
-            }
+        // Anything with no block to build is counted, so the run report names it; whether
+        // that was a decision or a hole is the coverage report's distinction to draw.
+        if ($part === null || $part->block() === null) {
+            $this->skip($emission['part']);
 
             return null;
         }
 
-        $block = $builder->build($emission['part'], $emission['id'], $spec);
+        if (!$part->compilesToBlocks()) {
+            return null;
+        }
+
+        $block = $builder->build($emission['part'], $emission['id'], $part->spec);
 
         if ($block === null) {
             return null;
@@ -807,7 +778,7 @@ final class Compiler
         // `promote:` is validated against the target and then not emitted: the lane has no
         // compiler. Counting it here keeps a declared-but-unbuilt collection out of the set of
         // things a clean coverage report implies were migrated.
-        foreach (array_keys($spec['promote'] ?? []) as $table) {
+        foreach (array_keys($part->promote()) as $table) {
             $this->skip(sprintf('promote: %s -> %s (lane not implemented)', $emission['part'], (string) $table));
         }
 
@@ -863,7 +834,6 @@ final class Compiler
      * @param array<int, array<string, mixed>> $ancestry
      * @param array<int, string> $parentable
      * @param array<string, mixed> $locales
-     * @param array<string, mixed> $pageSpec
      * @param array<string, mixed> $already the sites the online translations already produced
      * @return array<string, array<string, mixed>>
      */
@@ -873,7 +843,7 @@ final class Compiler
         array $parentable,
         array $locales,
         string $environment,
-        array $pageSpec,
+        PageRow $page,
         array $already,
     ): array {
         $row = $ancestry[$node['nodeId']] ?? null;
@@ -906,7 +876,7 @@ final class Compiler
             $parentId = $node['parentId'];
 
             if ($parentId !== null
-                && ($parentable[$parentId] ?? null) === ($pageSpec['section'] ?? 'pages')
+                && ($parentable[$parentId] ?? null) === $page->section()
             ) {
                 $out[$site]['parentRef'] = $this->uid($environment, $parentId);
             }
@@ -1017,9 +987,9 @@ final class Compiler
         string $environment,
         callable $emit,
     ): bool {
-        $entryType = $this->mapping->all()['defaults']['structuralEntryType'] ?? null;
+        $entryType = $this->mapping->structuralEntryType();
 
-        if (!is_string($entryType) || $entryType === '') {
+        if ($entryType === null) {
             // Without a target entry type there is nowhere to put the segment. Say so per
             // ancestor rather than re-rooting its subtree without a word.
             $this->skip('structural:no-entry-type:' . $environment);
@@ -1090,15 +1060,15 @@ final class Compiler
     ): array {
         $fields = [];
 
-        foreach ($this->mapping->sidecars() as $name => $spec) {
+        foreach ($this->mapping->sidecarRows() as $name => $sidecar) {
             // No `wanted()` gate: a sidecar rides the page it decorates, so a run narrowed
             // to one page entity still carries that page's hero. Excluding one is `drop:`.
-            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
+            if (!$sidecar->isMigrated()) {
                 continue;
             }
 
             $row = $parts->sidecarRow(
-                (string) $spec['table'],
+                (string) $sidecar->table(),
                 (string) $translation['entity'],
                 (int) $translation['entityId'],
             );
@@ -1108,10 +1078,10 @@ final class Compiler
             }
 
             $context = 'sidecar:' . $name;
-            $mapped = $builder->fieldsFrom($spec['map'] ?? [], $row, $context, $entryType);
+            $mapped = $builder->fieldsFrom($sidecar->map(), $row, $context, $entryType);
 
             if (isset($row['id'])) {
-                $mapped += $builder->childrenOf($spec['children'] ?? [], $entryType, (int) $row['id'], $context, true);
+                $mapped += $builder->childrenOf($sidecar->children(), $entryType, (int) $row['id'], $context, true);
             }
 
             foreach ($mapped as $target => $value) {
@@ -1131,9 +1101,7 @@ final class Compiler
     /** The Craft section an entry of this page entity lands in, per the mapping. */
     private function sectionOfEntity(string $entity): ?string
     {
-        $spec = $this->mapping->pages()[$entity] ?? null;
-
-        return is_array($spec) ? (string) ($spec['section'] ?? 'pages') : null;
+        return $this->mapping->pageRow($entity)?->section();
     }
 
     /** Whether a Matrix field on this entry type accepts blocks of the given type. */

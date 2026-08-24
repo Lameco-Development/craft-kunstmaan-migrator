@@ -42,31 +42,26 @@ final class FieldProvenance
     {
         // Page entry types in live-volume order: everything that lists them
         // should lead with where the content is.
-        $pages = $mapping->pages();
-        uasort($pages, static fn($a, $b): int =>
-            (int) (is_array($b) ? ($b['live'] ?? 0) : 0) <=> (int) (is_array($a) ? ($a['live'] ?? 0) : 0));
+        $pages = $mapping->pageRows();
+        uasort($pages, static fn(PageRow $a, PageRow $b): int => ($b->live() ?? 0) <=> ($a->live() ?? 0));
 
         $pageEntryTypes = [];
         $receives = [];
         $pageFeeders = [];
 
-        foreach ($pages as $name => $spec) {
-            if (!is_array($spec)) {
-                continue;
-            }
+        foreach ($pages as $name => $row) {
+            $entryType = $row->entryType();
 
-            $entryType = $spec['entryType'] ?? null;
-
-            if (!is_string($entryType) || $entryType === '') {
+            if ($entryType === null) {
                 continue;
             }
 
             $pageEntryTypes[$entryType] = true;
-            $receives[$entryType][] = (string) $name;
+            $receives[$entryType][] = $name;
 
-            foreach ((array) ($spec['map'] ?? []) as $field => $expression) {
+            foreach ($row->map() as $field => $expression) {
                 $pageFeeders[$entryType][self::rootField((string) $field)][] =
-                    ['lane' => 'pages', 'name' => (string) $name, 'expression' => (string) $expression];
+                    ['lane' => 'pages', 'name' => $name, 'expression' => (string) $expression];
             }
         }
 
@@ -75,23 +70,19 @@ final class FieldProvenance
         // Lane-invariant facts, once.
         $contextFields = [];
 
-        foreach ((array) (($mapping->all()['defaults'] ?? [])['contexts'] ?? []) as $context) {
-            $field = is_array($context) ? ($context['field'] ?? null) : null;
-
-            if (is_string($field) && $field !== '') {
-                $contextFields[$field] = true;
-            }
+        foreach ($mapping->defaultContexts() as $context) {
+            $contextFields[(string) $context['field']] = true;
         }
 
         $sidecarMaps = [];
 
-        foreach ($mapping->sidecars() as $name => $spec) {
-            if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual'])) {
+        foreach ($mapping->sidecarRows() as $name => $sidecar) {
+            if (!$sidecar->isMigrated()) {
                 continue;
             }
 
-            foreach ((array) ($spec['map'] ?? []) as $field => $expression) {
-                $sidecarMaps[(string) $name][self::rootField((string) $field)] = (string) $expression;
+            foreach ($sidecar->map() as $field => $expression) {
+                $sidecarMaps[$name][self::rootField((string) $field)] = (string) $expression;
             }
         }
 
@@ -102,35 +93,34 @@ final class FieldProvenance
         $blockReceives = [];
         $blockFeeders = [];
 
-        foreach ($mapping->parts() as $class => $spec) {
-            if (!is_array($spec) || !isset($spec['block']) || !is_string($spec['block']) || $spec['block'] === '') {
+        foreach ($mapping->partRows() as $class => $part) {
+            $block = $part->block();
+
+            if ($block === null || !$part->compilesToBlocks()) {
                 continue;
             }
 
             $partsBlocks++;
-            $block = $spec['block'];
-            $blockReceives[$block][] = (string) $class;
+            $blockReceives[$block][] = $class;
 
-            foreach ((array) ($spec['map'] ?? []) as $field => $expression) {
+            foreach ($part->map() as $field => $expression) {
                 $blockFeeders[$block][self::rootField((string) $field)][] =
-                    ['lane' => 'parts', 'name' => (string) $class, 'expression' => (string) $expression];
+                    ['lane' => 'parts', 'name' => $class, 'expression' => (string) $expression];
             }
 
-            foreach ((array) ($spec['children'] ?? []) as $field => $child) {
-                $table = is_array($child) ? (string) ($child['table'] ?? '') : '';
+            foreach ($part->children() as $field => $child) {
+                $table = (string) ($child['table'] ?? '');
                 $blockFeeders[$block][self::rootField((string) $field)][] =
-                    ['lane' => 'parts', 'name' => (string) $class, 'expression' => 'children of ' . ($table !== '' ? $table : (string) $class)];
+                    ['lane' => 'parts', 'name' => $class, 'expression' => 'children of ' . ($table !== '' ? $table : $class)];
             }
         }
 
         // The forms lane emits one block whose form field it fills itself.
-        $emit = (array) (($mapping->all()['forms'] ?? [])['emit'] ?? []);
-        $emitBlock = is_string($emit['block'] ?? null) ? $emit['block'] : null;
-        $emitField = is_string($emit['field'] ?? null) ? $emit['field'] : null;
+        $forms = $mapping->forms();
 
-        if ($emitBlock !== null && $emitField !== null) {
-            $blockReceives[$emitBlock] ??= [];
-            $blockFeeders[$emitBlock][$emitField][] =
+        if ($forms->emitBlock !== null && $forms->emitField !== null) {
+            $blockReceives[$forms->emitBlock] ??= [];
+            $blockFeeders[$forms->emitBlock][$forms->emitField][] =
                 ['lane' => 'forms', 'name' => 'forms lane', 'expression' => 'the migrated Formie form'];
         }
 

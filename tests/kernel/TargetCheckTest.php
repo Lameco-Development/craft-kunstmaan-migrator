@@ -105,6 +105,25 @@ final class TargetCheckTest extends TestCase
     }
 
     #[Test]
+    public function a_page_with_no_section_is_checked_against_the_one_the_compiler_uses(): void
+    {
+        // The compiler writes a page with no `section:` into `pages`; a check that skipped the
+        // absent key let that fail at the loader instead of here.
+        self::assertSame(
+            ['page `PartnerPage`: no section `pages` in Craft'],
+            $this->check(<<<'YAML'
+                version: 1
+                environments:
+                  COM: { database: legacy, locales: { en: comEnUs } }
+                pages:
+                  PartnerPage:
+                    entryType: partnerPage
+                    map: { partnerAddress: street }
+                YAML),
+        );
+    }
+
+    #[Test]
     public function an_unknown_entry_type_is_reported_once_not_once_per_field(): void
     {
         self::assertSame(
@@ -115,6 +134,7 @@ final class TargetCheckTest extends TestCase
                   COM: { database: legacy, locales: { en: comEnUs } }
                 pages:
                   NewsPage:
+                    section: partners
                     entryType: newsPage
                     map: { intro: intro, body: body }
                 YAML),

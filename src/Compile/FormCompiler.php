@@ -50,13 +50,13 @@ final class FormCompiler
      */
     public function compile(LegacyDatabase $db, string $environment, callable $emit): void
     {
-        $spec = $this->mapping->all()['forms'] ?? null;
+        $forms = $this->mapping->forms();
 
-        if (!is_array($spec) || $spec === []) {
+        if (!$forms->declared) {
             return;
         }
 
-        $context = (string) ($spec['context'] ?? 'form');
+        $context = $forms->context;
         $fieldSpecs = $this->mapping->formFields();
 
         if ($fieldSpecs === []) {

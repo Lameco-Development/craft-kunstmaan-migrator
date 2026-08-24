@@ -38,17 +38,9 @@ final class Suggester
         $drafted = [];
         $skipped = [];
 
-        foreach ($mapping->parts() as $part => $spec) {
-            if (!is_array($spec)) {
+        foreach ($mapping->partRows() as $part => $row) {
+            if ($row->isDecided()) {
                 continue;
-            }
-
-            // A row with any disposition has been decided; drafting over it
-            // would replace a decision with a guess.
-            foreach (['block', 'switch', 'drop', 'manual', 'consumedBy'] as $decided) {
-                if (isset($spec[$decided])) {
-                    continue 2;
-                }
             }
 
             $blocks = array_values(array_filter(
@@ -68,7 +60,7 @@ final class Suggester
                 continue;
             }
 
-            $patch = $this->draft((string) $part, $spec, $blocks[0], $db);
+            $patch = $this->draft((string) $part, $row->spec, $blocks[0], $db);
 
             if ($patch === null) {
                 $skipped[(string) $part] = sprintf('%s.md has no resolvable field rows for its columns', $blocks[0]);

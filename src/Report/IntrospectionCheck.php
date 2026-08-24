@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Report;
 
+use Lameco\Kunstmaanmigrator\Mapping\EntityRow;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Source\Introspection;
 
@@ -49,22 +50,25 @@ final class IntrospectionCheck
     private function subjects(): iterable
     {
         $lanes = [
-            'parts' => $this->mapping->parts(),
-            'pages' => $this->mapping->pages(),
-            'entities' => $this->mapping->entities(),
-            'sidecars' => $this->mapping->sidecars(),
+            'parts' => $this->mapping->partRows(),
+            'pages' => $this->mapping->pageRows(),
+            'entities' => $this->mapping->entityRows(),
+            'sidecars' => $this->mapping->sidecarRows(),
         ];
 
         foreach ($lanes as $lane => $rows) {
-            foreach ($rows as $subject => $spec) {
-                if (!is_array($spec) || isset($spec['drop']) || isset($spec['manual']) || !isset($spec['table'])) {
+            foreach ($rows as $subject => $row) {
+                // An entity row has no disposition: the schema gives it no `drop:` or `manual:`.
+                $migrated = $row instanceof EntityRow || $row->isMigrated();
+
+                if (!$migrated || $row->table() === null) {
                     continue;
                 }
 
-                $class = $this->introspection->entityForTable((string) $spec['table']);
+                $class = $this->introspection->entityForTable($row->table());
 
                 if ($class !== null) {
-                    yield ['lane' => $lane, 'subject' => (string) $subject, 'class' => $class, 'spec' => $spec];
+                    yield ['lane' => $lane, 'subject' => $subject, 'class' => $class, 'spec' => $row->spec];
                 }
             }
         }

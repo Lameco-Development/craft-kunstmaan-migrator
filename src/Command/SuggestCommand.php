@@ -89,16 +89,17 @@ final class SuggestCommand extends Command
         $unresolved = [];
         $emitted = 0;
 
-        foreach ($mapping->parts() as $part => $spec) {
-            if (!is_array($spec) || !isset($spec['block'], $spec['table'])) {
+        foreach ($mapping->partRows() as $part => $row) {
+            if ($row->block() === null || $row->table() === null) {
                 continue;
             }
 
-            if (!$input->getOption('all') && ($spec['map'] ?? []) !== []) {
+            if (!$input->getOption('all') && $row->map() !== []) {
                 continue;
             }
 
-            $block = (string) $spec['block'];
+            $spec = $row->spec;
+            $block = $row->block();
             $blockNotes = $notes->forBlock($block);
 
             if ($blockNotes === []) {
@@ -164,12 +165,13 @@ final class SuggestCommand extends Command
         // Page entities were outside this command entirely, so a page type could sit at three of
         // twelve mapped fields and nothing would say so — the readiness report only sees the
         // required ones, and `ignore:` swallows the rest without comment.
-        foreach ($mapping->pages() as $page => $spec) {
-            if (!is_array($spec) || !isset($spec['entryType'], $spec['table']) || isset($spec['manual'])) {
+        foreach ($mapping->pageRows() as $page => $row) {
+            if (!$row->compiles() || $row->table() === null) {
                 continue;
             }
 
-            $entryType = (string) $spec['entryType'];
+            $spec = $row->spec;
+            $entryType = (string) $row->entryType();
             $pageNotes = $notes->forBlock($entryType);
 
             if ($pageNotes === []) {

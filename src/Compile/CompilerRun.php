@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Compile;
 
+use Lameco\Kunstmaanmigrator\Mapping\PageRow;
 use Lameco\Kunstmaanmigrator\Source\PageReader;
 use Lameco\Kunstmaanmigrator\Source\PartReader;
 
@@ -24,8 +25,7 @@ final class CompilerRun
 {
     /**
      * @param array<string, ?string> $locales
-     * @param array<string, mixed> $pageSpecs
-     * @param array<string, mixed> $contexts
+     * @param array<string, PageRow> $pageRows
      * @param array<int, string> $parentable
      * @param array<int, array<string, mixed>> $ancestry
      * @param array<int, array<string, mixed>> $nodesById lft-ordered
@@ -39,8 +39,7 @@ final class CompilerRun
         public readonly BlockBuilder $builder,
         public readonly SequenceEngine $sequencer,
         public readonly array $locales,
-        public readonly array $pageSpecs,
-        public readonly array $contexts,
+        public readonly array $pageRows,
         public array $parentable,
         public readonly array $ancestry,
         public readonly array $nodesById,

@@ -92,9 +92,9 @@ final class FillMeasurer
         }
 
         if ($requirement->lane === 'pages') {
-            $table = (string) ($this->mapping->pages()[$requirement->subject]['table'] ?? '');
+            $table = $this->mapping->pageRow($requirement->subject)?->table();
 
-            return $table === '' || !$this->has($db, $table, $column)
+            return $table === null || !$this->has($db, $table, $column)
                 ? null
                 : $db->pageColumnFill($requirement->subject, $table, $column);
         }
@@ -103,15 +103,15 @@ final class FillMeasurer
             return null;
         }
 
-        $spec = $this->mapping->parts()[$requirement->subject] ?? null;
+        $part = $this->mapping->partRow($requirement->subject);
         $entities = $this->entities[$requirement->subject] ?? [];
-        $table = is_array($spec) ? (string) ($spec['table'] ?? '') : '';
+        $table = $part?->table();
 
-        if ($entities === [] || $table === '') {
+        if ($entities === [] || $table === null) {
             return null;
         }
 
-        $child = $this->childOf($spec, $requirement->target);
+        $child = $this->childOf($part->children(), $requirement->target);
 
         if ($child === null) {
             return $this->has($db, $table, $column) ? $db->columnFill($entities, $table, $column) : null;
@@ -152,16 +152,16 @@ final class FillMeasurer
      * The child collection behind a `block.field[]` target, or null when the target is the block
      * itself or a nested row read straight off the parent's own columns.
      *
-     * @param array<string, mixed> $spec
+     * @param array<string, array<string, mixed>> $children the part's `children:`
      * @return array{table:string, fk:string}|null
      */
-    private function childOf(array $spec, string $target): ?array
+    private function childOf(array $children, string $target): ?array
     {
         if (preg_match('/\.(\w+)\[\]$/', $target, $m) !== 1) {
             return null;
         }
 
-        $child = $spec['children'][$m[1]] ?? null;
+        $child = $children[$m[1]] ?? null;
 
         return is_array($child) && isset($child['table'], $child['fk'])
             ? ['table' => (string) $child['table'], 'fk' => (string) $child['fk']]
