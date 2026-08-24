@@ -193,8 +193,11 @@ final class KunstmaanEnvReader extends Component
     }
 
     /**
-     * Resolve source path via the Plugin's resolver, then delegate to
-     * loadFromPath. Used at runtime when consumers hit a public accessor.
+     * Resolve the checkout from `Settings::$legacySourcePath` (the wizard's
+     * detect step fills it), then delegate to loadFromPath. This used to look
+     * up the v1 `kunstmaanSourcePathResolver` component — removed in the v2
+     * prune — so the runtime path silently degraded to "no .env found" on
+     * every install; the setting is where the path actually lives now.
      */
     private function ensureLoaded(): void
     {
@@ -204,13 +207,16 @@ final class KunstmaanEnvReader extends Component
         try {
             // Nullsafe: in the unit tier no plugin instance exists, and "no
             // plugin" means the same as "no source path" — nothing to read.
-            $sourcePath = Plugin::getInstance()?->kunstmaanSourcePathResolver?->resolve();
+            $sourcePath = Plugin::getInstance()?->getSettings()->legacySourcePath;
+            $sourcePath = is_string($sourcePath) && $sourcePath !== ''
+                ? (string) \craft\helpers\App::parseEnv($sourcePath)
+                : null;
         } catch (Throwable $e) {
             $this->loaded = true;
-            $this->safeWarn('KunstmaanEnvReader: source-path resolver failed: ' . $e->getMessage());
+            $this->safeWarn('KunstmaanEnvReader: settings lookup failed: ' . $e->getMessage());
             return;
         }
-        if ($sourcePath === null) {
+        if ($sourcePath === null || $sourcePath === '' || !is_dir($sourcePath)) {
             $this->loaded = true;
             return;
         }

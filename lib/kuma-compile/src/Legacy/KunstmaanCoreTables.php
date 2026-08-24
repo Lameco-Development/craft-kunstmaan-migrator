@@ -2,18 +2,17 @@
 
 declare(strict_types=1);
 
-namespace Lameco\Kunstmaanmigrator\db;
+namespace Lameco\KumaCompile\Legacy;
 
 /**
- * Kunstmaan core table-name constants.
+ * Kunstmaan core table-name constants — the shared home for both halves.
  *
- * Single source of truth for the legacy Kunstmaan schema's table names.
- * `LegacyDbService` and any downstream Core\ query builder references these
- * constants instead of inlining `'kuma_*'` string literals (CORE-01).
- *
- * Relocated from src/source/ to src/db/ in the v2 loader prune — this is
- * shared DB-schema infrastructure consumed by LegacyDbService, DoctorController,
- * and the load-side adapters, not analyze-stage code.
+ * The write half's `LegacyDbService` builds its SQL from these. The readers
+ * in this package still carry the same names as literals inside their large
+ * SQL heredocs (constants cannot interpolate there, and the names are fixed
+ * by Kunstmaan itself, so drift is not a live risk) — this class is where a
+ * name would change if Kunstmaan ever changed one, and the greppable index
+ * of which tables the migrator reads.
  */
 final class KunstmaanCoreTables
 {

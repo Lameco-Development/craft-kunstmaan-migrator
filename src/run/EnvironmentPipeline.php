@@ -170,10 +170,11 @@ final class EnvironmentPipeline
         $db = LegacyDatabase::connect($env, (string) $spec['database'], $dsn);
 
         // The adapters and the media-token rewriter read the legacy database through
-        // Craft's `legacyDb` component, which is one connection from one setting. Three
-        // environments are three databases, so it is repointed per environment — without
-        // this a DE run reads COM's tables and reports them as migrated.
-        self::pointLegacyDbAt($dsn, (string) $spec['database']);
+        // LegacyDbService. Three environments are three databases, so it is repointed
+        // per environment — without this a DE run reads COM's tables and reports them
+        // as migrated. It adopts the SAME connection the compiler just opened: one
+        // environment, one PDO, both halves.
+        self::adoptLegacyDb($db);
 
         // Locale → site is per environment, not global. COM's `en` is comEnUs while LV's is
         // comLvEn, and one global map cannot hold both. The mapping states it per
@@ -392,15 +393,18 @@ final class EnvironmentPipeline
      */
     public static function pointLegacyDbAt(Dsn $dsn, string $database): void
     {
-        Craft::$app->set('legacyDb', [
-            'class' => Connection::class,
-            'dsn' => $dsn->forDatabase($database),
-            'username' => $dsn->user,
-            'password' => $dsn->password,
-            'charset' => $dsn->charset,
-            'attributes' => [\PDO::ATTR_EMULATE_PREPARES => false],
-        ]);
+        self::adoptLegacyDb(LegacyDatabase::connect($database, $database, $dsn));
+    }
 
-        Plugin::getInstance()?->ckeditorRewriterService->resetLookupCaches();
+    /**
+     * Hand LegacyDbService the compile half's connection — one environment,
+     * one PDO, both halves — and drop the rewriter caches: they are keyed on
+     * bare legacy ids, which only mean something inside one database.
+     */
+    public static function adoptLegacyDb(LegacyDatabase $db): void
+    {
+        $plugin = Plugin::getInstance();
+        $plugin?->legacyDbService->usePdo($db->pdo());
+        $plugin?->ckeditorRewriterService->resetLookupCaches();
     }
 }
