@@ -9,6 +9,7 @@ use craft\base\ElementInterface;
 use craft\db\Query;
 use craft\db\Table;
 use craft\elements\Entry;
+use craft\helpers\Db;
 use craft\models\Section;
 
 /**
@@ -82,5 +83,38 @@ final class CraftElementWriter implements ElementWriter
     public function invalidateCaches(): void
     {
         Craft::$app->elements->invalidateAllCaches();
+    }
+
+    public function structureEntries(string $sectionHandle): iterable
+    {
+        $section = Craft::$app->getEntries()->getSectionByHandle($sectionHandle);
+
+        if ($section === null || $section->type !== Section::TYPE_STRUCTURE) {
+            return [];
+        }
+
+        // One row per element, on whichever site Craft prefers; the other
+        // sites are reached through updateSlugAndUri(). Batched the way
+        // Craft's own resave walks a section, so a corpus-sized Structure is
+        // never all in memory at once.
+        $query = Entry::find()
+            ->sectionId($section->id)
+            ->siteId('*')
+            ->unique()
+            ->status(null)
+            ->orderBy(['structureelements.lft' => SORT_ASC]);
+
+        /** @var iterable<Entry> */
+        return Db::each($query);
+    }
+
+    public function updateSlugAndUri(ElementInterface $element): void
+    {
+        Craft::$app->elements->updateElementSlugAndUri(
+            $element,
+            updateOtherSites: true,
+            updateDescendants: false,
+            queue: false,
+        );
     }
 }

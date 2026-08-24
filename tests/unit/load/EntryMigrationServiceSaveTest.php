@@ -261,6 +261,16 @@ final class EntryMigrationServiceSaveTest extends TestCase
                 return $this->inner->findById($id, $class, $siteId);
             }
 
+            public function structureEntries(string $sectionHandle): iterable
+            {
+                return $this->inner->structureEntries($sectionHandle);
+            }
+
+            public function updateSlugAndUri(ElementInterface $element): void
+            {
+                $this->inner->updateSlugAndUri($element);
+            }
+
             public function invalidateCaches(): void
             {
                 $this->inner->invalidateCaches();

@@ -10,6 +10,7 @@ use Lameco\Kunstmaanmigrator\console\StateController;
 use Lameco\Kunstmaanmigrator\controllers\MigrationController;
 use Lameco\Kunstmaanmigrator\queue\FinalizeJob;
 use Lameco\Kunstmaanmigrator\queue\MigrateEnvironmentJob;
+use Lameco\Kunstmaanmigrator\queue\RecomputeStructureUrisJob;
 use Lameco\Kunstmaanmigrator\queue\ResolveDeferredRefsJob;
 use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use PHPUnit\Framework\TestCase;
@@ -54,7 +55,7 @@ final class MigrationPassCoverageTest extends TestCase
         // screen. How it is offered is the screen's business — a full run is
         // one button and the recovery passes live behind a disclosure — but a
         // pass that is reachable only from a terminal is not.
-        foreach (['full', 'entries', 'fixup', 'finalize'] as $pass) {
+        foreach (['full', 'entries', 'fixup', 'finalize', 'uris'] as $pass) {
             self::assertMatchesRegularExpression(
                 sprintf('~(?:value: \'%1$s\'|data-pass="%1$s"|queue\(\'%1$s\')~', $pass),
                 $template,
@@ -64,9 +65,9 @@ final class MigrationPassCoverageTest extends TestCase
         }
     }
 
-    public function testTheThreeQueueablePassesHaveJobs(): void
+    public function testTheFourQueueablePassesHaveJobs(): void
     {
-        foreach ([MigrateEnvironmentJob::class, FinalizeJob::class, ResolveDeferredRefsJob::class] as $job) {
+        foreach ([MigrateEnvironmentJob::class, FinalizeJob::class, ResolveDeferredRefsJob::class, RecomputeStructureUrisJob::class] as $job) {
             self::assertTrue(class_exists($job));
             self::assertTrue((new ReflectionClass($job))->hasMethod('execute'));
         }
@@ -78,7 +79,7 @@ final class MigrationPassCoverageTest extends TestCase
      */
     public function testEveryJobRefusesProduction(): void
     {
-        foreach (['MigrateEnvironmentJob', 'FinalizeJob', 'ResolveDeferredRefsJob'] as $job) {
+        foreach (['MigrateEnvironmentJob', 'FinalizeJob', 'ResolveDeferredRefsJob', 'RecomputeStructureUrisJob'] as $job) {
             self::assertStringContainsString(
                 'ProductionGuard::isProduction()',
                 $this->source('src/queue/' . $job . '.php'),
@@ -98,6 +99,28 @@ final class MigrationPassCoverageTest extends TestCase
 
             $this->expectException(RuntimeException::class);
             $this->expectExceptionMessage('Refusing to finalize');
+
+            $job->execute(null);
+        } finally {
+            if ($had) {
+                $_SERVER['CRAFT_ENVIRONMENT'] = $previous;
+            } else {
+                unset($_SERVER['CRAFT_ENVIRONMENT']);
+            }
+        }
+    }
+
+    public function testTheUriJobRefusesProduction(): void
+    {
+        $had = array_key_exists('CRAFT_ENVIRONMENT', $_SERVER);
+        $previous = $_SERVER['CRAFT_ENVIRONMENT'] ?? null;
+        $_SERVER['CRAFT_ENVIRONMENT'] = 'production';
+
+        try {
+            $job = (new ReflectionClass(RecomputeStructureUrisJob::class))->newInstanceWithoutConstructor();
+
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('Refusing to recompute URIs');
 
             $job->execute(null);
         } finally {

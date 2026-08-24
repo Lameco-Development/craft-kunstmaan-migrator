@@ -18,8 +18,8 @@ use yii\queue\RetryableJobInterface;
  * One environment's adapter passes, then the next link of the chain (#48).
  *
  * Pushed by the environment job's last batch. When environments remain, the
- * next one is pushed from here; when none do, the corpus-wide fixup and
- * finalize passes are — which is what makes their ordering structural instead
+ * next one is pushed from here; when none do, the corpus-wide fixup, finalize
+ * and URI passes are — which is what makes their ordering structural instead
  * of FIFO-hopeful (#47): they can no longer run before the entries they
  * resolve against exist.
  */
@@ -87,6 +87,7 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
         if ($this->chainCorpusPasses && !$this->entriesOnly && !$this->dryRun) {
             QueueHelper::push(job: new ResolveDeferredRefsJob(), priority: 512);
             QueueHelper::push(job: new FinalizeJob(['mappingPath' => $this->mappingPath, 'dryRun' => $this->dryRun]), priority: 512);
+            QueueHelper::push(job: new RecomputeStructureUrisJob(['mappingPath' => $this->mappingPath]), priority: 512);
         }
     }
 

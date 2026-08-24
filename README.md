@@ -221,8 +221,8 @@ execution (an entity-lane window, a page with its due structural
 placeholders) and lets Craft spawn the continuation, so no single execution
 runs the whole environment inside one request or one TTR. A batch's last
 execution pushes that environment's adapter pass; the adapter pass pushes the
-next environment; the corpus-wide fixup and finalize passes are pushed only
-after the last environment's adapters — an ordering the queue enforces
+next environment; the corpus-wide fixup, finalize and URI passes are pushed
+only after the last environment's adapters — an ordering the queue enforces
 structurally rather than relying on FIFO. A mapping file hash travels with
 the chain and refuses a continuation batch if the mapping changed mid-run,
 since the head of the corpus would otherwise compile against different rules
@@ -239,8 +239,8 @@ environment, in order: taxonomy entries, page entries with their blocks and
 assets, then SEO meta, redirects, navigation and translations — the adapters run
 after that environment's entries because each resolves a legacy id to an entry
 that has to exist already. Then, once across the whole corpus, the fixup pass
-resolves deferred references and the finalize pass rewrites legacy links and
-media in rich text.
+resolves deferred references, the finalize pass rewrites legacy links and
+media in rich text, and the URI pass settles every Structure entry's URL.
 
 | flag | |
 | --- | --- |
@@ -250,23 +250,30 @@ media in rich text.
 | `--only=PartnerPage` | one page type / entity, comma separated |
 | `--limit=N` | stop after N entries |
 | `--force` | re-save entries that already exist |
-| `--entries-only` | skip the adapters, the fixup and the finalize pass |
+| `--entries-only` | skip the adapters, the fixup, finalize and URI passes |
 | `--finalize-only` | run the finalize pass alone (idempotent, safe to re-run) |
-| `--queue` | hand the run to Craft's queue as one chained sequence: each environment runs in ~50-node batches, its last batch pushes that environment's adapters, which push the next environment, with the fixup and finalize passes chained after the last one — see **Running from the control panel** below |
+| `--queue` | hand the run to Craft's queue as one chained sequence: each environment runs in ~50-node batches, its last batch pushes that environment's adapters, which push the next environment, with the fixup, finalize and URI passes chained after the last one — see **Running from the control panel** below |
 | `--skip-assets` | skip the asset stage entirely |
 | `--fail-on-loss` | exit non-zero when the run lost content, not only when it failed |
-| `--resave=0` | skip the closing re-save (on by default; see below) |
+| `--resave` | also re-save every migrated section with Craft's `resave/entries` when the run finishes (off by default; see below) |
 | `--allow-drift` | run even though the legacy corpus has grown past the mapping |
 
-**The run re-saves for you.** URIs are computed at save time from the parent's
-URI, so a subtree written before its ancestor's per-site slugs settle keeps a
-stale prefix — on the reference corpus, the difference between 76.6% and 97.7%
-URL fidelity. Every section the mapping writes into is re-saved when the run
-finishes. Pass `--resave=0` to skip it, and run it yourself afterwards:
-
-```bash
-./craft resave/entries --section=pages
-```
+**The run settles its own URLs.** A Structure entry's URI is its parent's URI
+plus its slug, computed at save time — and the parent is not always written
+first: entity-lane units run before every node, a parent a payload named before
+it existed is patched at the very end of the corpus, and the descendant
+maintenance Craft does after a save goes to the queue at default priority,
+behind the whole migration chain. A subtree written before its ancestor's
+per-site slugs settled kept a stale prefix — on the reference corpus, the
+difference between 76.6% and 97.7% URL fidelity — until an operator ran
+`resave/entries`. The run now ends with a URI pass of its own: every Structure
+section the mapping writes into, walked parents-first, each entry's URI
+recomputed on every site straight into `elements_sites`, from committed state.
+Both callers run it — the console after the finalize pass, the queue as the
+last job of the chain — and the JSON summary reports it under `uris`.
+`resave/entries` is no longer needed for URIs. `--resave` still runs it
+afterwards for an operator comparing the two; note that a re-save is a full
+save that propagates, which creates rows on sites the payload never named.
 
 **The run warns about blocks the target will reject.** A Matrix names the entry types
 it accepts, and a part whose block is not on that list is dropped at write time. Whether

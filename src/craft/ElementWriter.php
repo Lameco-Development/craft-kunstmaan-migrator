@@ -93,4 +93,29 @@ interface ElementWriter
      * Invalidates Craft's element caches after a bulk write.
      */
     public function invalidateCaches(): void;
+
+    /**
+     * The entries of a Structure section, parents before children, one per
+     * element — the order a URI recomputation has to walk in, because a
+     * Structure entry's URI is its parent's URI plus its own slug.
+     *
+     * Empty when the handle names no section or not a Structure: a Channel's
+     * URI inherits no prefix, so there is nothing to settle.
+     *
+     * @return iterable<Entry>
+     */
+    public function structureEntries(string $sectionHandle): iterable;
+
+    /**
+     * Recomputes an element's slug and URI on the site it was loaded in and on
+     * every other site it exists on, and writes them straight to
+     * `elements_sites`: no element save, no nested-entry maintenance, no search
+     * indexing — and no queue job, which is the point. Craft's own descendant
+     * maintenance after a save goes to the queue at default priority, behind
+     * the whole migration chain.
+     *
+     * Descendants are left alone; a caller walking parents-first reaches them
+     * next.
+     */
+    public function updateSlugAndUri(ElementInterface $element): void;
 }

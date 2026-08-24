@@ -325,4 +325,13 @@ final class RefusingDeleteWriter implements ElementWriter
     public function invalidateCaches(): void
     {
     }
+
+    public function structureEntries(string $sectionHandle): iterable
+    {
+        return [];
+    }
+
+    public function updateSlugAndUri(ElementInterface $element): void
+    {
+    }
 }
