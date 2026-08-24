@@ -51,7 +51,7 @@
         "test-integration": "vendor/bin/phpunit --testsuite Integration",
         "test-coverage": [
             "@php -r \"if (!extension_loaded('pcov') && !extension_loaded('xdebug')) { fwrite(STDERR, 'install pcov or xdebug to run coverage' . PHP_EOL); exit(1); }\"",
-            "vendor/bin/phpunit --coverage-clover=build/coverage/clover.xml",
+            "@php -d pcov.directory=. vendor/bin/phpunit --coverage-clover=build/coverage/clover.xml",
             "@php tools/check-coverage.php"
         ],
         "analyse": "vendor/bin/phpstan analyse --no-progress",
