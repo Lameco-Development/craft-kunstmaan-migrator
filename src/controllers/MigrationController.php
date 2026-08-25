@@ -665,19 +665,19 @@ final class MigrationController extends Controller
         // environment: both resolve references that cannot exist until every
         // environment has been written.
         if ($pass === 'fixup') {
-            Craft::$app->getQueue()->push(new ResolveDeferredRefsJob());
+            QueueHelper::push(job: new ResolveDeferredRefsJob(), priority: 512);
 
             return $this->asJson(['ok' => true, 'queued' => ['fixup'], 'message' => 'Queued reference resolution.']);
         }
 
         if ($pass === 'finalize') {
-            Craft::$app->getQueue()->push(new FinalizeJob(['mappingPath' => $path, 'dryRun' => $dryRun]));
+            QueueHelper::push(job: new FinalizeJob(['mappingPath' => $path, 'dryRun' => $dryRun]), priority: 512);
 
             return $this->asJson(['ok' => true, 'queued' => ['finalize'], 'message' => 'Queued finalize.']);
         }
 
         if ($pass === 'uris') {
-            Craft::$app->getQueue()->push(new RecomputeStructureUrisJob(['mappingPath' => $path]));
+            QueueHelper::push(job: new RecomputeStructureUrisJob(['mappingPath' => $path]), priority: 512);
 
             return $this->asJson(['ok' => true, 'queued' => ['uris'], 'message' => 'Queued URL settling.']);
         }

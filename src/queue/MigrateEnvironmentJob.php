@@ -99,6 +99,9 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
 
     public int $deferredRefs = 0;
 
+    /** Craft's deferred entry-URI jobs this job's batches refused to queue. */
+    public int $slugJobsVetoed = 0;
+
     public int $batchSize = 50;
 
     private ?EnvironmentPipeline $pipeline = null;
@@ -156,6 +159,12 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
         $this->pipeline = EnvironmentPipeline::build($mapping, $this->settings);
 
         $this->context = $this->pipeline->prepare($mapping, $this->environment, (array) $spec, $this->settings);
+
+        // Each batch is its own process, so each arms for itself and disarms
+        // in afterBatch(). Only a chain that ends in the URI pass may veto.
+        if ($this->chainCorpusPasses) {
+            $this->pipeline->armUriJobGuard($this->settings);
+        }
 
         $compiler = $this->pipeline->compiler();
         $run = $compiler->begin($this->context->legacy, $this->environment);
@@ -242,7 +251,9 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
 
     protected function afterBatch(): void
     {
+        $this->pipeline->disarmUriJobGuard($this->tally);
         $this->pipeline->foldCompileReport($this->tally);
+        $this->slugJobsVetoed += $this->tally->slugJobsVetoed;
 
         foreach ($this->tally->counts as $name => $count) {
             $this->counts[$name] = ($this->counts[$name] ?? 0) + $count;
@@ -288,6 +299,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             'perSiteBlocksNotRepresentable' => $this->perSiteBlockLosses,
             'perSiteBlockLossSample' => $this->perSiteBlockLossSample,
             'assetFailures' => $this->assetFailures,
+            'slugJobsVetoed' => $this->slugJobsVetoed,
         ]);
 
         QueueHelper::push(job: new RunAdaptersJob([

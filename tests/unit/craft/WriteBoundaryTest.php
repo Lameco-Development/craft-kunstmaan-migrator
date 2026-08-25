@@ -55,6 +55,16 @@ final class WriteBoundaryTest extends TestCase
             'seam' => 'EmbedGateway',
             'instead' => 'available/createFromUrl',
         ],
+        // Pushes go through craft\helpers\Queue so priority and TTR travel
+        // with spawned batches (ADR-0008); everything else the queue offers —
+        // its events, its listing, releasing a job — is this seam's.
+        [
+            'pattern' => '~Craft::\$app->(?:queue|getQueue\(\))->(\w+)~',
+            'adapter' => 'src/craft/CraftUriJobGuard.php',
+            'fake' => 'tests/support/InMemoryUriJobGuard.php',
+            'seam' => 'UriJobGuard',
+            'instead' => 'QueueHelper::push for a push; arm/disarm/release for the rest',
+        ],
     ];
 
     /**

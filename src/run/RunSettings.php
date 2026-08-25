@@ -26,4 +26,14 @@ final class RunSettings
         public readonly bool $skipAssets = false,
     ) {
     }
+
+    /**
+     * Whether this run ends in the URI pass — the same two flags both callers
+     * gate the pass on. Only such a run may veto Craft's own deferred URI
+     * maintenance; any other leaves the queue to settle what it wrote.
+     */
+    public function settlesUris(): bool
+    {
+        return !$this->dryRun && !$this->entriesOnly;
+    }
 }

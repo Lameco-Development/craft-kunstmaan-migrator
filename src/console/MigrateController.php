@@ -11,6 +11,7 @@ use craft\helpers\Queue as QueueHelper;
 use Lameco\Kunstmaanmigrator\Compile\PayloadWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
 use Lameco\Kunstmaanmigrator\finalize\StructureUriPass;
@@ -403,11 +404,15 @@ final class MigrateController extends Controller
         // from committed state; see StructureUriPass. Part of the run, not a line in the
         // README the operator may or may not have reached.
         $uris = null;
+        $slugJobsReleased = 0;
 
-        if (!$this->entriesOnly && !$this->dryRun) {
-            RunLog::default()->track('uris', [], function(array &$extra) use ($mapping, &$uris): void {
-                $uris = (new StructureUriPass(new CraftElementWriter()))->run($mapping);
+        if ($settings->settlesUris()) {
+            RunLog::default()->track('uris', [], function(array &$extra) use ($mapping, &$uris, &$slugJobsReleased): void {
+                $pass = new StructureUriPass(new CraftElementWriter(), new CraftUriJobGuard());
+                $uris = $pass->run($mapping);
+                $slugJobsReleased = $pass->releasedJobs();
                 $extra['counts'] = $uris;
+                $extra['slugJobsReleased'] = $slugJobsReleased;
             });
         }
 
@@ -430,6 +435,8 @@ final class MigrateController extends Controller
             'fixup' => $fixup,
             'finalize' => $finalize,
             'uris' => $uris,
+            'slugJobsVetoed' => $tally->slugJobsVetoed,
+            'slugJobsReleased' => $slugJobsReleased,
             'resave' => $resave,
             'lossyConversions' => $lossCount,
             'losses' => $tally->losses,
