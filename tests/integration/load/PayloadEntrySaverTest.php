@@ -413,6 +413,51 @@ final class PayloadEntrySaverTest extends TestCase
     }
 
     /**
+     * The failed deferral that wrote `pendingRefs` empty: a resumed run met an entry that
+     * already existed, left it untouched, and still recorded that its refs now resolved —
+     * against a field the save never wrote.
+     */
+    public function testAnUntouchedExistingEntryKeepsThePendingRefsItsOwnSaveRecorded(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+
+        $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:202', [
+            'sites' => ['en' => ['parentRef' => 'kuma:COM:nt_page:9']],
+        ]));
+
+        $this->save($saver, $payload);
+        $deferred = [['field' => 'parentId', 'site' => 'en', 'ref' => 'kuma:COM:nt_page:9', 'path' => []]];
+        self::assertSame($deferred, $state->get('COM:nt_page', '202')['meta']['pendingRefs']);
+
+        // The parent exists by the time the resumed run comes back round to this payload.
+        $state->record('COM:nt_page', '9', 'entry', 42);
+        $this->save($saver, $payload);
+
+        self::assertSame(
+            $deferred,
+            $state->get('COM:nt_page', '202')['meta']['pendingRefs'],
+            'A save that wrote nothing must not record a resolution the entry never received.',
+        );
+
+        // A forced save does write the entry, so its verdict on the refs stands.
+        $forced = new PayloadEntrySaver(
+            new SaverFakeSchemaGateway(),
+            $entryService,
+            $state,
+            new AssetMigrationService(),
+            new CkeditorRewriterService(),
+            static fn(callable $fn) => $fn(),
+            new MigrationOptions(force: true),
+        );
+        $this->save($forced, $payload);
+
+        self::assertSame([], $state->get('COM:nt_page', '202')['meta']['pendingRefs']);
+    }
+
+    /**
      * @param array<string, mixed> $overrides
      * @return array<string, mixed>
      */
