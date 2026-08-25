@@ -6,7 +6,6 @@ namespace Lameco\Kunstmaanmigrator\load;
 
 use Craft;
 use craft\base\Element;
-use craft\base\ElementInterface;
 use craft\elements\Entry;
 use craft\enums\PropagationMethod;
 use craft\fields\Matrix;
@@ -221,39 +220,13 @@ class EntryMigrationService extends Component
         $entry->setEnabledForSite($enabledMap);
 
         // ------------------------------------------------------------------ 4
-        // Read existing block UIDs and thread them into pageBuilder payload
-        // (Pitfall 3 avoidance — keeps matrix rows stable across re-runs)
+        // Block identity: the ids the previous run recorded, threaded back in
+        // so re-runs update nested entries in place (Pitfall 3)
         // ------------------------------------------------------------------ 4
         $existingMeta = $existingId !== null
             ? ($this->stateService->get($stateSource, (string) $stateKey)['meta'] ?? null)
             : null;
-
-        // Per-site block-UID map. Shape:
-        //   ['<siteHandle>' => ['<sourceRef>' => '<blockId>', ...], ...]
-        // Matrix fields with `propagationMethod: none` get separate block
-        // elements per site, so a flat sourceRef→blockId map (the v1 shape)
-        // collapses across sites and only the last-written site's block ids
-        // survive — breaking the deferred-entry-relation fix-up pass for
-        // every other site. Phase 12 / Gap [C]-followup: nested per-site.
-        $blockUidMap = [];
-        if (!empty($existingMeta)) {
-            if (is_string($existingMeta)) {
-                $existingMeta = json_decode($existingMeta, true);
-            }
-            $rawBlockIds = (array) ($existingMeta['blockIds'] ?? $existingMeta['blockUids'] ?? []);
-            // Back-compat: detect the flat v1 shape (scalar values) and
-            // promote it to a per-primary-site submap so re-runs against
-            // pre-Phase-12 state rows still thread block UIDs correctly
-            // for the primary site at minimum.
-            if ($rawBlockIds !== []) {
-                $first = reset($rawBlockIds);
-                if (is_array($first)) {
-                    $blockUidMap = $rawBlockIds;
-                } else {
-                    $blockUidMap = [$primarySite->handle => $rawBlockIds];
-                }
-            }
-        }
+        $blocks = BlockIdentity::fromMeta($this->elements(), $existingMeta, $primarySite->handle);
 
         // Inject the kunstmaanSourceId custom-field value on each per-site
         // payload BEFORE applyPerSiteData runs. Every migrated entry carries
@@ -280,11 +253,6 @@ class EntryMigrationService extends Component
             $stateSource,
             (string) $stateKey,
         );
-        // Extract source-ref positions BEFORE applyPerSiteData strips them.
-        $primarySourceRefPositions = $this->extractSourceRefPositions(
-            (array) ($primaryData['fieldValues'] ?? []),
-        );
-
         // Say so before writing, not after: on a field that shares one block set across sites,
         // locales carrying different legacy parts cannot all survive the save.
         $this->reportUnrepresentablePerSiteBlocks(
@@ -298,7 +266,7 @@ class EntryMigrationService extends Component
         $this->applyPerSiteData(
             $entry,
             $primaryData,
-            (array) ($blockUidMap[$primarySite->handle] ?? []),
+            $blocks,
             $report,
             $stateSource,
             (string) $stateKey,
@@ -322,13 +290,7 @@ class EntryMigrationService extends Component
             );
         }
 
-        // Collect primary-site block UIDs immediately after save. Per-site
-        // bucket so secondary sites (with propagationMethod=none) can keep
-        // their distinct block ids without overwriting.
-        $blockUidMap[$primarySite->handle] = array_merge(
-            (array) ($blockUidMap[$primarySite->handle] ?? []),
-            $this->collectBlockUidsByPosition($entry, $primarySourceRefPositions),
-        );
+        $blocks->record($primarySite->handle, $entry);
 
         // ------------------------------------------------------------------ 6
         // Record / update state row
@@ -353,11 +315,6 @@ class EntryMigrationService extends Component
             if (!isset($perSite[$site->handle])) {
                 continue;
             }
-            // Extract source-ref positions BEFORE applyPerSiteData strips them.
-            $siteSourceRefPositions = $this->extractSourceRefPositions(
-                (array) ($perSite[$site->handle]['fieldValues'] ?? []),
-            );
-
             // Critical: re-load scoped to siteId (Pitfall 2)
             $localised = $this->elements()->findById((int) $entry->id, Entry::class, $site->siteId);
 
@@ -365,26 +322,15 @@ class EntryMigrationService extends Component
                 continue;
             }
 
-            // Phase 12 / propagationMethod=none cleanup: when the primary
-            // save enables this entry on multiple sites, Craft auto-creates
-            // ghost matrix-block mirrors on the non-primary sites with NULL
-            // content. The secondary save then ADDS new blocks alongside
-            // the ghosts (sortOrders 1-N for ghosts + 1-M for real EN data),
-            // bloating the rendered matrix with empty rows. Hard-delete any
-            // block on this site that isn't in our tracked blockUidMap for
-            // this site BEFORE applyPerSiteData runs setFieldValues — the
-            // tracked set carries real blocks from previous runs (re-runs)
-            // or is empty (first runs), so the wipe targets only ghosts.
-            $this->wipeStaleSecondarySiteBlocks(
-                $localised,
-                (array) ($perSite[$site->handle]['fieldValues'] ?? []),
-                (array) ($blockUidMap[$site->handle] ?? []),
-            );
+            // Ghost blocks the primary save propagated onto this site would otherwise sit
+            // beside the blocks this save is about to write; the secondary save adds, it does
+            // not replace. Anything here that no run tracked goes first.
+            $blocks->reconcile($localised, $site->handle, (array) ($perSite[$site->handle]['fieldValues'] ?? []));
 
             $this->applyPerSiteData(
                 $localised,
                 $perSite[$site->handle],
-                (array) ($blockUidMap[$site->handle] ?? []),
+                $blocks,
                 $report,
                 $stateSource,
                 (string) $stateKey,
@@ -404,41 +350,22 @@ class EntryMigrationService extends Component
                 continue;
             }
 
-            // Merge this site's block UIDs into its own bucket so the
-            // post-load fix-up pass (and next run's threading) can find
-            // each site's block ids independently.
-            $blockUidMap[$site->handle] = array_merge(
-                (array) ($blockUidMap[$site->handle] ?? []),
-                $this->collectBlockUidsByPosition($localised, $siteSourceRefPositions),
-            );
+            $blocks->record($site->handle, $localised);
         }
 
         // ------------------------------------------------------------------ 7b
-        // Blocks on sites this payload never addressed.
-        //
-        // `commonPageBuilder` is propagationMethod: none, so every site owns its own nested
-        // entries. On the primary save Craft duplicates the primary site's blocks to every
-        // site the entry propagates to, and the loop above only visits sites the payload
-        // names — so only those get pruned by their own save. A locale the page does not
-        // exist in is never visited, and keeps a full copy of the primary's blocks forever.
-        // Measured on a clean run: 28,108 blocks written from 6,285 compiled, the surplus
-        // sitting on 7,729 (entry, site) pairs the payload never wrote.
-        //
-        // A site with no payload has no content by definition, so anything found there is a
-        // propagation artefact and is removed.
+        // Blocks on sites this payload never addressed: the loop above only
+        // visits sites the payload names, so only those are pruned by their
+        // own save. A locale the page does not exist in is never visited.
         // ------------------------------------------------------------------ 7b
-        $this->wipeBlocksOnUnpayloadedSites($entry, $perSite, $sites);
+        $blocks->prune($entry, $perSite, $sites);
 
         // ------------------------------------------------------------------ 8
-        // Persist the accumulated block UID map to state so the NEXT re-run
-        // can thread all UIDs back in and update blocks in place (Pitfall 3).
+        // Persist the per-site block id map so the NEXT re-run can thread
+        // the ids back in and update blocks in place (Pitfall 3).
         // ------------------------------------------------------------------ 8
-        // `!empty($blockUidMap)` until now, which is always true: the primary
-        // site's key is assigned unconditionally above, so the guard never
-        // prevented anything. What it meant to prevent is writing meta that
-        // records nothing.
-        if (array_filter($blockUidMap) !== []) {
-            $this->stateService->updateMeta($stateSource, (string) $stateKey, null, ['blockIds' => $blockUidMap]);
+        if ($blocks->tracked() !== []) {
+            $this->stateService->updateMeta($stateSource, (string) $stateKey, null, ['blockIds' => $blocks->tracked()]);
         }
 
         // ------------------------------------------------------------------ 9
@@ -528,12 +455,12 @@ class EntryMigrationService extends Component
      * each reload-before-save of subsequent sites.
      *
      * @param array<string, mixed> $data
-     * @param array<string, string> $blockUidMap
+     * @param BlockIdentity|null $blocks threads the site's known block ids into the payload; null writes it as is
      */
     private function applyPerSiteData(
         Entry $entry,
         array $data,
-        array $blockUidMap,
+        ?BlockIdentity $blocks,
         ?MigrationReport $report = null,
         ?string $stateSource = null,
         ?string $stateKey = null,
@@ -585,15 +512,8 @@ class EntryMigrationService extends Component
             $entry->setParentId((int) $data['parentId']);
         }
 
-        // Thread existing block UIDs into every matrix field payload so re-runs
-        // update existing blocks in place instead of duplicating them.
-        foreach ($fieldValues as $handle => $payload) {
-            if (is_array($payload) && $payload !== [] && $this->looksLikeMatrixPayload($payload)) {
-                $fieldValues[$handle] = $this->threadBlockUidsIntoPageBuilder(
-                    $payload,
-                    $blockUidMap,
-                );
-            }
+        if ($blocks !== null && $siteHandle !== null) {
+            $fieldValues = $blocks->thread($siteHandle, $fieldValues);
         }
         $fieldValues = $this->stripSourcePartRefs(
             $fieldValues,
@@ -814,7 +734,7 @@ class EntryMigrationService extends Component
      *    Stripping it does *not* cost the UID threading, though this docblock
      *    said so for as long as that was true. The sourceRef→blockId map is
      *    read off the marker before the strip and persisted in the state row's
-     *    `meta.blockIds`, per site; `threadBlockUidsIntoPageBuilder()` reads it
+     *    `meta.blockIds`, per site; `BlockIdentity::thread()` reads it
      *    back on the next run and keys each block by its existing id, so Craft
      *    updates in place. Adding the field to the entry types would change
      *    nothing here — the marker never needed to survive the save, only the
@@ -1054,18 +974,8 @@ class EntryMigrationService extends Component
         $refsByField = [];
 
         foreach ($perSite as $siteHandle => $siteData) {
-            foreach ($this->extractSourceRefPositions((array) ($siteData['fieldValues'] ?? [])) as $fieldHandle => $positions) {
-                $refs = [];
-
-                foreach ($positions as $position) {
-                    if (is_array($position) && $position['ref'] !== null) {
-                        $refs[(string) $position['ref']] = true;
-                    }
-                }
-
-                if ($refs !== []) {
-                    $refsByField[(string) $fieldHandle][(string) $siteHandle] = $refs;
-                }
+            foreach (BlockIdentity::sourceRefs((array) ($siteData['fieldValues'] ?? [])) as $fieldHandle => $refs) {
+                $refsByField[$fieldHandle][(string) $siteHandle] = $refs;
             }
         }
 
@@ -1173,350 +1083,5 @@ class EntryMigrationService extends Component
         if (class_exists(Craft::class, false)) {
             Craft::warning('EntryMigrationService: ' . $message, __METHOD__);
         }
-    }
-
-    /**
-     * Rewrite pageBuilder payload outer keys from "new{n}" to the matching
-     * existing block UID when the block's `fields._sourcePartRef` value is
-     * found in $uidMap.
-     *
-     * Shape of $uidMap: ['TextPagePart:123' => 'uid-abc', ...]
-     *
-     * @param array<string, array> $payload
-     * @param array<string, string> $uidMap
-     * @return array<string, array>
-     */
-    private function threadBlockUidsIntoPageBuilder(array $payload, array $uidMap): array
-    {
-        if (empty($uidMap)) {
-            return $payload;
-        }
-
-        $rewritten = [];
-        foreach ($payload as $key => $block) {
-            // A block's own nested Matrixes are threaded first, so reusing a parent in place
-            // reuses its children too rather than rebuilding them underneath it.
-            if (is_array($block) && is_array($block['fields'] ?? null)) {
-                foreach ($block['fields'] as $nestedHandle => $nestedPayload) {
-                    if (is_array($nestedPayload) && $nestedPayload !== [] && $this->looksLikeMatrixPayload($nestedPayload)) {
-                        $block['fields'][$nestedHandle] = $this->threadBlockUidsIntoPageBuilder($nestedPayload, $uidMap);
-                    }
-                }
-            }
-
-            $sourceRef = $block['fields']['_sourcePartRef'] ?? null;
-            if ($sourceRef !== null && isset($uidMap[$sourceRef])) {
-                // Use the persisted id as the key so Craft updates in place
-                $rewritten[$uidMap[$sourceRef]] = $block;
-            } else {
-                $rewritten[$key] = $block;
-            }
-        }
-        return $rewritten;
-    }
-
-    /**
-     * Returns true if $payload looks like a Craft matrix block payload:
-     * an array where every value is itself an array containing at least a `type` key.
-     *
-     * @param array<mixed> $payload
-     */
-    private function looksLikeMatrixPayload(array $payload): bool
-    {
-        $first = reset($payload);
-        return is_array($first) && isset($first['type']);
-    }
-
-    /**
-     * Extract `_sourcePartRef` values from a fieldValues payload by position,
-     * keyed by field handle. Must be called BEFORE stripSourcePartRefs() removes
-     * the refs. Returns `[fieldHandle => [0 => 'ref0', 1 => 'ref1', ...]]`.
-     *
-     * @param array<string, mixed> $fieldValues
-     * @return array<string, list<string|null>>
-     */
-    private function extractSourceRefPositions(array $fieldValues): array
-    {
-        $positions = [];
-        foreach ($fieldValues as $handle => $value) {
-            if (!is_array($value) || !$this->looksLikeMatrixPayload($value)) {
-                continue;
-            }
-            $refs = [];
-            foreach (array_values($value) as $block) {
-                $fields = is_array($block) ? (array) ($block['fields'] ?? []) : [];
-                $refs[] = [
-                    'ref' => $fields['_sourcePartRef'] ?? null,
-                    // A nested Matrix is the same problem one level down, and a block whose
-                    // children cannot be threaded has them rebuilt under it on every re-run.
-                    'children' => $this->extractSourceRefPositions($fields),
-                ];
-            }
-            $positions[$handle] = $refs;
-        }
-        return $positions;
-    }
-
-    /**
-     * Match just-saved matrix blocks by their position index against the
-     * source-ref positions map built before saving. Returns `[sourceRef => elementId]`.
-     *
-     * Craft 5's Matrix._createEntriesFromSerializedData() indexes existing entries
-     * by element ID (integer) in the flat-array format we use. UIDs as keys are
-     * only supported in the `uid:` prefixed / sortOrder format. We therefore store
-     * element IDs so the next re-run can pass them as keys and Craft updates the
-     * existing nested entry in place instead of creating a new one.
-     *
-     * Ordering contract: `threadBlockUidsIntoPageBuilder` rekeys blocks but
-     * preserves order; `stripSourcePartRefs` only removes a field key. Craft
-     * persists blocks in the order supplied to `setFieldValues`, so position 0
-     * in the payload === index 0 in `->all()` after save.
-     *
-     * @param array<string, list<string|null>> $sourceRefPositions
-     * @return array<string, string> sourceRef → elementId (string-cast integer)
-     */
-    private function collectBlockUidsByPosition(ElementInterface $entry, array $sourceRefPositions): array
-    {
-        $map = [];
-        foreach ($sourceRefPositions as $fieldHandle => $sourceRefs) {
-            try {
-                $blocks = $entry->getFieldValue($fieldHandle);
-                if (!$blocks || !method_exists($blocks, 'all')) {
-                    continue;
-                }
-                foreach (array_values($blocks->all()) as $idx => $block) {
-                    $position = $sourceRefs[$idx] ?? null;
-
-                    if (!is_array($position)) {
-                        continue;
-                    }
-
-                    if ($position['ref'] !== null && $block->id) {
-                        $map[$position['ref']] = (string) $block->id;
-                    }
-
-                    if ($position['children'] !== []) {
-                        $map += $this->collectBlockUidsByPosition($block, $position['children']);
-                    }
-                }
-            } catch (\Throwable) {
-                // Field may not be a matrix — skip
-            }
-        }
-        return $map;
-    }
-
-    /**
-     * Phase 12 / propagationMethod=none ghost-block cleanup. Hard-delete
-     * matrix-block elements on the secondary site that aren't in our
-     * tracked sourceRef→blockId map for this site. Background:
-     *
-     * Craft 5's matrix-block save with `propagationMethod: none` creates
-     * empty mirror blocks on every non-primary site enabled on the parent
-     * during the PRIMARY save (EntryMigrationService::saveEntryForSites
-     * sets `setEnabledForSite([1=>true, 2=>true, ...])` before the primary
-     * save). When the secondary site's save then runs with that site's
-     * actual data, Craft adds NEW blocks alongside the ghosts instead of
-     * replacing them — so the EN site's matrix ends up with both the
-     * 5 NL-mirror ghosts (sortOrder 1-5, NULL content) and the 3 real EN
-     * blocks (sortOrder 1-3) co-existing. Without this cleanup, the
-     * rendered EN matrix is a bloated mess.
-     *
-     * Cleanup contract:
-     *   - $perSiteFieldValues: this site's fieldValues map; we only wipe
-     *     blocks for matrix fields the secondary save is about to populate.
-     *     Other matrix fields (which this site's payload doesn't touch)
-     *     are left alone.
-     *   - $trackedBlockIds: blockUidMap[$siteHandle] — sourceRef → blockId
-     *     for blocks this migration tracked as real on this site. On first
-     *     runs the bucket is empty (no real blocks yet); on re-runs it
-     *     carries the previous run's real EN block ids.
-     *
-     * @param array<string, mixed>  $perSiteFieldValues
-     * @param array<string, string> $trackedBlockIds  sourceRef → blockId
-     */
-    private function wipeStaleSecondarySiteBlocks(
-        Entry $localised,
-        array $perSiteFieldValues,
-        array $trackedBlockIds,
-    ): void {
-        $trackedIds = [];
-        foreach ($trackedBlockIds as $blockId) {
-            $intId = (int) $blockId;
-            if ($intId > 0) {
-                $trackedIds[$intId] = true;
-            }
-        }
-
-        foreach ($perSiteFieldValues as $handle => $payload) {
-            if (!is_array($payload) || $payload === [] || !$this->looksLikeMatrixPayload($payload)) {
-                continue;
-            }
-            try {
-                $existing = $localised->getFieldValue((string) $handle);
-            } catch (\Throwable) {
-                continue;
-            }
-            if (!$existing || !method_exists($existing, 'all')) {
-                continue;
-            }
-            // Use ->siteId() to scope the query to this site's blocks.
-            // Without this scope we'd potentially see blocks from other
-            // sites and mistakenly delete them.
-            try {
-                if (method_exists($existing, 'siteId')) {
-                    $existing->siteId($localised->siteId);
-                }
-                if (method_exists($existing, 'status')) {
-                    $existing->status(null);
-                }
-                $blocks = $existing->all();
-            } catch (\Throwable) {
-                continue;
-            }
-            foreach ($blocks as $block) {
-                if (!is_object($block) || empty($block->id)) {
-                    continue;
-                }
-                if (isset($trackedIds[(int) $block->id])) {
-                    continue;
-                }
-                try {
-                    $this->elements()->delete($block, true);
-                } catch (\Throwable $e) {
-                    $this->warn(sprintf(
-                        'wipeStaleSecondarySiteBlocks: deleteElement(%d) failed: %s',
-                        (int) $block->id,
-                        $e->getMessage(),
-                    ));
-                }
-            }
-        }
-    }
-
-    /**
-     * Delete nested entries sitting on sites this payload said nothing about.
-     *
-     * Craft's own pruning (`NestedElementManager::deleteOtherNestedElements()`) is scoped to
-     * the owner's site, so it only ever runs for a site the loader actually saves. This closes
-     * the gap for the rest.
-     *
-     * @param array<string, mixed> $perSite the payload's per-site data, keyed by site handle
-     */
-    private function wipeBlocksOnUnpayloadedSites(Entry $entry, array $perSite, SiteMap $sites): void
-    {
-        $keep = [];
-
-        foreach (array_keys($perSite) as $handle) {
-            $siteId = $sites->siteIdForHandle((string) $handle);
-
-            if ($siteId !== null) {
-                $keep[$siteId] = true;
-            }
-        }
-
-        if ($keep === []) {
-            return;
-        }
-
-        // Every Craft site, not only this environment's: propagation does not
-        // stop at the mapping, so neither can the pruning.
-        foreach ($sites->craftSiteIds() as $siteId) {
-            if (isset($keep[$siteId])) {
-                continue;
-            }
-
-            $localised = $this->elements()->findById((int) $entry->id, Entry::class, $siteId);
-
-            if ($localised === null) {
-                continue;
-            }
-
-            foreach ($this->nestedEntriesOn($localised) as $block) {
-                // A nested entry is one element shared across the sites it exists on, so the
-                // copy reachable from an unpayloaded site is the *same row* the payloaded site
-                // renders. Deleting it there takes the content with it — measured at 294 of 825
-                // pages losing their whole Page Builder on a clean run.
-                if ($this->blockLivesOnAnySite($block, $keep)) {
-                    continue;
-                }
-
-                try {
-                    $this->elements()->delete($block, true);
-                } catch (\Throwable $e) {
-                    $this->warn(sprintf(
-                        'wipeBlocksOnUnpayloadedSites: deleteElement(%d) failed: %s',
-                        (int) $block->id,
-                        $e->getMessage(),
-                    ));
-                }
-            }
-        }
-    }
-
-    /**
-     * Does this nested entry have a row on any of the sites the payload named?
-     *
-     * @param array<int, bool> $keep site ids the payload named
-     */
-    private function blockLivesOnAnySite(Entry $block, array $keep): bool
-    {
-        if ($block->id === null || $keep === []) {
-            return false;
-        }
-
-        return $this->elements()->livesOnAnySite((int) $block->id, array_keys($keep));
-    }
-
-    /**
-     * Every nested entry owned by this entry on its own site, across all Matrix fields.
-     *
-     * @return list<Entry>
-     */
-    private function nestedEntriesOn(Entry $localised): array
-    {
-        $out = [];
-
-        foreach ($localised->getFieldLayout()?->getCustomFields() ?? [] as $field) {
-            // Matrix only. An Entries *relation* field also answers `all()`, and its entries
-            // are other people's content — deleting those would be catastrophic rather than
-            // tidy. Ownership is re-checked per block below as a second line of defence.
-            if (!$field instanceof Matrix) {
-                continue;
-            }
-
-            try {
-                $value = $localised->getFieldValue($field->handle);
-            } catch (\Throwable) {
-                continue;
-            }
-
-            if (!is_object($value) || !method_exists($value, 'all')) {
-                continue;
-            }
-
-            try {
-                if (method_exists($value, 'siteId')) {
-                    $value->siteId($localised->siteId);
-                }
-                if (method_exists($value, 'status')) {
-                    $value->status(null);
-                }
-
-                foreach ($value->all() as $block) {
-                    // Only ever delete a block this entry actually owns.
-                    if ($block instanceof Entry
-                        && $block->id
-                        && $block->getPrimaryOwnerId() === $localised->id
-                    ) {
-                        $out[] = $block;
-                    }
-                }
-            } catch (\Throwable) {
-                continue;
-            }
-        }
-
-        return $out;
     }
 }

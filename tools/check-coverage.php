@@ -58,6 +58,9 @@ const MODULES = [
  */
 const WATCHED = [
     'src/load/EntryMigrationService.php',
+    // Nested-entry reconciliation, lifted out of EntryMigrationService and
+    // tested through its interface; unmeasured until CI runs it once.
+    'src/load/BlockIdentity.php',
     'src/load/AssetMigrationService.php',
     'src/load/NavigationMigrationService.php',
     // The compile half decides what every entry becomes; until these carry a

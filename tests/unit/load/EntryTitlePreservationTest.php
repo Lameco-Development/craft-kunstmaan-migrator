@@ -21,7 +21,7 @@ final class EntryTitlePreservationTest extends TestCase
     private function apply(Entry $entry, array $data): void
     {
         (new ReflectionMethod(EntryMigrationService::class, 'applyPerSiteData'))
-            ->invoke(new EntryMigrationService(), $entry, $data, []);
+            ->invoke(new EntryMigrationService(), $entry, $data, null);
     }
 
     public function testANullTitleLeavesTheExistingEntryTitleInPlace(): void
