@@ -109,6 +109,9 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
     /** Craft's deferred entry-URI jobs this job's batches refused to queue. */
     public int $slugJobsVetoed = 0;
 
+    /** Saves this job's batches made without indexing; the index stage at the end of the chain does it once. */
+    public int $searchIndexDeferred = 0;
+
     public int $batchSize = 50;
 
     private ?EnvironmentPipeline $pipeline = null;
@@ -168,9 +171,10 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
         $this->context = $this->pipeline->prepare($mapping, $this->environment, (array) $spec, $this->settings);
 
         // Each batch is its own process, so each arms for itself and disarms
-        // in afterBatch(). Only a chain that ends in the URI pass may veto.
+        // in afterBatch(). Only a chain that ends in the closing passes may
+        // hold Craft's maintenance off.
         if ($this->chainCorpusPasses) {
-            $this->pipeline->armUriJobGuard($this->settings);
+            $this->pipeline->armMaintenanceGuard($this->settings);
         }
 
         $compiler = $this->pipeline->compiler();
@@ -258,9 +262,10 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
 
     protected function afterBatch(): void
     {
-        $this->pipeline->disarmUriJobGuard($this->tally);
+        $this->pipeline->disarmMaintenanceGuard($this->tally);
         $this->pipeline->foldCompileReport($this->tally);
         $this->slugJobsVetoed += $this->tally->slugJobsVetoed;
+        $this->searchIndexDeferred += $this->tally->searchIndexDeferred;
 
         foreach ($this->tally->counts as $name => $count) {
             $this->counts[$name] = ($this->counts[$name] ?? 0) + $count;
@@ -307,6 +312,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             'perSiteBlockLossSample' => $this->perSiteBlockLossSample,
             'assetFailures' => $this->assetFailures,
             'slugJobsVetoed' => $this->slugJobsVetoed,
+            'searchIndexDeferred' => $this->searchIndexDeferred,
         ]);
 
         QueueHelper::push(job: new RunAdaptersJob([

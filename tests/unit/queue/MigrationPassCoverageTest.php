@@ -9,6 +9,7 @@ use Lameco\Kunstmaanmigrator\console\LoadController;
 use Lameco\Kunstmaanmigrator\console\StateController;
 use Lameco\Kunstmaanmigrator\controllers\MigrationController;
 use Lameco\Kunstmaanmigrator\queue\FinalizeJob;
+use Lameco\Kunstmaanmigrator\queue\IndexForSearchJob;
 use Lameco\Kunstmaanmigrator\queue\MigrateEnvironmentJob;
 use Lameco\Kunstmaanmigrator\queue\RecomputeStructureUrisJob;
 use Lameco\Kunstmaanmigrator\queue\ResolveDeferredRefsJob;
@@ -65,9 +66,9 @@ final class MigrationPassCoverageTest extends TestCase
         }
     }
 
-    public function testTheFourQueueablePassesHaveJobs(): void
+    public function testTheFiveQueueablePassesHaveJobs(): void
     {
-        foreach ([MigrateEnvironmentJob::class, FinalizeJob::class, ResolveDeferredRefsJob::class, RecomputeStructureUrisJob::class] as $job) {
+        foreach ([MigrateEnvironmentJob::class, FinalizeJob::class, ResolveDeferredRefsJob::class, RecomputeStructureUrisJob::class, IndexForSearchJob::class] as $job) {
             self::assertTrue(class_exists($job));
             self::assertTrue((new ReflectionClass($job))->hasMethod('execute'));
         }
@@ -79,7 +80,7 @@ final class MigrationPassCoverageTest extends TestCase
      */
     public function testEveryJobRefusesProduction(): void
     {
-        foreach (['MigrateEnvironmentJob', 'FinalizeJob', 'ResolveDeferredRefsJob', 'RecomputeStructureUrisJob'] as $job) {
+        foreach (['MigrateEnvironmentJob', 'FinalizeJob', 'ResolveDeferredRefsJob', 'RecomputeStructureUrisJob', 'IndexForSearchJob'] as $job) {
             self::assertStringContainsString(
                 'ProductionGuard::isProduction()',
                 $this->source('src/queue/' . $job . '.php'),
@@ -121,6 +122,28 @@ final class MigrationPassCoverageTest extends TestCase
 
             $this->expectException(RuntimeException::class);
             $this->expectExceptionMessage('Refusing to recompute URIs');
+
+            $job->execute(null);
+        } finally {
+            if ($had) {
+                $_SERVER['CRAFT_ENVIRONMENT'] = $previous;
+            } else {
+                unset($_SERVER['CRAFT_ENVIRONMENT']);
+            }
+        }
+    }
+
+    public function testTheIndexJobRefusesProduction(): void
+    {
+        $had = array_key_exists('CRAFT_ENVIRONMENT', $_SERVER);
+        $previous = $_SERVER['CRAFT_ENVIRONMENT'] ?? null;
+        $_SERVER['CRAFT_ENVIRONMENT'] = 'production';
+
+        try {
+            $job = (new ReflectionClass(IndexForSearchJob::class))->newInstanceWithoutConstructor();
+
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('Refusing to index for search');
 
             $job->execute(null);
         } finally {

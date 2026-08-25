@@ -37,4 +37,13 @@ interface MigrationStateStream
      * @return Generator<int, array<string, mixed>>
      */
     public function entryRows(): Generator;
+
+    /**
+     * Streams the distinct target ids recorded under `$targetType` ('entry',
+     * 'asset', 'navigation_node'), rows without a target skipped — what the
+     * final index stage hands to the queue, without loading an element.
+     *
+     * @return Generator<int, int>
+     */
+    public function targetIds(string $targetType): Generator;
 }

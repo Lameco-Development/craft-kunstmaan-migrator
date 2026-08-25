@@ -40,6 +40,41 @@ final class ElementWriterContractTest extends TestCase
             $writer->saved[0]['propagate'],
             'propagating to sites the payload never named is what leaked nested entries onto them',
         );
+        self::assertTrue($writer->saved[0]['updateSearchIndex'], 'outside a run, Craft indexes on save as it always did');
+    }
+
+    /**
+     * Deferral is a switch around the saves, and resuming says how many it
+     * covered — the number the operator compares against the index stage.
+     */
+    public function testDeferringSearchIndexingCoversTheSavesInBetween(): void
+    {
+        $writer = new InMemoryElementWriter();
+
+        $writer->save($this->element(1));
+        $writer->deferSearchIndexing();
+        $writer->deferSearchIndexing();
+        $writer->save($this->element(2));
+        $writer->save($this->element(3));
+        $deferred = $writer->resumeSearchIndexing();
+        $writer->save($this->element(4));
+
+        self::assertSame(2, $deferred);
+        self::assertSame([true, false, false, true], array_column($writer->saved, 'updateSearchIndex'));
+        self::assertSame(0, $writer->resumeSearchIndexing(), 'resuming twice counts nothing twice');
+    }
+
+    public function testSiteIdsOfAnswersTheSitesAnElementWasWrittenOrDeclaredOn(): void
+    {
+        $writer = new InMemoryElementWriter();
+        $onSiteTwo = $this->element(7);
+        $onSiteTwo->siteId = 2;
+
+        $writer->save($onSiteTwo);
+        $writer->willLiveOn(7, [5]);
+
+        self::assertSame([2, 5], $writer->siteIdsOf(7));
+        self::assertSame([], $writer->siteIdsOf(8), 'an element with no row anywhere');
     }
 
     public function testDeleteDefaultsToTheSoftDeleteWindow(): void

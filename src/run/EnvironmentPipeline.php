@@ -10,8 +10,10 @@ use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
 use Lameco\Kunstmaanmigrator\Compile\Compiler;
 use Lameco\Kunstmaanmigrator\Compile\PayloadWriter;
 use Lameco\Kunstmaanmigrator\Compile\Transforms;
+use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
+use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
@@ -42,7 +44,7 @@ final class EnvironmentPipeline
 {
     private readonly ?WriteConflictRetry $retry;
 
-    private bool $uriJobsArmed = false;
+    private bool $maintenanceGuarded = false;
 
     public function __construct(
         private readonly PayloadValidator $validator,
@@ -50,6 +52,7 @@ final class EnvironmentPipeline
         private readonly Compiler $compiler,
         private readonly Transforms $transforms,
         private readonly UriJobGuard $uriJobs,
+        private readonly ElementWriter $elements,
     ) {
         $this->retry = $saver === null ? null : new WriteConflictRetry($saver->save(...));
     }
@@ -74,6 +77,7 @@ final class EnvironmentPipeline
             new Compiler($mapping, $transforms, new TargetModel($gateway), $settings->only),
             $transforms,
             new CraftUriJobGuard(),
+            new CraftElementWriter(),
         );
     }
 
@@ -161,7 +165,7 @@ final class EnvironmentPipeline
     ): void {
         $context = $this->prepare($mapping, $env, $spec, $settings);
 
-        $this->guardUriJobs($settings, $tally, function() use ($context, $env, $settings, $tally, $writer): void {
+        $this->guardMaintenance($settings, $tally, function() use ($context, $env, $settings, $tally, $writer): void {
             $this->compiler->compile(
                 $context->legacy,
                 $env,
@@ -178,48 +182,52 @@ final class EnvironmentPipeline
     }
 
     /**
-     * Run `$body` with Craft's deferred entry-URI jobs vetoed — when, and
-     * only when, this run ends in the URI pass that makes them redundant.
-     * Disarmed on the way out whatever happens inside, so an exception never
-     * leaves a handler on the queue for whatever the process does next.
+     * Run `$body` with Craft's per-save maintenance held off — entry-URI jobs
+     * vetoed, search indexing deferred — when, and only when, this run ends
+     * in the closing passes that do that work once: the URI pass and the
+     * index stage, gated together. Disarmed on the way out whatever happens
+     * inside, so an exception never leaves a handler on the queue, or the
+     * index off, for whatever the process does next.
      *
      * @param callable(): void $body
      */
-    public function guardUriJobs(RunSettings $settings, RunTally $tally, callable $body): void
+    public function guardMaintenance(RunSettings $settings, RunTally $tally, callable $body): void
     {
-        $this->armUriJobGuard($settings);
+        $this->armMaintenanceGuard($settings);
 
         try {
             $body();
         } finally {
-            $this->disarmUriJobGuard($tally);
+            $this->disarmMaintenanceGuard($tally);
         }
     }
 
     /**
      * The arm half on its own, for the batched job: a batch arms when it
      * loads and disarms after its last item, with Craft's own loop in between.
-     * A caller whose run will not reach the URI pass gets a no-op.
+     * A caller whose run will not reach the closing passes gets a no-op.
      */
-    public function armUriJobGuard(RunSettings $settings): void
+    public function armMaintenanceGuard(RunSettings $settings): void
     {
-        if (!$settings->settlesUris() || $this->uriJobsArmed) {
+        if (!$settings->settlesUris() || $this->maintenanceGuarded) {
             return;
         }
 
         $this->uriJobs->arm();
-        $this->uriJobsArmed = true;
+        $this->elements->deferSearchIndexing();
+        $this->maintenanceGuarded = true;
     }
 
-    /** The disarm half; what was vetoed lands on the tally. */
-    public function disarmUriJobGuard(RunTally $tally): void
+    /** The disarm half; what was vetoed and what went unindexed land on the tally. */
+    public function disarmMaintenanceGuard(RunTally $tally): void
     {
-        if (!$this->uriJobsArmed) {
+        if (!$this->maintenanceGuarded) {
             return;
         }
 
-        $this->uriJobsArmed = false;
+        $this->maintenanceGuarded = false;
         $tally->slugJobsVetoed += $this->uriJobs->disarm();
+        $tally->searchIndexDeferred += $this->elements->resumeSearchIndexing();
     }
 
     /**

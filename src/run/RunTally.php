@@ -103,6 +103,12 @@ final class RunTally
      */
     public int $slugJobsVetoed = 0;
 
+    /**
+     * Saves the run made without updating the search index, because the
+     * final index stage rebuilds it once; see `ElementWriter::deferSearchIndexing()`.
+     */
+    public int $searchIndexDeferred = 0;
+
     public function count(string $bucket): void
     {
         $this->counts[$bucket] = ($this->counts[$bucket] ?? 0) + 1;

@@ -34,6 +34,17 @@ final class WriteBoundaryTest extends TestCase
             'seam' => 'ElementWriter',
             'instead' => 'save/delete/findById/invalidateCaches',
         ],
+        // Indexing is deferred at the save and rebuilt by the index stage as
+        // Craft's own queue jobs; an inline indexElementAttributes() is the
+        // per-save cost the deferral exists to remove.
+        [
+            'name' => 'ElementWriter (search)',
+            'pattern' => '~Craft::\$app->(?:search|getSearch\(\))->(\w+)~',
+            'adapter' => 'src/craft/CraftElementWriter.php',
+            'fake' => 'tests/support/InMemoryElementWriter.php',
+            'seam' => 'ElementWriter',
+            'instead' => 'deferSearchIndexing/resumeSearchIndexing/queueSearchIndex',
+        ],
         [
             'pattern' => '~Navigation::\$plugin->(?:get\w+\(\)->)?(\w+)~',
             'adapter' => 'src/craft/VerbbNavigationGateway.php',
@@ -73,7 +84,7 @@ final class WriteBoundaryTest extends TestCase
     public static function boundaries(): iterable
     {
         foreach (self::BOUNDARIES as $boundary) {
-            yield $boundary['seam'] => [$boundary];
+            yield ($boundary['name'] ?? $boundary['seam']) => [$boundary];
         }
     }
 

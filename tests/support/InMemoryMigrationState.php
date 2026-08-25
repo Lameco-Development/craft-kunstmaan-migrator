@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\support;
 
+use Generator;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 
 /**
@@ -76,6 +77,21 @@ final class InMemoryMigrationState extends MigrationStateService
 
         $current = $this->rows[$source . '|' . $key]['meta'] ?? [];
         $this->rows[$source . '|' . $key]['meta'] = array_merge(is_array($current) ? $current : [], $meta);
+    }
+
+    public function targetIds(string $targetType): Generator
+    {
+        $seen = [];
+
+        foreach ($this->rows as $row) {
+            $id = (int) ($row['targetId'] ?? 0);
+
+            if (($row['targetType'] ?? null) === $targetType && $id > 0 && !isset($seen[$id])) {
+                $seen[$id] = true;
+
+                yield $id;
+            }
+        }
     }
 
     /** @return array<string, mixed>|null the meta a row carries, as the next run would read it */

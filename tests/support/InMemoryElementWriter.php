@@ -17,7 +17,7 @@ use ReflectionClass;
  */
 final class InMemoryElementWriter implements ElementWriter
 {
-    /** @var list<array{element: ElementInterface, runValidation: bool, propagate: bool}> */
+    /** @var list<array{element: ElementInterface, runValidation: bool, propagate: bool, updateSearchIndex: bool}> */
     public array $saved = [];
 
     /** @var list<array{element: ElementInterface, hardDelete: bool}> */
@@ -37,8 +37,34 @@ final class InMemoryElementWriter implements ElementWriter
      */
     public array $urisUpdated = [];
 
+    /**
+     * Every `findById()`, in call order — the element loads a module asked
+     * for, which is what a read-count assertion is about.
+     *
+     * @var list<array{id: int, siteId: ?int}>
+     */
+    public array $reads = [];
+
+    /** How many times a module asked which sites an element has a row on. */
+    public int $siteLookups = 0;
+
+    public bool $searchIndexDeferred = false;
+
+    /**
+     * Every index job asked for, in call order: the element type and the ids
+     * it carries.
+     *
+     * @var list<array{elementType: string, elementIds: list<int>}>
+     */
+    public array $searchIndexQueued = [];
+
     /** @var array<string, list<Entry>> section handle => entries, parents first */
     private array $structures = [];
+
+    /** @var array<int, list<int>> owner id => the nested entries it primarily owns */
+    private array $nested = [];
+
+    private int $savesWhileDeferred = 0;
 
     /**
      * Craft stamps an id onto a new element as it saves it, and callers read
@@ -101,6 +127,13 @@ final class InMemoryElementWriter implements ElementWriter
         return false;
     }
 
+    public function siteIdsOf(int $elementId): array
+    {
+        $this->siteLookups++;
+
+        return array_keys($this->sitesOf[$elementId] ?? []);
+    }
+
     public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
     {
         if (isset($this->refuse[spl_object_id($element)])) {
@@ -117,13 +150,53 @@ final class InMemoryElementWriter implements ElementWriter
             $this->sitesOf[(int) $element->id][(int) $element->siteId] = true;
         }
 
+        if ($this->searchIndexDeferred) {
+            $this->savesWhileDeferred++;
+        }
+
         $this->saved[] = [
             'element' => $element,
             'runValidation' => $runValidation,
             'propagate' => $propagate,
+            'updateSearchIndex' => !$this->searchIndexDeferred,
         ];
 
         return true;
+    }
+
+    public function deferSearchIndexing(): void
+    {
+        if ($this->searchIndexDeferred) {
+            return;
+        }
+
+        $this->searchIndexDeferred = true;
+        $this->savesWhileDeferred = 0;
+    }
+
+    public function resumeSearchIndexing(): int
+    {
+        $this->searchIndexDeferred = false;
+        $deferred = $this->savesWhileDeferred;
+        $this->savesWhileDeferred = 0;
+
+        return $deferred;
+    }
+
+    public function nestedEntryIds(array $ownerIds): array
+    {
+        $ids = [];
+
+        foreach ($ownerIds as $ownerId) {
+            $ids = [...$ids, ...($this->nested[$ownerId] ?? [])];
+        }
+
+        return $ids;
+    }
+
+    public function queueSearchIndex(string $elementType, array $elementIds): void
+    {
+        $this->searchIndexQueued[] = ['elementType' => $elementType, 'elementIds' => $elementIds];
     }
 
     public function delete(ElementInterface $element, bool $hardDelete = false): void
@@ -138,6 +211,8 @@ final class InMemoryElementWriter implements ElementWriter
      */
     public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
     {
+        $this->reads[] = ['id' => $id, 'siteId' => $siteId];
+
         return $this->findable[$this->key($id, $siteId)] ?? $this->findable[$this->key($id, null)] ?? null;
     }
 
@@ -204,6 +279,12 @@ final class InMemoryElementWriter implements ElementWriter
         foreach ($siteIds as $siteId) {
             $this->sitesOf[$elementId][$siteId] = true;
         }
+    }
+
+    /** @param list<int> $nestedIds the nested entries whose primary owner this is */
+    public function willOwnNested(int $ownerId, array $nestedIds): void
+    {
+        $this->nested[$ownerId] = $nestedIds;
     }
 
     public function willRefuse(ElementInterface $element): void
