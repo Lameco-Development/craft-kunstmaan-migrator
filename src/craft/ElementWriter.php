@@ -26,6 +26,10 @@ use craft\elements\Entry;
  * construction: `new Entry()`, the Single-section lookup, and one raw query on
  * `elements_sites`. Those three are the rest of the surface.
  *
+ * The performance pass added what a save costs beyond the row: search
+ * indexing, held off for the run and rebuilt once at the end, and the one
+ * site lookup that replaces a `findById()` per site.
+ *
  * Two adapters make it a real seam rather than a hypothetical one:
  * CraftElementWriter in production, InMemoryElementWriter in tests.
  */
@@ -58,6 +62,20 @@ interface ElementWriter
      * @param list<int> $siteIds
      */
     public function livesOnAnySite(int $elementId, array $siteIds): bool;
+
+    /**
+     * The sites an element has a row on — one read, however many sites the
+     * install has.
+     *
+     * The question the unlisted-site wipe asks before it loads anything: an
+     * entry written to two of nine sites has nothing to prune on the other
+     * seven, and asking each of them with a site-scoped `findById()` was six
+     * null-returning element loads per entry, ~11k per run.
+     *
+     * @return list<int>
+     */
+    public function siteIdsOf(int $elementId): array;
+
     /**
      * Saves an element, returning false rather than throwing when Craft
      * refuses it — callers read `$element->getErrors()` for the reason.
@@ -65,8 +83,53 @@ interface ElementWriter
      * `$propagate` defaults to false because this migration writes each site
      * explicitly: letting Craft propagate a save to sites the payload never
      * named is what leaked nested entries onto them.
+     *
+     * While search indexing is deferred (`deferSearchIndexing()`), the save
+     * tells Craft not to index; Craft memoises that for the nested-entry and
+     * propagation saves it makes inside the same call, so blocks inherit it.
      */
     public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool;
+
+    /**
+     * Stop every save from here until `resumeSearchIndexing()` updating the
+     * search index.
+     *
+     * Craft indexes on every save — inline in a console request, one queue
+     * job per save under the web runner — and a nested entry whose field is
+     * searchable re-indexes its owner too. During a migration that is
+     * keyword extraction for every owner save and every block save, for
+     * content nobody searches until the run is done. A run that defers it
+     * indexes once, at the end, through `queueSearchIndex()`.
+     *
+     * A fact about the run, not about one writer: the services each hold
+     * their own adapter, so the production adapter keeps this process-wide,
+     * the way `UriJobGuard`'s handler is.
+     */
+    public function deferSearchIndexing(): void;
+
+    /** Index on save again; how many saves went unindexed while deferred. */
+    public function resumeSearchIndexing(): int;
+
+    /**
+     * The nested entries whose primary owner is one of these, one level down.
+     * Trashed, draft and revision rows excluded.
+     *
+     * The final index stage needs them because Craft indexes a nested entry
+     * as an element of its own, not only as keywords on its owner's row.
+     *
+     * @param list<int> $ownerIds
+     * @return list<int>
+     */
+    public function nestedEntryIds(array $ownerIds): array;
+
+    /**
+     * Rebuild the search index of these elements on every site they have —
+     * deferred to the queue, no element save. One call is one job.
+     *
+     * @param class-string<ElementInterface> $elementType
+     * @param list<int> $elementIds
+     */
+    public function queueSearchIndex(string $elementType, array $elementIds): void;
 
     /**
      * Deletes an element. `$hardDelete` skips the soft-delete window, which is

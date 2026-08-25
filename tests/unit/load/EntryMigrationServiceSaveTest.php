@@ -351,11 +351,36 @@ final class EntryMigrationServiceSaveTest extends TestCase
                 return $this->inner->livesOnAnySite($elementId, $siteIds);
             }
 
+            public function siteIdsOf(int $elementId): array
+            {
+                return $this->inner->siteIdsOf($elementId);
+            }
+
             public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
             {
                 $this->saves++;
 
                 throw $this->deadlock;
+            }
+
+            public function deferSearchIndexing(): void
+            {
+                $this->inner->deferSearchIndexing();
+            }
+
+            public function resumeSearchIndexing(): int
+            {
+                return $this->inner->resumeSearchIndexing();
+            }
+
+            public function nestedEntryIds(array $ownerIds): array
+            {
+                return $this->inner->nestedEntryIds($ownerIds);
+            }
+
+            public function queueSearchIndex(string $elementType, array $elementIds): void
+            {
+                $this->inner->queueSearchIndex($elementType, $elementIds);
             }
 
             public function delete(ElementInterface $element, bool $hardDelete = false): void

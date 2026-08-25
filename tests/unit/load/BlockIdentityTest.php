@@ -356,6 +356,36 @@ final class BlockIdentityTest extends TestCase
         self::assertSame([], $this->writer->deleted);
     }
 
+    /**
+     * The wipe asks once which sites the entry has a row on, and loads the
+     * entry only there. Nine Craft sites, rows on two: one site lookup, one
+     * localised load, and nothing asked of the seven empty sites — where the
+     * old loop issued a null-returning `findById()` each, ~11k per run.
+     */
+    public function testTheUnlistedSiteWipeAsksForTheEntrysSitesOnceAndLoadsNothingElsewhere(): void
+    {
+        $craftSites = ['default' => [1, 'nl-NL', true]];
+
+        foreach (range(2, 9) as $siteId) {
+            $craftSites['site' . $siteId] = [$siteId, 'en-GB'];
+        }
+
+        $sites = EnvironmentFactory::sites(['nl' => 'default', 'en' => 'site2', 'de' => 'site3'], $craftSites);
+        $entry = IdentityStubEntry::make(siteId: 1, blocks: [], id: 700);
+        $onSite5 = IdentityStubEntry::make(siteId: 5, blocks: [
+            'pageBuilder' => [IdentityStubBlock::withId(801, ownerId: 700)],
+        ], layout: IdentityStubFieldLayout::withFields([self::matrixField('pageBuilder')]), id: 700);
+        $this->writer->willLiveOn(700, [1]);
+        $this->writer->willFind(700, $onSite5, 5);
+        $this->writer->willFindOnlyOnKnownSites(700);
+
+        $this->identity()->prune($entry, ['default' => []], $sites);
+
+        self::assertSame(1, $this->writer->siteLookups);
+        self::assertSame([['id' => 700, 'siteId' => 5]], $this->writer->reads, 'the payloaded site is not loaded, and the seven empty sites are not asked');
+        self::assertSame([801], $this->writer->deletedIds());
+    }
+
     public function testAnEmptyPayloadPrunesNothing(): void
     {
         // With no payload there is no "keep" set — bailing out beats treating every site

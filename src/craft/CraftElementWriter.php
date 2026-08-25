@@ -10,7 +10,9 @@ use craft\db\Query;
 use craft\db\Table;
 use craft\elements\Entry;
 use craft\helpers\Db;
+use craft\helpers\Queue as QueueHelper;
 use craft\models\Section;
+use craft\queue\jobs\UpdateSearchIndex;
 
 /**
  * The production adapter: a thin pass-through to `Craft::$app->elements`.
@@ -23,9 +25,18 @@ use craft\models\Section;
  * and a deadlock rolls that whole transaction back; a retry here would commit
  * one element on top of an entry that is already gone. `run\WriteConflictRetry`
  * retries the payload instead, where the unit of work is idempotent.
+ *
+ * The search-index deferral is the one piece of state, and it is static:
+ * `Plugin::wireServices()` hands every service its own instance of this
+ * adapter, and the deferral is a fact about the run. Armed and disarmed by the
+ * pipeline around the run; a process that dies armed takes the flag with it.
  */
 final class CraftElementWriter implements ElementWriter
 {
+    private static bool $searchIndexDeferred = false;
+
+    private static int $savesWhileDeferred = 0;
+
     public function createEntry(int $sectionId, int $typeId, int $siteId): Entry
     {
         $entry = new Entry();
@@ -60,9 +71,82 @@ final class CraftElementWriter implements ElementWriter
             ->exists();
     }
 
+    public function siteIdsOf(int $elementId): array
+    {
+        $siteIds = (new Query())
+            ->select('siteId')
+            ->from(Table::ELEMENTS_SITES)
+            ->where(['elementId' => $elementId])
+            ->column();
+
+        return array_map(intval(...), $siteIds);
+    }
+
     public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool
     {
+        if (self::$searchIndexDeferred) {
+            self::$savesWhileDeferred++;
+
+            return Craft::$app->elements->saveElement($element, $runValidation, $propagate, updateSearchIndex: false);
+        }
+
         return Craft::$app->elements->saveElement($element, $runValidation, $propagate);
+    }
+
+    public function deferSearchIndexing(): void
+    {
+        if (self::$searchIndexDeferred) {
+            return;
+        }
+
+        self::$searchIndexDeferred = true;
+        self::$savesWhileDeferred = 0;
+    }
+
+    public function resumeSearchIndexing(): int
+    {
+        self::$searchIndexDeferred = false;
+        $deferred = self::$savesWhileDeferred;
+        self::$savesWhileDeferred = 0;
+
+        return $deferred;
+    }
+
+    public function nestedEntryIds(array $ownerIds): array
+    {
+        if ($ownerIds === []) {
+            return [];
+        }
+
+        $ids = (new Query())
+            ->select('entries.id')
+            ->from(['entries' => Table::ENTRIES])
+            ->innerJoin(['elements' => Table::ELEMENTS], '[[elements.id]] = [[entries.id]]')
+            ->where(['entries.primaryOwnerId' => $ownerIds])
+            ->andWhere(['elements.dateDeleted' => null, 'elements.draftId' => null, 'elements.revisionId' => null])
+            ->column();
+
+        return array_map(intval(...), $ids);
+    }
+
+    public function queueSearchIndex(string $elementType, array $elementIds): void
+    {
+        if ($elementIds === []) {
+            return;
+        }
+
+        // Ahead of whatever Craft's own maintenance left at default priority,
+        // with the chain's TTR: a chunk is a few hundred elements on every
+        // site, and the channel default of 300 seconds is for one.
+        QueueHelper::push(
+            job: new UpdateSearchIndex([
+                'elementType' => $elementType,
+                'elementId' => $elementIds,
+                'siteId' => '*',
+            ]),
+            priority: 512,
+            ttr: 3600,
+        );
     }
 
     public function delete(ElementInterface $element, bool $hardDelete = false): void

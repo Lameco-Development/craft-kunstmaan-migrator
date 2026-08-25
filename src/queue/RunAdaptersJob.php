@@ -19,10 +19,10 @@ use yii\queue\RetryableJobInterface;
  * One environment's adapter passes, then the next link of the chain (#48).
  *
  * Pushed by the environment job's last batch. When environments remain, the
- * next one is pushed from here; when none do, the corpus-wide fixup, finalize
- * and URI passes are — which is what makes their ordering structural instead
- * of FIFO-hopeful (#47): they can no longer run before the entries they
- * resolve against exist.
+ * next one is pushed from here; when none do, the corpus-wide fixup, finalize,
+ * URI and index passes are — which is what makes their ordering structural
+ * instead of FIFO-hopeful (#47): they can no longer run before the entries
+ * they resolve against exist.
  */
 final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
 {
@@ -68,10 +68,10 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
                 $tally = new RunTally();
 
                 // An adapter that saves entries queues the same deferred URI
-                // work a batch does; the veto holds only for a chain that
-                // ends in the URI pass.
+                // work and indexing a batch does; the hold applies only to a
+                // chain that ends in the closing passes.
                 if ($this->chainCorpusPasses) {
-                    $pipeline->guardUriJobs($settings, $tally, function() use (&$extra, $pipeline, $context, $settings): void {
+                    $pipeline->guardMaintenance($settings, $tally, function() use (&$extra, $pipeline, $context, $settings): void {
                         $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings);
                     });
                 } else {
@@ -79,6 +79,7 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
                 }
 
                 $extra['slugJobsVetoed'] = $tally->slugJobsVetoed;
+                $extra['searchIndexDeferred'] = $tally->searchIndexDeferred;
             });
         }
 
@@ -105,6 +106,9 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
             QueueHelper::push(job: new ResolveDeferredRefsJob(['fullCorpus' => $this->fullCorpus]), priority: 512);
             QueueHelper::push(job: new FinalizeJob(['mappingPath' => $this->mappingPath, 'dryRun' => $this->dryRun]), priority: 512);
             QueueHelper::push(job: new RecomputeStructureUrisJob(['mappingPath' => $this->mappingPath]), priority: 512);
+            // Last of all: the run saved with search indexing deferred, and
+            // the index is rebuilt once, from committed state.
+            QueueHelper::push(job: new IndexForSearchJob(), priority: 512);
         }
     }
 

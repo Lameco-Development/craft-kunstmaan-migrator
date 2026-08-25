@@ -481,6 +481,22 @@ class MigrationStateService extends Component implements MigrationStateReader, M
         }
     }
 
+    public function targetIds(string $targetType): Generator
+    {
+        $reader = $this->db()->createCommand(
+            'SELECT DISTINCT targetId FROM ' . $this->db()->schema->quoteTableName($this->table())
+            . ' WHERE targetType = :targetType AND targetId IS NOT NULL AND targetId > 0',
+            [':targetType' => $targetType],
+        )->query();
+        try {
+            foreach ($reader as $row) {
+                yield (int) $row['targetId'];
+            }
+        } finally {
+            $reader->close();
+        }
+    }
+
     /**
      * Executes `$callback` only if `(source, key, siteId)` has not already
      * been recorded. The callback must return an array with keys

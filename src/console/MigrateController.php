@@ -14,6 +14,7 @@ use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
+use Lameco\Kunstmaanmigrator\finalize\SearchIndexPass;
 use Lameco\Kunstmaanmigrator\finalize\StructureUriPass;
 use Lameco\Kunstmaanmigrator\load\FixupService;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
@@ -287,10 +288,10 @@ final class MigrateController extends Controller
 
             // One job starts the chain (#48): each environment's last batch
             // pushes its adapters, each adapter pass pushes the next
-            // environment, and the corpus-wide fixup, finalize and URI passes run only after
-            // the last, the URI pass last of all — the same migration as an
-            // inline run, with the ordering enforced structurally instead of
-            // FIFO-hopeful (#47).
+            // environment, and the corpus-wide fixup, finalize, URI and index
+            // passes run only after the last, in that order — the same
+            // migration as an inline run, with the ordering enforced
+            // structurally instead of FIFO-hopeful (#47).
             QueueHelper::push(job: new MigrateEnvironmentJob([
                 'mappingPath' => $this->mapping,
                 'environment' => $queued[0],
@@ -309,6 +310,7 @@ final class MigrateController extends Controller
                 $queued[] = 'fixup';
                 $queued[] = 'finalize';
                 $queued[] = 'uris';
+                $queued[] = 'search';
             }
 
             $this->stdout(json_encode([
@@ -434,6 +436,23 @@ final class MigrateController extends Controller
             });
         }
 
+        // The run saved with search indexing deferred; rebuilt once here, from committed
+        // state, as Craft's own index jobs — the last thing the run leaves for the queue.
+        // See SearchIndexPass.
+        $searchIndex = null;
+        $searchIndexJobs = 0;
+
+        if ($settings->settlesUris()) {
+            RunLog::default()->track('search', [], function(array &$extra) use ($plugin, &$searchIndex, &$searchIndexJobs): void {
+                $pass = new SearchIndexPass(new CraftElementWriter(), $plugin->migrationStateService);
+                $searchIndex = $pass->run();
+                $searchIndexJobs = $pass->jobs();
+                $extra['counts'] = $searchIndex;
+                $extra['searchIndexQueued'] = array_sum($searchIndex);
+                $extra['searchIndexJobs'] = $searchIndexJobs;
+            });
+        }
+
         $resave = null;
 
         if ($this->resave && !$this->dryRun) {
@@ -456,6 +475,10 @@ final class MigrateController extends Controller
             'uris' => $uris,
             'slugJobsVetoed' => $tally->slugJobsVetoed,
             'slugJobsReleased' => $slugJobsReleased,
+            'searchIndexDeferred' => $tally->searchIndexDeferred,
+            'searchIndex' => $searchIndex,
+            'searchIndexQueued' => $searchIndex === null ? null : array_sum($searchIndex),
+            'searchIndexJobs' => $searchIndexJobs,
             'resave' => $resave,
             'lossyConversions' => $lossCount,
             'losses' => $tally->losses,

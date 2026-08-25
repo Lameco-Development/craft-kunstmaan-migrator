@@ -186,4 +186,9 @@ final class FakeStateStream implements MigrationStateStream
     {
         yield from $this->entries;
     }
+
+    public function targetIds(string $targetType): Generator
+    {
+        yield from [];
+    }
 }

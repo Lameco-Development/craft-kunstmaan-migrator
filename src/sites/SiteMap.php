@@ -154,19 +154,6 @@ final class SiteMap
         return $handle === null ? null : ($this->craftSiteIds[$handle] ?? null);
     }
 
-    /**
-     * Every Craft site's id, whether or not a locale claims it.
-     *
-     * A pass that prunes what propagation left behind has to look on every
-     * site, not only the ones this environment writes — that is where the
-     * artefacts are.
-     *
-     * @return list<int>
-     */
-    public function craftSiteIds(): array
-    {
-        return array_values($this->craftSiteIds);
-    }
 
     /** @return array<string, string> locale => handle, verbatim and in order */
     public function configured(): array

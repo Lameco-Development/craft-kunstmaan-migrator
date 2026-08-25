@@ -728,6 +728,7 @@ final class MigrationController extends Controller
             $queued[] = 'fixup';
             $queued[] = 'finalize';
             $queued[] = 'uris';
+            $queued[] = 'search';
         }
 
         // What was queued, in words. "Queued LV, fixup, finalize." leaks two

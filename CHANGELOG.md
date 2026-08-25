@@ -49,6 +49,24 @@ maintenance the URI stage replaces. Details in the site's
 
 ### Changed
 
+- **No search indexing during the run; the index is rebuilt once at the
+  end.** Craft extracted search keywords inline on every save — every owner
+  save, every block save, and the owner again for each block whose field is
+  searchable — for content nobody searches until the migration is done. A
+  run that ends in the closing passes now saves with `updateSearchIndex`
+  off, under the same gate as the URI pass, and a final index stage
+  (`SearchIndexPass`, after the URI pass in both callers) hands every
+  element the state table names — entries with their nested entries, assets,
+  navigation nodes — to Craft's own `UpdateSearchIndex` jobs in chunks of
+  200, without re-saving anything. The summary and the run log report
+  `searchIndexDeferred` (saves made unindexed) and `searchIndexQueued`
+  (elements handed to the queue). `--entries-only`, `--dry-run` and
+  `load/entry` keep indexing on save, as before.
+- **The unlisted-site wipe is one query per entry.** `BlockIdentity::prune()`
+  asked every Craft site the payload never named for a localised entry — six
+  null-returning element loads per entry on a nine-site install, ~11k per
+  run. It now asks the seam once which sites the entry has a row on
+  (`ElementWriter::siteIdsOf()`) and loads the entry only there.
 - **⚠ One namespace, one root.** `Lameco\KumaCompile\*` is now
   `Lameco\Kunstmaanmigrator\*` and lives under `src/` with everything else;
   `lib/kuma-compile/` is gone. Kernel packages keep their CamelCase names
