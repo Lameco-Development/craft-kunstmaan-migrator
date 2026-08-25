@@ -263,10 +263,27 @@ class EntryMigrationService extends Component
             (string) $stateKey,
             $tally,
         );
+
+        // A new element always propagates on its first save, whatever `propagate` says
+        // (`Elements::saveElement()`: `$propagate = !$element->id || $propagate`), and each
+        // site row it creates receives every field value the primary holds — Matrix
+        // included, which `NestedElementManager::duplicateNestedElements()` copies as fresh
+        // nested entries. Those are the ghosts the secondary saves then had to hard-delete
+        // before writing their own blocks: per entry on three sites, 2B nested entries
+        // written to be deleted. So a new entry's first save goes out bare — every Matrix
+        // field empty, so propagation has nothing to copy — and the primary writes its own
+        // blocks in the per-site pass below, on an owner that is no longer new. An existing
+        // entry never propagates on save, so it carries its blocks from the start.
+        $isNew = $entry->id === null;
+        $bareData = $primaryData;
+        if ($isNew) {
+            $bareData['fieldValues'] = BlockIdentity::withoutBlocks((array) ($primaryData['fieldValues'] ?? []));
+        }
+
         $this->applyPerSiteData(
             $entry,
-            $primaryData,
-            $blocks,
+            $bareData,
+            $isNew ? null : $blocks,
             $report,
             $stateSource,
             (string) $stateKey,
@@ -290,7 +307,9 @@ class EntryMigrationService extends Component
             );
         }
 
-        $blocks->record($primarySite->handle, $entry);
+        if (!$isNew) {
+            $blocks->record($primarySite->handle, $entry);
+        }
 
         // ------------------------------------------------------------------ 6
         // Record / update state row
@@ -304,15 +323,18 @@ class EntryMigrationService extends Component
         );
 
         // ------------------------------------------------------------------ 7
-        // Subsequent saves — every non-primary site. Reload-before-save per
-        // Pitfall 2. Each site save stays independent; a per-site failure is
-        // a warning, not fatal — don't abort the whole migration.
+        // Per-site saves — every site the payload names, the primary included
+        // when its first save went out bare. Reload-before-save per Pitfall 2:
+        // the instance the first save propagated from still lists the sites it
+        // created as new, and a second save of it would duplicate nested
+        // entries onto them; a reload starts from what the database holds.
+        // Each site save stays independent; a per-site failure is a warning,
+        // not fatal — don't abort the whole migration.
         // ------------------------------------------------------------------ 7
         foreach ($targets as $site) {
-            if ($site->siteId === $primarySite->siteId) {
-                continue;
-            }
-            if (!isset($perSite[$site->handle])) {
+            $isPrimary = $site->siteId === $primarySite->siteId;
+
+            if (!isset($perSite[$site->handle]) || ($isPrimary && !$isNew)) {
                 continue;
             }
             // Critical: re-load scoped to siteId (Pitfall 2)
@@ -322,14 +344,17 @@ class EntryMigrationService extends Component
                 continue;
             }
 
-            // Ghost blocks the primary save propagated onto this site would otherwise sit
-            // beside the blocks this save is about to write; the secondary save adds, it does
-            // not replace. Anything here that no run tracked goes first.
-            $blocks->reconcile($localised, $site->handle, (array) ($perSite[$site->handle]['fieldValues'] ?? []));
+            // A row this save created bare holds nothing to reconcile. Any other row may:
+            // on a site newly added to an existing entry, or on a re-run whose state row
+            // predates the per-site map, blocks no run tracked would otherwise sit beside
+            // the ones this save writes — a secondary save adds, it does not replace.
+            if (!$isPrimary) {
+                $blocks->reconcile($localised, $site->handle, (array) ($perSite[$site->handle]['fieldValues'] ?? []));
+            }
 
             $this->applyPerSiteData(
                 $localised,
-                $perSite[$site->handle],
+                $isPrimary ? $primaryData : $perSite[$site->handle],
                 $blocks,
                 $report,
                 $stateSource,
