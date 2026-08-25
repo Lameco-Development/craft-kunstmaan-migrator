@@ -103,6 +103,20 @@ maintenance the URI stage replaces. Details in the site's
 
 ### Fixed
 
+- **The fixup and finalize passes run under the maintenance hold too.** The
+  hold on Craft's per-save maintenance — entry-URI jobs vetoed, search
+  indexing deferred — covered the entry loop and the adapters and stopped
+  there: the console ran fixup and finalize outside it, and the queue's
+  `ResolveDeferredRefsJob` and `FinalizeJob` never armed it. On the
+  reference corpus a single-environment console run reported
+  `searchIndexDeferred: 13,348` and `slugJobsVetoed: 1,935`, then grew
+  `searchindex` by 23,973 entry rows during the two passes (446 patch saves,
+  153 finalize saves), every one queued for indexing again by the index
+  stage. Both passes now run under the same `MaintenanceGuard` in both
+  callers, gated the same way — never on a dry run, `--entries-only`, or the
+  run screen's stand-alone fixup and finalize buttons, which no URI pass or
+  index stage follows — and their vetoed and deferred counts fold into
+  `slugJobsVetoed` and `searchIndexDeferred` on the summary and the run log.
 - **The fixup pass classifies a reference nothing will ever resolve, once.**
   On the reference corpus the pass ran 20 minutes for `patched: 642,
   orphans: 206` — every orphan a ref from the COM home page to a node whose

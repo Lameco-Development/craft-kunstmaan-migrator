@@ -44,7 +44,7 @@ final class EnvironmentPipeline
 {
     private readonly ?WriteConflictRetry $retry;
 
-    private bool $maintenanceGuarded = false;
+    private readonly MaintenanceGuard $maintenance;
 
     /** Nanoseconds the current compile unit spent inside `handlePayload`; see `timeCompile()`. */
     private int $handledNs = 0;
@@ -56,10 +56,11 @@ final class EnvironmentPipeline
         private readonly ?PayloadEntrySaver $saver,
         private readonly Compiler $compiler,
         private readonly Transforms $transforms,
-        private readonly UriJobGuard $uriJobs,
-        private readonly ElementWriter $elements,
+        UriJobGuard $uriJobs,
+        ElementWriter $elements,
     ) {
         $this->retry = $saver === null ? null : new WriteConflictRetry($saver->save(...));
+        $this->maintenance = new MaintenanceGuard($uriJobs, $elements);
     }
 
     /**
@@ -192,49 +193,26 @@ final class EnvironmentPipeline
      * Run `$body` with Craft's per-save maintenance held off — entry-URI jobs
      * vetoed, search indexing deferred — when, and only when, this run ends
      * in the closing passes that do that work once: the URI pass and the
-     * index stage, gated together. Disarmed on the way out whatever happens
-     * inside, so an exception never leaves a handler on the queue, or the
-     * index off, for whatever the process does next.
+     * index stage, gated together. See MaintenanceGuard, which the passes
+     * that have no pipeline arm directly.
      *
      * @param callable(): void $body
      */
     public function guardMaintenance(RunSettings $settings, RunTally $tally, callable $body): void
     {
-        $this->armMaintenanceGuard($settings);
-
-        try {
-            $body();
-        } finally {
-            $this->disarmMaintenanceGuard($tally);
-        }
+        $this->maintenance->guard($settings, $tally, $body);
     }
 
-    /**
-     * The arm half on its own, for the batched job: a batch arms when it
-     * loads and disarms after its last item, with Craft's own loop in between.
-     * A caller whose run will not reach the closing passes gets a no-op.
-     */
+    /** The arm half on its own, for the batched job; see MaintenanceGuard::arm(). */
     public function armMaintenanceGuard(RunSettings $settings): void
     {
-        if (!$settings->settlesUris() || $this->maintenanceGuarded) {
-            return;
-        }
-
-        $this->uriJobs->arm();
-        $this->elements->deferSearchIndexing();
-        $this->maintenanceGuarded = true;
+        $this->maintenance->arm($settings);
     }
 
-    /** The disarm half; what was vetoed and what went unindexed land on the tally. */
+    /** The disarm half; see MaintenanceGuard::disarm(). */
     public function disarmMaintenanceGuard(RunTally $tally): void
     {
-        if (!$this->maintenanceGuarded) {
-            return;
-        }
-
-        $this->maintenanceGuarded = false;
-        $tally->slugJobsVetoed += $this->uriJobs->disarm();
-        $tally->searchIndexDeferred += $this->elements->resumeSearchIndexing();
+        $this->maintenance->disarm($tally);
     }
 
     /**
