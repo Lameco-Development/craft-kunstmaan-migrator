@@ -737,20 +737,7 @@ class AssetMigrationService extends Component
         }
         $tCopy = round((microtime(true) - $tCopyStart) * 1000);
 
-        $asset = new Asset();
-        $asset->tempFilePath = $tempPath;
-        $asset->filename = $safeName;
-        $asset->newFolderId = $yearFolder->id;
-        $asset->avoidFilenameConflicts = true;
-        // Craft treats a console save as a non-CP upload and re-encodes every image
-        // (Image::cleanImageByPath) — 1.4 s per asset on the reference corpus, 91%
-        // of a page pass. Legacy media comes from the client's own CMS, not an
-        // untrusted upload; Craft still reads dimensions on relocation.
-        $asset->sanitizeOnUpload = false;
-        if (!empty($row['name'])) {
-            $asset->alt = (string) $row['name'];
-        }
-        $asset->setScenario(Asset::SCENARIO_CREATE);
+        $asset = $this->newAsset($row, $safeName, $yearFolder->id, $tempPath);
 
         $tSaveStart = microtime(true);
         try {
@@ -858,15 +845,7 @@ class AssetMigrationService extends Component
             return null;
         }
 
-        $asset = new Asset();
-        $asset->tempFilePath = $tempPath;
-        $asset->filename = $safeName;
-        $asset->newFolderId = $folderId;
-        $asset->avoidFilenameConflicts = true;
-        if (!empty($row['name'])) {
-            $asset->alt = (string) $row['name'];
-        }
-        $asset->setScenario(Asset::SCENARIO_CREATE);
+        $asset = $this->newAsset($row, $safeName, $folderId, $tempPath);
 
         try {
             $saved = $this->withClassEventDetached(
@@ -879,6 +858,34 @@ class AssetMigrationService extends Component
         }
 
         return $saved ? $asset : null;
+    }
+
+    /**
+     * The one way an ingested file becomes an Asset — the first attempt and the
+     * size-cap retry must save the same thing.
+     *
+     * Craft treats a console save as a non-CP upload and re-encodes every image
+     * (Image::cleanImageByPath): on the reference corpus 1.4 s per asset and 91%
+     * of a page pass, and a JPEG misnamed `.png` came back as a 60 MB PNG. Legacy
+     * media comes from the client's own CMS, not an untrusted upload; Craft still
+     * reads dimensions on relocation.
+     *
+     * @param array<string, mixed> $row
+     */
+    private function newAsset(array $row, string $safeName, int $folderId, string $tempPath): Asset
+    {
+        $asset = new Asset();
+        $asset->tempFilePath = $tempPath;
+        $asset->filename = $safeName;
+        $asset->newFolderId = $folderId;
+        $asset->avoidFilenameConflicts = true;
+        $asset->sanitizeOnUpload = false;
+        if (!empty($row['name'])) {
+            $asset->alt = (string) $row['name'];
+        }
+        $asset->setScenario(Asset::SCENARIO_CREATE);
+
+        return $asset;
     }
 
     /**
