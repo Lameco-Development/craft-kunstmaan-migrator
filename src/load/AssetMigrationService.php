@@ -742,6 +742,11 @@ class AssetMigrationService extends Component
         $asset->filename = $safeName;
         $asset->newFolderId = $yearFolder->id;
         $asset->avoidFilenameConflicts = true;
+        // Craft treats a console save as a non-CP upload and re-encodes every image
+        // (Image::cleanImageByPath) — 1.4 s per asset on the reference corpus, 91%
+        // of a page pass. Legacy media comes from the client's own CMS, not an
+        // untrusted upload; Craft still reads dimensions on relocation.
+        $asset->sanitizeOnUpload = false;
         if (!empty($row['name'])) {
             $asset->alt = (string) $row['name'];
         }
