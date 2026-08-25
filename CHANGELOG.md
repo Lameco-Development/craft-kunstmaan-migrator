@@ -18,6 +18,17 @@ dropping read zero on that run (`writeConflictRetries`, `mediaTokenIssues`,
 maintenance the URI stage replaces. Details in the site's
 `docs/migration/AUDIT.md`.
 
+Speed, same corpus, COM as a full single environment on the console path,
+Imagick installed: **38m 52s end to end** (entry pass 30m 16s, fixup 6m 29s,
+finalize 18s, URIs 1m 49s), against 1h 14m earlier the same day and roughly
+2h the night before — 1,830 created, 15,885 elements, 0 soft-deleted,
+0 retries, `searchindex` untouched until the final stage. The phase timers
+put the remaining half hour at 78% entry saves (410 ms average; the
+`siteGroup`-propagated taxonomy entries such as the 599 FAQs at 526 ms
+each, ten site rows apiece) and 20% assets (4,842 resolutions at 40 ms).
+The benchmark slice that found each step is in
+`docs/verifying-a-migration.md`.
+
 ### Added
 
 - **A Coverage screen — the inverse of the mapping.** Pick an entry type and

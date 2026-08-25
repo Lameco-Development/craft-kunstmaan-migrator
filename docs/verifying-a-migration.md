@@ -212,6 +212,24 @@ same flags holds. To measure the guarded save instead, drop `--entries-only` and
 adapter passes in the budget — or disable the adapters in the plugin settings for the bench
 database, which keeps `settlesUris()` true and the adapters off.
 
+### Reference numbers — 2026-08-25
+
+The slice `--legacy-env=COM --only=BlogPage,ProductPage,ContentPage,CasePage --limit=150
+--entries-only` on a freshly restored database, one change per run, Imagick installed from the
+third row on:
+
+| build | entry pass | assets (264) | what changed |
+|---|---:|---:|---|
+| `e26a4df` | 402.9 s | 367.1 s · 1,390 ms | baseline — assets were 91% of the pass |
+| `7678bce` | 238.2 s | 200.0 s · 758 ms | `sanitizeOnUpload = false` on the first save (#81) |
+| same, Imagick | 117.2 s | 81.5 s · 309 ms | GD decoded one 45 MP progressive JPEG in 169 s |
+| `9285b7f` | **56.9 s** | **20.2 s · 77 ms** | the size-cap retry saves the same Asset (#82) |
+
+Full COM as a single environment on the same day: **38m 52s** end to end — entry pass 30m 16s
+(was 1h 06m that morning, 1h 40m the night before), fixup 6m 29s, finalize 18 s, URIs 1m 49s.
+What remains is 78% entry saves — the `siteGroup`-propagated taxonomy entries (599 FAQs at
+526 ms, ten site rows each) are the largest single type — and 20% assets at 40 ms each.
+
 ---
 
 ## What good looks like
