@@ -6,6 +6,18 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+Measured against the reference corpus on 2026-08-25 (`development` @
+`c4f4ef2`, clean database, three environments, console run, **no
+`resave/entries`**): COM lands **1,093 of 1,131** live translations on their
+legacy URL — 96.6%, or 98.7% on the denominator AUDIT used (entries disabled
+on a site excluded) — against 76.6% after load and 97.7% only after a resave
+before the URI stage existed. LV 97.2%. Every counter this release stops
+dropping read zero on that run (`writeConflictRetries`, `mediaTokenIssues`,
+`deferredRefs`, `perSiteBlocksNotRepresentable`); the queue held 5,084
+`UpdateElementSlugsAndUris` jobs at priority 1024 afterwards — the starved
+maintenance the URI stage replaces. Details in the site's
+`docs/migration/AUDIT.md`.
+
 ### Added
 
 - **A Coverage screen — the inverse of the mapping.** Pick an entry type and
