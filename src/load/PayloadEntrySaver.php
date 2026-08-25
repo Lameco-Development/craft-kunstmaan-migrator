@@ -189,7 +189,14 @@ final class PayloadEntrySaver
         // individually-resolved entries between runs; a fresh pass-1 save
         // should never leave stale pendingRefs pointing at refs this save
         // already resolved directly.
-        $meta = ['pendingRefs' => $deferredRefs];
+        //
+        // Unless the save wrote nothing: an entry that already existed is left untouched
+        // without `force` (see saveEntryForSites()), and the refs resolved above went into
+        // no field. Recording that resolution would erase a deferral the entry still needs —
+        // a resumed run did exactly that to a placeholder whose parent existed by the time
+        // the run came back round, and the fixup pass then had nothing to repair.
+        $untouched = $wasAlreadySaved && !$this->options->force && (int) $entry->id === $existingEntryId;
+        $meta = $untouched ? [] : ['pendingRefs' => $deferredRefs];
 
         // What the SEO pass looks for. `SeoMigrationService` reads `refIdsByLocale` — its own
         // comments call it "the authoritative per-locale ref_id map written by ExtractService",
@@ -208,7 +215,9 @@ final class PayloadEntrySaver
             $meta['refIdsByLocale'] = $refIds;
         }
 
-        $this->stateService->updateMeta($stateSource, $stateKey, null, $meta);
+        if ($meta !== []) {
+            $this->stateService->updateMeta($stateSource, $stateKey, null, $meta);
+        }
 
         foreach ($p->aliases as $alias) {
             $this->stateService->recordAlias($alias, $p->sourceUid, (int) $entry->id);

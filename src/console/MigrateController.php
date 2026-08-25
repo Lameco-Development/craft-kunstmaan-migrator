@@ -263,6 +263,11 @@ final class MigrateController extends Controller
             return ($report->counts['failed'] ?? 0) > 0 ? ExitCode::UNSPECIFIED_ERROR : ExitCode::OK;
         }
 
+        // Whether this run walks every environment and every node: the fixup pass may then
+        // classify a ref whose target never appeared as unresolvable under this mapping, rather
+        // than pending. A narrowed run cannot tell the two apart and leaves everything pending.
+        $fullCorpus = $this->legacyEnv === null && !$this->narrowed();
+
         if ($this->queue) {
             $queued = [];
 
@@ -296,6 +301,7 @@ final class MigrateController extends Controller
                 'entriesOnly' => $this->entriesOnly,
                 'only' => $only,
                 'chainCorpusPasses' => true,
+                'fullCorpus' => $fullCorpus,
                 'mappingHash' => sha1((string) file_get_contents($this->mapping)),
             ]), priority: 512);
 
@@ -362,10 +368,11 @@ final class MigrateController extends Controller
         $fixup = null;
 
         if (!$this->dryRun) {
-            RunLog::default()->track('fixup', [], function(array &$extra) use ($plugin, &$fixup): void {
-                $fixup = (new FixupService($plugin->migrationStateService, $plugin->entryMigrationService))->run();
+            RunLog::default()->track('fixup', ['fullCorpus' => $fullCorpus], function(array &$extra) use ($plugin, $fullCorpus, &$fixup): void {
+                $fixup = (new FixupService($plugin->migrationStateService, $plugin->entryMigrationService))->run($fullCorpus);
                 $extra['patched'] = $fixup['patched'] ?? 0;
                 $extra['orphans'] = count($fixup['orphans'] ?? []);
+                $extra['unresolvable'] = $fixup['unresolvable'] ?? 0;
             });
 
             foreach (($fixup['orphans'] ?? []) as $orphan) {
@@ -374,6 +381,17 @@ final class MigrateController extends Controller
                     (string) ($orphan['sourceUid'] ?? '?'),
                     (string) ($orphan['field'] ?? '?'),
                     (string) ($orphan['ref'] ?? '?'),
+                ));
+            }
+
+            // Reported once, by target: the next run will not walk these again.
+            foreach (($fixup['unresolvableTargets'] ?? []) as $target) {
+                $tally->problem(sprintf(
+                    '%s: %d reference(s) from %s can never resolve — %s',
+                    (string) ($target['ref'] ?? '?'),
+                    (int) ($target['count'] ?? 0),
+                    implode(', ', (array) ($target['from'] ?? [])),
+                    (string) ($target['reason'] ?? '?'),
                 ));
             }
         }
@@ -426,7 +444,8 @@ final class MigrateController extends Controller
 
         $lossCount = $tally->lossyConversions;
         $unresolvedAssets = count($tally->unresolvedAssets);
-        $orphans = count($fixup['orphans'] ?? []);
+        // A reference nothing will ever resolve is as lost as one still pending.
+        $orphans = count($fixup['orphans'] ?? []) + (int) ($fixup['unresolvable'] ?? 0);
 
         $perSiteBlockLosses = $tally->perSiteBlockLosses;
 

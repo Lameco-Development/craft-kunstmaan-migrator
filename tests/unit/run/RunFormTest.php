@@ -51,12 +51,12 @@ final class RunFormTest extends TestCase
         // the corpus passes there. (The CP keeps its manual fixup/finalize
         // buttons — an operator escape hatch, not part of a full run.)
         self::assertStringNotContainsString(
-            'new ResolveDeferredRefsJob()',
+            'new ResolveDeferredRefsJob(',
             $this->source('src/console/MigrateController.php'),
         );
 
         $chain = $this->source('src/queue/RunAdaptersJob.php');
-        self::assertStringContainsString('new ResolveDeferredRefsJob()', $chain);
+        self::assertStringContainsString('new ResolveDeferredRefsJob(', $chain);
         self::assertStringContainsString('new FinalizeJob(', $chain);
         self::assertStringContainsString('new MigrateEnvironmentJob(', $chain);
     }

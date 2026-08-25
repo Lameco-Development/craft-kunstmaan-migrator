@@ -24,6 +24,14 @@ final class ResolveDeferredRefsJob extends BaseJob implements RetryableJobInterf
     /** @var array<string, mixed> */
     public array $report = [];
 
+    /**
+     * Whether the chain that ends here walked every environment and every node. Only then may
+     * a ref whose target has no state row be classified as unresolvable rather than pending;
+     * the chain's first job knows, and passes it down. The run screen's stand-alone fixup
+     * button does not, and leaves everything pending.
+     */
+    public bool $fullCorpus = false;
+
     public function execute($queue): void
     {
         if (ProductionGuard::isProduction()) {
@@ -32,11 +40,11 @@ final class ResolveDeferredRefsJob extends BaseJob implements RetryableJobInterf
 
         $plugin = Plugin::getInstance();
 
-        RunLog::default()->track('fixup', [], function(array &$extra) use ($plugin): void {
+        RunLog::default()->track('fixup', ['fullCorpus' => $this->fullCorpus], function(array &$extra) use ($plugin): void {
             $this->report = (new FixupService(
                 $plugin->migrationStateService,
                 $plugin->entryMigrationService,
-            ))->run();
+            ))->run($this->fullCorpus);
 
             $extra['counts'] = $this->report;
         });

@@ -85,6 +85,34 @@ maintenance the URI stage replaces. Details in the site's
 
 ### Fixed
 
+- **The fixup pass classifies a reference nothing will ever resolve, once.**
+  On the reference corpus the pass ran 20 minutes for `patched: 642,
+  orphans: 206` — every orphan a ref from the COM home page to a node whose
+  page type the mapping declares unmapped, re-walked, re-resolved and
+  re-reported on every run. When the caller states the run walked the whole
+  corpus (an un-narrowed console `migrate`, a queue chain that queued every
+  environment — a parameter, never inferred), a pending ref whose target
+  has no state row moves from `pendingRefs` to the sibling meta key
+  `unresolvableRefs` with a reason, and the summary's `fixup` block reports
+  it once as `unresolvable` plus `unresolvableTargets` grouped by target.
+  `orphans` keeps meaning "still pending after this pass"; `--fail-on-loss`
+  counts both. A narrowed run, the run screen's stand-alone fixup button and
+  `load/fixup` leave everything pending, as before.
+- **A patch costs one element save per field, not one per reference.** The
+  pass now resolves every pending target of an entry first (one state lookup
+  per distinct target per pass), groups the resolvable refs per (site,
+  top-level field), reads the field once, applies every patch to that value
+  and saves once — and skips the save when the stored value already holds
+  the patched id. 642 patched refs used to be up to 642 element saves and
+  1,284 element loads; the number to measure is the `fixup` wall time in the
+  run log and the element saves per patched ref.
+- **The deferral that wrote `pendingRefs` empty, explained and closed.** An
+  entry that already existed is left untouched without `--force`, but the
+  saver still recorded that its references resolved — against fields the
+  save never wrote. On a resumed run the parent existed by the time the run
+  came back round, so `[]` overwrote the deferral the placeholder still
+  needed and the fixup pass had nothing to repair. An untouched entry now
+  keeps the `pendingRefs` its own save recorded.
 - **The run settles Structure URIs itself.** A Structure entry's URI is its
   parent's plus its slug, computed at save time, and the parent was not always
   written first — entity-lane units precede every node, deferred `parentRef`s

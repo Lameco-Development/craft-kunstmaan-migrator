@@ -191,6 +191,26 @@ circular reference, or simply file-order luck).
   already-saved entry (using `path` to locate the right container, including
   inside nested Matrix blocks — see below) and clear it from `pendingRefs`.
   Anything still unresolved after pass 2 is reported as an orphan reference.
+  The refs of one entry are patched per (site, top-level field): one read of
+  the field, every resolvable patch applied to that value, one element save —
+  and no save at all when the stored value already holds the patched one.
+- **Unresolvable, not pending (`unresolvableRefs`):** when the caller states
+  that the run walked the whole corpus (`FixupService::run(fullCorpus: true)`
+  — the console's un-narrowed `migrate`, the queue chain that queued every
+  environment), a pending ref whose target has **no state row at all** can
+  never resolve under this mapping: its page type is declared unmapped, or
+  its node was never compiled. Pass 2 moves it from `pendingRefs` to the
+  sibling meta key `unresolvableRefs` — the same entry shape plus a `reason`
+  — so the next pass does not walk, re-resolve and re-report it. The pass
+  reports these once, as `unresolvable` (count) and `unresolvableTargets`
+  (grouped by target, most-referenced first, with a sample of the entries
+  naming it). A narrowed run (`--only`, `--limit`, `--legacy-env`, the run
+  screen's stand-alone fixup button, `load/fixup`) cannot tell a forward
+  reference from a missing target and leaves everything pending. A state
+  row without a target id is a target mid-write and stays pending too. A
+  later pass-1 save of the entry (with `--force`) re-evaluates its refs from
+  the payload and overwrites `pendingRefs`; `unresolvableRefs` is a record
+  of what this mapping could not do and is not consulted by any pass.
 
 This lets the loader accept payload files in whatever order they're
 generated without requiring the orchestration side to compute a dependency

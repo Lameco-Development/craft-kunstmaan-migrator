@@ -36,6 +36,8 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
     /** @var list<string>|null */
     public ?array $only = null;
     public bool $chainCorpusPasses = true;
+    /** Carried from the chain's first job to `ResolveDeferredRefsJob`, which explains it. */
+    public bool $fullCorpus = false;
     public string $mappingHash = '';
 
     public function execute($queue): void
@@ -92,6 +94,7 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
                 'entriesOnly' => $this->entriesOnly,
                 'only' => $this->only,
                 'chainCorpusPasses' => $this->chainCorpusPasses,
+                'fullCorpus' => $this->fullCorpus,
                 'mappingHash' => $this->mappingHash,
             ]), priority: 512);
 
@@ -99,7 +102,7 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
         }
 
         if ($this->chainCorpusPasses && !$this->entriesOnly && !$this->dryRun) {
-            QueueHelper::push(job: new ResolveDeferredRefsJob(), priority: 512);
+            QueueHelper::push(job: new ResolveDeferredRefsJob(['fullCorpus' => $this->fullCorpus]), priority: 512);
             QueueHelper::push(job: new FinalizeJob(['mappingPath' => $this->mappingPath, 'dryRun' => $this->dryRun]), priority: 512);
             QueueHelper::push(job: new RecomputeStructureUrisJob(['mappingPath' => $this->mappingPath]), priority: 512);
         }

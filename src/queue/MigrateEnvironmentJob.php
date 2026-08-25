@@ -55,6 +55,13 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
     /** Whether the chain ends in the corpus-wide fixup + finalize passes. */
     public bool $chainCorpusPasses = true;
 
+    /**
+     * Whether the chain walks every environment and every node. Set by the caller that queued
+     * it, since only the caller knows what it left out; the fixup pass at the end of the
+     * chain classifies a target that never appeared as unresolvable only when this is true.
+     */
+    public bool $fullCorpus = false;
+
     /** sha1 of the mapping file at push time; a mid-run edit refuses to continue. */
     public string $mappingHash = '';
 
@@ -311,6 +318,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             'entriesOnly' => $this->entriesOnly,
             'only' => $this->only,
             'chainCorpusPasses' => $this->chainCorpusPasses,
+            'fullCorpus' => $this->fullCorpus,
             'mappingHash' => $this->mappingHash,
         ]), priority: 512);
     }

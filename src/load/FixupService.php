@@ -22,20 +22,46 @@ use Throwable;
  * `docs/loader-contract.md` "pendingRefs entry shape") and append the
  * resolved id, then re-save through `EntryMigrationService`'s per-site save
  * path so Matrix block ids persist (see `EntryMigrationService::
- * resaveEntryFieldForSite()`/`resaveEntryParentForSite()`). Still-unresolved
- * or unpatchable refs are kept in `pendingRefs` and reported as orphans —
- * nothing is ever silently dropped.
+ * resaveEntryFieldForSite()`/`resaveEntryParentForSite()`). The refs of one
+ * entry are patched per (site, top-level field): one read, every resolvable
+ * patch applied to that value, one save — an element save is what a patch
+ * costs, and the reference corpus had hundreds landing on one home page.
  *
- * Per-ref fail-forward: a `Throwable` raised while resolving or re-saving
- * one pending ref (stale site handle, DB deadlock, save failure) is caught
- * and that ref alone is folded into `orphans` (with its error message) and
- * kept in `pendingRefs` for the next run — it never aborts the rest of the
- * pass, matching `LoadController::buildLiveReport()`'s per-payload
- * fail-forward convention in pass 1.
+ * A pending ref whose target has no state row at all after a full-corpus
+ * pass is not pending, it is unresolvable under this mapping: its page type
+ * is declared unmapped, or its node was never compiled. Such a ref moves
+ * from `pendingRefs` to `unresolvableRefs` (same entry shape plus a
+ * `reason`) so the next pass does not walk it again; it is reported once,
+ * grouped by target. Only a caller knows whether the run was full — the
+ * console has `narrowed()`, the queue chain knows which environments it
+ * queued — so that fact arrives as a parameter, never inferred here.
+ * Still-unresolved (narrowed run, target mid-write) or unpatchable refs
+ * are kept in `pendingRefs` and reported as orphans — nothing is ever
+ * silently dropped.
+ *
+ * Per-group fail-forward: a `Throwable` raised while re-saving one group
+ * (stale site handle, DB deadlock, save failure) is caught and that group's
+ * refs alone are folded into `orphans` (with the error message) and kept in
+ * `pendingRefs` for the next run — it never aborts the rest of the pass,
+ * matching `LoadController::buildLiveReport()`'s per-payload fail-forward
+ * convention in pass 1.
  */
 final class FixupService
 {
+    public const REASON_TARGET_NEVER_MIGRATED = 'target was never migrated under this mapping';
+
+    private const TARGET_SAMPLE = 10;
+    private const FROM_SAMPLE = 3;
+
     private readonly RefResolver $refResolver;
+
+    /**
+     * One state lookup per distinct target per pass: 206 refs on one entry
+     * named three targets.
+     *
+     * @var array<string, array{id: ?int, recorded: bool}>
+     */
+    private array $lookups = [];
 
     public function __construct(
         private readonly MigrationStateService $stateService,
@@ -52,12 +78,24 @@ final class FixupService
     }
 
     /**
-     * @return array{patched: int, orphans: list<array{sourceUid: string, field: string, ref: string, path: list<int|string>, error?: string}>}
+     * @param bool $fullCorpus whether the load that precedes this pass walked every
+     *   environment and every node. A narrowed run cannot tell a forward reference from a
+     *   target that will never exist, so it leaves every unresolved ref pending.
+     * @return array{
+     *   patched: int,
+     *   orphans: list<array{sourceUid: string, field: string, ref: string, path: list<int|string>, error?: string}>,
+     *   unresolvable: int,
+     *   unresolvableTargets: list<array{ref: string, count: int, reason: string, from: list<string>}>,
+     * }
      */
-    public function run(): array
+    public function run(bool $fullCorpus = false): array
     {
+        $this->lookups = [];
         $patched = 0;
         $orphans = [];
+        /** @var array<string, array{count: int, from: array<string, true>}> keyed by target ref */
+        $unresolvableTargets = [];
+        $unresolvableCount = 0;
         /**
          * `updateMeta()` is a write; deferring every call until after this
          * method's own foreach over `entryRows()` has fully exhausted (and
@@ -65,12 +103,13 @@ final class FixupService
          * about writing mid-iteration over an open read cursor on the same
          * connection.
          *
-         * @var list<array{source: string, key: string, remaining: list<mixed>}>
+         * @var list<array{source: string, key: string, meta: array<string, mixed>}>
          */
         $metaUpdates = [];
 
         foreach ($this->stateService->entryRows() as $row) {
-            $pendingRefs = $this->decodePendingRefs($row['meta'] ?? null);
+            $meta = self::decodeMeta($row['meta'] ?? null);
+            $pendingRefs = self::listAt($meta, 'pendingRefs');
             if ($pendingRefs === []) {
                 continue;
             }
@@ -81,73 +120,209 @@ final class FixupService
             $targetId = $row['targetId'] !== null ? (int) $row['targetId'] : null;
 
             $remaining = [];
-            /** @var array<string, bool> $seenContainers de-dupe key for the multi-ref-per-container warning */
-            $seenContainers = [];
+            $unresolvable = [];
+            /** @var array<string, list<array{pending: array<string, mixed>, id: int}>> keyed by site + top-level field */
+            $groups = [];
 
             foreach ($pendingRefs as $pending) {
-                $field = (string) ($pending['field'] ?? '');
-                $site = (string) ($pending['site'] ?? '');
                 $ref = (string) ($pending['ref'] ?? '');
-                $path = (is_array($pending['path'] ?? null)) ? array_values($pending['path']) : [];
+                $lookup = $this->lookup($ref);
 
-                $error = null;
-                try {
-                    $resolvedId = $this->refResolver->resolve($ref);
-
-                    if (($pending['kind'] ?? null) === 'link') {
-                        $ok = $resolvedId !== null
-                            && $targetId !== null
-                            && $this->patchLinkField(
-                                $targetId,
-                                $site,
-                                $path,
-                                $resolvedId,
-                                is_array($pending['link'] ?? null) ? $pending['link'] : [],
-                            );
-                    } else {
-                        $ok = $resolvedId !== null
-                            && $targetId !== null
-                            && $this->applyPatch($targetId, $site, $path, $resolvedId, $sourceUid, $seenContainers);
-                    }
-                } catch (Throwable $e) {
-                    // A stale site handle, a DB deadlock, or a save failure
-                    // for THIS ref must not abort the whole pass — every
-                    // other still-fixable ref gets its own chance, and the
-                    // pass always finishes and prints its JSON report.
-                    $ok = false;
-                    $error = $e->getMessage();
-                }
-
-                if (!$ok) {
-                    $remaining[] = $pending;
-                    $orphan = ['sourceUid' => $sourceUid, 'field' => $field, 'ref' => $ref, 'path' => $path];
-                    if ($error !== null) {
-                        $orphan['error'] = $error;
-                    }
-                    $orphans[] = $orphan;
+                if ($lookup['id'] === null && $fullCorpus && !$lookup['recorded']) {
+                    $unresolvable[] = $pending + ['reason' => self::REASON_TARGET_NEVER_MIGRATED];
+                    $unresolvableCount++;
+                    $unresolvableTargets[$ref] ??= ['count' => 0, 'from' => []];
+                    $unresolvableTargets[$ref]['count']++;
+                    $unresolvableTargets[$ref]['from'][$sourceUid] = true;
                     continue;
                 }
 
-                $patched++;
+                if ($lookup['id'] === null || $targetId === null) {
+                    $remaining[] = $pending;
+                    $orphans[] = self::orphan($sourceUid, $pending);
+                    continue;
+                }
+
+                $groups[self::groupKey($pending)][] = ['pending' => $pending, 'id' => $lookup['id']];
+            }
+
+            /** @var array<string, bool> $seenContainers de-dupe key for the multi-ref-per-container warning */
+            $seenContainers = [];
+
+            foreach ($groups as $group) {
+                try {
+                    $failed = $this->applyGroup($targetId, $sourceUid, $group, $seenContainers);
+                } catch (Throwable $e) {
+                    // A stale site handle, a DB deadlock, or a save failure
+                    // for THIS group must not abort the whole pass — every
+                    // other still-fixable ref gets its own chance, and the
+                    // pass always finishes and prints its JSON report.
+                    $failed = array_map(
+                        static fn(array $member): array => ['pending' => $member['pending'], 'error' => $e->getMessage()],
+                        $group,
+                    );
+                }
+
+                $patched += count($group) - count($failed);
+
+                foreach ($failed as $failure) {
+                    $remaining[] = $failure['pending'];
+                    $orphans[] = self::orphan($sourceUid, $failure['pending'], $failure['error']);
+                }
             }
 
             if (count($remaining) !== count($pendingRefs)) {
-                $metaUpdates[] = ['source' => $source, 'key' => $key, 'remaining' => $remaining];
+                $update = ['pendingRefs' => $remaining];
+
+                if ($unresolvable !== []) {
+                    $update['unresolvableRefs'] = array_merge(self::listAt($meta, 'unresolvableRefs'), $unresolvable);
+                }
+
+                $metaUpdates[] = ['source' => $source, 'key' => $key, 'meta' => $update];
             }
         }
 
         foreach ($metaUpdates as $update) {
-            $this->stateService->updateMeta($update['source'], $update['key'], null, ['pendingRefs' => $update['remaining']]);
+            $this->stateService->updateMeta($update['source'], $update['key'], null, $update['meta']);
         }
 
-        return ['patched' => $patched, 'orphans' => $orphans];
+        return [
+            'patched' => $patched,
+            'orphans' => $orphans,
+            'unresolvable' => $unresolvableCount,
+            'unresolvableTargets' => self::targetSample($unresolvableTargets),
+        ];
+    }
+
+    /**
+     * @return array{id: ?int, recorded: bool} the target's entry id, and whether the state
+     *   table has a row for it at all — a row without a target id is a target mid-write, not
+     *   a target that will never exist
+     */
+    private function lookup(string $ref): array
+    {
+        if (!isset($this->lookups[$ref])) {
+            $id = $this->refResolver->resolve($ref);
+            $this->lookups[$ref] = ['id' => $id, 'recorded' => $id !== null || $this->refResolver->isRecorded($ref)];
+        }
+
+        return $this->lookups[$ref];
+    }
+
+    /**
+     * The refs that share one element save: same site, same top-level field. A parent ref
+     * (`path === []`) groups by site alone.
+     *
+     * @param array<string, mixed> $pending
+     */
+    private static function groupKey(array $pending): string
+    {
+        $path = self::pathOf($pending);
+
+        return (string) ($pending['site'] ?? '') . "\0" . ($path === [] ? '' : (string) $path[0]);
+    }
+
+    /**
+     * Apply one group's patches: read the field once, apply every member's mutation to that
+     * value, save once — and only when the value actually changed, so a re-run over an
+     * already-patched container costs no element save.
+     *
+     * @param list<array{pending: array<string, mixed>, id: int}> $group
+     * @param array<string, bool> $seenContainers
+     * @return list<array{pending: array<string, mixed>, error: ?string}> the members that did not land
+     */
+    private function applyGroup(int $entryId, string $sourceUid, array $group, array &$seenContainers): array
+    {
+        $site = (string) ($group[0]['pending']['site'] ?? '');
+        $siteId = $this->siteIdFor($site);
+
+        if ($siteId === null) {
+            return self::allFailed($group, null);
+        }
+
+        $path = self::pathOf($group[0]['pending']);
+
+        if ($path === []) {
+            return $this->applyParentGroup($entryId, $siteId, $sourceUid, $site, $group, $seenContainers);
+        }
+
+        $topField = (string) $path[0];
+        $current = $this->entryService->readEntryFieldValueForSite($entryId, $siteId, $topField) ?? [];
+        $tree = [$topField => $current];
+        $mutated = $tree;
+        $applied = [];
+        $failed = [];
+
+        foreach ($group as $member) {
+            $pending = $member['pending'];
+            $memberPath = self::pathOf($pending);
+            $this->warnOnSharedContainer($sourceUid, $site, $memberPath, $seenContainers);
+
+            try {
+                $mutated = ($pending['kind'] ?? null) === 'link'
+                    ? self::setAtPath($mutated, $memberPath, self::linkValue($member['id'], $siteId, $pending))
+                    : self::appendAtPath($mutated, $memberPath, $member['id']);
+                $applied[] = $member;
+            } catch (RuntimeException $e) {
+                Craft::warning('FixupService: ' . $e->getMessage(), 'kunstmaan-migrator');
+                $failed[] = ['pending' => $pending, 'error' => null];
+            }
+        }
+
+        if ($applied === [] || $mutated === $tree) {
+            return $failed;
+        }
+
+        if (!$this->entryService->resaveEntryFieldForSite($entryId, $siteId, $topField, (array) ($mutated[$topField] ?? []))) {
+            return array_merge($failed, self::allFailed($applied, null));
+        }
+
+        return $failed;
+    }
+
+    /**
+     * A parent is one link per site, written through its own save path; a Link-field ref
+     * with no path has nowhere to go.
+     *
+     * @param list<array{pending: array<string, mixed>, id: int}> $group
+     * @param array<string, bool> $seenContainers
+     * @return list<array{pending: array<string, mixed>, error: ?string}>
+     */
+    private function applyParentGroup(int $entryId, int $siteId, string $sourceUid, string $site, array $group, array &$seenContainers): array
+    {
+        $failed = [];
+
+        foreach ($group as $member) {
+            $this->warnOnSharedContainer($sourceUid, $site, [], $seenContainers);
+
+            $ok = ($member['pending']['kind'] ?? null) !== 'link'
+                && $this->entryService->resaveEntryParentForSite($entryId, $siteId, $member['id']);
+
+            if (!$ok) {
+                $failed[] = ['pending' => $member['pending'], 'error' => null];
+            }
+        }
+
+        return $failed;
+    }
+
+    /**
+     * @param list<array{pending: array<string, mixed>, id: int}> $members
+     * @return list<array{pending: array<string, mixed>, error: ?string}>
+     */
+    private static function allFailed(array $members, ?string $error): array
+    {
+        return array_map(
+            static fn(array $member): array => ['pending' => $member['pending'], 'error' => $error],
+            $members,
+        );
     }
 
     /**
      * @param list<int|string> $path
      * @param array<string, bool> $seenContainers
      */
-    private function applyPatch(int $targetId, string $site, array $path, int $resolvedId, string $sourceUid, array &$seenContainers): bool
+    private function warnOnSharedContainer(string $sourceUid, string $site, array $path, array &$seenContainers): void
     {
         $containerKey = $site . "\0" . implode('.', $path);
         if (isset($seenContainers[$containerKey])) {
@@ -166,18 +341,6 @@ final class FixupService
             ), 'kunstmaan-migrator');
         }
         $seenContainers[$containerKey] = true;
-
-        $siteId = $this->siteIdFor($site);
-
-        if ($siteId === null) {
-            return false;
-        }
-
-        if ($path === []) {
-            return $this->entryService->resaveEntryParentForSite($targetId, $siteId, $resolvedId);
-        }
-
-        return $this->patchNestedField($targetId, $siteId, $path, $resolvedId);
     }
 
     /**
@@ -197,27 +360,16 @@ final class FixupService
     }
 
     /**
-     * Write a resolved entry link at the slot the payload named.
+     * A resolved entry link as a Link field holds it: one value at its own key, carrying the
+     * `label` / `target` the payload had.
      *
-     * A relation appends an id to a list; a Link field holds one value at its own key, so the
-     * path addresses the slot itself and the value replaces whatever is there.
-     *
-     * @param list<int|string> $path non-empty; $path[0] is the top-level field handle
-     * @param array<string, mixed> $extra `label` / `target` the payload carried
+     * @param array<string, mixed> $pending
+     * @return array<string, string>
      */
-    private function patchLinkField(int $targetId, string $site, array $path, int $resolvedId, array $extra): bool
+    private static function linkValue(int $resolvedId, int $siteId, array $pending): array
     {
-        if ($path === []) {
-            return false;
-        }
-
-        $siteId = $this->siteIdFor($site);
-
-        if ($siteId === null) {
-            return false;
-        }
-
         $link = ['type' => 'entry', 'value' => sprintf('{entry:%d@%d:url}', $resolvedId, $siteId)];
+        $extra = is_array($pending['link'] ?? null) ? $pending['link'] : [];
 
         foreach (['label', 'target'] as $key) {
             if (isset($extra[$key]) && is_string($extra[$key]) && $extra[$key] !== '') {
@@ -225,24 +377,7 @@ final class FixupService
             }
         }
 
-        $topField = (string) $path[0];
-
-        // A Link field at the top level of the entry is the whole value, not a path into one.
-        if (count($path) === 1) {
-            return $this->entryService->resaveEntryFieldForSite($targetId, $siteId, $topField, $link);
-        }
-
-        $current = $this->entryService->readEntryFieldValueForSite($targetId, $siteId, $topField) ?? [];
-
-        try {
-            $mutated = self::setAtPath([$topField => $current], $path, $link);
-        } catch (RuntimeException $e) {
-            Craft::warning('FixupService: ' . $e->getMessage(), 'kunstmaan-migrator');
-
-            return false;
-        }
-
-        return $this->entryService->resaveEntryFieldForSite($targetId, $siteId, $topField, (array) ($mutated[$topField] ?? []));
+        return $link;
     }
 
     /**
@@ -275,25 +410,6 @@ final class FixupService
     }
 
     /**
-     * @param list<int|string> $path non-empty; $path[0] is the top-level field handle.
-     */
-    private function patchNestedField(int $targetId, int $siteId, array $path, int $resolvedId): bool
-    {
-        $topField = (string) $path[0];
-        $current = $this->entryService->readEntryFieldValueForSite($targetId, $siteId, $topField) ?? [];
-
-        try {
-            $mutated = self::appendAtPath([$topField => $current], $path, $resolvedId);
-        } catch (RuntimeException $e) {
-            Craft::warning('FixupService: ' . $e->getMessage(), 'kunstmaan-migrator');
-
-            return false;
-        }
-
-        return $this->entryService->resaveEntryFieldForSite($targetId, $siteId, $topField, (array) ($mutated[$topField] ?? []));
-    }
-
-    /**
      * Pure path-navigation: descend `$path` from `$node`'s root, resolving
      * each segment to the ACTUAL storage key at that level. A string segment
      * is a literal array key (a field handle, or the literal `'fields'`); an
@@ -303,7 +419,8 @@ final class FixupService
      * records position, matching the same ordering contract
      * `EntryMigrationService::collectBlockUidsByPosition()` already relies on
      * elsewhere in this class. The LAST segment addresses the container
-     * itself: append `$resolvedId` to it.
+     * itself: append `$resolvedId` to it — unless it is already there, in
+     * which case the node comes back untouched and no save follows.
      *
      * @param array<array-key, mixed> $node
      * @param list<int|string> $path non-empty
@@ -319,7 +436,9 @@ final class FixupService
             if (!is_array($container)) {
                 throw new RuntimeException(sprintf('path segment "%s" is not a list container.', (string) $segment));
             }
-            $container[] = $resolvedId;
+            if (!in_array($resolvedId, $container, true) && !in_array((string) $resolvedId, $container, true)) {
+                $container[] = $resolvedId;
+            }
             $node[$key] = $container;
 
             return $node;
@@ -351,21 +470,80 @@ final class FixupService
     }
 
     /**
-     * @return list<array{field: string, site: string, ref: string, path: list<int|string>}>
+     * @param array<string, mixed> $pending
+     * @return list<int|string>
      */
-    private function decodePendingRefs(mixed $rawMeta): array
+    private static function pathOf(array $pending): array
+    {
+        return is_array($pending['path'] ?? null) ? array_values($pending['path']) : [];
+    }
+
+    /**
+     * @param array<string, mixed> $pending
+     * @return array{sourceUid: string, field: string, ref: string, path: list<int|string>, error?: string}
+     */
+    private static function orphan(string $sourceUid, array $pending, ?string $error = null): array
+    {
+        $orphan = [
+            'sourceUid' => $sourceUid,
+            'field' => (string) ($pending['field'] ?? ''),
+            'ref' => (string) ($pending['ref'] ?? ''),
+            'path' => self::pathOf($pending),
+        ];
+
+        if ($error !== null) {
+            $orphan['error'] = $error;
+        }
+
+        return $orphan;
+    }
+
+    /**
+     * The targets nothing will ever resolve, most-referenced first — three targets explain
+     * two hundred refs, and a summary should say so in three lines.
+     *
+     * @param array<string, array{count: int, from: array<string, true>}> $targets
+     * @return list<array{ref: string, count: int, reason: string, from: list<string>}>
+     */
+    private static function targetSample(array $targets): array
+    {
+        uasort($targets, static fn(array $a, array $b): int => $b['count'] <=> $a['count']);
+        $sample = [];
+
+        foreach (array_slice($targets, 0, self::TARGET_SAMPLE, true) as $ref => $target) {
+            $sample[] = [
+                'ref' => (string) $ref,
+                'count' => $target['count'],
+                'reason' => self::REASON_TARGET_NEVER_MIGRATED,
+                'from' => array_slice(array_keys($target['from']), 0, self::FROM_SAMPLE),
+            ];
+        }
+
+        return $sample;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private static function decodeMeta(mixed $rawMeta): array
     {
         $meta = $rawMeta;
         if (is_string($meta)) {
             $decoded = json_decode($meta, true);
             $meta = is_array($decoded) ? $decoded : null;
         }
-        if (!is_array($meta)) {
-            return [];
-        }
 
-        $pending = $meta['pendingRefs'] ?? [];
+        return is_array($meta) ? $meta : [];
+    }
 
-        return is_array($pending) ? array_values($pending) : [];
+    /**
+     * @param array<string, mixed> $meta
+     * @return list<array<string, mixed>>
+     */
+    private static function listAt(array $meta, string $key): array
+    {
+        $list = $meta[$key] ?? [];
+
+        return is_array($list) ? array_values(array_filter($list, 'is_array')) : [];
     }
 }

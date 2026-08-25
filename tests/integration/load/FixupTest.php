@@ -149,6 +149,20 @@ final class FixupInMemoryMigrationStateService extends MigrationStateService
         $this->rows[$rowKey]['meta'] = array_merge($current, $meta);
     }
 
+    /** A row whose target is not there yet — what a target mid-write looks like. */
+    public function recordWithoutTarget(string $source, string $key): void
+    {
+        $this->rows[$this->rowKey($source, $key, null)] = [
+            'source' => $source,
+            'sourceKey' => $key,
+            'targetType' => 'entry',
+            'targetId' => null,
+            'targetUid' => '',
+            'siteId' => null,
+            'meta' => null,
+        ];
+    }
+
     /**
      * @return Generator<int, array<string, mixed>>
      */
@@ -180,6 +194,12 @@ final class FixupFakeEntryMigrationService extends EntryMigrationService
 
     /** @var array<string, int> keyed by "entryId\0site" */
     public array $parentStore = [];
+
+    /** Element saves the fixup pass asked for — what a patch costs. */
+    public int $resaves = 0;
+
+    /** Element loads the fixup pass asked for. */
+    public int $reads = 0;
 
     /**
      * @var array<string, true> keyed by "entryId\0site\0field" — set by a
@@ -224,6 +244,7 @@ final class FixupFakeEntryMigrationService extends EntryMigrationService
 
     public function readEntryFieldValueForSite(int $entryId, int $siteId, string $fieldHandle): ?array
     {
+        $this->reads++;
         $value = $this->fieldStore[$this->key($entryId, $siteId)][$fieldHandle] ?? null;
 
         return is_array($value) ? $value : null;
@@ -235,6 +256,7 @@ final class FixupFakeEntryMigrationService extends EntryMigrationService
             throw new RuntimeException('simulated resave failure');
         }
 
+        $this->resaves++;
         $this->fieldStore[$this->key($entryId, $siteId)][$fieldHandle] = $value;
 
         return true;
@@ -242,6 +264,7 @@ final class FixupFakeEntryMigrationService extends EntryMigrationService
 
     public function resaveEntryParentForSite(int $entryId, int $siteId, int $parentId): bool
     {
+        $this->resaves++;
         $this->parentStore[$this->key($entryId, $siteId)] = $parentId;
 
         return true;
@@ -465,7 +488,182 @@ final class FixupTest extends TestCase
 
         $report = $fixup->run();
 
-        self::assertSame(['patched' => 0, 'orphans' => []], $report);
+        self::assertSame(['patched' => 0, 'orphans' => [], 'unresolvable' => 0, 'unresolvableTargets' => []], $report);
+    }
+
+    public function testAFullCorpusPassClassifiesATargetWithNoStateRowAsUnresolvableAndStopsWalkingIt(): void
+    {
+        $state = new FixupInMemoryMigrationStateService();
+        $entryService = new FixupFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+        $fixup = new FixupService($state, $entryService, static fn(string $handle): ?int => $handle === 'en' ? 1 : null);
+
+        // The home page names two nodes whose page type the mapping declares unmapped —
+        // and names one of them twice, from two blocks.
+        $home = Payload::fromArray($this->payloadArray('kuma:COM:kuma_nodes:1', [
+            'sites' => ['en' => ['fieldValues' => [
+                'relatedPages' => [['_ref' => 'kuma:COM:kuma_nodes:22']],
+                'pageBuilder' => [
+                    ['type' => 'contentBlock', 'fields' => ['relatedEntries' => [['_ref' => 'kuma:COM:kuma_nodes:22']]]],
+                    ['type' => 'contentBlock', 'fields' => ['relatedEntries' => [['_ref' => 'kuma:COM:kuma_nodes:16']]]],
+                ],
+            ]]],
+        ]));
+        $this->save($saver, $home);
+
+        $report = $fixup->run(fullCorpus: true);
+
+        self::assertSame(0, $report['patched']);
+        self::assertSame([], $report['orphans'], 'An unresolvable ref is not an orphan: orphans are what is still pending.');
+        self::assertSame(3, $report['unresolvable']);
+        self::assertSame([
+            [
+                'ref' => 'kuma:COM:kuma_nodes:22',
+                'count' => 2,
+                'reason' => FixupService::REASON_TARGET_NEVER_MIGRATED,
+                'from' => ['kuma:COM:kuma_nodes:1'],
+            ],
+            [
+                'ref' => 'kuma:COM:kuma_nodes:16',
+                'count' => 1,
+                'reason' => FixupService::REASON_TARGET_NEVER_MIGRATED,
+                'from' => ['kuma:COM:kuma_nodes:1'],
+            ],
+        ], $report['unresolvableTargets'], 'Reported once, grouped by target, most-referenced first.');
+
+        $meta = $state->get('COM:kuma_nodes', '1')['meta'] ?? [];
+        self::assertSame([], $meta['pendingRefs']);
+        self::assertCount(3, $meta['unresolvableRefs']);
+        self::assertSame('kuma:COM:kuma_nodes:22', $meta['unresolvableRefs'][0]['ref']);
+        self::assertSame(['relatedPages'], $meta['unresolvableRefs'][0]['path']);
+        self::assertSame(FixupService::REASON_TARGET_NEVER_MIGRATED, $meta['unresolvableRefs'][0]['reason']);
+
+        // The next pass has nothing to walk: reported once, not on every run.
+        $again = $fixup->run(fullCorpus: true);
+
+        self::assertSame(['patched' => 0, 'orphans' => [], 'unresolvable' => 0, 'unresolvableTargets' => []], $again);
+        self::assertSame(0, $entryService->reads, 'A ref that cannot resolve never costs an element load.');
+    }
+
+    public function testANarrowedPassLeavesATargetWithNoStateRowPending(): void
+    {
+        $state = new FixupInMemoryMigrationStateService();
+        $entryService = new FixupFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+        $fixup = new FixupService($state, $entryService, static fn(string $handle): ?int => $handle === 'en' ? 1 : null);
+
+        $a = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:105', [
+            'sites' => ['en' => ['fieldValues' => [
+                'relatedPages' => [['_ref' => 'kuma:COM:nt_page:999']],
+            ]]],
+        ]));
+        $this->save($saver, $a);
+
+        $report = $fixup->run(fullCorpus: false);
+
+        self::assertSame(0, $report['unresolvable']);
+        self::assertCount(1, $report['orphans'], 'A narrowed run cannot tell a forward reference from a missing target.');
+
+        $meta = $state->get('COM:nt_page', '105')['meta'] ?? [];
+        self::assertCount(1, $meta['pendingRefs']);
+        self::assertArrayNotHasKey('unresolvableRefs', $meta);
+
+        // The target arrives in a later, full run — and the ref, still pending, is patched.
+        $state->record('COM:nt_page', '999', 'entry', 555);
+        $report = $fixup->run(fullCorpus: true);
+
+        self::assertSame(1, $report['patched']);
+        self::assertSame(0, $report['unresolvable']);
+    }
+
+    public function testAFullCorpusPassKeepsARecordedTargetWithoutAnIdPending(): void
+    {
+        $state = new FixupInMemoryMigrationStateService();
+        $entryService = new FixupFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+        $fixup = new FixupService($state, $entryService, static fn(string $handle): ?int => $handle === 'en' ? 1 : null);
+
+        $a = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:106', [
+            'sites' => ['en' => ['fieldValues' => [
+                'relatedPages' => [['_ref' => 'kuma:COM:nt_page:998']],
+            ]]],
+        ]));
+        $this->save($saver, $a);
+        $state->recordWithoutTarget('COM:nt_page', '998');
+
+        $report = $fixup->run(fullCorpus: true);
+
+        self::assertSame(0, $report['unresolvable'], 'A state row without a target id is a target mid-write, not one that never existed.');
+        self::assertCount(1, $report['orphans']);
+    }
+
+    public function testRefsIntoOneFieldOfOneEntryCostOneReadAndOneSave(): void
+    {
+        $state = new FixupInMemoryMigrationStateService();
+        $entryService = new FixupFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+        $fixup = new FixupService($state, $entryService, static fn(string $handle): ?int => $handle === 'en' ? 1 : null);
+
+        $a = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:107', [
+            'sites' => ['en' => ['fieldValues' => [
+                'relatedPages' => [['_ref' => 'kuma:COM:nt_page:901']],
+                'pageBuilder' => [
+                    ['type' => 'contentBlock', 'fields' => ['relatedEntries' => [['_ref' => 'kuma:COM:nt_page:902']]]],
+                    ['type' => 'contentBlock', 'fields' => ['relatedEntries' => [['_ref' => 'kuma:COM:nt_page:903']]]],
+                    ['type' => 'contentBlock', 'fields' => ['relatedEntries' => [['_ref' => 'kuma:COM:nt_page:901']]]],
+                ],
+            ]]],
+        ]));
+        $entryAId = $this->save($saver, $a)->entryId;
+
+        $state->record('COM:nt_page', '901', 'entry', 111);
+        $state->record('COM:nt_page', '902', 'entry', 222);
+        $state->record('COM:nt_page', '903', 'entry', 333);
+
+        $report = $fixup->run();
+
+        self::assertSame(4, $report['patched']);
+        self::assertSame([], $report['orphans']);
+        self::assertSame(2, $entryService->reads, 'One read per (site, top-level field), not one per ref.');
+        self::assertSame(2, $entryService->resaves, 'One element save per (site, top-level field), not one per ref.');
+
+        $pageBuilder = $entryService->readEntryFieldValueForSite($entryAId, 1, 'pageBuilder');
+        self::assertSame([222], $pageBuilder[0]['fields']['relatedEntries']);
+        self::assertSame([333], $pageBuilder[1]['fields']['relatedEntries']);
+        self::assertSame([111], $pageBuilder[2]['fields']['relatedEntries']);
+        self::assertSame([111], $entryService->readEntryFieldValueForSite($entryAId, 1, 'relatedPages'));
+    }
+
+    public function testARefWhoseIdIsAlreadyInTheContainerIsDrainedWithoutASave(): void
+    {
+        $state = new FixupInMemoryMigrationStateService();
+        $entryService = new FixupFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+        $fixup = new FixupService($state, $entryService, static fn(string $handle): ?int => $handle === 'en' ? 1 : null);
+
+        $a = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:108', [
+            'sites' => ['en' => ['fieldValues' => [
+                'relatedPages' => [['_ref' => 'kuma:COM:nt_page:904']],
+            ]]],
+        ]));
+        $entryAId = $this->save($saver, $a)->entryId;
+
+        // A save landed the id but the meta update behind it did not: the ref is still pending.
+        $state->record('COM:nt_page', '904', 'entry', 444);
+        $entryService->resaveEntryFieldForSite($entryAId, 1, 'relatedPages', [444]);
+        $entryService->resaves = 0;
+
+        $report = $fixup->run();
+
+        self::assertSame(1, $report['patched']);
+        self::assertSame(0, $entryService->resaves, 'The stored value already equals the patched one; nothing to save.');
+        self::assertSame([444], $entryService->readEntryFieldValueForSite($entryAId, 1, 'relatedPages'));
+        self::assertSame([], $state->get('COM:nt_page', '108')['meta']['pendingRefs']);
     }
 
     public function testRefWhoseResaveThrowsIsOrphanedButOtherResolvableRefsInTheSameRunStillGetPatched(): void
