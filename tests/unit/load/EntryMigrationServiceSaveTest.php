@@ -97,11 +97,118 @@ final class EntryMigrationServiceSaveTest extends TestCase
 
         self::assertSame([['sectionId' => self::SECTION, 'typeId' => self::TYPE, 'siteId' => 1]], $this->writer->created);
         self::assertSame(600, $entry->id);
-        self::assertSame([$this->built[0], $onEn], array_column($this->writer->saved, 'element'), 'primary first, then the reload for `en`');
+        self::assertSame(
+            [$this->built[0], $this->built[0], $onEn],
+            array_column($this->writer->saved, 'element'),
+            'primary first, bare; then the reload per site the payload names, the primary included',
+        );
         self::assertSame('Over ons', $this->built[0]->title);
         self::assertSame('About us', $onEn->title);
-        self::assertFalse($this->writer->saved[0]['propagate'], 'the migration writes each site itself');
+        self::assertSame([false, false, false], array_column($this->writer->saved, 'propagate'), 'the migration writes each site itself');
         self::assertSame(600, $this->state->getTargetId(self::SOURCE, '42'));
+    }
+
+    public function testANewEntryIsSavedBareFirstSoPropagationHasNoBlocksToCopyThenOncePerSiteWithItsOwn(): void
+    {
+        // Craft propagates a new element to every site in its enabled map whatever
+        // `propagate` says, and a propagated row receives the primary's Matrix values —
+        // duplicated as fresh nested entries. On three sites with B blocks that was 2B ghosts
+        // written to be hard-deleted before the secondaries wrote their own. Bare first, then
+        // each site with its own blocks on an owner that is no longer new: nothing to copy,
+        // nothing to delete.
+        $this->writer->entryFactory = function(int $sectionId, int $typeId, int $siteId): Entry {
+            return $this->built[] = SaveStubEntry::make($sectionId, $typeId, $siteId, assignBlockIdsFrom: 100);
+        };
+        $onEn = SaveStubEntry::make(self::SECTION, self::TYPE, 2, assignBlockIdsFrom: 200);
+        $onDe = SaveStubEntry::make(self::SECTION, self::TYPE, 3, assignBlockIdsFrom: 300);
+        $this->writer->nextId = 600;
+        $this->writer->willFind(600, $onEn, 2);
+        $this->writer->willFind(600, $onDe, 3);
+
+        $this->save($perSite = [
+            'default' => $this->siteData('Over ons', ['pageBuilder' => $this->blocks('Text:1', 'Text:2', 'Text:3')]),
+            'en' => $this->siteData('About us', ['pageBuilder' => $this->blocks('Text:4', 'Text:5', 'Text:6')]),
+            'de' => $this->siteData('Über uns', ['pageBuilder' => $this->blocks('Text:7', 'Text:8', 'Text:9')]),
+        ]);
+
+        // Craft's own propagation saves for the two secondary rows are invisible to the
+        // seam; what the plugin asks for is one bare save plus one per site.
+        self::assertSame([$this->built[0], $this->built[0], $onEn, $onDe], array_column($this->writer->saved, 'element'));
+        self::assertSame([false, false, false, false], array_column($this->writer->saved, 'propagate'));
+        self::assertSame([], $this->writer->deleted, 'no ghost blocks, so nothing to hard-delete');
+        self::assertSame([], $this->built[0]->fieldValuesPerSave[0]['pageBuilder'], 'the bare save carries every Matrix field empty');
+        self::assertSame(['new1', 'new2', 'new3'], array_keys($this->built[0]->fieldValuesPerSave[1]['pageBuilder']), 'the primary writes its own blocks second');
+        self::assertSame(['new1', 'new2', 'new3'], array_keys($onEn->capturedFieldValues['pageBuilder']));
+        self::assertSame([
+            'blockIds' => [
+                'default' => ['Text:1' => '100', 'Text:2' => '101', 'Text:3' => '102'],
+                'en' => ['Text:4' => '200', 'Text:5' => '201', 'Text:6' => '202'],
+                'de' => ['Text:7' => '300', 'Text:8' => '301', 'Text:9' => '302'],
+            ],
+        ], $this->state->metaOf(self::SOURCE, '42'));
+
+        // The re-run: the entry exists, so the primary carries its blocks from the first
+        // save and no site writes a bare row. Every block keeps its id — no duplicates.
+        $this->writer->saved = [];
+        $this->writer->willFind(600, $this->built[0], 1);
+
+        $this->save($perSite, force: true);
+
+        self::assertSame([$this->built[0], $onEn, $onDe], array_column($this->writer->saved, 'element'), 'one save per site, none bare');
+        self::assertSame([], $this->writer->deleted);
+        self::assertSame([100, 101, 102], array_keys($this->built[0]->capturedFieldValues['pageBuilder']));
+        self::assertSame([200, 201, 202], array_keys($onEn->capturedFieldValues['pageBuilder']));
+        self::assertSame([300, 301, 302], array_keys($onDe->capturedFieldValues['pageBuilder']));
+        self::assertSame([100, 101, 102], $this->built[0]->blockIds('pageBuilder'), 'updated in place, not rebuilt');
+        self::assertSame([
+            'blockIds' => [
+                'default' => ['Text:1' => '100', 'Text:2' => '101', 'Text:3' => '102'],
+                'en' => ['Text:4' => '200', 'Text:5' => '201', 'Text:6' => '202'],
+                'de' => ['Text:7' => '300', 'Text:8' => '301', 'Text:9' => '302'],
+            ],
+        ], $this->state->metaOf(self::SOURCE, '42'));
+    }
+
+    public function testASiteNewlyAddedToAnExistingEntryStillHasItsPropagatedGhostsReconciled(): void
+    {
+        // An existing entry cannot be saved bare without losing the primary's own blocks, so
+        // a site it gains on a re-run receives Craft's duplicates of them; the guard that
+        // once ran on every first save still earns its place here.
+        $existing = SaveStubEntry::make(self::SECTION, self::TYPE, 1, assignBlockIdsFrom: 100);
+        $existing->id = 500;
+        $existing->blocksByField['pageBuilder'] = [SaveStubBlock::withId(100)];
+        $this->state->willResolve(self::SOURCE, '42', 500);
+        $this->state->updateMeta(self::SOURCE, '42', null, ['blockIds' => ['default' => ['Text:1' => '100']]]);
+        $this->writer->willFind(500, $existing, 1);
+
+        $onEn = SaveStubEntry::make(self::SECTION, self::TYPE, 2, assignBlockIdsFrom: 200);
+        $onEn->blocksByField['pageBuilder'] = [SaveStubBlock::withId(77), SaveStubBlock::withId(78)];
+        $this->writer->willFind(500, $onEn, 2);
+
+        $this->save([
+            'default' => $this->siteData('Over ons', ['pageBuilder' => $this->blocks('Text:1')]),
+            'en' => $this->siteData('About us', ['pageBuilder' => $this->blocks('Text:2')]),
+        ], force: true);
+
+        self::assertSame([$existing, $onEn], array_column($this->writer->saved, 'element'));
+        self::assertSame([77, 78], $this->writer->deletedIds(), 'the ghosts go before `en` writes its own block');
+        self::assertSame([100], array_keys($existing->capturedFieldValues['pageBuilder']), 'the primary keeps its block');
+        self::assertSame(
+            ['blockIds' => ['default' => ['Text:1' => '100'], 'en' => ['Text:2' => '200']]],
+            $this->state->metaOf(self::SOURCE, '42'),
+        );
+    }
+
+    /** @return array<string, array{type: string, fields: array<string, string>}> */
+    private function blocks(string ...$refs): array
+    {
+        $out = [];
+
+        foreach ($refs as $i => $ref) {
+            $out['new' . ($i + 1)] = ['type' => 'text', 'fields' => ['_sourcePartRef' => $ref, 'body' => $ref]];
+        }
+
+        return $out;
     }
 
     public function testASiteThePayloadSaysNothingAboutIsLeftOutOfTheEnabledMapNotSetToFalse(): void
@@ -307,7 +414,7 @@ final class EntryMigrationServiceSaveTest extends TestCase
         ]);
 
         self::assertSame($entry, $saved);
-        self::assertSame([600], $this->writer->savedIds(), 'only the primary save went through');
+        self::assertSame([600, 600], $this->writer->savedIds(), 'only the primary saves went through');
         self::assertSame(600, $this->state->getTargetId(self::SOURCE, '42'));
     }
 
@@ -431,8 +538,11 @@ final class EntryMigrationServiceSaveTest extends TestCase
  */
 final class SaveStubEntry extends Entry
 {
-    /** @var array<string, mixed> */
+    /** @var array<string, mixed> the last setFieldValues() */
     public array $capturedFieldValues = [];
+
+    /** @var list<array<string, mixed>> every setFieldValues(), in order */
+    public array $fieldValuesPerSave = [];
 
     /** @var array<int, bool> */
     public array $enabledMap = [];
@@ -442,12 +552,20 @@ final class SaveStubEntry extends Entry
 
     public ?FieldLayout $layout = null;
 
-    public static function make(int $sectionId, int $typeId, int $siteId): self
+    /**
+     * When set, a Matrix payload handed to setFieldValues() becomes the field's blocks the
+     * way Craft's save would leave them: a block keyed by an id keeps it, a `new{n}` block is
+     * assigned the next one. That is what lets a test tell "updated in place" from "rebuilt".
+     */
+    private ?int $nextBlockId = null;
+
+    public static function make(int $sectionId, int $typeId, int $siteId, ?int $assignBlockIdsFrom = null): self
     {
         $entry = (new \ReflectionClass(self::class))->newInstanceWithoutConstructor();
         $entry->sectionId = $sectionId;
         $entry->typeId = $typeId;
         $entry->siteId = $siteId;
+        $entry->nextBlockId = $assignBlockIdsFrom;
 
         return $entry;
     }
@@ -460,6 +578,31 @@ final class SaveStubEntry extends Entry
     public function setFieldValues(array $values): void
     {
         $this->capturedFieldValues = $values;
+        $this->fieldValuesPerSave[] = $values;
+
+        if ($this->nextBlockId === null) {
+            return;
+        }
+
+        foreach ($values as $handle => $payload) {
+            if (!is_array($payload)) {
+                continue;
+            }
+
+            $blocks = [];
+
+            foreach (array_keys($payload) as $key) {
+                $blocks[] = SaveStubBlock::withId(is_int($key) ? $key : $this->nextBlockId++);
+            }
+
+            $this->blocksByField[$handle] = $blocks;
+        }
+    }
+
+    /** @return list<int> */
+    public function blockIds(string $fieldHandle): array
+    {
+        return array_map(static fn(SaveStubBlock $block): int => (int) $block->id, $this->blocksByField[$fieldHandle] ?? []);
     }
 
     public function getFieldValue(string $fieldHandle): mixed

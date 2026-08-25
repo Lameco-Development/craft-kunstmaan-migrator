@@ -11,7 +11,9 @@ use craft\models\EntryType;
 use craft\models\FieldLayout;
 use DateTime;
 use DateTimeImmutable;
+use Lameco\Kunstmaanmigrator\load\BlockIdentity;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
@@ -31,8 +33,9 @@ final class EntryMigrationServiceApplyPerSiteDataTest extends TestCase
         array $blockUidMap = [],
         ?string $stateSource = null,
     ): void {
+        $blocks = new BlockIdentity(new InMemoryElementWriter(), ['default' => $blockUidMap]);
         (new ReflectionMethod(EntryMigrationService::class, 'applyPerSiteData'))
-            ->invoke(new EntryMigrationService(), $entry, $data, $blockUidMap, null, $stateSource, '5', 'default');
+            ->invoke(new EntryMigrationService(), $entry, $data, $blocks, null, $stateSource, '5', 'default');
     }
 
     public function testAParentIdInThePayloadLandsOnTheEntry(): void
