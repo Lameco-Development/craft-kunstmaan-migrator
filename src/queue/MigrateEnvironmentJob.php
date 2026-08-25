@@ -112,6 +112,20 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
     /** Saves this job's batches made without indexing; the index stage at the end of the chain does it once. */
     public int $searchIndexDeferred = 0;
 
+    /**
+     * Where this job's batches spent their time, folded per batch — the same
+     * phase table the console prints, so a queued run's split is comparable.
+     *
+     * @var array<string, array{seconds: float, count: int}>
+     */
+    public array $timings = [];
+
+    /** @var array<string, array{seconds: float, count: int}> */
+    public array $timingsByType = [];
+
+    /** Seconds the batches took end to end, `loadData()` to `afterBatch()`, summed. */
+    public float $wallSeconds = 0.0;
+
     public int $batchSize = 50;
 
     private ?EnvironmentPipeline $pipeline = null;
@@ -120,8 +134,12 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
     private ?RunTally $tally = null;
     private ?EnvironmentContext $context = null;
 
+    private int $batchStartedAt = 0;
+
     protected function loadData(): \craft\base\Batchable
     {
+        $this->batchStartedAt = hrtime(true);
+
         // Refusing here as well as in the console command is deliberate: a job
         // is the one path that can reach a production queue without anyone
         // typing a command on that machine.
@@ -218,12 +236,14 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
         };
 
         try {
-            match ($item[0]) {
-                'e' => $compiler->compileEntitySlice($this->compilerRun, (string) $item[1], (int) $item[2], (int) $item[3], $emit),
-                'n' => $compiler->compileNodeUnit($this->compilerRun, (int) $item[1], $emit),
-                't' => $compiler->finishStructural($this->compilerRun, $emit),
-                default => throw new RuntimeException('Unknown work unit: ' . json_encode($item)),
-            };
+            $this->pipeline->timeCompile($this->tally, function() use ($compiler, $item, $emit): void {
+                match ($item[0]) {
+                    'e' => $compiler->compileEntitySlice($this->compilerRun, (string) $item[1], (int) $item[2], (int) $item[3], $emit),
+                    'n' => $compiler->compileNodeUnit($this->compilerRun, (int) $item[1], $emit),
+                    't' => $compiler->finishStructural($this->compilerRun, $emit),
+                    default => throw new RuntimeException('Unknown work unit: ' . json_encode($item)),
+                };
+            });
         } catch (\Throwable $e) {
             // A unit that dies — a compile-time throw, a write conflict that
             // outlasted its retries — is one unit's problem, not the batch's:
@@ -264,6 +284,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
     {
         $this->pipeline->disarmMaintenanceGuard($this->tally);
         $this->pipeline->foldCompileReport($this->tally);
+        $this->foldTimings($this->tally, (hrtime(true) - $this->batchStartedAt) / 1e9);
         $this->slugJobsVetoed += $this->tally->slugJobsVetoed;
         $this->searchIndexDeferred += $this->tally->searchIndexDeferred;
 
@@ -287,6 +308,14 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             10,
         );
         $this->assetFailures += count($this->tally->assetFailures);
+    }
+
+    /** One batch's phase timings onto the job's running total. */
+    public function foldTimings(RunTally $tally, float $batchSeconds): void
+    {
+        $this->timings = RunTally::mergeTimings($this->timings, $tally->timings);
+        $this->timingsByType = RunTally::mergeTimings($this->timingsByType, $tally->timingsByType);
+        $this->wallSeconds += $batchSeconds;
     }
 
     protected function after(): void
@@ -313,6 +342,8 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             'assetFailures' => $this->assetFailures,
             'slugJobsVetoed' => $this->slugJobsVetoed,
             'searchIndexDeferred' => $this->searchIndexDeferred,
+            'wallSeconds' => round($this->wallSeconds, 3),
+            'timings' => RunTally::timingReport($this->timings) + ['byType' => RunTally::topTypes($this->timingsByType)],
         ]);
 
         QueueHelper::push(job: new RunAdaptersJob([

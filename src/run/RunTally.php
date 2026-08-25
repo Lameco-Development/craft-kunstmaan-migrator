@@ -109,6 +109,27 @@ final class RunTally
      */
     public int $searchIndexDeferred = 0;
 
+    /**
+     * Where the entry pass spent its time, per phase: `compile`, `validate`,
+     * `assets` (resolution and ingest), `entrySave` (the Craft save, propagation
+     * included) and `state` (the state-table reads and writes around the save).
+     *
+     * The reference corpus took an hour for 1,830 payloads and nobody could say
+     * how the hour split. Accumulated where the work happens, unconditionally —
+     * a dozen `hrtime()` calls per payload are nothing next to one Craft save.
+     *
+     * @var array<string, array{seconds: float, count: int}>
+     */
+    public array $timings = [];
+
+    /**
+     * `entrySave` + `assets` seconds per page type / entity, so an operator
+     * can pick the expensive types for a `--only` slice.
+     *
+     * @var array<string, array{seconds: float, count: int}>
+     */
+    public array $timingsByType = [];
+
     public function count(string $bucket): void
     {
         $this->counts[$bucket] = ($this->counts[$bucket] ?? 0) + 1;
@@ -208,5 +229,122 @@ final class RunTally
     public function hasFailures(): bool
     {
         return ($this->counts['failed'] ?? 0) > 0;
+    }
+
+    /** Close a phase opened with `hrtime(true)`. */
+    public function timed(string $phase, int $startedAt, int $count = 1): void
+    {
+        $this->addTiming($phase, (hrtime(true) - $startedAt) / 1e9, $count);
+    }
+
+    public function addTiming(string $phase, float $seconds, int $count = 1): void
+    {
+        $this->timings = self::mergeTimings($this->timings, [$phase => ['seconds' => $seconds, 'count' => $count]]);
+    }
+
+    public function addTypeTiming(string $type, float $seconds, int $count = 1): void
+    {
+        $this->timingsByType = self::mergeTimings($this->timingsByType, [$type => ['seconds' => $seconds, 'count' => $count]]);
+    }
+
+    /**
+     * Two timing tables added together — the job folds each batch's tally
+     * into its own scalars with this, the same way the console sums one tally.
+     *
+     * @param array<string, array{seconds: float, count: int}> $into
+     * @param array<string, array{seconds: float, count: int}> $from
+     * @return array<string, array{seconds: float, count: int}>
+     */
+    public static function mergeTimings(array $into, array $from): array
+    {
+        foreach ($from as $key => $timing) {
+            $into[$key] = [
+                'seconds' => ($into[$key]['seconds'] ?? 0.0) + $timing['seconds'],
+                'count' => ($into[$key]['count'] ?? 0) + $timing['count'],
+            ];
+        }
+
+        return $into;
+    }
+
+    /**
+     * What was added since `$before` — the console's tally spans every
+     * environment, and its per-environment run-log line wants one.
+     *
+     * @param array<string, array{seconds: float, count: int}> $before
+     * @param array<string, array{seconds: float, count: int}> $now
+     * @return array<string, array{seconds: float, count: int}>
+     */
+    public static function timingsSince(array $before, array $now): array
+    {
+        $out = [];
+
+        foreach ($now as $key => $timing) {
+            $out[$key] = [
+                'seconds' => $timing['seconds'] - ($before[$key]['seconds'] ?? 0.0),
+                'count' => $timing['count'] - ($before[$key]['count'] ?? 0),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The phase table as both callers report it: seconds, count and the
+     * average per count in milliseconds.
+     *
+     * @param array<string, array{seconds: float, count: int}> $timings
+     * @return array<string, array{seconds: float, count: int, avgMs: float}>
+     */
+    public static function timingReport(array $timings): array
+    {
+        $out = [];
+
+        foreach ($timings as $phase => $timing) {
+            $out[$phase] = [
+                'seconds' => round($timing['seconds'], 3),
+                'count' => $timing['count'],
+                'avgMs' => $timing['count'] > 0 ? round($timing['seconds'] * 1000 / $timing['count'], 1) : 0.0,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The most expensive types first, at most `$limit` of them.
+     *
+     * @param array<string, array{seconds: float, count: int}> $byType
+     * @return array<string, array{seconds: float, count: int, avgMs: float}>
+     */
+    public static function topTypes(array $byType, int $limit = 15): array
+    {
+        uasort($byType, static fn(array $a, array $b): int => $b['seconds'] <=> $a['seconds']);
+
+        return self::timingReport(array_slice($byType, 0, $limit, true));
+    }
+
+    /**
+     * One line an operator reads without parsing JSON:
+     * `assets 61% · entrySave 29% · state 6% · compile 3%`.
+     *
+     * @param array<string, array{seconds: float, count: int}> $timings
+     */
+    public static function shareLine(array $timings): string
+    {
+        $total = array_sum(array_map(static fn(array $t): float => $t['seconds'], $timings));
+
+        if ($total <= 0.0) {
+            return '';
+        }
+
+        uasort($timings, static fn(array $a, array $b): int => $b['seconds'] <=> $a['seconds']);
+        $parts = [];
+
+        foreach ($timings as $phase => $timing) {
+            $parts[] = sprintf('%s %d%%', $phase, (int) round($timing['seconds'] * 100 / $total));
+        }
+
+        return implode(' · ', $parts);
     }
 }

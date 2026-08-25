@@ -322,6 +322,7 @@ final class MigrateController extends Controller
         }
 
         $pipeline = EnvironmentPipeline::build($mapping, $settings);
+        $entryPassStarted = hrtime(true);
 
         foreach ($mapping->environments() as $env => $spec) {
             if ($this->legacyEnv !== null && $env !== $this->legacyEnv) {
@@ -340,6 +341,7 @@ final class MigrateController extends Controller
                 'only' => $only,
             ], function(array &$extra) use ($pipeline, $mapping, $env, $spec, $settings, $tally): void {
                 $before = $tally->counts;
+                $timingsBefore = $tally->timings;
 
                 try {
                     $pipeline->run(
@@ -359,9 +361,12 @@ final class MigrateController extends Controller
 
                     $extra['counts'] = $delta;
                     $extra['problems'] = count($tally->problems);
+                    $extra['timings'] = RunTally::timingReport(RunTally::timingsSince($timingsBefore, $tally->timings));
                 }
             });
         }
+
+        $wallSeconds = round((hrtime(true) - $entryPassStarted) / 1e9, 3);
 
         // A payload can name a parent or a relation that no entry had been written for yet, and
         // pass one parks those as `pendingRefs` rather than failing. Nothing resolved them: the
@@ -495,7 +500,16 @@ final class MigrateController extends Controller
             'problems' => array_slice($tally->problems, 0, 40),
             'only' => $only,
             'adapters' => $tally->adapters,
+            'wallSeconds' => $wallSeconds,
+            'timings' => RunTally::timingReport($tally->timings) + ['byType' => RunTally::topTypes($tally->timingsByType)],
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT) . PHP_EOL);
+
+        // The split, where an operator watching the terminal sees it. The JSON above
+        // is for the build-to-build comparison; this line is for deciding whether one
+        // is worth making.
+        if (($share = RunTally::shareLine($tally->timings)) !== '') {
+            $this->stderr(sprintf("Entry pass %ss: %s\n", number_format($wallSeconds, 1), $share), Console::FG_CYAN);
+        }
 
         // Losses are counted either way; --fail-on-loss is what makes ignoring them a
         // decision rather than the default.
