@@ -97,6 +97,12 @@ final class RunTally
      */
     public array $assetFailures = [];
 
+    /**
+     * Craft's deferred entry-URI jobs the run refused to queue, because its
+     * own URI pass does that work; see `UriJobGuard`.
+     */
+    public int $slugJobsVetoed = 0;
+
     public function count(string $bucket): void
     {
         $this->counts[$bucket] = ($this->counts[$bucket] ?? 0) + 1;

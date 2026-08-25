@@ -11,7 +11,9 @@ use Lameco\Kunstmaanmigrator\Compile\Compiler;
 use Lameco\Kunstmaanmigrator\Compile\PayloadWriter;
 use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
+use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\load\PayloadEntrySaver;
@@ -40,11 +42,14 @@ final class EnvironmentPipeline
 {
     private readonly ?WriteConflictRetry $retry;
 
+    private bool $uriJobsArmed = false;
+
     public function __construct(
         private readonly PayloadValidator $validator,
         private readonly ?PayloadEntrySaver $saver,
         private readonly Compiler $compiler,
         private readonly Transforms $transforms,
+        private readonly UriJobGuard $uriJobs,
     ) {
         $this->retry = $saver === null ? null : new WriteConflictRetry($saver->save(...));
     }
@@ -68,6 +73,7 @@ final class EnvironmentPipeline
             $settings->dryRun ? null : self::saver($gateway, self::optionsFor($settings)),
             new Compiler($mapping, $transforms, new TargetModel($gateway), $settings->only),
             $transforms,
+            new CraftUriJobGuard(),
         );
     }
 
@@ -155,18 +161,65 @@ final class EnvironmentPipeline
     ): void {
         $context = $this->prepare($mapping, $env, $spec, $settings);
 
-        $this->compiler->compile(
-            $context->legacy,
-            $env,
-            function(array $raw) use ($context, $settings, $tally, $writer): void {
-                $this->handlePayload($raw, $context, $settings, $tally, $writer);
-            },
-            $settings->limit,
-        );
+        $this->guardUriJobs($settings, $tally, function() use ($context, $env, $settings, $tally, $writer): void {
+            $this->compiler->compile(
+                $context->legacy,
+                $env,
+                function(array $raw) use ($context, $settings, $tally, $writer): void {
+                    $this->handlePayload($raw, $context, $settings, $tally, $writer);
+                },
+                $settings->limit,
+            );
 
-        if (!$settings->entriesOnly) {
-            $tally->adapters[$env] = $this->runAdapters($context, $settings);
+            if (!$settings->entriesOnly) {
+                $tally->adapters[$env] = $this->runAdapters($context, $settings);
+            }
+        });
+    }
+
+    /**
+     * Run `$body` with Craft's deferred entry-URI jobs vetoed — when, and
+     * only when, this run ends in the URI pass that makes them redundant.
+     * Disarmed on the way out whatever happens inside, so an exception never
+     * leaves a handler on the queue for whatever the process does next.
+     *
+     * @param callable(): void $body
+     */
+    public function guardUriJobs(RunSettings $settings, RunTally $tally, callable $body): void
+    {
+        $this->armUriJobGuard($settings);
+
+        try {
+            $body();
+        } finally {
+            $this->disarmUriJobGuard($tally);
         }
+    }
+
+    /**
+     * The arm half on its own, for the batched job: a batch arms when it
+     * loads and disarms after its last item, with Craft's own loop in between.
+     * A caller whose run will not reach the URI pass gets a no-op.
+     */
+    public function armUriJobGuard(RunSettings $settings): void
+    {
+        if (!$settings->settlesUris() || $this->uriJobsArmed) {
+            return;
+        }
+
+        $this->uriJobs->arm();
+        $this->uriJobsArmed = true;
+    }
+
+    /** The disarm half; what was vetoed lands on the tally. */
+    public function disarmUriJobGuard(RunTally $tally): void
+    {
+        if (!$this->uriJobsArmed) {
+            return;
+        }
+
+        $this->uriJobsArmed = false;
+        $tally->slugJobsVetoed += $this->uriJobs->disarm();
     }
 
     /**

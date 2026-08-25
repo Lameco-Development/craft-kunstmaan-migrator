@@ -6,6 +6,7 @@ namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\queue\BaseJob;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
+use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
 use Lameco\Kunstmaanmigrator\finalize\StructureUriPass;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\RunLog;
@@ -28,6 +29,9 @@ final class RecomputeStructureUrisJob extends BaseJob implements RetryableJobInt
     /** @var array<string, int> */
     public array $counts = [];
 
+    /** Craft's deferred entry-URI jobs the pass dropped, its work being done. */
+    public int $slugJobsReleased = 0;
+
     public function execute($queue): void
     {
         if (ProductionGuard::isProduction()) {
@@ -39,14 +43,18 @@ final class RecomputeStructureUrisJob extends BaseJob implements RetryableJobInt
         }
 
         RunLog::default()->track('uris', [], function(array &$extra) use ($queue): void {
-            $this->counts = (new StructureUriPass(new CraftElementWriter()))->run(
+            $pass = new StructureUriPass(new CraftElementWriter(), new CraftUriJobGuard());
+
+            $this->counts = $pass->run(
                 Mapping::fromFile($this->mappingPath),
                 function(string $section, int $done, int $total) use ($queue): void {
                     $this->setProgress($queue, $done / $total, $section);
                 },
             );
+            $this->slugJobsReleased = $pass->releasedJobs();
 
             $extra['counts'] = $this->counts;
+            $extra['slugJobsReleased'] = $this->slugJobsReleased;
         });
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\finalize;
 
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 
 /**
@@ -27,11 +28,20 @@ use Lameco\Kunstmaanmigrator\Mapping\Mapping;
  * children, no element save and no queue. It runs after the fixup pass has
  * patched the deferred parents, from committed state, outside any entry
  * transaction.
+ *
+ * Once the walk is done, the entry-URI jobs Craft queued for the same work
+ * are released: the guard vetoes them while a process is armed, but a batched
+ * queue run is many processes and the jobs its batches pushed unguarded are
+ * still waiting — every one an element save that queues its descendants.
  */
 final class StructureUriPass
 {
-    public function __construct(private readonly ElementWriter $elements)
-    {
+    private int $releasedJobs = 0;
+
+    public function __construct(
+        private readonly ElementWriter $elements,
+        private readonly UriJobGuard $jobs,
+    ) {
     }
 
     /**
@@ -57,7 +67,15 @@ final class StructureUriPass
             }
         }
 
+        $this->releasedJobs = $this->jobs->release();
+
         return $counts;
+    }
+
+    /** The deferred entry-URI jobs the last `run()` dropped from the queue. */
+    public function releasedJobs(): int
+    {
+        return $this->releasedJobs;
     }
 
     /**

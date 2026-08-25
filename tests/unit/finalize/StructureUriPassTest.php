@@ -8,6 +8,7 @@ use craft\elements\Entry;
 use Lameco\Kunstmaanmigrator\finalize\StructureUriPass;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryUriJobGuard;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -44,7 +45,7 @@ final class StructureUriPassTest extends TestCase
         $writer->willLiveOn(12, [2]);
         $writer->willWalk('pages', [$root, $child, $grandchild]);
 
-        $counts = (new StructureUriPass($writer))->run(Mapping::fromArray([
+        $counts = (new StructureUriPass($writer, new InMemoryUriJobGuard()))->run(Mapping::fromArray([
             'pages' => ['HomePage' => ['entryType' => 'home']],
         ]));
 
@@ -72,7 +73,7 @@ final class StructureUriPassTest extends TestCase
         $writer->willWalk('partners', [$this->entry(2, 1), $this->entry(3, 1)]);
         $writer->willWalk('news', [$this->entry(4, 1)]);
 
-        $counts = (new StructureUriPass($writer))->run(Mapping::fromArray([
+        $counts = (new StructureUriPass($writer, new InMemoryUriJobGuard()))->run(Mapping::fromArray([
             'pages' => [
                 'HomePage' => ['entryType' => 'home'],
                 'ContentPage' => ['entryType' => 'content'],
@@ -94,7 +95,7 @@ final class StructureUriPassTest extends TestCase
     {
         $writer = new InMemoryElementWriter();
 
-        $counts = (new StructureUriPass($writer))->run(Mapping::fromArray([
+        $counts = (new StructureUriPass($writer, new InMemoryUriJobGuard()))->run(Mapping::fromArray([
             'pages' => ['HomePage' => ['entryType' => 'home']],
         ]));
 
@@ -107,7 +108,7 @@ final class StructureUriPassTest extends TestCase
         $writer = new InMemoryElementWriter();
         $seen = [];
 
-        (new StructureUriPass($writer))->run(
+        (new StructureUriPass($writer, new InMemoryUriJobGuard()))->run(
             Mapping::fromArray([
                 'pages' => ['HomePage' => ['entryType' => 'home']],
                 'entities' => ['Partner' => ['table' => 'partner', 'entryType' => 'partner', 'section' => 'partners']],
@@ -118,6 +119,35 @@ final class StructureUriPassTest extends TestCase
         );
 
         self::assertSame([['pages', 1, 2], ['partners', 2, 2]], $seen);
+    }
+
+    /**
+     * A batched queue run is many processes, and the entry-URI jobs a batch
+     * pushed before it armed are still waiting when the pass runs — each an
+     * element save that queues its descendants. Once the walk has done their
+     * work they are dropped; the search-index job and any other element's
+     * URI job stay, because nothing here did those.
+     */
+    public function testTheDeferredEntryUriJobsAreReleasedOnceTheWalkIsDone(): void
+    {
+        $writer = new InMemoryElementWriter();
+        $writer->willWalk('pages', [$this->entry(1, 1)]);
+
+        $jobs = new InMemoryUriJobGuard();
+        $jobs->push();
+        $jobs->push();
+        $jobs->pushSearchIndex();
+        $jobs->push(elementType: 'craft\elements\Category');
+
+        $pass = new StructureUriPass($writer, $jobs);
+        $pass->run(Mapping::fromArray(['pages' => ['HomePage' => ['entryType' => 'home']]]));
+
+        self::assertSame(2, $pass->releasedJobs());
+        self::assertSame(
+            ['craft\queue\jobs\UpdateSearchIndex', 'craft\queue\jobs\UpdateElementSlugsAndUris'],
+            array_column($jobs->queued, 'class'),
+        );
+        self::assertSame(['craft\elements\Category'], array_column(array_slice($jobs->queued, 1), 'elementType'));
     }
 
     /**

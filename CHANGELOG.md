@@ -100,6 +100,25 @@ maintenance the URI stage replaces. Details in the site's
   `uris`), the queue chain as `RecomputeStructureUrisJob` after `FinalizeJob`,
   and the run screen offers it as a recovery pass. `migrate --resave` is now
   off by default and only there to compare against.
+- **A run that settles URIs itself no longer leaves Craft's deferred URI
+  jobs behind.** Every migration save is a `resaving` one, and for a
+  Structure entry Craft answers it by queueing `UpdateElementSlugsAndUris`
+  for the descendants at default priority 1024 — behind the 512 chain. After
+  the reference run the queue held 5,084 of them, each an element save that
+  queues its own descendants, all waiting for the next `queue/run`, all made
+  redundant by the URI pass. A `UriJobGuard` seam (production adapter on the
+  queue's before-push event, in-memory twin) now vetoes entry URI jobs while
+  a run that ends in the URI pass is in progress — armed and disarmed by
+  `EnvironmentPipeline` for both callers, never for `--entries-only`,
+  `--dry-run` or `load/entry`, so an interrupted or narrowed run keeps
+  Craft's maintenance — and `StructureUriPass` releases the ones still
+  waiting once its walk is done, since a batched queue run is many
+  processes and a handler in one is gone in the next. Search-index jobs and
+  other element types' URI jobs are never touched. Reported as
+  `slugJobsVetoed` and `slugJobsReleased` in the summary and the run log.
+  The run screen's recovery passes now push at 512 through
+  `QueueHelper::push()` like the rest of the chain, so they no longer wait
+  behind that backlog.
 - **A deadlock no longer commits a partial entry.** The writer adapter
   retried the one element save that hit a 1213 deadlock, inside the entry's
   transaction — which InnoDB had already rolled back whole. The retried

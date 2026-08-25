@@ -10,6 +10,7 @@ use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Lameco\Kunstmaanmigrator\run\RunLog;
 use Lameco\Kunstmaanmigrator\run\RunSettings;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use RuntimeException;
 use yii\queue\RetryableJobInterface;
@@ -62,7 +63,20 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
             $context = $pipeline->prepare($mapping, $this->environment, (array) $spec, $settings);
 
             RunLog::default()->track('adapters', ['environment' => $this->environment], function(array &$extra) use ($pipeline, $context, $settings): void {
-                $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings);
+                $tally = new RunTally();
+
+                // An adapter that saves entries queues the same deferred URI
+                // work a batch does; the veto holds only for a chain that
+                // ends in the URI pass.
+                if ($this->chainCorpusPasses) {
+                    $pipeline->guardUriJobs($settings, $tally, function() use (&$extra, $pipeline, $context, $settings): void {
+                        $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings);
+                    });
+                } else {
+                    $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings);
+                }
+
+                $extra['slugJobsVetoed'] = $tally->slugJobsVetoed;
             });
         }
 

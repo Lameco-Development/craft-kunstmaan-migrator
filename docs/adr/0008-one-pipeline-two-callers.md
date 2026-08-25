@@ -32,3 +32,9 @@ console path ran different adapter lists in a different order.
   failed install.
 - A review proposing "just call the adapter directly here, it's one line"
   is proposing the fifth call site.
+- A run that settles URIs itself vetoes Craft's deferred entry-URI jobs, and
+  it is the pipeline that arms and disarms that veto (`UriJobGuard`), so the
+  console and the queue agree on when it holds: only for a run that ends in
+  the URI pass, never for `--entries-only`, `--dry-run` or `load/entry`. The
+  batched job cannot wrap its run in one call, so it takes the two halves
+  and pairs them per batch; what a batch pushed unguarded, the pass releases.
