@@ -47,6 +47,15 @@ final class PayloadEntrySaver
     private $transactionRunner;
 
     /**
+     * Nanoseconds and calls the save in progress spent resolving and ingesting
+     * assets — summed here because the resolution happens several recursion
+     * levels below `doSave()`, and put on the tally once when the save ends.
+     */
+    private int $assetNs = 0;
+
+    private int $assetCalls = 0;
+
+    /**
      * @param ?callable(callable(): SaveResult): SaveResult $transactionRunner
      *   Defaults to `Craft::$app->getDb()->transaction()` (commits on
      *   success, rolls back and rethrows on failure — `LoadController`'s
@@ -116,8 +125,13 @@ final class PayloadEntrySaver
         // "created" is decided BEFORE the save — saveEntryForSites() records
         // into this exact (stateSource, stateKey) pair, so a pre-existing row
         // means this call is an update, not a create.
+        $stateStarted = hrtime(true);
         $existingEntryId = $this->stateService->getTargetId($stateSource, $stateKey);
+        $stateNs = hrtime(true) - $stateStarted;
         $wasAlreadySaved = $existingEntryId !== null;
+
+        $this->assetNs = 0;
+        $this->assetCalls = 0;
 
         $deferredRefs = [];
         $unresolvedAssets = [];
@@ -166,6 +180,7 @@ final class PayloadEntrySaver
             ];
         }
 
+        $saveStarted = hrtime(true);
         $entry = $this->entryService->saveEntryForSites(
             $section['id'],
             $entryType['id'],
@@ -183,6 +198,8 @@ final class PayloadEntrySaver
         // Craft propagates it across the section's sites — so the address is written once,
         // against that row, which is what an untranslatable field means.
         $droppedAddresses = $this->writeAddressesOnPrimarySite((int) $entry->id, $droppedAddresses);
+        $saveNs = hrtime(true) - $saveStarted;
+        $stateStarted = hrtime(true);
 
         // Reflects THIS run's deferred state, overwriting whatever a
         // previous run left behind — Task 5's fixup pass owns clearing
@@ -222,6 +239,15 @@ final class PayloadEntrySaver
         foreach ($p->aliases as $alias) {
             $this->stateService->recordAlias($alias, $p->sourceUid, (int) $entry->id);
         }
+
+        $stateNs += hrtime(true) - $stateStarted;
+
+        // The state row `saveEntryForSites()` writes for the entry itself is inside
+        // `entrySave`; `state` is what this module reads and writes around it.
+        $tally->addTiming('state', $stateNs / 1e9);
+        $tally->addTiming('entrySave', $saveNs / 1e9);
+        $tally->addTiming('assets', $this->assetNs / 1e9, $this->assetCalls);
+        $tally->addTypeTiming(self::typeOf($p), ($saveNs + $this->assetNs) / 1e9);
 
         return new SaveResult(
             sourceUid: $p->sourceUid,
@@ -429,7 +455,11 @@ final class PayloadEntrySaver
         }
 
         if (array_key_exists('_asset', $node) && is_string($node['_asset'])) {
+            $assetStarted = hrtime(true);
             $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset'], $env, $this->options);
+            $this->assetNs += hrtime(true) - $assetStarted;
+            $this->assetCalls++;
+
             if ($resolvedId <= 0) {
                 $unresolvedAssets[] = [
                     'field' => $fieldHandle,
@@ -619,7 +649,11 @@ final class PayloadEntrySaver
         array $path,
         array &$mediaTokenIssues,
     ): string {
+        // Counted as `assets`: every token this resolves is a JIT asset lookup, ingest included.
+        $assetStarted = hrtime(true);
         $rewritten = $this->ckeditorRewriter->rewriteCurlyMediaTokens($html, $siteId);
+        $this->assetNs += hrtime(true) - $assetStarted;
+        $this->assetCalls++;
 
         foreach ($this->ckeditorRewriter->consumeUnresolvedDiagnostics() as $diagnostic) {
             if (($diagnostic['tokenFamily'] ?? null) !== 'media_token') {
@@ -629,5 +663,25 @@ final class PayloadEntrySaver
         }
 
         return $rewritten;
+    }
+
+    /**
+     * The name an operator can hand to `--only`: a page's legacy class basename
+     * (`PartnerPage`), or for an entity lane the legacy table its sourceUid
+     * names — the `pages:` / `entities:` keys the compiler filters on.
+     */
+    private static function typeOf(Payload $p): string
+    {
+        $class = $p->legacy['class'];
+
+        if (is_string($class) && $class !== '') {
+            $segments = explode('\\', $class);
+
+            return (string) end($segments);
+        }
+
+        $parsed = RefResolver::parse($p->sourceUid);
+
+        return $parsed['source'] ?? $p->entryType;
     }
 }

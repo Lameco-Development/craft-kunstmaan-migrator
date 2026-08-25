@@ -149,6 +149,97 @@ final class RunTallyTest extends TestCase
         self::assertSame(3, $tally->lossyConversions);
     }
 
+    public function testPhaseTimingsAccumulateSecondsAndCounts(): void
+    {
+        $tally = new RunTally();
+        $tally->addTiming('entrySave', 0.5);
+        $tally->addTiming('entrySave', 1.5);
+        $tally->addTiming('assets', 0.25, 3);
+        $tally->timed('state', hrtime(true));
+
+        self::assertSame(['seconds' => 2.0, 'count' => 2], $tally->timings['entrySave']);
+        self::assertSame(['seconds' => 0.25, 'count' => 3], $tally->timings['assets']);
+        self::assertSame(1, $tally->timings['state']['count']);
+        self::assertGreaterThanOrEqual(0.0, $tally->timings['state']['seconds']);
+    }
+
+    public function testTheReportCarriesAnAveragePerCountInMilliseconds(): void
+    {
+        $tally = new RunTally();
+        $tally->addTiming('entrySave', 3.0, 4);
+        $tally->addTiming('compile', 1.0, 0);
+
+        self::assertSame(
+            [
+                'entrySave' => ['seconds' => 3.0, 'count' => 4, 'avgMs' => 750.0],
+                'compile' => ['seconds' => 1.0, 'count' => 0, 'avgMs' => 0.0],
+            ],
+            RunTally::timingReport($tally->timings),
+        );
+    }
+
+    /** A batch is a fresh tally; the job folds each one and the sums must match one long tally. */
+    public function testTimingsFoldAdditivelyAcrossBatches(): void
+    {
+        $batchOne = new RunTally();
+        $batchOne->addTiming('assets', 1.0, 2);
+        $batchOne->addTypeTiming('PartnerPage', 4.0);
+
+        $batchTwo = new RunTally();
+        $batchTwo->addTiming('assets', 2.0, 3);
+        $batchTwo->addTiming('state', 0.5);
+        $batchTwo->addTypeTiming('PartnerPage', 1.0);
+        $batchTwo->addTypeTiming('NewsPage', 2.0);
+
+        $timings = RunTally::mergeTimings(RunTally::mergeTimings([], $batchOne->timings), $batchTwo->timings);
+        $byType = RunTally::mergeTimings(RunTally::mergeTimings([], $batchOne->timingsByType), $batchTwo->timingsByType);
+
+        self::assertSame(['assets' => ['seconds' => 3.0, 'count' => 5], 'state' => ['seconds' => 0.5, 'count' => 1]], $timings);
+        self::assertSame(['PartnerPage' => ['seconds' => 5.0, 'count' => 2], 'NewsPage' => ['seconds' => 2.0, 'count' => 1]], $byType);
+    }
+
+    public function testTimingsSinceIsTheDeltaAPerEnvironmentLineWants(): void
+    {
+        $tally = new RunTally();
+        $tally->addTiming('entrySave', 2.0);
+        $before = $tally->timings;
+        $tally->addTiming('entrySave', 3.0);
+        $tally->addTiming('assets', 1.0);
+
+        self::assertSame(
+            ['entrySave' => ['seconds' => 3.0, 'count' => 1], 'assets' => ['seconds' => 1.0, 'count' => 1]],
+            RunTally::timingsSince($before, $tally->timings),
+        );
+    }
+
+    /** The operator picks `--only=<types>` off this list, so the expensive ones come first and the tail is cut. */
+    public function testTheTypeTableIsTopNByTotalSeconds(): void
+    {
+        $tally = new RunTally();
+
+        foreach (range(1, 20) as $i) {
+            $tally->addTypeTiming('Type' . $i, (float) $i);
+        }
+
+        $top = RunTally::topTypes($tally->timingsByType, 3);
+
+        self::assertSame(['Type20', 'Type19', 'Type18'], array_keys($top));
+        self::assertSame(['seconds' => 20.0, 'count' => 1, 'avgMs' => 20000.0], $top['Type20']);
+        self::assertCount(15, RunTally::topTypes($tally->timingsByType));
+    }
+
+    public function testTheShareLineReadsLargestFirstAndSaysNothingForAnEmptyRun(): void
+    {
+        $tally = new RunTally();
+        $tally->addTiming('compile', 3.0);
+        $tally->addTiming('assets', 61.0);
+        $tally->addTiming('state', 6.0);
+        $tally->addTiming('entrySave', 30.0);
+
+        self::assertSame('assets 61% · entrySave 30% · state 6% · compile 3%', RunTally::shareLine($tally->timings));
+        self::assertSame('', RunTally::shareLine([]));
+    }
+
     public function testSettingsCarryTheFlagsAJobCannotReadOffAController(): void
     {
         $settings = new RunSettings(dryRun: true, force: true, limit: 10, entriesOnly: true, only: ['newsPage']);

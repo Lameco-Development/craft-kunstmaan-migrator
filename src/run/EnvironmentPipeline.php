@@ -46,6 +46,11 @@ final class EnvironmentPipeline
 
     private bool $maintenanceGuarded = false;
 
+    /** Nanoseconds the current compile unit spent inside `handlePayload`; see `timeCompile()`. */
+    private int $handledNs = 0;
+
+    private int $handledPayloads = 0;
+
     public function __construct(
         private readonly PayloadValidator $validator,
         private readonly ?PayloadEntrySaver $saver,
@@ -166,14 +171,16 @@ final class EnvironmentPipeline
         $context = $this->prepare($mapping, $env, $spec, $settings);
 
         $this->guardMaintenance($settings, $tally, function() use ($context, $env, $settings, $tally, $writer): void {
-            $this->compiler->compile(
-                $context->legacy,
-                $env,
-                function(array $raw) use ($context, $settings, $tally, $writer): void {
-                    $this->handlePayload($raw, $context, $settings, $tally, $writer);
-                },
-                $settings->limit,
-            );
+            $this->timeCompile($tally, function() use ($context, $env, $settings, $tally, $writer): void {
+                $this->compiler->compile(
+                    $context->legacy,
+                    $env,
+                    function(array $raw) use ($context, $settings, $tally, $writer): void {
+                        $this->handlePayload($raw, $context, $settings, $tally, $writer);
+                    },
+                    $settings->limit,
+                );
+            });
 
             if (!$settings->entriesOnly) {
                 $tally->adapters[$env] = $this->runAdapters($context, $settings);
@@ -290,6 +297,30 @@ final class EnvironmentPipeline
     }
 
     /**
+     * Run one compile unit and put what it cost on the tally as `compile`.
+     *
+     * The compiler emits into `handlePayload`, so the compile phase cannot be
+     * timed around a call of its own: it is the unit's wall time minus the time
+     * its payloads spent being validated and saved. The console wraps the
+     * whole `compile()` walk in one unit; the batched job wraps every
+     * `processItem()` — same subtraction, same phase.
+     *
+     * @param callable(): void $unit
+     */
+    public function timeCompile(RunTally $tally, callable $unit): void
+    {
+        $started = hrtime(true);
+        $this->handledNs = 0;
+        $this->handledPayloads = 0;
+
+        try {
+            $unit();
+        } finally {
+            $tally->addTiming('compile', (hrtime(true) - $started - $this->handledNs) / 1e9, $this->handledPayloads);
+        }
+    }
+
+    /**
      * The adapter passes for one prepared environment, as `run()` executes them.
      *
      * @return array<string, mixed>
@@ -307,31 +338,39 @@ final class EnvironmentPipeline
         RunTally $tally,
         ?PayloadWriter $writer,
     ): void {
-        $tally->count('compiled');
-        $writer?->write($raw);
-
-        $payload = Payload::fromArray($raw);
-        $violations = $this->validator->validate($payload);
-
-        if ($violations !== []) {
-            $tally->count('invalid');
-
-            foreach ($violations as $violation) {
-                $tally->problem(sprintf('%s %s', $violation->code, $violation->message));
-            }
-
-            return;
-        }
-
-        if ($this->saver === null || $this->retry === null) {
-            return;
-        }
+        $started = hrtime(true);
+        $this->handledPayloads++;
 
         try {
-            $tally->absorb($this->retry->save($payload, $context, $tally), $this->saver->refreshesExisting());
-        } catch (\Throwable $e) {
-            $tally->count('failed');
-            $tally->problem(sprintf('%s: %s', $payload->sourceUid, $e->getMessage()));
+            $tally->count('compiled');
+            $writer?->write($raw);
+
+            $payload = Payload::fromArray($raw);
+            $violations = $this->validator->validate($payload);
+            $tally->timed('validate', $started);
+
+            if ($violations !== []) {
+                $tally->count('invalid');
+
+                foreach ($violations as $violation) {
+                    $tally->problem(sprintf('%s %s', $violation->code, $violation->message));
+                }
+
+                return;
+            }
+
+            if ($this->saver === null || $this->retry === null) {
+                return;
+            }
+
+            try {
+                $tally->absorb($this->retry->save($payload, $context, $tally), $this->saver->refreshesExisting());
+            } catch (\Throwable $e) {
+                $tally->count('failed');
+                $tally->problem(sprintf('%s: %s', $payload->sourceUid, $e->getMessage()));
+            }
+        } finally {
+            $this->handledNs += hrtime(true) - $started;
         }
     }
 

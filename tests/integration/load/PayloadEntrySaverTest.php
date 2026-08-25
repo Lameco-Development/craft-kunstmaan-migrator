@@ -740,6 +740,57 @@ final class PayloadEntrySaverTest extends TestCase
         self::assertSame(777, $issue['legacyId']);
     }
 
+    /**
+     * The hour a real corpus takes has to split into phases, and the split is
+     * only trustworthy if every phase is closed on every save — a phase left at
+     * zero would read as "free", which is the most convincing way to be wrong.
+     */
+    public function testASavePutsItsAssetEntrySaveAndStateTimeOnTheTallyKeyedByType(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new class() extends AssetMigrationService {
+            public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
+            {
+                return 77;
+            }
+        };
+        $saver = $this->makeSaver($entryService, $state, $assetService);
+        $tally = new RunTally();
+
+        $raw = $this->payloadArray('kuma:COM:nt_page:700', [
+            'sites' => ['en' => ['fieldValues' => ['relatedPages' => ['_asset' => '/uploads/media/a.png']]]],
+        ]);
+        $raw['legacy'] = ['class' => 'App\\Entity\\Pages\\PartnerPage', 'refIds' => ['en' => 1]];
+
+        $saver->save(Payload::fromArray($raw), $this->env(), $tally);
+
+        foreach (['assets', 'entrySave', 'state'] as $phase) {
+            self::assertSame(1, $tally->timings[$phase]['count'], $phase);
+            self::assertGreaterThan(0.0, $tally->timings[$phase]['seconds'], $phase . ' was not timed');
+        }
+
+        self::assertSame(['PartnerPage'], array_keys($tally->timingsByType), 'keyed by the name --only takes');
+        self::assertSame(1, $tally->timingsByType['PartnerPage']['count']);
+        self::assertGreaterThan(0.0, $tally->timingsByType['PartnerPage']['seconds']);
+    }
+
+    /** An entity-lane payload has no page class; its legacy table is the name that narrows a run. */
+    public function testAnEntityPayloadIsAttributedToItsLegacyTable(): void
+    {
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $saver = $this->makeSaver($entryService, $state);
+        $tally = new RunTally();
+
+        $saver->save(Payload::fromArray($this->payloadArray('kuma:COM:kuma_tags:3')), $this->env(), $tally);
+
+        self::assertSame(['COM:kuma_tags'], array_keys($tally->timingsByType));
+        self::assertSame(0, $tally->timings['assets']['count'], 'no asset node, no asset call — the phase still closes');
+    }
+
     public function testTheLegacyIdentityIsRecordedSoTheSeoPassCanFindItsRows(): void
     {
         // Without this the SEO pass has nothing to look up: `refIdsByLocale` is what decides

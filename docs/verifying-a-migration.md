@@ -134,6 +134,86 @@ only pages the migration claims to have produced.
 
 ---
 
+## Benchmarking a change
+
+The reference corpus takes about an hour for one environment's entry pass, which is the wrong
+feedback loop for a change that is meant to make it faster. The run reports where its time goes,
+so a change can be measured on a ten-minute slice instead.
+
+**What is timed.** Every run carries a phase table on its summary — `timings` in the console
+JSON, and on the queue job's `finished` line in the run log:
+
+| Phase | What it covers | Where it is measured |
+|---|---|---|
+| `compile` | reading the legacy rows and building the payload | `EnvironmentPipeline::timeCompile()` — a compile unit's wall time minus what its payloads cost to handle |
+| `validate` | `Payload::fromArray` + `PayloadValidator` | `EnvironmentPipeline::handlePayload()` |
+| `assets` | every `_asset` node and `{{kuma:media:}}` token: resolution, and the JIT ingest when the file is not migrated yet | `PayloadEntrySaver` |
+| `entrySave` | `saveEntryForSites()`, Craft's propagation and the block reconciliation included | `PayloadEntrySaver` |
+| `state` | the state-table read before the save and the meta/alias writes after it | `PayloadEntrySaver` |
+
+Each phase has `seconds`, `count` and `avgMs`; `wallSeconds` is the entry pass end to end, and the
+gap between it and the phase sum is what nothing above accounts for. `timings.byType` is
+`entrySave` + `assets` per page type or entity lane — the names are the ones `--only` takes —
+top 15 by total, which is how a representative slice gets chosen. The console also prints the
+split to stderr as one line (`assets 61% · entrySave 29% · state 6% · compile 3%`). The closing
+passes (fixup, finalize, URIs, search) keep their own lines in the run log.
+
+**The procedure.**
+
+```bash
+# 1. the same starting point every time — restore the dump, apply the schema
+mysql <project>_bench < <dump>.sql
+CRAFT_DB_OVERRIDE=<project>_bench php craft up
+
+# 2. one full run first, to learn which types carry the time
+CRAFT_DB_OVERRIDE=<project>_bench php craft kunstmaan-migrator/migrate \
+    --mapping=migration/mapping/<project>.yaml --legacy-env=COM --entries-only > full.json
+jq '.timings.byType' full.json
+
+# 3. the slice: the expensive types, capped — aim for ~10 minutes
+mysql <project>_bench < <dump>.sql && CRAFT_DB_OVERRIDE=<project>_bench php craft up
+CRAFT_DB_OVERRIDE=<project>_bench php craft kunstmaan-migrator/migrate \
+    --mapping=migration/mapping/<project>.yaml --legacy-env=COM --entries-only \
+    --only=PartnerPage,NewsPage --limit=200 > before.json
+
+# 4. switch builds, restore, run the identical command, compare phase totals
+jq '{wall: .wallSeconds, timings: (.timings | del(.byType))}' before.json after.json
+```
+
+Compare `seconds` per phase between the two files, on the same slice, from the same dump. A
+change that claims to speed up asset ingest should move `assets` and leave `entrySave` alone; a
+change that moves `wallSeconds` and no phase has changed something the table does not name.
+
+**How `--only` and `--limit` combine.** `--only` names `pages:` entries (a legacy page class,
+`PartnerPage`) and `entities:` lanes; a node whose class is not named is skipped, and so is an
+entity lane. `--limit=N` counts page and entity payloads, entity lanes first in mapping order and
+then nodes in tree (`lft`) order, and stops the walk at N. So `--only=PartnerPage --limit=200`
+is the first 200 partner pages in tree order. The structural placeholders their ancestors need
+are emitted regardless of either flag and do not count against the limit; the placeholders that
+would follow the last emitted page are *not* emitted once the limit is hit, since the walk
+returns before its closing flush. Both flags bound the console run; the queue path (`--queue`)
+takes `--only` but builds its batches without the limit, so a benchmark is an inline run.
+
+**What a narrowed run skips, and what it does not.** A run with `--only` or `--limit` warns on
+mapping drift instead of refusing, and the fixup pass leaves every deferred reference pending
+rather than classifying any as unresolvable — nothing it saw is complete enough to judge. It
+still runs the closing passes: `--only` and `--limit` do not touch `settlesUris()`, which is
+`!--dry-run && !--entries-only`, so a narrowed run without `--entries-only` arms the URI-job
+veto and defers search indexing exactly as a full run does, then runs the adapters, fixup,
+finalize, the URI pass and the index stage. The adapters are the problem for a ten-minute
+budget: SEO, navigation and translations read the legacy database corpus-wide, not per slice.
+
+Hence `--entries-only` in the recipe — and its consequence. With it the guards are **not**
+armed: every save queues Craft's `UpdateElementSlugsAndUris` job and indexes search inline, so
+`entrySave` measures the save *with* the maintenance a full run holds off (`slugJobsVetoed` and
+`searchIndexDeferred` read 0 in the summary, which is how to tell). The absolute numbers are
+therefore higher than a full run's; the comparison between two builds on the same slice with the
+same flags holds. To measure the guarded save instead, drop `--entries-only` and accept the
+adapter passes in the budget — or disable the adapters in the plugin settings for the bench
+database, which keeps `settlesUris()` true and the adapters off.
+
+---
+
 ## What good looks like
 
 On the reference corpus, after the structural-placeholder work: **97.7% URL fidelity**, up from

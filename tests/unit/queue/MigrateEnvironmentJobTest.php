@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\tests\unit\queue;
 
 use Lameco\Kunstmaanmigrator\queue\MigrateEnvironmentJob;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use RuntimeException;
@@ -94,6 +95,37 @@ final class MigrateEnvironmentJobTest extends TestCase
         $describe = (new \ReflectionMethod($job, 'defaultDescription'))->invoke($job);
 
         self::assertStringContainsString('DE', (string) $describe);
+    }
+
+    /**
+     * Each batch is its own process and a fresh tally; the job is what
+     * outlives them, so the phase split folds onto it batch by batch — the
+     * same table the console prints for one long tally.
+     */
+    public function testEachBatchFoldsItsPhaseTimingsOntoTheJob(): void
+    {
+        $job = $this->job(['mappingPath' => '/x.yaml', 'environment' => 'COM']);
+
+        $first = new RunTally();
+        $first->addTiming('entrySave', 2.0, 10);
+        $first->addTiming('compile', 0.5, 10);
+        $first->addTypeTiming('PartnerPage', 1.5, 5);
+        $job->foldTimings($first, 3.0);
+
+        $second = new RunTally();
+        $second->addTiming('entrySave', 1.0, 5);
+        $second->addTiming('assets', 4.0, 8);
+        $second->addTypeTiming('PartnerPage', 0.5, 2);
+        $second->addTypeTiming('NewsPage', 0.25, 1);
+        $job->foldTimings($second, 6.0);
+
+        self::assertSame(['seconds' => 3.0, 'count' => 15], $job->timings['entrySave']);
+        self::assertSame(['seconds' => 0.5, 'count' => 10], $job->timings['compile']);
+        self::assertSame(['seconds' => 4.0, 'count' => 8], $job->timings['assets']);
+        self::assertSame(['seconds' => 2.0, 'count' => 7], $job->timingsByType['PartnerPage']);
+        self::assertSame(['seconds' => 0.25, 'count' => 1], $job->timingsByType['NewsPage']);
+        self::assertSame(9.0, $job->wallSeconds);
+        self::assertSame(200.0, RunTally::timingReport($job->timings)['entrySave']['avgMs']);
     }
 
     public function testTheFlagsThatSurviveSerialisationAreScalars(): void
