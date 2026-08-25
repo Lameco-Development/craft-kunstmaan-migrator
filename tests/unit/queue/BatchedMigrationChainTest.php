@@ -49,13 +49,13 @@ final class BatchedMigrationChainTest extends TestCase
         );
 
         self::assertStringContainsString('new MigrateEnvironmentJob(', $source);
-        self::assertStringContainsString('new ResolveDeferredRefsJob()', $source);
+        self::assertStringContainsString('new ResolveDeferredRefsJob(', $source);
         self::assertStringContainsString('new FinalizeJob(', $source);
         // Last of all: the URI pass reads the parents the fixup pass patched.
         self::assertStringContainsString('new RecomputeStructureUrisJob(', $source);
         self::assertLessThan(
             strpos($source, 'new RecomputeStructureUrisJob('),
-            strpos($source, 'new ResolveDeferredRefsJob()'),
+            strpos($source, 'new ResolveDeferredRefsJob('),
         );
         // The next environment starts only after this one's adapters — and the
         // corpus passes only when no environment remains.

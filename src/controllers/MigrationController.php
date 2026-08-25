@@ -718,6 +718,7 @@ final class MigrationController extends Controller
             'force' => $force,
             'entriesOnly' => $pass === 'entries',
             'chainCorpusPasses' => $pass === 'full',
+            'fullCorpus' => $pass === 'full' && count($selected) === count($environments),
             'mappingHash' => sha1((string) file_get_contents($path)),
         ]), priority: 512);
 

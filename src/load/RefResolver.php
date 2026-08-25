@@ -47,6 +47,22 @@ final class RefResolver
     }
 
     /**
+     * Whether the state table has a row for the target at all. `resolve()` answers null both
+     * for a target mid-write and for one that was never migrated; the fixup pass needs the
+     * difference to tell a pending ref from an unresolvable one.
+     */
+    public function isRecorded(string $sourceUid): bool
+    {
+        if (SourceUid::isForm($sourceUid)) {
+            return $this->stateReader->get('form', $sourceUid) !== null;
+        }
+
+        $parsed = self::parse($sourceUid);
+
+        return $parsed !== null && $this->stateReader->get($parsed['source'], $parsed['key']) !== null;
+    }
+
+    /**
      * Pure grammar parser, reused by `MigrationStateService::resolveSourceUid()`
      * and `recordAlias()` (via static call). The grammar itself is owned by
      * `SourceUid`, next to the constructors that mint every uid — this is a
