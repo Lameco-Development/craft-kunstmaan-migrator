@@ -7,7 +7,10 @@ namespace Lameco\Kunstmaanmigrator\queue;
 use craft\queue\BaseJob;
 use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\run\MaintenanceGuard;
 use Lameco\Kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\run\RunSettings;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use RuntimeException;
 use yii\queue\RetryableJobInterface;
@@ -25,6 +28,14 @@ final class FinalizeJob extends BaseJob implements RetryableJobInterface
     public string $mappingPath = '';
     public bool $dryRun = false;
 
+    /**
+     * Whether the URI pass and the index stage follow this job. Only then may its
+     * saves hold Craft's maintenance off; the run screen's stand-alone finalize
+     * button queues this job alone, and a hold there would leave what it rewrote
+     * unsettled and unindexed for good.
+     */
+    public bool $chainCorpusPasses = false;
+
     /** @var array<string, int> */
     public array $counts = [];
 
@@ -39,17 +50,29 @@ final class FinalizeJob extends BaseJob implements RetryableJobInterface
         }
 
         RunLog::default()->track('finalize', ['dryRun' => $this->dryRun], function(array &$extra) use ($queue): void {
-            $report = (new FinalizePass())->run(
-                Mapping::fromFile($this->mappingPath),
-                $this->dryRun,
-                null,
-                function(string $environment, int $done, int $total) use ($queue): void {
-                    $this->setProgress($queue, $done / $total, $environment);
-                },
-            );
+            $tally = new RunTally();
+            $pass = function() use ($queue): void {
+                $report = (new FinalizePass())->run(
+                    Mapping::fromFile($this->mappingPath),
+                    $this->dryRun,
+                    null,
+                    function(string $environment, int $done, int $total) use ($queue): void {
+                        $this->setProgress($queue, $done / $total, $environment);
+                    },
+                );
 
-            $this->counts = $report->counts;
-            $extra['counts'] = $report->counts;
+                $this->counts = $report->counts;
+            };
+
+            if ($this->chainCorpusPasses) {
+                MaintenanceGuard::build()->guard(new RunSettings(dryRun: $this->dryRun), $tally, $pass);
+            } else {
+                $pass();
+            }
+
+            $extra['counts'] = $this->counts;
+            $extra['slugJobsVetoed'] = $tally->slugJobsVetoed;
+            $extra['searchIndexDeferred'] = $tally->searchIndexDeferred;
         });
     }
 

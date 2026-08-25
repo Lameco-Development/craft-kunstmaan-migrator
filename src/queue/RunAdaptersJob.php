@@ -103,8 +103,10 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
         }
 
         if ($this->chainCorpusPasses && !$this->entriesOnly && !$this->dryRun) {
-            QueueHelper::push(job: new ResolveDeferredRefsJob(['fullCorpus' => $this->fullCorpus]), priority: 512);
-            QueueHelper::push(job: new FinalizeJob(['mappingPath' => $this->mappingPath, 'dryRun' => $this->dryRun]), priority: 512);
+            // Both save entries, and both run before the URI pass and the index
+            // stage; told so, each holds Craft's maintenance off the way a batch does.
+            QueueHelper::push(job: new ResolveDeferredRefsJob(['fullCorpus' => $this->fullCorpus, 'chainCorpusPasses' => true]), priority: 512);
+            QueueHelper::push(job: new FinalizeJob(['mappingPath' => $this->mappingPath, 'dryRun' => $this->dryRun, 'chainCorpusPasses' => true]), priority: 512);
             QueueHelper::push(job: new RecomputeStructureUrisJob(['mappingPath' => $this->mappingPath]), priority: 512);
             // Last of all: the run saved with search indexing deferred, and
             // the index is rebuilt once, from committed state.

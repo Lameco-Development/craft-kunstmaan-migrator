@@ -276,6 +276,45 @@ final class MaintenanceGuardTest extends TestCase
     }
 
     /**
+     * The corpus-wide passes save entries too and run before the URI pass
+     * and the index stage just the same. Unguarded, the two grew
+     * `searchindex` by 23,973 rows on the reference corpus after the entry
+     * loop had deferred 13,348 saves — so both callers hold them the same
+     * way, and the two jobs gate on the chain the way the adapter job does:
+     * the run screen's stand-alone buttons queue them with nothing after.
+     */
+    public function testBothCallersHoldTheCorpusPassesUnderTheSameGuard(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $console = (string) file_get_contents($root . '/src/console/MigrateController.php');
+        $adapters = (string) file_get_contents($root . '/src/queue/RunAdaptersJob.php');
+
+        $hold = (int) strpos($console, '$pipeline->guardMaintenance($settings, $tally');
+        self::assertGreaterThan(0, $hold);
+        self::assertLessThan((int) strpos($console, '$this->fixup('), $hold, 'the fixup pass runs under the hold');
+        self::assertLessThan((int) strpos($console, '$this->finalize('), $hold, 'the finalize pass runs under the hold');
+        self::assertLessThan((int) strpos($console, 'new StructureUriPass('), $hold, 'the URI pass consumes the hold, it is not under it');
+
+        foreach (['ResolveDeferredRefsJob', 'FinalizeJob'] as $job) {
+            $source = (string) file_get_contents(sprintf('%s/src/queue/%s.php', $root, $job));
+
+            self::assertStringContainsString('if ($this->chainCorpusPasses) {', $source, $job);
+            self::assertStringContainsString('MaintenanceGuard::build()->guard(', $source, $job);
+            self::assertStringContainsString("\$extra['slugJobsVetoed'] = \$tally->slugJobsVetoed", $source, $job);
+            self::assertStringContainsString("\$extra['searchIndexDeferred'] = \$tally->searchIndexDeferred", $source, $job);
+            self::assertMatchesRegularExpression(
+                sprintf("/new %s\\(\\[[^\\]]*'chainCorpusPasses' => true/", $job),
+                $adapters,
+                sprintf('the chain tells %s the closing passes follow', $job),
+            );
+        }
+
+        $panel = (string) file_get_contents($root . '/src/controllers/MigrationController.php');
+        self::assertStringContainsString('new ResolveDeferredRefsJob()', $panel, 'the stand-alone fixup button does not hold');
+        self::assertStringNotContainsString("new FinalizeJob(['mappingPath' => \$path, 'dryRun' => \$dryRun, 'chainCorpusPasses'", $panel);
+    }
+
+    /**
      * The production adapter is unreachable here, so what it must never do
      * is pinned in its source: only the one job class, only for entries,
      * and only while waiting — a job a worker holds is not ours to drop.

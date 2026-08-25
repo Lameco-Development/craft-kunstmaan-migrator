@@ -368,61 +368,22 @@ final class MigrateController extends Controller
 
         $wallSeconds = round((hrtime(true) - $entryPassStarted) / 1e9, 3);
 
-        // A payload can name a parent or a relation that no entry had been written for yet, and
-        // pass one parks those as `pendingRefs` rather than failing. Nothing resolved them: the
-        // fixup pass was only ever reachable through `load/fixup`, so a `migrate` run left every
-        // deferred reference dangling and said nothing about it.
         $fixup = null;
-
-        if (!$this->dryRun) {
-            RunLog::default()->track('fixup', ['fullCorpus' => $fullCorpus], function(array &$extra) use ($plugin, $fullCorpus, &$fixup): void {
-                $fixup = (new FixupService($plugin->migrationStateService, $plugin->entryMigrationService))->run($fullCorpus);
-                $extra['patched'] = $fixup['patched'] ?? 0;
-                $extra['orphans'] = count($fixup['orphans'] ?? []);
-                $extra['unresolvable'] = $fixup['unresolvable'] ?? 0;
-            });
-
-            foreach (($fixup['orphans'] ?? []) as $orphan) {
-                $tally->problem(sprintf(
-                    '%s: unresolved %s -> %s',
-                    (string) ($orphan['sourceUid'] ?? '?'),
-                    (string) ($orphan['field'] ?? '?'),
-                    (string) ($orphan['ref'] ?? '?'),
-                ));
-            }
-
-            // Reported once, by target: the next run will not walk these again.
-            foreach (($fixup['unresolvableTargets'] ?? []) as $target) {
-                $tally->problem(sprintf(
-                    '%s: %d reference(s) from %s can never resolve — %s',
-                    (string) ($target['ref'] ?? '?'),
-                    (int) ($target['count'] ?? 0),
-                    implode(', ', (array) ($target['from'] ?? [])),
-                    (string) ($target['reason'] ?? '?'),
-                ));
-            }
-        }
-
-        // Last, and only after every environment: `[NT<id>]` resolves a legacy node translation to
-        // the entry it became, and `/uploads/media/...` to a migrated asset. Neither can be
-        // answered until the entries and assets exist. The rewriter has always been able to do
-        // this and was called by nothing; see CkeditorFinalizeService.
         $finalize = null;
 
-        if (!$this->entriesOnly) {
-            // Per environment, not once: the pass resolves against the legacy database,
-            // and running it after the loop meant it only ever saw the last one.
-            $finalizeReport = null;
-            RunLog::default()->track('finalize', ['dryRun' => $this->dryRun], function(array &$extra) use ($mapping, &$finalizeReport): void {
-                $finalizeReport = (new FinalizePass())->run($mapping, $this->dryRun, $this->legacyEnv);
-                $extra['counts'] = $finalizeReport->counts;
-            });
-            $finalize = $finalizeReport->counts;
-
-            foreach (array_slice($finalizeReport->warnings, 0, 20) as $warning) {
-                $tally->problem($warning);
+        // The fixup and finalize passes save entries the same way the entry loop does, and run
+        // before the URI pass and the index stage just the same — so they run under the same
+        // hold. Unguarded, the two grew `searchindex` by 23,973 rows on the reference corpus,
+        // every one of them queued for indexing again by the index stage.
+        $pipeline->guardMaintenance($settings, $tally, function() use ($plugin, $mapping, $fullCorpus, $tally, &$fixup, &$finalize): void {
+            if (!$this->dryRun) {
+                $fixup = $this->fixup($plugin, $fullCorpus, $tally);
             }
-        }
+
+            if (!$this->entriesOnly) {
+                $finalize = $this->finalize($mapping, $tally);
+            }
+        });
 
         // A Structure entry's URI is its parent's plus its slug, rendered at save time — and
         // the parent is not always written first. Settled here, parents first on every site,
@@ -532,9 +493,74 @@ final class MigrateController extends Controller
         );
     }
 
+    /**
+     * A payload can name a parent or a relation that no entry had been written for yet, and
+     * pass one parks those as `pendingRefs` rather than failing. Nothing resolved them: the
+     * fixup pass was only ever reachable through `load/fixup`, so a `migrate` run left every
+     * deferred reference dangling and said nothing about it.
+     *
+     * @return array<string, mixed> the pass's report, as the summary prints it
+     */
+    private function fixup(Plugin $plugin, bool $fullCorpus, RunTally $tally): array
+    {
+        $fixup = [];
 
+        RunLog::default()->track('fixup', ['fullCorpus' => $fullCorpus], function(array &$extra) use ($plugin, $fullCorpus, &$fixup): void {
+            $fixup = (new FixupService($plugin->migrationStateService, $plugin->entryMigrationService))->run($fullCorpus);
+            $extra['patched'] = $fixup['patched'] ?? 0;
+            $extra['orphans'] = count($fixup['orphans'] ?? []);
+            $extra['unresolvable'] = $fixup['unresolvable'] ?? 0;
+        });
 
+        foreach (($fixup['orphans'] ?? []) as $orphan) {
+            $tally->problem(sprintf(
+                '%s: unresolved %s -> %s',
+                (string) ($orphan['sourceUid'] ?? '?'),
+                (string) ($orphan['field'] ?? '?'),
+                (string) ($orphan['ref'] ?? '?'),
+            ));
+        }
 
+        // Reported once, by target: the next run will not walk these again.
+        foreach (($fixup['unresolvableTargets'] ?? []) as $target) {
+            $tally->problem(sprintf(
+                '%s: %d reference(s) from %s can never resolve — %s',
+                (string) ($target['ref'] ?? '?'),
+                (int) ($target['count'] ?? 0),
+                implode(', ', (array) ($target['from'] ?? [])),
+                (string) ($target['reason'] ?? '?'),
+            ));
+        }
+
+        return $fixup;
+    }
+
+    /**
+     * Last, and only after every environment: `[NT<id>]` resolves a legacy node translation to
+     * the entry it became, and `/uploads/media/...` to a migrated asset. Neither can be
+     * answered until the entries and assets exist. The rewriter has always been able to do
+     * this and was called by nothing; see CkeditorFinalizeService.
+     *
+     * Per environment, not once: the pass resolves against the legacy database, and running
+     * it after the loop meant it only ever saw the last one.
+     *
+     * @return array<string, int> the pass's counts
+     */
+    private function finalize(Mapping $mapping, RunTally $tally): array
+    {
+        $report = null;
+
+        RunLog::default()->track('finalize', ['dryRun' => $this->dryRun], function(array &$extra) use ($mapping, &$report): void {
+            $report = (new FinalizePass())->run($mapping, $this->dryRun, $this->legacyEnv);
+            $extra['counts'] = $report->counts;
+        });
+
+        foreach (array_slice($report->warnings, 0, 20) as $warning) {
+            $tally->problem($warning);
+        }
+
+        return $report->counts;
+    }
 
     /**
      * Re-save every section the mapping writes into — what `--resave` asks for.

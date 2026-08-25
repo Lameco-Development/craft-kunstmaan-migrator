@@ -7,7 +7,10 @@ namespace Lameco\Kunstmaanmigrator\queue;
 use craft\queue\BaseJob;
 use Lameco\Kunstmaanmigrator\load\FixupService;
 use Lameco\Kunstmaanmigrator\Plugin;
+use Lameco\Kunstmaanmigrator\run\MaintenanceGuard;
 use Lameco\Kunstmaanmigrator\run\RunLog;
+use Lameco\Kunstmaanmigrator\run\RunSettings;
+use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use RuntimeException;
 use yii\queue\RetryableJobInterface;
@@ -32,6 +35,14 @@ final class ResolveDeferredRefsJob extends BaseJob implements RetryableJobInterf
      */
     public bool $fullCorpus = false;
 
+    /**
+     * Whether the URI pass and the index stage follow this job. Only then may its
+     * patch saves hold Craft's maintenance off; the run screen's stand-alone fixup
+     * button queues this job alone, and a hold there would leave what it patched
+     * unsettled and unindexed for good.
+     */
+    public bool $chainCorpusPasses = false;
+
     public function execute($queue): void
     {
         if (ProductionGuard::isProduction()) {
@@ -41,12 +52,23 @@ final class ResolveDeferredRefsJob extends BaseJob implements RetryableJobInterf
         $plugin = Plugin::getInstance();
 
         RunLog::default()->track('fixup', ['fullCorpus' => $this->fullCorpus], function(array &$extra) use ($plugin): void {
-            $this->report = (new FixupService(
-                $plugin->migrationStateService,
-                $plugin->entryMigrationService,
-            ))->run($this->fullCorpus);
+            $tally = new RunTally();
+            $pass = function() use ($plugin): void {
+                $this->report = (new FixupService(
+                    $plugin->migrationStateService,
+                    $plugin->entryMigrationService,
+                ))->run($this->fullCorpus);
+            };
+
+            if ($this->chainCorpusPasses) {
+                MaintenanceGuard::build()->guard(new RunSettings(), $tally, $pass);
+            } else {
+                $pass();
+            }
 
             $extra['counts'] = $this->report;
+            $extra['slugJobsVetoed'] = $tally->slugJobsVetoed;
+            $extra['searchIndexDeferred'] = $tally->searchIndexDeferred;
         });
     }
 
