@@ -201,6 +201,24 @@ final class Mapping
     }
 
     /**
+     * The date an offline translation must have been saved on or after to be migrated anyway.
+     *
+     * Kunstmaan switches a translation off instead of deleting it, so a corpus carries years
+     * of dead locales that no editor will ever publish. They are dropped. The ones saved since
+     * this date are editorial work in progress, and dropping those loses real work — so they
+     * come across, disabled, for an editor to publish.
+     *
+     * Null means no rescue: every offline translation is dropped regardless of age. That is
+     * the safe default, because a corpus with no date declared has nobody who decided one.
+     */
+    public function offlineCutoff(): ?string
+    {
+        $cutoff = $this->data['defaults']['offlineCutoff'] ?? null;
+
+        return is_string($cutoff) && $cutoff !== '' ? $cutoff : null;
+    }
+
+    /**
      * The `transforms:` block — the configured transform table `Compile\Transforms` is built from.
      *
      * @return array<string, mixed>

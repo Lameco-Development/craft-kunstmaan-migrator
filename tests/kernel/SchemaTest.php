@@ -35,6 +35,26 @@ final class SchemaTest extends TestCase
     }
 
     #[Test]
+    public function an_offline_cutoff_that_is_not_a_date_is_rejected(): void
+    {
+        // The cutoff reaches SQL as a comparison against a stored timestamp. A value the
+        // database cannot read as a date does not fail there, it just compares as a string
+        // and quietly changes which pages migrate — so it is refused here instead.
+        $errors = $this->validate(<<<'YAML'
+            version: 1
+            environments:
+              COM: { database: legacy, locales: { en: comEnUs } }
+            defaults:
+              offlineCutoff: 'march 2026'
+            YAML);
+
+        self::assertContains(
+            'defaults: `offlineCutoff: march 2026` is not a date the database can compare (expected YYYY-MM-DD)',
+            $errors,
+        );
+    }
+
+    #[Test]
     public function a_page_that_names_a_table_but_says_nothing_about_its_columns_is_rejected(): void
     {
         $errors = $this->validate(<<<'YAML'

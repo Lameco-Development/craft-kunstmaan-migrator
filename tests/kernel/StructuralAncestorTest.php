@@ -232,18 +232,18 @@ final class StructuralAncestorTest extends TestCase
     }
 
     #[Test]
-    public function an_offline_translation_still_writes_its_slug_for_that_site(): void
+    public function an_offline_translation_writes_nothing_for_that_site(): void
     {
-        // Node 18's NL translation is offline but carries a slug; Kunstmaan still builds the
-        // NL URL from it. The row is written disabled so it owns the segment without publishing.
+        // Node 18's NL translation is offline and carries a slug. It used to be written as a
+        // disabled row so the NL URL kept its segment; it no longer is. A locale switched off
+        // in Kunstmaan does not exist in Craft, and this mapping declares no `offlineCutoff`,
+        // so nothing is rescued — see OfflineCutoffTest for the locales that are.
         $payloads = $this->bySourceUid($this->compile());
         $sites = $payloads['kuma:COM:kuma_nodes:18']['sites'];
 
-        self::assertArrayHasKey('comNlNl', $sites);
-        self::assertFalse($sites['comNlNl']['enabled']);
-        self::assertSame('acme-nl', $sites['comNlNl']['slug']);
+        self::assertArrayNotHasKey('comNlNl', $sites);
 
-        // …and a published translation is never downgraded by one.
+        // …and the published translation is untouched by its absence.
         self::assertTrue($sites['comEnUs']['enabled']);
         self::assertSame('acme', $sites['comEnUs']['slug']);
     }

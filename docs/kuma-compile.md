@@ -186,6 +186,32 @@ One Kunstmaan *node* becomes one Craft entry; its published *translations* becom
 sites, each with its own field values — which is what Craft's per-site content model expects.
 `sourceUid` is the node identity, so a re-run updates rather than duplicates.
 
+An entry's sites are exactly those translations and nothing else. A locale the node was never
+translated into gets no row at all: an empty row is what lets Craft propagate the primary site's
+slug into that locale, where it collides with the real entry and takes a permanent `-2`.
+
+A translation that is switched off gets no row either, which is a deliberate reversal — earlier
+versions wrote it disabled so it kept owning its slug in that locale's URL. Kunstmaan switches a
+translation off instead of deleting it, so a corpus carries years of dead locales that no editor
+will ever publish, and the URLs they were preserving are covered by the redirects lane. Set
+`defaults.offlineCutoff` to keep the recent ones:
+
+```yaml
+defaults:
+  # Offline translations saved on or after this date are editorial work in progress, and
+  # come across disabled for an editor to publish. Older ones are dropped. Omit the key
+  # and every offline translation is dropped regardless of age.
+  offlineCutoff: '2026-03-01'
+```
+
+The rescue only reaches a translation that was published at some point: Kunstmaan keeps an
+unpublished edit in a draft version, and a translation with no public version has no page entity
+to read content from, so no date can bring it across.
+
+This decides which *pages* exist, not which URLs are right. An offline ancestor still hands its
+slug to the published pages beneath it, however old it is — see "Structural placeholders" in
+`docs/loader-contract.md`.
+
 `--craft=<project root>` reads the target content model and uses it to derive the nested entry
 type of every Matrix field and where an absorbed heading lands. Without it, both fall back to
 the field handle, and a mapping may need `absorbInto:` written by hand.

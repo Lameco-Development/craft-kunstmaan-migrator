@@ -15,35 +15,61 @@ use PDO;
  */
 final class PageReader
 {
-    public function __construct(private readonly PDO $pdo)
-    {
+    /**
+     * @param ?string $offlineCutoff a date an offline translation must have been saved on or
+     *                               after to be read anyway; null reads only published ones
+     */
+    public function __construct(
+        private readonly PDO $pdo,
+        private readonly ?string $offlineCutoff = null,
+    ) {
     }
 
     /**
-     * Published nodes with their translations, parent and per-translation page entity.
+     * Nodes that become entries, with their translations, parent and per-translation page entity.
+     *
+     * A translation is here when it is published, or when it is switched off but was saved on
+     * or after `offlineCutoff` — the second kind is editorial work in progress, and it arrives
+     * with `online` false so the compiler writes it disabled rather than publishing it.
+     *
+     * The join onto the *public* version is what bounds the rescue: a translation switched off
+     * after having been live keeps that pointer, so its content is readable. One that was never
+     * published has no public version and no page entity to read parts from — its content lives
+     * in a draft version — so no cutoff can reach it.
      *
      * @return list<array{
      *     nodeId:int, parentId:?int, entity:string,
      *     translations: list<array{lang:string, title:string, slug:?string, url:?string,
-     *                              entity:string, entityClass:string, entityId:int, created:?string}>
+     *                              entity:string, entityClass:string, entityId:int,
+     *                              created:?string, online:bool}>
      * }>
      */
     public function nodes(): array
     {
-        $sql = <<<'SQL'
-            SELECT n.id AS nodeId, n.parent_id AS parentId,
-                   t.lang, t.title, t.slug, t.url, t.created,
-                   v.ref_entity_name AS entity, v.ref_id AS entityId
-            FROM kuma_node_translations t
-            JOIN kuma_nodes n ON n.id = t.node_id AND n.deleted = 0
-            JOIN kuma_node_versions v ON v.id = t.public_node_version_id
-            WHERE t.online = 1 AND v.ref_id IS NOT NULL
-            ORDER BY n.lft, n.id, t.lang
-            SQL;
+        // `v.updated` is when the content was last saved, which is the question the cutoff
+        // asks. The translation row's own timestamp moves for reasons that are not edits.
+        $liveOnly = $this->offlineCutoff === null;
+
+        $sql = sprintf(
+            <<<'SQL'
+                SELECT n.id AS nodeId, n.parent_id AS parentId,
+                       t.lang, t.title, t.slug, t.url, t.created, t.online,
+                       v.ref_entity_name AS entity, v.ref_id AS entityId
+                FROM kuma_node_translations t
+                JOIN kuma_nodes n ON n.id = t.node_id AND n.deleted = 0
+                JOIN kuma_node_versions v ON v.id = t.public_node_version_id
+                WHERE (t.online = 1%s) AND v.ref_id IS NOT NULL
+                ORDER BY n.lft, n.id, t.lang
+                SQL,
+            $liveOnly ? '' : ' OR v.updated >= :cutoff',
+        );
+
+        $statement = $this->pdo->prepare($sql);
+        $statement->execute($liveOnly ? [] : [':cutoff' => $this->offlineCutoff]);
 
         $nodes = [];
 
-        foreach ($this->pdo->query($sql) as $row) {
+        foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $id = (int) $row['nodeId'];
 
             $nodes[$id] ??= [
@@ -64,6 +90,7 @@ final class PageReader
                 'entityClass' => (string) $row['entity'],
                 'entityId' => (int) $row['entityId'],
                 'created' => $row['created'] !== null ? (string) $row['created'] : null,
+                'online' => ((int) ($row['online'] ?? 0)) === 1,
             ];
         }
 
@@ -79,6 +106,12 @@ final class PageReader
      * The entity is carried so a parentRef can be checked for more than existence: a parent
      * whose entry lands in a different Craft section cannot be a structure parent.
      *
+     * Published means *published*, not merely present in `nodes()`. A node whose only
+     * translations were rescued by `offlineCutoff` is live nowhere, so the compiler emits no
+     * page for it — counting it here would end the ancestor walk at a node nothing ever
+     * writes, and its published descendants would point at a parent that never arrives. Left
+     * out, it becomes a structural placeholder instead and still hands over its segment.
+     *
      * @return array<int, string>
      */
     public function publishedNodeIds(): array
@@ -86,7 +119,13 @@ final class PageReader
         $ids = [];
 
         foreach ($this->nodes() as $node) {
-            $ids[$node['nodeId']] = $node['entity'];
+            foreach ($node['translations'] as $translation) {
+                if ($translation['online']) {
+                    $ids[$node['nodeId']] = $node['entity'];
+
+                    break;
+                }
+            }
         }
 
         return $ids;

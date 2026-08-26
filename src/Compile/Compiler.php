@@ -98,7 +98,7 @@ final class Compiler
     public function begin(LegacyDatabase $db, string $environment): CompilerRun
     {
         $pdo = $db->pdo();
-        $pages = new PageReader($pdo);
+        $pages = new PageReader($pdo, $this->mapping->offlineCutoff());
         $parts = new PartReader($pdo);
         $entities = new EntityIndex($this->mapping->entities(), $pages->nodeIdByTranslation());
         $builder = new BlockBuilder(
@@ -205,28 +205,27 @@ final class Compiler
                 continue;
             }
 
+            // Two legacy locales can map to one Craft site (`pt` and `br` both reach comBrPt).
+            // A published translation always outranks a rescued offline one for that site,
+            // whichever order they arrive in.
+            if (isset($sites[$site]) && $sites[$site]['enabled'] && !$translation['online']) {
+                continue;
+            }
+
             $sites[$site] = $this->site(
                 $translation, $node, $run->parts, $run->builder, $run->sequencer,
                 $run->parentable, $run->environment, $page,
             );
         }
 
-        if ($sites === []) {
+        // A page published in no mapped locale is not a page. `offlineCutoff` adds locales to
+        // a page that is live somewhere; it does not revive one that is live nowhere — that
+        // would emit an entry enabled on no site, which the loader refuses wholesale as
+        // NO_ENABLED_SITE. If the node still owns a path segment, the structural lane above
+        // emits it as a placeholder, which is the payload allowed to be enabled nowhere.
+        if (array_filter(array_column($sites, 'enabled')) === []) {
             return;
         }
-
-        // A locale whose translation is offline still owns its slug in that locale's URL:
-        // Kunstmaan builds `for-resellers/products-services/...` from an EN slug on a node
-        // whose EN translation is switched off. Carrying only the online translations
-        // leaves Craft to propagate the primary site's slug into that locale, and every
-        // descendant inherits the wrong word. The row is written disabled, so it owns the
-        // path segment without publishing anything.
-        //
-        // Only ever an addition to a page that is published *somewhere* mapped. A node
-        // with no published mapped locale at all is not a page here — if it still owns a
-        // path segment, the structural lane above emits it, and reviving it as an entry
-        // enabled nowhere is what `NO_ENABLED_SITE` is there to catch.
-        $sites += $this->offlineSites($node, $run->ancestry, $run->parentable, $run->locales, $run->environment, $page, $sites);
 
         $emit([
             'sourceUid' => $this->uid($run->environment, $node['nodeId']),
@@ -509,7 +508,9 @@ final class Compiler
     ): array {
         $entryType = (string) $page->entryType();
         $site = [
-            'enabled' => true,
+            // A rescued offline translation is real content on a locale the old site kept
+            // dark. It arrives disabled: an editor publishes it, the cutover does not.
+            'enabled' => $translation['online'],
             'title' => $translation['title'],
             'slug' => $translation['slug'],
         ];
@@ -821,68 +822,6 @@ final class Compiler
     private function uid(string $environment, int $nodeId): string
     {
         return SourceUid::forNode($environment, $nodeId);
-    }
-
-    /**
-     * Disabled site rows for the locales this node has a slug in but no published translation.
-     *
-     * Same idea as a structural placeholder, one level down: the entry exists on that site only
-     * to own its slug, so the URLs beneath it come out in the right language. Sites the node is
-     * genuinely published in are left untouched.
-     *
-     * @param array<string, mixed> $node
-     * @param array<int, array<string, mixed>> $ancestry
-     * @param array<int, string> $parentable
-     * @param array<string, mixed> $locales
-     * @param array<string, mixed> $already the sites the online translations already produced
-     * @return array<string, array<string, mixed>>
-     */
-    private function offlineSites(
-        array $node,
-        array $ancestry,
-        array $parentable,
-        array $locales,
-        string $environment,
-        PageRow $page,
-        array $already,
-    ): array {
-        $row = $ancestry[$node['nodeId']] ?? null;
-
-        if ($row === null) {
-            return [];
-        }
-
-        $out = [];
-
-        foreach ($row['slugs'] as $lang => $slug) {
-            if (($row['offline'][$lang] ?? false) !== true) {
-                continue;
-            }
-
-            $site = $locales[$lang] ?? null;
-
-            // Two legacy locales can map to one Craft site (`pt` and `br` both reach comBrPt).
-            // A published translation always outranks an unpublished one for that site.
-            if (!is_string($site) || isset($already[$site]) || isset($out[$site])) {
-                continue;
-            }
-
-            $out[$site] = [
-                'enabled' => false,
-                'title' => $row['titles'][$lang] ?? $slug,
-                'slug' => $slug,
-            ];
-
-            $parentId = $node['parentId'];
-
-            if ($parentId !== null
-                && ($parentable[$parentId] ?? null) === $page->section()
-            ) {
-                $out[$site]['parentRef'] = $this->uid($environment, $parentId);
-            }
-        }
-
-        return $out;
     }
 
     /**

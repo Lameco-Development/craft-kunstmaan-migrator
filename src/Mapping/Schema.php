@@ -167,6 +167,18 @@ final class Schema
         if ($mapping->environments() === []) {
             $errors[] = 'no `environments:` — there is nothing to read from';
         }
+
+        $cutoff = $mapping->offlineCutoff();
+
+        // The cutoff is compared against a stored timestamp in SQL. A value the database
+        // cannot read as a date compares as a string instead of failing, which silently
+        // changes which pages migrate — the one kind of wrong a run never reports.
+        if ($cutoff !== null && \DateTimeImmutable::createFromFormat('!Y-m-d', $cutoff) === false) {
+            $errors[] = sprintf(
+                'defaults: `offlineCutoff: %s` is not a date the database can compare (expected YYYY-MM-DD)',
+                $cutoff,
+            );
+        }
     }
 
     /** @param list<string> $errors */
