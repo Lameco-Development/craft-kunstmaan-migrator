@@ -424,7 +424,7 @@ final class BlockIdentityTest extends TestCase
         self::assertSame([41], $this->writer->deletedIds());
     }
 
-    // --- withoutBlocks / sourceRefs ---------------------------------------------
+    // --- withoutBlocks -----------------------------------------------------------
 
     public function testWithoutBlocksEmptiesEveryMatrixPayloadAndLeavesTheRestAlone(): void
     {
@@ -436,19 +436,6 @@ final class BlockIdentityTest extends TestCase
         ]);
 
         self::assertSame(['pageBuilder' => [], 'sidebar' => [], 'body' => 'text', 'tags' => [1, 2]], $out);
-    }
-
-    public function testSourceRefsAreASetPerTopLevelMatrixField(): void
-    {
-        $refs = BlockIdentity::sourceRefs([
-            'pageBuilder' => [
-                self::block('Text:5', ['columns' => ['new2' => ['type' => 'column', 'fields' => ['_sourcePartRef' => 'Column:9']]]]),
-                ['type' => 'text', 'fields' => []],
-            ],
-            'body' => 'not a matrix payload',
-        ]);
-
-        self::assertSame(['pageBuilder' => ['Text:5' => true]], $refs, 'nested refs belong to their parent, not the field');
     }
 
     private static function matrixField(string $handle): Matrix

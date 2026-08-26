@@ -995,11 +995,14 @@ class EntryMigrationService extends Component
         string $stateKey,
         ?RunTally $tally = null,
     ): void {
-        // sourceRefs per matrix handle per site, from the payload the compiler produced.
+        // Block identities per matrix handle per site, from the payload the compiler produced.
+        // Identity is the block's `_sourcePartRef` where it has one and its content otherwise —
+        // keying on refs alone made every sidecar- and link-built Matrix invisible here, which
+        // is how `heroButtons` lost every locale but the last written without a word.
         $refsByField = [];
 
         foreach ($perSite as $siteHandle => $siteData) {
-            foreach (BlockIdentity::sourceRefs((array) ($siteData['fieldValues'] ?? [])) as $fieldHandle => $refs) {
+            foreach (PerSiteBlockDivergence::identities((array) ($siteData['fieldValues'] ?? [])) as $fieldHandle => $refs) {
                 $refsByField[$fieldHandle][(string) $siteHandle] = $refs;
             }
         }

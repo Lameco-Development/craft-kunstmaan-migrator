@@ -251,27 +251,6 @@ final class BlockIdentity
         return $fieldValues;
     }
 
-    /**
-     * The legacy parts each top-level Matrix field names, as a set per field — what
-     * `PerSiteBlockDivergence` compares across sites.
-     *
-     * @param array<string, mixed> $fieldValues
-     * @return array<string, array<string, true>> field handle → set of sourceRefs
-     */
-    public static function sourceRefs(array $fieldValues): array
-    {
-        $out = [];
-
-        foreach (self::positions($fieldValues) as $handle => $positions) {
-            foreach ($positions as $position) {
-                if ($position['ref'] !== null) {
-                    $out[$handle][$position['ref']] = true;
-                }
-            }
-        }
-
-        return $out;
-    }
 
     /**
      * A Craft Matrix payload: an array whose values are arrays that each carry a `type`.

@@ -19,6 +19,94 @@ namespace Lameco\Kunstmaanmigrator\load;
 final class PerSiteBlockDivergence
 {
     /**
+     * What identifies each block of every Matrix field in one site's payload.
+     *
+     * A block carrying `_sourcePartRef` is identified by it: two locales holding the same
+     * legacy part with translated copy are the common case, and calling that divergence
+     * would fire on almost every multi-site entry in the corpus.
+     *
+     * A block carrying no ref is identified by its content instead. Only page-builder blocks
+     * get a ref — a Matrix built by `link()`, `links()` or the sidecar lane has none, which on
+     * the reference corpus is 0 of 102 `heroButtons` blocks against 3,298 of 3,316 page-builder
+     * blocks. Keying purely on refs made those fields invisible to the check, so `heroButtons`
+     * on a `propagationMethod: all` field lost every locale but the last one written, silently:
+     * an English page serving a Danish button. With no ref to compare, the content is the only
+     * evidence of whether two locales are carrying the same thing.
+     *
+     * Nested Matrixes ride along inside their parent block's fingerprint rather than being
+     * reported in their own right; the owner block already differs when a child does.
+     *
+     * @param array<string, mixed> $fieldValues one site's `fieldValues`
+     * @return array<string, array<string, bool>> Matrix field handle → set of block identities
+     */
+    public static function identities(array $fieldValues): array
+    {
+        $out = [];
+
+        foreach ($fieldValues as $handle => $value) {
+            if (!is_array($value) || $value === [] || !self::looksLikeMatrix($value)) {
+                continue;
+            }
+
+            $identities = [];
+
+            foreach (array_values($value) as $block) {
+                $fields = is_array($block) ? (array) ($block['fields'] ?? []) : [];
+                $ref = $fields['_sourcePartRef'] ?? null;
+
+                $identities[$ref !== null
+                    ? 'ref:' . (string) $ref
+                    : 'content:' . self::fingerprint(is_array($block) ? $block : [])] = true;
+            }
+
+            $out[(string) $handle] = $identities;
+        }
+
+        return $out;
+    }
+
+    /**
+     * A stable hash of one block's content.
+     *
+     * Keys are sorted the whole way down, because key order is an artefact of how the payload
+     * was assembled: two identical buttons serialised in different orders are the same button,
+     * and hashing them apart would put the noise straight back.
+     *
+     * @param array<mixed> $block
+     */
+    private static function fingerprint(array $block): string
+    {
+        $canonical = self::sortDeep($block);
+
+        return md5((string) json_encode($canonical));
+    }
+
+    /**
+     * @param array<mixed> $value
+     * @return array<mixed>
+     */
+    private static function sortDeep(array $value): array
+    {
+        foreach ($value as $key => $item) {
+            if (is_array($item)) {
+                $value[$key] = self::sortDeep($item);
+            }
+        }
+
+        ksort($value);
+
+        return $value;
+    }
+
+    /** @param array<mixed> $payload */
+    private static function looksLikeMatrix(array $payload): bool
+    {
+        $first = reset($payload);
+
+        return is_array($first) && isset($first['type']);
+    }
+
+    /**
      * @param array<string, array<string, bool>> $perSiteRefs site handle → set of sourceRefs
      */
     public static function isUnrepresentable(array $perSiteRefs): bool
