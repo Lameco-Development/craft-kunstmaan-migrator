@@ -48,6 +48,10 @@ final class RedirectCompiler
         }
 
         $pdo = $db->pdo();
+
+        // No `offlineCutoff` here, deliberately. A redirect's source is a URL the old site
+        // actually served, and a translation that was switched off served none — a 301 from
+        // a path nobody could reach is noise in Retour.
         $pages = new PageReader($pdo);
         $parts = new PartReader($pdo);
         $nodeOfTranslation = $pages->nodeIdByTranslation();
