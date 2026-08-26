@@ -27,9 +27,43 @@
             var data = response.data;
             results.style.display = '';
 
+            // A mapping can pass every gate and still carry warnings — a required field
+            // nothing fills is the one that predicts a block arriving empty — so these
+            // render alongside the verdict rather than only in place of it.
+            var appendWarnings = function () {
+              if (!data.warnings || !data.warnings.length) {
+                return;
+              }
+
+              var note = document.createElement('blockquote');
+              note.className = 'note';
+              var title = document.createElement('p');
+              title.innerHTML = '<strong></strong>';
+              title.querySelector('strong').textContent = '{{ "Warnings"|t('kunstmaan-migrator')|e('js') }}';
+              note.appendChild(title);
+
+              var warnList = document.createElement('ul');
+              data.warnings.forEach(function (warning) {
+                var item = document.createElement('li');
+                item.textContent = warning;
+                warnList.appendChild(item);
+              });
+              note.appendChild(warnList);
+
+              if (data.warningTotal > data.warnings.length) {
+                var extra = document.createElement('p');
+                extra.className = 'light';
+                extra.textContent = '{{ "… and {more} more"|t('kunstmaan-migrator', { more: '###' })|e('js') }}'.replace('###', String(data.warningTotal - data.warnings.length));
+                note.appendChild(extra);
+              }
+
+              results.appendChild(note);
+            };
+
             if (data.ok) {
               results.innerHTML = '<blockquote class="note tip"><p></p></blockquote>';
               results.querySelector('p').textContent = data.summary;
+              appendWarnings();
               return;
             }
 
@@ -59,6 +93,7 @@
 
             results.innerHTML = '';
             results.appendChild(box);
+            appendWarnings();
           }).finally(function () {
             button.classList.remove('loading');
           });

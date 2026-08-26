@@ -448,11 +448,18 @@ final class MigrationController extends Controller
             return $this->asJson(['ok' => false, 'headline' => $message, 'errors' => [], 'total' => 0]);
         }
 
-        $verdict = (new MappingCheck(new TargetModel(new CraftSchemaGateway())))->verdict($mapping);
+        $check = new MappingCheck(new TargetModel(new CraftSchemaGateway()));
+        $verdict = $check->verdict($mapping);
 
         if ($verdict !== null) {
             $verdict[0] = Craft::t('kunstmaan-migrator', $verdict[0]);
         }
+
+        // The non-blocking findings travel with the verdict rather than instead of it: a
+        // mapping can pass every gate and still leave a required field unmapped, which is
+        // how a block reaches an editor empty. This screen was the operator's one look at
+        // the mapping and it showed only what refuses the run.
+        $warnings = $check->warnings($mapping);
 
         $summary = Craft::t('kunstmaan-migrator', 'Well-formed and matches this install: {pages} page types, {parts} parts, {entities} entities.', [
             'pages' => count($mapping->pages()),
@@ -460,9 +467,13 @@ final class MigrationController extends Controller
             'entities' => count($mapping->entities()),
         ]);
 
-        return $this->asJson($verdict === null
-            ? ['ok' => true, 'summary' => $summary]
-            : ['ok' => false, 'headline' => $verdict[0], 'errors' => array_slice($verdict[1], 0, 40), 'total' => count($verdict[1])]);
+        return $this->asJson([
+            ...($verdict === null
+                ? ['ok' => true, 'summary' => $summary]
+                : ['ok' => false, 'headline' => $verdict[0], 'errors' => array_slice($verdict[1], 0, 40), 'total' => count($verdict[1])]),
+            'warnings' => array_slice($warnings, 0, 40),
+            'warningTotal' => count($warnings),
+        ]);
     }
 
     /**

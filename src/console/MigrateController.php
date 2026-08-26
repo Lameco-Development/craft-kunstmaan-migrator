@@ -207,7 +207,18 @@ final class MigrateController extends Controller
         // The shared verdict: shape, install, blocks-nothing-accepts, open
         // conflicts. Drift and the --only list stay here — they are facts
         // about this run, not about the mapping.
-        if (($verdict = (new MappingCheck($target))->verdict($mapping)) !== null) {
+        $check = new MappingCheck($target);
+
+        // The non-blocking findings, printed before the verdict decides anything. These were
+        // reachable only from `mapping/check` and the standalone `validate`, so an operator
+        // running `migrate` never saw them — and "required but never mapped" is exactly the
+        // warning that predicts a block arriving empty. It does not refuse the run: a mapping
+        // may knowingly ship a field an editor fills in afterwards. It just stops being silent.
+        foreach ($check->warnings($mapping) as $warning) {
+            $this->stderr('  · ' . $warning . "\n", Console::FG_YELLOW);
+        }
+
+        if (($verdict = $check->verdict($mapping)) !== null) {
             return $this->refuse($verdict[0], $verdict[1]);
         }
 

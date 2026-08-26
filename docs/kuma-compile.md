@@ -111,6 +111,19 @@ block entry types, field handles (including nested Matrix paths), sections, prom
 destinations and relation fields. Required fields the mapping never supplies are reported as
 warnings rather than errors, since a field may have a default.
 
+Two warnings predict content arriving *wrong* rather than not arriving, which is the kind of
+defect a migration ships without noticing:
+
+- **a required field nothing fills** — the block lands and renders empty. On the reference
+  corpus this was `faqBlock.faqSource` and `faqBlock.heading`: 84 compiled FAQ blocks carrying
+  7 headings and 0 sources between them, so the blocks existed and showed nothing.
+- **rich text aimed at a plain-text field** — `| ckeditor` keeps the legacy HTML, and a
+  `PlainText` field has nowhere to render it, so the tags reach the page as text. Use
+  `inlineHtml`, which flattens block tags and keeps emphasis.
+
+Both are also printed by the `migrate` preflight and the control panel's Check button, so an
+operator running a migration sees them without knowing to run `validate` first.
+
 This check exists because the alternative is finding out at load time. On the first real
 mapping it caught eight wrong handles — `embed` for a field called `embedCode`, `logos` for
 `logoSliderItems`, `statistics` for `stats` — each of which had been written by hand and

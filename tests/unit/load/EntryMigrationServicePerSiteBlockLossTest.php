@@ -103,6 +103,53 @@ final class EntryMigrationServicePerSiteBlockLossTest extends TestCase
         self::assertSame([], $this->tally->perSiteBlockLosses);
     }
 
+    /** @param list<string> $labels */
+    private function buttonSiteData(array $labels): array
+    {
+        return ['fieldValues' => ['heroButtons' => array_map(
+            static fn(string $label): array => ['type' => 'button', 'fields' => [
+                'commonLink' => ['value' => 'https://enreach.com/contact', 'label' => $label],
+            ]],
+            $labels,
+        )]];
+    }
+
+    /**
+     * The blind spot. `heroButtons` comes from the sidecar lane, so its blocks carry no
+     * `_sourcePartRef` — measured, 0 of 102 against 3,298 of 3,316 page-builder blocks. The
+     * check keyed on refs alone, so the field never reached the divergence test and the loss
+     * shipped silently: `/en-us/products/ms-365` served the Danish button "Kontakt os".
+     */
+    public function testRefLessBlocksThatDivergeAcrossLocalesAreReported(): void
+    {
+        $svc = new EntryMigrationService();
+        $report = new MigrationReport();
+        $entry = LossStubEntry::withField(LossStubEntry::matrix(PropagationMethod::All));
+
+        $this->report($svc, $entry, [
+            'comEnUs' => $this->buttonSiteData(['More information']),
+            'comDkDa' => $this->buttonSiteData(['Kontakt os']),
+        ], $report);
+
+        self::assertCount(1, $this->tally->perSiteBlockLosses);
+        self::assertStringContainsString('field "heroButtons"', $this->tally->perSiteBlockLosses[0]);
+        self::assertSame(1, $report->counts['fallback.perSiteBlocksNotRepresentable'] ?? 0);
+    }
+
+    /** The same button in every locale is representable, and must stay quiet. */
+    public function testRefLessBlocksThatAgreeAcrossLocalesStaySilent(): void
+    {
+        $svc = new EntryMigrationService();
+        $entry = LossStubEntry::withField(LossStubEntry::matrix(PropagationMethod::All));
+
+        $this->report($svc, $entry, [
+            'comEnUs' => $this->buttonSiteData(['More information']),
+            'comNlNl' => $this->buttonSiteData(['More information']),
+        ], null);
+
+        self::assertSame([], $this->tally->perSiteBlockLosses);
+    }
+
     public function testAFieldTheLayoutCannotResolveToAMatrixIsNotJudged(): void
     {
         $svc = new EntryMigrationService();

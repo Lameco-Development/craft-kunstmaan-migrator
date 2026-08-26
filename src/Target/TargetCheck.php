@@ -171,6 +171,85 @@ final class TargetCheck
     }
 
     /**
+     * Mapping entries that send markup to a field with nowhere to render it.
+     *
+     * `ckeditor` keeps the legacy HTML, which is right for a rich target and wrong for a
+     * PlainText one: Craft stores the string as given and the template prints it, so the
+     * tags arrive on the page as text. On the reference corpus 60 live `ContentMediaTabbed`
+     * placements sent `content | ckeditor` into `tabbedContentMediaTab.text` and the site
+     * showed a literal `<p>` in front of the copy.
+     *
+     * The mapping already states the rule where it got it right — `uspBlockUsp.text` is
+     * flattened with `inlineHtml` "because a rich target would not need the flattening" —
+     * and the same target is fed raw HTML by a different part two entries away. That is the
+     * inconsistency this catches, and it is knowable from the mapping and the content model
+     * without reading a row of legacy data.
+     *
+     * A warning rather than an error: a PlainText field holding one `<em>` is untidy, not
+     * broken, and refusing the run over it would be worse than saying so.
+     *
+     * @return list<string>
+     */
+    public function htmlIntoPlainText(Mapping $mapping): array
+    {
+        $warnings = [];
+
+        foreach ($mapping->parts() as $name => $spec) {
+            $block = $spec['block'] ?? null;
+
+            if (!is_string($block) || !$this->schema->hasEntryType($block)) {
+                continue;
+            }
+
+            foreach ($spec['map'] ?? [] as $target => $expression) {
+                $this->warnOnRichIntoPlain($name, $block, (string) $target, $expression, $warnings);
+            }
+
+            foreach ($spec['children'] ?? [] as $field => $child) {
+                $nested = $this->schema->nestedTypeOf($block, (string) $field);
+
+                if ($nested === null) {
+                    continue;
+                }
+
+                foreach ($child['map'] ?? [] as $target => $expression) {
+                    $this->warnOnRichIntoPlain($name, $nested, (string) $target, $expression, $warnings);
+                }
+            }
+        }
+
+        return $warnings;
+    }
+
+    /** @param list<string> $warnings */
+    private function warnOnRichIntoPlain(
+        string $subject,
+        string $owner,
+        string $target,
+        mixed $expression,
+        array &$warnings,
+    ): void {
+        if (!is_string($expression) || preg_match('/\|\s*ckeditor\s*$/', $expression) !== 1) {
+            return;
+        }
+
+        $slot = $this->schema->slot($owner, $target);
+
+        if ($slot === null || $slot->type !== 'PlainText') {
+            return;
+        }
+
+        $warnings[] = sprintf(
+            '%s -> %s.%s: `%s` keeps the legacy HTML but the field is PlainText — the tags '
+            . 'render as text; use `inlineHtml` to flatten them',
+            $subject,
+            $owner,
+            $target,
+            trim($expression),
+        );
+    }
+
+    /**
      * Page entry types with nowhere to put a block at all.
      *
      * `contexts:` names the Matrix a page's block stream lands in. When the target's entry type
