@@ -76,8 +76,13 @@ final class MappingCheck
 
     /**
      * The non-blocking findings: pages with no block field, required fields
-     * nothing fills, and — given an introspection artifact — the legacy app's
-     * own wiring the mapping contradicts.
+     * nothing fills, markup aimed at a field that cannot render it, and —
+     * given an introspection artifact — the legacy app's own wiring the
+     * mapping contradicts.
+     *
+     * None of these refuse a run, and all of them predict content arriving
+     * wrong rather than not arriving, which is the kind of defect a migration
+     * ships without noticing.
      *
      * @return list<string>
      */
@@ -87,7 +92,11 @@ final class MappingCheck
 
         if ($this->target !== null) {
             $targetCheck = new TargetCheck($this->target);
-            $warnings = [...$targetCheck->pagesWithNoBlockField($mapping), ...$targetCheck->unfilledRequired($mapping)];
+            $warnings = [
+                ...$targetCheck->pagesWithNoBlockField($mapping),
+                ...$targetCheck->unfilledRequired($mapping),
+                ...$targetCheck->htmlIntoPlainText($mapping),
+            ];
         }
 
         if ($introspection !== null) {
