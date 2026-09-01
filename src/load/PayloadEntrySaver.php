@@ -197,7 +197,16 @@ final class PayloadEntrySaver
         // that never names that site was dropped above. The entry itself does exist there —
         // Craft propagates it across the section's sites — so the address is written once,
         // against that row, which is what an untranslatable field means.
-        $droppedAddresses = $this->writeAddressesOnPrimarySite((int) $entry->id, $droppedAddresses);
+        //
+        // An address nested in a Matrix belongs to a block, not to the entry, and the block's
+        // element id does not exist until the save above has run — which is why the write is
+        // here and not in the per-site pass. `saveEntryForSites()` has just recorded that id
+        // against the block's `_sourcePartRef`, so the map is read back rather than guessed.
+        $droppedAddresses = $this->writeAddressesOnPrimarySite(
+            (int) $entry->id,
+            $droppedAddresses,
+            $this->blockIdsFor($stateSource, $stateKey),
+        );
         $saveNs = hrtime(true) - $saveStarted;
         $stateStarted = hrtime(true);
 
@@ -319,6 +328,9 @@ final class PayloadEntrySaver
      * @param list<array{field: string, site: string, ref: string, path: list<int|string>}> $deferredRefs
      * @param list<array{field: string, site: string, path: list<int|string>, asset: string}> $unresolvedAssets
      * @param list<array<string, mixed>> $mediaTokenIssues
+     * @param ?string $blockRef the `_sourcePartRef` of the nearest Matrix block above `$node`,
+     *   which is the identity the loader records that block under. An address found beneath a
+     *   block is owned by that block, and this is the only thing that says which one.
      * @return array{present: bool, value: mixed}
      */
     private function resolveNode(
@@ -334,6 +346,7 @@ final class PayloadEntrySaver
         ?int $existingEntryId = null,
         string $ownerTitle = '',
         array &$droppedAddresses = [],
+        ?string $blockRef = null,
     ): array {
         if (is_string($node)) {
             if (!str_contains($node, '{{kuma:media:')) {
@@ -364,6 +377,7 @@ final class PayloadEntrySaver
                     'path' => $path,
                     'parts' => $node['_address'],
                     'ownerTitle' => $ownerTitle,
+                    'blockRef' => $blockRef,
                 ];
 
                 return ['present' => false, 'value' => null];
@@ -371,7 +385,16 @@ final class PayloadEntrySaver
 
             return [
                 'present' => true,
-                'value' => $this->addressValue($node['_address'], $fieldHandle, $siteHandle, $path, $existingEntryId, $ownerTitle),
+                // Only a top-level field's owner is known here. One nested in a Matrix belongs
+                // to a block that has not been saved yet, so it is written as new and the id is
+                // reused on the pass below, which runs after the block exists.
+                'value' => $this->addressValue(
+                    $node['_address'],
+                    $fieldHandle,
+                    $siteHandle,
+                    $path === [$fieldHandle] ? $existingEntryId : null,
+                    $ownerTitle,
+                ),
             ];
         }
 
@@ -480,6 +503,15 @@ final class PayloadEntrySaver
             return ['present' => true, 'value' => [$resolvedId]];
         }
 
+        // A Matrix block carries its own `_sourcePartRef`, and everything below it belongs to
+        // that block rather than to the entry — so the ref replaces whatever was in scope for
+        // the descent, and a block nested in a block correctly shadows its parent's.
+        $childBlockRef = $blockRef;
+
+        if (is_array($node['fields'] ?? null) && is_string($node['fields']['_sourcePartRef'] ?? null)) {
+            $childBlockRef = $node['fields']['_sourcePartRef'];
+        }
+
         $isList = array_is_list($node);
         $out = [];
         foreach ($node as $key => $childValue) {
@@ -496,6 +528,7 @@ final class PayloadEntrySaver
                 $existingEntryId,
                 $ownerTitle,
                 $droppedAddresses,
+                $childBlockRef,
             );
             if (!$child['present']) {
                 continue;
@@ -513,14 +546,17 @@ final class PayloadEntrySaver
     /**
      * Write the addresses the per-site pass had to drop, against the primary site.
      *
-     * Only a top-level address field can be placed this way: one nested inside a Matrix is
-     * owned by a block whose identity is not known here, so it stays dropped and stays
-     * counted. `partnerBranch.branchAddress` is the case that hits this.
+     * A top-level address is owned by the entry. One nested in a Matrix is owned by the block
+     * that carries it — a nested entry, which `resaveEntryFieldForSite()` loads by id exactly
+     * like any other. `$blockIds` is what turns the block's `_sourcePartRef` into that id;
+     * with no candidate that loads there is nothing to write against, and the address stays
+     * dropped and stays counted. `partnerBranch.branchAddress` is the case that hits this.
      *
-     * @param list<array{field: string, site: string, path: list<int|string>, parts: array<string, mixed>, ownerTitle: string}> $dropped
+     * @param list<array{field: string, site: string, path: list<int|string>, parts: array<string, mixed>, ownerTitle: string, blockRef?: ?string}> $dropped
+     * @param array<string, list<int>> $blockIds source part ref => the blocks it became, best first
      * @return list<array{field: string, site: string}> what is still unwritten, for the report
      */
-    private function writeAddressesOnPrimarySite(int $entryId, array $dropped): array
+    private function writeAddressesOnPrimarySite(int $entryId, array $dropped, array $blockIds = []): array
     {
         $primary = $this->gateway->primarySite();
         $unwritten = [];
@@ -529,41 +565,107 @@ final class PayloadEntrySaver
         foreach ($dropped as $address) {
             $isTopLevel = $address['path'] === [$address['field']];
 
-            // One address per field is enough: the field is not translatable, so every site's
-            // copy holds the same value and the first is as good as the last.
-            if (!$isTopLevel || isset($written[$address['field']])) {
-                if (!$isTopLevel) {
-                    // `field` here is the top-level handle the resolver walked in from; the
-                    // path's last segment is the address field itself, which is what an
-                    // operator needs to find it.
-                    $unwritten[] = [
-                        'field' => (string) (end($address['path']) ?: $address['field']),
-                        'site' => $address['site'],
-                    ];
-                }
+            // `field` is the top-level handle the resolver walked in from, which for a nested
+            // address names the Matrix rather than the address. The path's last segment is the
+            // address field itself — what the block is asked for, and what an operator needs to
+            // read in the report.
+            $field = $isTopLevel
+                ? $address['field']
+                : (string) (end($address['path']) ?: $address['field']);
+
+            $ref = (string) ($address['blockRef'] ?? '');
+            $owners = $isTopLevel ? [$entryId] : ($blockIds[$ref] ?? []);
+
+            // One address per owner and field is enough: the field is not translatable, so
+            // every site's copy holds the same value and the first is as good as the last.
+            $slot = ($isTopLevel ? (string) $entryId : $ref) . '|' . $field;
+
+            if (isset($written[$slot])) {
+                continue;
+            }
+
+            if ($this->writeOneAddress($address, $field, $owners, $primary['handle'], (int) $primary['id'])) {
+                $written[$slot] = true;
 
                 continue;
             }
 
-            $value = $this->addressValue(
-                $address['parts'],
-                $address['field'],
-                $primary['handle'],
-                $address['path'],
-                $entryId,
-                $address['ownerTitle'],
-            );
-
-            if ($this->entryService->resaveEntryFieldForSite($entryId, (int) $primary['id'], $address['field'], $value)) {
-                $written[$address['field']] = true;
-
-                continue;
-            }
-
-            $unwritten[] = ['field' => $address['field'], 'site' => $primary['handle']];
+            $unwritten[] = ['field' => $field, 'site' => $address['site']];
         }
 
         return $unwritten;
+    }
+
+    /**
+     * Try each element that could own this address, and stop at the one that takes it.
+     *
+     * A block is looked up by source ref and a ref can name more than one element id: the save
+     * records one per site it wrote, and which of those is the live element depends on the
+     * Matrix field's propagation. Under `all` there is one shared block and the last site to
+     * save it holds the surviving id, the earlier ones having been replaced; under `none` each
+     * site owns its own block and only the primary site's supports an Address at all. Rather
+     * than encode that, every candidate is offered: `resaveEntryFieldForSite()` reports false
+     * for an element that no longer exists or does not support the primary site, which is
+     * exactly the question being asked.
+     *
+     * @param array{parts: array<string, mixed>, ownerTitle: string} $address
+     * @param list<int> $owners
+     */
+    private function writeOneAddress(array $address, string $field, array $owners, string $primaryHandle, int $primarySiteId): bool
+    {
+        foreach ($owners as $ownerId) {
+            $value = $this->addressValue(
+                $address['parts'],
+                $field,
+                $primaryHandle,
+                $ownerId,
+                $address['ownerTitle'],
+            );
+
+            if ($this->entryService->resaveEntryFieldForSite($ownerId, $primarySiteId, $field, $value)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The source-ref → block element ids `saveEntryForSites()` has just persisted, gathered
+     * across the sites it buckets them by, most recently written first.
+     *
+     * Order matters and reverse is the right one: the buckets are filled primary site first
+     * and then site by site as each is saved, so under a Matrix that shares one block set the
+     * last bucket holds the id that survived and the earlier ones name elements Craft has
+     * already replaced. `writeOneAddress()` walks the list, so a field that instead keeps a
+     * block per site still finds the primary site's further down.
+     *
+     * @return array<string, list<int>>
+     */
+    private function blockIdsFor(string $stateSource, string $stateKey): array
+    {
+        $meta = $this->stateService->get($stateSource, $stateKey)['meta'] ?? null;
+
+        if (is_string($meta)) {
+            $meta = json_decode($meta, true);
+        }
+
+        $buckets = is_array($meta) ? (array) ($meta['blockIds'] ?? []) : [];
+        $out = [];
+
+        foreach (array_reverse($buckets) as $bucket) {
+            // A pre-Phase-12 state row holds the flat `ref => id` shape rather than a per-site
+            // one; casting a scalar id gives an integer key, which `is_string()` drops.
+            foreach ((array) $bucket as $ref => $id) {
+                if (!is_string($ref) || (int) $id <= 0 || in_array((int) $id, $out[$ref] ?? [], true)) {
+                    continue;
+                }
+
+                $out[$ref][] = (int) $id;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -575,20 +677,19 @@ final class PayloadEntrySaver
      * identical and the element id would not, which is churn a migration should not produce.
      * So an entry that already owns an address at this field reuses that id.
      *
-     * Only a top-level address field can be matched this way. One nested inside a Matrix is
-     * owned by a block whose identity is not known until the block is saved, so it is written
-     * as new; `partnerBranch.branchAddress` is the case that hits this.
+     * `$ownerElementId` is whichever element holds the field — the entry for a top-level one,
+     * the block for one nested in a Matrix. It is null only while that owner does not exist
+     * yet, which is the first save of a nested address; the pass that runs after the block is
+     * saved supplies the id, so a re-run reuses rather than recreates.
      *
      * @param array<string, mixed> $parts
-     * @param list<int|string> $path
      * @return array<array-key, array<string, mixed>>
      */
     private function addressValue(
         array $parts,
         string $fieldHandle,
         string $siteHandle,
-        array $path,
-        ?int $existingEntryId,
+        ?int $ownerElementId,
         string $ownerTitle = '',
     ): array {
         // Craft's Address layout marks its Label required by default, and an address with no
@@ -602,9 +703,9 @@ final class PayloadEntrySaver
 
         $key = 'new1';
 
-        if ($existingEntryId !== null && $path === [$fieldHandle]) {
+        if ($ownerElementId !== null) {
             $siteId = (int) ($this->gateway->siteByHandle($siteHandle)['id'] ?? 0);
-            $current = $this->entryService->readEntryFieldValueForSite($existingEntryId, $siteId, $fieldHandle);
+            $current = $this->entryService->readEntryFieldValueForSite($ownerElementId, $siteId, $fieldHandle);
             $existingId = $current === null ? null : array_key_first($current);
 
             if (is_int($existingId) || (is_string($existingId) && ctype_digit($existingId))) {
