@@ -415,4 +415,62 @@ final class AssetResolutionTest extends TestCase
             $entryService->lastPerSite['en']['fieldValues']['pageBuilder'][0]['fields']['media'],
         );
     }
+
+    /**
+     * Bug 2 (`[M2317]` surviving in a card's document-download href) — a Link field's
+     * `_linkAsset` (BlockBuilder's payload node for a `[M<id>]` token found in a link URL
+     * column) resolves through the same JIT `resolveFromLegacyId()` the plain `_asset` relation
+     * uses, but the loader must write the asset-typed Link shape
+     * (`craft\fields\linktypes\Asset::supports()`), not a bare id list.
+     */
+    public function testAResolvableLinkAssetTokenBecomesAnAssetTypedLinkTag(): void
+    {
+        $state = new AssetResolutionInMemoryMigrationStateService();
+        $entryService = new AssetResolutionFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new FakeAssetMigrationService();
+        $assetService->resolvedLegacyIds = [2317 => 15609];
+        $saver = $this->makeSaver($entryService, $state, $assetService);
+
+        $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:404', [
+            'sites' => ['en' => ['fieldValues' => ['media' => ['_linkAsset' => '2317', 'label' => 'Download now']]]],
+        ]));
+
+        $result = $this->save($saver, $payload);
+
+        self::assertSame(
+            ['type' => 'asset', 'value' => '{asset:15609@1:url}', 'label' => 'Download now'],
+            $entryService->lastPerSite['en']['fieldValues']['media'],
+        );
+        self::assertSame([], $result->unresolvedAssets);
+    }
+
+    /**
+     * The kuma_media row a `[M<id>]` token names may be deleted or missing on disk — there is
+     * no manual-redirect equivalent for a media reference the way `_linkRef` has
+     * `_linkFallback`, so an unresolved `_linkAsset` drops the link entirely rather than
+     * writing the dead legacy URL the token was cut from.
+     */
+    public function testAnUnresolvedLinkAssetTokenDropsTheLinkAndIsReportedAsAnUnresolvedAsset(): void
+    {
+        $state = new AssetResolutionInMemoryMigrationStateService();
+        $entryService = new AssetResolutionFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new FakeAssetMigrationService(); // resolvedLegacyIds left empty: genuinely missing
+        $saver = $this->makeSaver($entryService, $state, $assetService);
+
+        $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:405', [
+            'sites' => ['en' => ['fieldValues' => ['media' => ['_linkAsset' => '2317', 'label' => 'Download now']]]],
+        ]));
+
+        $result = $this->save($saver, $payload);
+
+        self::assertArrayNotHasKey('media', $entryService->lastPerSite['en']['fieldValues']);
+        self::assertSame([[
+            'field' => 'media',
+            'site' => 'en',
+            'path' => [],
+            'asset' => 'kuma_media:2317',
+        ]], $result->unresolvedAssets);
+    }
 }

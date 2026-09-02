@@ -784,6 +784,15 @@ final class BlockBuilder
      * at compile time, rather than at save time, so it shows up in a `--dump` payload exactly
      * like everything else the compiler decided.
      *
+     * A `[M<id>]` token is the same shortcode family for a `kuma_media` row rather than a node —
+     * Kunstmaan's own "secure download" link builder leaves it embedded in an otherwise-complete
+     * URL (`/uploads/media/<uuid>/file.pdf?token=[M2317]`), not standing alone the way `[NT<id>]`
+     * does, so it is looked for anywhere in the string rather than matched against the whole of
+     * it. The rest of that URL is legacy plumbing with no Craft equivalent — there is no
+     * download-token check on the migrated site — so once the id is known, the loader resolves
+     * the asset itself and the token's original surroundings are dropped rather than carried
+     * into a value nothing downstream can use.
+     *
      * @return array<string, string>|null
      */
     private function oneLink(string $url, string $label, bool $newWindow): ?array
@@ -794,17 +803,23 @@ final class BlockBuilder
             return null;
         }
 
-        $ref = $this->entities?->uidFor('nodeLink', $url, $this->environment);
+        $mediaId = $this->mediaLinkId($url);
 
-        if ($ref !== null) {
-            $link = ['_linkRef' => $ref];
-            $fallback = $this->redirectFallback($url);
-
-            if ($fallback !== null) {
-                $link['_linkFallback'] = $fallback;
-            }
+        if ($mediaId !== null) {
+            $link = ['_linkAsset' => (string) $mediaId];
         } else {
-            $link = $this->linkTarget($url);
+            $ref = $this->entities?->uidFor('nodeLink', $url, $this->environment);
+
+            if ($ref !== null) {
+                $link = ['_linkRef' => $ref];
+                $fallback = $this->redirectFallback($url);
+
+                if ($fallback !== null) {
+                    $link['_linkFallback'] = $fallback;
+                }
+            } else {
+                $link = $this->linkTarget($url);
+            }
         }
 
         if (trim($label) !== '') {
@@ -816,6 +831,18 @@ final class BlockBuilder
         }
 
         return $link;
+    }
+
+    /**
+     * Kunstmaan's `[M<id>]` media/document placeholder — the numeric value is `kuma_media.id`
+     * directly, the same token `CkeditorRewriterService` resolves inside rich-text HTML. Here
+     * it turns up in a plain link URL column instead, e.g. a document-download button built via
+     * `link(link_url, ...)`, so it is read the same way rather than left for the loader to see
+     * only as an opaque, unresolved string.
+     */
+    private function mediaLinkId(string $url): ?int
+    {
+        return preg_match('/\[M(\d+)\]/', $url, $m) === 1 ? (int) $m[1] : null;
     }
 
     /**

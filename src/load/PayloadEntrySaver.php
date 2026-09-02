@@ -488,6 +488,41 @@ final class PayloadEntrySaver
             return ['present' => true, 'value' => $link];
         }
 
+        // A Craft Link field pointing at a document/media asset — the same `[M<id>]` shortcode
+        // `_asset` resolves for a relation field, but for a Link field the resolved value has to
+        // be `{asset:<id>@<siteId>:url}` under `type: 'asset'`, the shape
+        // `craft\fields\linktypes\Asset::supports()` requires (mirrors `_linkRef`'s `{entry:…}`
+        // above). Resolved by id rather than by URL: `BlockBuilder::oneLink()` already pulled the
+        // kuma_media id straight out of the token, so there is no legacy URL to parse back out of.
+        if (array_key_exists('_linkAsset', $node) && is_string($node['_linkAsset']) && ctype_digit($node['_linkAsset'])) {
+            $assetStarted = hrtime(true);
+            $resolvedId = $this->assetService->resolveFromLegacyId((int) $node['_linkAsset'], $env, $this->options);
+            $this->assetNs += hrtime(true) - $assetStarted;
+            $this->assetCalls++;
+
+            if ($resolvedId <= 0) {
+                $unresolvedAssets[] = [
+                    'field' => $fieldHandle,
+                    'site' => $siteHandle,
+                    'path' => array_slice($path, 0, -1),
+                    'asset' => 'kuma_media:' . $node['_linkAsset'],
+                ];
+
+                // No manual-redirect equivalent exists for a media reference — unresolved means
+                // gone. The link is dropped from its containing slot, same fail-forward contract
+                // as an unresolved `_linkRef` with no `_linkFallback`, rather than writing the
+                // dead legacy URL the token was cut from.
+                return ['present' => false, 'value' => null];
+            }
+
+            $link = $this->linkValueWithLabel([
+                'type' => 'asset',
+                'value' => sprintf('{asset:%d@%d:url}', $resolvedId, $siteId),
+            ], $node);
+
+            return ['present' => true, 'value' => $link];
+        }
+
         if (array_key_exists('_asset', $node) && is_string($node['_asset'])) {
             $assetStarted = hrtime(true);
             $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset'], $env, $this->options);
