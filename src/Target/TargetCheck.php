@@ -421,7 +421,15 @@ final class TargetCheck
                 continue;
             }
 
-            $nested = $this->schema->nestedTypeOf($owner, (string) $field);
+            // The schema only guesses the nested type when a Matrix allows exactly one; a
+            // page builder allows a dozen, and `block:` is how a `children:` row names the
+            // one it means instead of going unchecked.
+            $explicitBlock = ($child['block'] ?? '') !== '' ? (string) $child['block'] : null;
+            $nested = $this->schema->nestedTypeOf($owner, (string) $field) ?? $explicitBlock;
+
+            if ($explicitBlock !== null && !$this->schema->hasEntryType($explicitBlock)) {
+                $errors[] = sprintf('%s: child `%s` names block `%s`, which is not a Craft entry type', $subject, $field, $explicitBlock);
+            }
 
             foreach (array_keys($child['map'] ?? []) as $target) {
                 if ($nested !== null && $this->schema->slot($nested, (string) $target) === null) {

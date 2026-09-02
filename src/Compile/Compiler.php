@@ -100,7 +100,15 @@ final class Compiler
         $pdo = $db->pdo();
         $pages = new PageReader($pdo, $this->mapping->offlineCutoff());
         $parts = new PartReader($pdo);
-        $entities = new EntityIndex($this->mapping->entities(), $pages->nodeIdByTranslation());
+
+        // Ancestors that own a path segment but never become an entry of their own; also the
+        // only source of a node's title, for `lookup(node.title)` — a node's own table has
+        // none, Kunstmaan keeps it on the translation row, one per locale. Read once, ahead of
+        // the entity index that needs it and the structural walk that needs it again below.
+        $ancestry = $pages->ancestry();
+        $nodeTitles = array_map(static fn(array $node): array => $node['titles'], $ancestry);
+
+        $entities = new EntityIndex($this->mapping->entities(), $pages->nodeIdByTranslation(), $nodeTitles);
         $builder = new BlockBuilder(
             $parts,
             $this->transforms,
@@ -126,10 +134,9 @@ final class Compiler
             }
         }
 
-        // Ancestors that own a path segment but never become an entry of their own.
-        // Registered as parentable before anything is emitted, so a child's parentRef can
-        // point at one; emitted shallowest-first, so the loader resolves each ref in pass one.
-        $ancestry = $pages->ancestry();
+        // `$ancestry` was read above, ahead of the entity index. Registered as parentable
+        // before anything is emitted, so a child's parentRef can point at one; emitted
+        // shallowest-first, so the loader resolves each ref in pass one.
 
         // Ordered by `lft`, and emitted *interleaved with the pages* rather than all up front.
         // A placeholder's own parent is often an ordinary page, and the loader resolves a
@@ -541,7 +548,7 @@ final class Compiler
             : null;
 
         $pageFields = $pageRow !== null
-            ? $builder->fieldsFrom($page->map(), $pageRow, $translation['entity'], $entryType)
+            ? $builder->fieldsFrom($page->map(), $pageRow, $translation['entity'], $entryType, $translation['lang'])
             : [];
 
         // A page entity can own collections too. Partner branches, contact persons and awards
@@ -554,6 +561,7 @@ final class Compiler
                 $translation['entityId'],
                 $translation['entity'],
                 true,
+                $translation['lang'],
             );
         }
 
@@ -624,6 +632,19 @@ final class Compiler
 
         $builderBlocks = array_merge($prependedBlocks, $builderBlocks);
 
+        // A page's own `children:` can target the builder field too — a wrapper block built
+        // from a collection rather than a pagepart, landing beside the pagepart-derived blocks
+        // instead of in a Matrix field of its own. `partnerBranches` never collided with this
+        // because it addresses a field nothing else writes; appended here, not overwritten,
+        // because overwriting is how such a block would vanish the moment the page also had
+        // pagepart content in the same field.
+        $builderField = $page->builderField();
+        $ownBuilderBlocks = $pageFields[$builderField] ?? [];
+
+        if (is_array($ownBuilderBlocks) && $ownBuilderBlocks !== []) {
+            $builderBlocks = [...$builderBlocks, ...$ownBuilderBlocks];
+        }
+
         $formBlock = $this->formBlockFor($parts, $translation, $page, $environment);
 
         if ($formBlock !== null) {
@@ -631,7 +652,7 @@ final class Compiler
         }
 
         if ($builderBlocks !== []) {
-            $pageFields[$page->builderField()] = $builderBlocks;
+            $pageFields[$builderField] = $builderBlocks;
         }
 
         if ($pageFields !== []) {

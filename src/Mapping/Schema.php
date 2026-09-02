@@ -43,7 +43,7 @@ final class Schema
         'unreviewed', 'absorbInto', 'source', 'conflict', 'consumedBy', 'drop', 'manual', 'todo', 'note',
     ];
 
-    private const CHILD_KEYS = ['table', 'fk', 'order', 'map', 'ignore', 'unreviewed', 'todo'];
+    private const CHILD_KEYS = ['table', 'fk', 'order', 'block', 'map', 'children', 'ignore', 'unreviewed', 'todo'];
 
     private const PAGE_KEYS = ['live', 'table', 'section', 'entryType', 'map', 'children', 'ignore',
         'unreviewed', 'contexts', 'postDate', 'manual', 'drop', 'todo', 'note', ];
@@ -264,6 +264,14 @@ final class Schema
                         $errors[] = sprintf('%s, %s `%s`: missing `%s:`', $subject, $noun, $field, $required);
                     }
                 }
+            }
+
+            // A child row can own a collection of its own — `children:` one level down, the
+            // same shape this method already walks. Recursing is what stops a nested block
+            // wrapper (one block, several nested rows) from validating clean on a mistake
+            // this method would have caught at the top level.
+            if (($child['children'] ?? []) !== []) {
+                $this->checkChildren(sprintf('%s, child `%s`', $subject, $field), $child, $errors);
             }
         }
     }

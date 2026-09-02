@@ -38,7 +38,9 @@ final class IntrospectionCheck
 
         return [
             ...$this->unclaimedManyToMany($text),
+            ...$this->unclaimedOwnedCollections($text),
             ...$this->mappedColumnsMissing(),
+            ...$this->unmappedEditableColumns($text),
         ];
     }
 
@@ -105,6 +107,46 @@ final class IntrospectionCheck
 
 
     /**
+     * The owning OneToMany associations `unclaimedManyToMany` does not look at — a page's
+     * own child collection, in its own table with a foreign key back to the owner, not a
+     * join table. `productBrandItems` on `ProductPage` is exactly this shape: no join table
+     * for `unclaimedManyToMany` to notice, and no scalar column on `ProductPage` itself for
+     * `mappedColumnsMissing` to catch either — the relation is invisible to both without this.
+     *
+     * @return list<string>
+     */
+    private function unclaimedOwnedCollections(string $mappingText): array
+    {
+        $out = [];
+
+        foreach ($this->subjects() as $subject) {
+            foreach ($this->introspection->ownedCollections($subject['class']) as $collection) {
+                if ($collection['field'] === '') {
+                    continue;
+                }
+
+                $needle = $collection['table'] !== '' ? $collection['table'] : $collection['field'];
+
+                // Named anywhere in the file counts — a `children:` block that reads the
+                // table, or a reasoned note that declines it by name.
+                if (str_contains($mappingText, $needle)) {
+                    continue;
+                }
+
+                $out[] = sprintf(
+                    '%s `%s`: Doctrine relates `%s` to %s through a one-to-many, and the mapping never reads it — the collection is lost',
+                    $subject['lane'],
+                    $subject['subject'],
+                    $collection['field'],
+                    $this->shortName($collection['target']),
+                );
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * @return list<string>
      */
     private function mappedColumnsMissing(): array
@@ -131,6 +173,36 @@ final class IntrospectionCheck
                         $this->shortName($subject['class']),
                     );
                 }
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * `editableColumns` was dead code until now — declared, documented, called nowhere. It
+     * reads the opposite direction from `mappedColumnsMissing`: not a mapped column the
+     * entity lacks, but a column the legacy CP form lets an editor fill in that the mapping
+     * never mentions at all — a field that would silently disappear rather than fail loudly.
+     *
+     * @return list<string>
+     */
+    private function unmappedEditableColumns(string $mappingText): array
+    {
+        $out = [];
+
+        foreach ($this->subjects() as $subject) {
+            foreach ($this->introspection->editableColumns($subject['class']) as $column) {
+                if (str_contains($mappingText, $column)) {
+                    continue;
+                }
+
+                $out[] = sprintf(
+                    '%s `%s`: `%s` has a form widget in the legacy CP, and the mapping never reads it — content an editor could type is dropped',
+                    $subject['lane'],
+                    $subject['subject'],
+                    $column,
+                );
             }
         }
 

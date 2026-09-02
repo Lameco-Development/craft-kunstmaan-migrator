@@ -28,10 +28,12 @@ final readonly class EntityIndex
     /**
      * @param array<string, array<string, mixed>> $entities the mapping's `entities:` lane
      * @param array<int, int> $nodeOfTranslation node translation id => node id, for `ref(nodeLink)`
+     * @param array<int, array<string, string>> $nodeTitles node id => lang => title, for `lookup(node.title)`
      */
     public function __construct(
         private array $entities = [],
         private array $nodeOfTranslation = [],
+        private array $nodeTitles = [],
     ) {
     }
 
@@ -86,6 +88,28 @@ final readonly class EntityIndex
             (string) $spec['table'],
             (int) $id,
         );
+    }
+
+    /**
+     * A node's title, resolved through the tree rather than a `ref()` — `brand_id` names a
+     * BrandPage node, and a card heading needs the text Craft would show for it, not a
+     * relation. Kunstmaan keeps a title per locale on the translation row, not on the node
+     * itself; `$lang` picks one, and the first title the node carries in any locale stands
+     * in when it is not given or the node has none in it.
+     */
+    public function titleOfNode(int $nodeId, ?string $lang = null): ?string
+    {
+        $titles = $this->nodeTitles[$nodeId] ?? [];
+
+        if ($titles === []) {
+            return null;
+        }
+
+        if ($lang !== null && isset($titles[$lang])) {
+            return $titles[$lang];
+        }
+
+        return (string) reset($titles);
     }
 
     /** The legacy table an entity reads, so a `lookup()` can reach a column on the row it points at. */
