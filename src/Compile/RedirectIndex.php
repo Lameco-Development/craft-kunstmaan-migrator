@@ -44,13 +44,29 @@ final class RedirectIndex
     /** @param list<string> $locales the environment's legacy locale codes, for stripping an origin's `/{locale}/` prefix */
     public static function load(PDO $pdo, array $locales = []): self
     {
-        $targets = [];
-
         try {
             $rows = $pdo->query(sprintf('SELECT origin, target FROM `%s` ORDER BY id', self::TABLE));
         } catch (\PDOException) {
             return new self([]);
         }
+
+        return self::fromRows($rows, $locales);
+    }
+
+    /**
+     * Same normalisation as `load()`, over rows already read — for a caller that reads the
+     * table through its own DB seam (`LegacyDbService::queryAll()`) rather than a raw PDO
+     * handle. `GlobalsMigrationService` and `NavigationMigrationService` both need the same
+     * `kuma_redirects` fallback `BlockBuilder::oneLink()` uses on the compile side, for an
+     * `[NT<id>]` token that lands in their own load-phase field rather than in page content —
+     * this is what lets them reuse it without opening a second connection.
+     *
+     * @param iterable<array<string, mixed>> $rows
+     * @param list<string> $locales the environment's legacy locale codes, for stripping an origin's `/{locale}/` prefix
+     */
+    public static function fromRows(iterable $rows, array $locales = []): self
+    {
+        $targets = [];
 
         foreach ($rows as $row) {
             $origin = self::normalise(self::stripLocalePrefix((string) ($row['origin'] ?? ''), $locales));

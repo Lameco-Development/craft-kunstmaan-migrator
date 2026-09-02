@@ -9,6 +9,7 @@ use craft\elements\Entry;
 use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
 use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
 use Lameco\Kunstmaanmigrator\Compile\GlobalsCompiler;
+use Lameco\Kunstmaanmigrator\Compile\RedirectIndex;
 use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
@@ -63,6 +64,18 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
         return $this->navigationGateway ??= new VerbbNavigationGateway();
     }
 
+    /**
+     * A blank nav node.
+     *
+     * Its own method for the same reason `NavigationMigrationService::newNavNode()` is: constructing
+     * a Craft element boots the whole application, which is the one thing standing between this
+     * pass and a test that can drive its write half.
+     */
+    protected function newNavNode(): NavNode
+    {
+        return new NavNode();
+    }
+
     public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
         $report = new MigrationReport();
@@ -98,8 +111,15 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
             $report->warn(sprintf('%d skipped: %s', $count, $reason));
         }
 
+        // Same fallback `BlockBuilder::oneLink()` tries on the compile side for a `[NT<id>]`
+        // link whose target never became a Craft entry — a `kuma_redirects` 301, when the
+        // legacy site had one on file. Loaded once per pass, over `$context->legacy`'s own
+        // connection rather than opening a second one.
+        $locales = ($context->mapping->environments()[$context->name] ?? [])['locales'] ?? [];
+        $redirects = RedirectIndex::load($context->legacy->pdo(), array_keys($locales));
+
         foreach ($records as $record) {
-            $this->loadRecord($record, $localeToSiteId, $opts, $context, $report);
+            $this->loadRecord($record, $localeToSiteId, $opts, $context, $report, $redirects);
         }
 
         return $report;
@@ -115,6 +135,7 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
         MigrationOptions $opts,
         EnvironmentContext $context,
         MigrationReport $report,
+        RedirectIndex $redirects,
     ): void {
         $locale = (string) ($record['locale'] ?? '');
         $siteId = $localeToSiteId[$locale] ?? null;
@@ -145,7 +166,7 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
             return;
         }
 
-        $parentId = $this->upsertNode($record, $navId, $siteId, null, $opts, $context, $report);
+        $parentId = $this->upsertNode($record, $navId, $siteId, null, $opts, $context, $report, $redirects);
 
         if ($parentId === null) {
             return;
@@ -153,7 +174,7 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
 
         foreach ((array) ($record['children'] ?? []) as $child) {
             $child['context'] = $record['context'];
-            $this->upsertNode($child, $navId, $siteId, $parentId, $opts, $context, $report);
+            $this->upsertNode($child, $navId, $siteId, $parentId, $opts, $context, $report, $redirects);
         }
     }
 
@@ -168,6 +189,7 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
         MigrationOptions $opts,
         EnvironmentContext $context,
         MigrationReport $report,
+        RedirectIndex $redirects,
     ): ?int {
         $sourceUid = sprintf('%s@%d', (string) $record['sourceUid'], $siteId);
         $existingId = $this->stateService?->getTargetId(self::STATE_SOURCE, $sourceUid, $siteId);
@@ -179,7 +201,7 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
         $node = $existingId === null
             ? null
             : $this->elements()->findById($existingId, NavNode::class, $siteId);
-        $node ??= new NavNode();
+        $node ??= $this->newNavNode();
 
         $node->navId = $navId;
         $node->siteId = $siteId;
@@ -200,10 +222,27 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
         } else {
             $node->type = null;
             $node->elementId = null;
-            $node->url = $url !== '' ? $url : '#';
 
             if (preg_match(self::INTERNAL_LINK, $url) === 1) {
-                $report->warn(sprintf('%s: %s resolves to no migrated entry; kept as a literal URL.', $sourceUid, $url));
+                // The node this `[NT<id>]` addresses never became a Craft entry — deleted, or a
+                // page type that only compiles into the redirects lane. `BlockBuilder::
+                // oneLink()` tries the same manual `kuma_redirects` 301 for exactly this case on
+                // the compile side; writing the raw token here instead used to leave a literal,
+                // unclickable "[NT80]" in the footer HTML.
+                $fallbackUrl = $this->redirectFallback($url, $context, $redirects);
+
+                if ($fallbackUrl !== null) {
+                    $node->url = $fallbackUrl;
+                } else {
+                    $node->url = '#';
+                    $report->warn(sprintf(
+                        '%s: %s resolves to no migrated entry and no kuma_redirects fallback; linked to "#" instead of the raw token.',
+                        $sourceUid,
+                        $url,
+                    ));
+                }
+            } else {
+                $node->url = $url !== '' ? $url : '#';
             }
         }
 
@@ -281,5 +320,33 @@ class GlobalsMigrationService extends Component implements MigrationAdapter
             (string) (int) $nodeId,
             null,
         );
+    }
+
+    /**
+     * The manual `kuma_redirects` target for an `[NT<id>]` link whose own node never became a
+     * Craft entry — the same fallback `BlockBuilder::oneLink()` tries on the compile side
+     * (`RedirectIndex`), against the node translation's own legacy URL rather than reimplemented.
+     */
+    private function redirectFallback(string $url, EnvironmentContext $context, RedirectIndex $redirects): ?string
+    {
+        if (preg_match(self::INTERNAL_LINK, $url, $m) !== 1 || $context->legacy === null) {
+            return null;
+        }
+
+        try {
+            $statement = $context->legacy->pdo()->prepare(
+                'SELECT url FROM kuma_node_translations WHERE id = ?'
+            );
+            $statement->execute([(int) $m[1]]);
+            $legacyUrl = $statement->fetchColumn();
+        } catch (Throwable) {
+            return null;
+        }
+
+        if (!is_string($legacyUrl) || $legacyUrl === '') {
+            return null;
+        }
+
+        return $redirects->targetFor($legacyUrl);
     }
 }
