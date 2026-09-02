@@ -586,6 +586,7 @@ final class Compiler
 
         $builderBlocks = [];
         $prependedBlocks = [];
+        $appendedBlocks = [];
 
         // Blocks an emitted context routes into a column group instead of the builder streams
         // above, keyed by group index then context — see `mergeColumnGroups()`.
@@ -604,6 +605,8 @@ final class Compiler
 
                 continue;
             }
+
+            $contextBuilt = false;
 
             foreach ($sequencer->apply($sequence) as $emission) {
                 $block = $this->blockFor($emission, $builder, $builder->environment());
@@ -632,12 +635,32 @@ final class Compiler
                     // `prepend: true` is what puts a hero above the body. It was declared in the
                     // mapping and read by nothing, so every `top` part landed *after* the whole
                     // main context — 890 live placements arriving at the foot of the page.
+                    //
+                    // `append: true` is its mirror: a context whose blocks belong *after* every
+                    // other context, `prepend`'s own main context included — a page's own
+                    // `footer-top` override, unshifted onto the tail of the builder rather than
+                    // woven into mapping order.
                     $prependedBlocks[] = $block;
+                } elseif (($target['append'] ?? false) === true) {
+                    $appendedBlocks[] = $block;
                 } else {
                     $builderBlocks[] = $block;
                 }
 
+                $contextBuilt = true;
                 $this->blocks++;
+            }
+
+            // `enabledField:` names a boolean page field to flip on when this context
+            // actually produced content — the compiled stand-in for "does this page
+            // override the region at all", which nothing upstream of the block loop
+            // can answer: a `sequence` entry can still resolve to zero blocks (an
+            // unbuilt part, a disallowed block type), and the switch must follow what
+            // was actually placed, not what the legacy data merely listed.
+            $enabledField = $target['enabledField'] ?? null;
+
+            if ($contextBuilt && is_string($enabledField) && $enabledField !== '') {
+                $pageFields[$enabledField] = true;
             }
         }
 
@@ -667,6 +690,8 @@ final class Compiler
         $builderBlocks = $formBlock !== null
             ? array_merge($prependedBlocks, [$formBlock], $builderBlocks)
             : array_merge($prependedBlocks, $builderBlocks);
+
+        $builderBlocks = array_merge($builderBlocks, $appendedBlocks);
 
         if ($builderBlocks !== []) {
             $pageFields[$builderField] = $builderBlocks;
