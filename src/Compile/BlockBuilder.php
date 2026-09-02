@@ -27,6 +27,7 @@ final class BlockBuilder
         private ?string $block = null,
         private readonly ?MediaIndex $media = null,
         private readonly ?EntityIndex $entities = null,
+        private ?string $lang = null,
     ) {
     }
 
@@ -71,6 +72,13 @@ final class BlockBuilder
      * stability follows from the parent block's own ref. Without it a re-run appends instead
      * of replacing: three legacy branches became six, then nine.
      *
+     * A child row may itself carry a `children:` — the same shape one level down, recursed
+     * rather than given a second mechanism. That is what turns a page-owned collection into
+     * one wrapper block with N nested rows instead of N top-level blocks: `productBrandItems`
+     * lands as one `cardsBlock` holding N `cardsCards`, not N `cardsBlock`s. A row's `block:`
+     * names its type explicitly, for when the field it lands in — a page builder Matrix — takes
+     * more than one type and the schema cannot guess which this row means.
+     *
      * @param array<string, array<string, mixed>> $children
      * @return array<string, list<array{type:string, fields:array<string,mixed>}>>
      */
@@ -80,9 +88,16 @@ final class BlockBuilder
         int $ownerId,
         string $context,
         bool $trackable = false,
+        ?string $lang = null,
     ): array {
-        $previous = $this->block;
+        $previousBlock = $this->block;
+        $previousLang = $this->lang;
         $this->block = $owner;
+
+        if ($lang !== null) {
+            $this->lang = $lang;
+        }
+
         $out = [];
 
         foreach ($children as $field => $child) {
@@ -101,11 +116,12 @@ final class BlockBuilder
 
             // A child's map addresses fields on the *nested* entry type, so that is the type the
             // schema must be asked about while it is evaluated — `commonLink` is a Link field on
-            // `button`, and nothing at all on the block that owns the Matrix.
-            $childType = $this->childBlockType((string) $field);
+            // `button`, and nothing at all on the block that owns the Matrix. `block:` overrides
+            // the schema guess, needed the moment the owning field allows more than one type.
+            $childType = ($child['block'] ?? '') !== '' ? (string) $child['block'] : $this->childBlockType((string) $field);
 
             foreach ($rows as $childRow) {
-                $fields = $this->fieldsFrom($child['map'] ?? [], $childRow, $context . '.' . $field, $childType);
+                $fields = $this->fieldsFrom($child['map'] ?? [], $childRow, $context . '.' . $field, $childType, $this->lang);
 
                 // Every block carries its origin, at every depth. The loader threads these back
                 // into the payload on a re-run so Craft updates a block in place instead of
@@ -113,6 +129,17 @@ final class BlockBuilder
                 // which is what happened to `contentColumn` and `button` on every forced run.
                 if (isset($childRow['id'])) {
                     $fields['_sourcePartRef'] = $this->sourceRef((string) $child['table'], (int) $childRow['id']);
+
+                    if (($child['children'] ?? []) !== []) {
+                        $fields += $this->childrenOf(
+                            (array) $child['children'],
+                            $childType,
+                            (int) $childRow['id'],
+                            $context . '.' . $field,
+                            false,
+                            $this->lang,
+                        );
+                    }
                 }
 
                 $blocks[] = [
@@ -126,7 +153,8 @@ final class BlockBuilder
             }
         }
 
-        $this->block = $previous;
+        $this->block = $previousBlock;
+        $this->lang = $previousLang;
 
         return $out;
     }
@@ -137,14 +165,21 @@ final class BlockBuilder
      * @param ?string $owner the entry type these targets name, when the caller knows it — a page
      *   map addresses a page entry type, and without it the schema is asked about whichever block
      *   happened to be built last.
+     * @param ?string $lang the site locale being compiled, for `lookup(node.title)` — the node
+     *   tree keeps one title per locale, and without this the first one it has stands in.
      * @return array<string, mixed>
      */
-    public function fieldsFrom(array $map, array $row, string $context, ?string $owner = null): array
+    public function fieldsFrom(array $map, array $row, string $context, ?string $owner = null, ?string $lang = null): array
     {
-        $previous = $this->block;
+        $previousBlock = $this->block;
+        $previousLang = $this->lang;
 
         if ($owner !== null) {
             $this->block = $owner;
+        }
+
+        if ($lang !== null) {
+            $this->lang = $lang;
         }
 
         $fields = [];
@@ -157,7 +192,8 @@ final class BlockBuilder
             }
         }
 
-        $this->block = $previous;
+        $this->block = $previousBlock;
+        $this->lang = $previousLang;
 
         return $fields;
     }
@@ -208,6 +244,28 @@ final class BlockBuilder
             }
 
             return $values === [] ? null : implode("\n", $values);
+        }
+
+        // One target, several expressions on a single line, joined by a literal that is not
+        // itself content — a card heading built from a country and a brand ("Netherlands by
+        // Acme") needs the pieces on one line, which is what `concat`'s newline join cannot
+        // give it. `join(' by ', country_id | lookup(Country.title), brand_id | lookup(node.title))`.
+        if (preg_match('/^join\((.*)\)$/s', $expression, $m) === 1) {
+            $arguments = $this->splitArguments($m[1]);
+            $separator = array_shift($arguments) ?? '';
+            $separator = preg_match("/^'(.*)'$/", $separator, $sm) === 1 ? $sm[1] : $separator;
+
+            $values = [];
+
+            foreach ($arguments as $piece) {
+                $value = $this->evaluate($piece, $row, $context);
+
+                if (is_scalar($value) && trim((string) $value) !== '') {
+                    $values[] = (string) $value;
+                }
+            }
+
+            return $values === [] ? null : implode($separator, $values);
         }
 
         $parts = array_map('trim', explode('|', $expression));
@@ -352,16 +410,28 @@ final class BlockBuilder
         return $out;
     }
 
-    /** One column of the entity row a foreign key points at. */
+    /**
+     * One column of the entity row a foreign key points at — or, for `node.title`, the title
+     * of the node it names.
+     *
+     * A node has no `title` column of its own: Kunstmaan keeps it on the translation row, one
+     * per locale, which a plain row read by id cannot reach. `brand_id` on `ProductBrandItem`
+     * names a BrandPage *node*, and a card heading needs the text an editor sees, not a
+     * relation — the same reason `ref()` cannot stand in here.
+     */
     private function lookup(string $entity, string $column, mixed $foreignKey): mixed
     {
-        $table = $this->entities?->tableFor($entity);
-
-        if ($table === null || $foreignKey === null || !ctype_digit((string) $foreignKey)) {
+        if ($foreignKey === null || !ctype_digit((string) $foreignKey)) {
             return null;
         }
 
-        return $this->parts->row($table, (int) $foreignKey)[$column] ?? null;
+        if ($entity === 'node' && $column === 'title') {
+            return $this->entities?->titleOfNode((int) $foreignKey, $this->lang);
+        }
+
+        $table = $this->entities?->tableFor($entity);
+
+        return $table === null ? null : ($this->parts->row($table, (int) $foreignKey)[$column] ?? null);
     }
 
     /**

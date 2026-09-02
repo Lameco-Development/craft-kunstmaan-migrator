@@ -99,6 +99,40 @@ final class Introspection
     }
 
     /**
+     * The owning OneToMany associations of one entity — a child collection that lives in its
+     * own table, with a foreign key back to the owner, rather than the join table an owning
+     * ManyToMany uses.
+     *
+     * Doctrine always marks a OneToMany's inverse side with `mappedBy`, because there is no
+     * other kind: the owning side of a one-to-many is the ManyToOne on the other entity. That
+     * is what makes `productBrandItems` on `ProductPage` invisible to `owningManyToMany` —
+     * it filters `mappedBy` OUT — and to `mappedColumnsMissing`, which only ever looks at
+     * columns of the entity's own table. A page-owned collection like this one has neither.
+     *
+     * @return list<array{field: string, target: string, table: string}>
+     */
+    public function ownedCollections(string $class): array
+    {
+        $out = [];
+
+        foreach ((array) ($this->entities[$class]['associations'] ?? []) as $assoc) {
+            if (($assoc['kind'] ?? '') !== 'OneToMany' || !isset($assoc['mappedBy'])) {
+                continue;
+            }
+
+            $target = (string) ($assoc['target'] ?? '');
+
+            $out[] = [
+                'field' => (string) ($assoc['field'] ?? ''),
+                'target' => $target,
+                'table' => (string) ($this->entities[$target]['table'] ?? ''),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
      * The database columns an entity's CP form actually edits.
      *
      * A column with a form widget is content an editor could type; a column without one is
