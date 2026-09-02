@@ -630,8 +630,6 @@ final class Compiler
             }
         }
 
-        $builderBlocks = array_merge($prependedBlocks, $builderBlocks);
-
         // A page's own `children:` can target the builder field too — a wrapper block built
         // from a collection rather than a pagepart, landing beside the pagepart-derived blocks
         // instead of in a Matrix field of its own. `partnerBranches` never collided with this
@@ -647,9 +645,13 @@ final class Compiler
 
         $formBlock = $this->formBlockFor($parts, $translation, $page, $environment);
 
-        if ($formBlock !== null) {
-            $builderBlocks[] = $formBlock;
-        }
+        // The form always followed the prepended contexts in Kunstmaan (Potions: text, then
+        // form, then main). Pinning it to the foot of the builder put it after `main` instead,
+        // and the same fate awaited `text` itself until it also got `prepend: true`. Both the
+        // prepended contexts and the form now land ahead of the rest, in that order.
+        $builderBlocks = $formBlock !== null
+            ? array_merge($prependedBlocks, [$formBlock], $builderBlocks)
+            : array_merge($prependedBlocks, $builderBlocks);
 
         if ($builderBlocks !== []) {
             $pageFields[$builderField] = $builderBlocks;
@@ -667,10 +669,11 @@ final class Compiler
      *
      * The forms lane compiles a page's `form` context into a Formie form and stops there:
      * on the first full Enreach run, 70 forms existed and no page pointed at any of them.
-     * A page whose form context holds at least one mappable field gets a form block at the
-     * foot of its builder, carrying `{"_form": <form sourceUid>}` for the loader to resolve
-     * against the form lane's state row — the same two-pass contract a `_ref` follows when
-     * the target does not exist yet.
+     * A page whose form context holds at least one mappable field gets a form block placed
+     * right after any prepended contexts in its builder (the caller positions it; this only
+     * builds it), carrying `{"_form": <form sourceUid>}` for the loader to resolve against
+     * the form lane's state row: the same two-pass contract a `_ref` follows when the target
+     * does not exist yet.
      *
      * @param array<string, mixed> $translation
      * @return array{type:string, fields:array<string,mixed>}|null
