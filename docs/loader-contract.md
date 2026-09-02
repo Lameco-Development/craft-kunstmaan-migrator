@@ -119,7 +119,16 @@ served.
 - **Link field pointing at a migrated entry** — `{"_linkRef": "<sourceUid>", "label": "…"}`.
   Craft stores an entry link as a reference tag, so the loader resolves the uid and writes
   `{"value": "{entry:<id>@<siteId>:url}", …}`. Same grammar and same fail-forward contract as
-  `_ref`: unresolved means the link is dropped, not that a bogus value is written.
+  `_ref`: unresolved defers to `pendingRefs`, patched by the fixup pass once the target resolves.
+  The `_linkRef` target is not guaranteed to ever resolve, though — the node it addresses may be
+  `deleted`, or a page type that only compiles into the `redirects:` lane, never `pages:`. When
+  the compiler found a manual `kuma_redirects` row covering that node translation's legacy URL,
+  the node also carries `{"_linkFallback": "<redirect target>"}`; if `_linkRef` is still
+  unresolved at save time, the loader writes `{"type": "url", "value": "<redirect target>", …}`
+  instead of dropping the link — the same 301 that made the link work on the old site. No
+  `_linkFallback`, or the ref resolves later: the fixup pass overwrites the field with the real
+  entry reference the moment it can; with neither a fallback nor a resolution, the field is left
+  unset.
 - **Formie form relation** — `{"_form": "kuma:<ENV>:form:<Entity>:<id>"}`, emitted inside its
   list container (`"commonForm": [{"_form": …}]`). The form lane's own grammar: one segment
   more than `sourceUid`, resolved against the state row `FormMigrationService` records

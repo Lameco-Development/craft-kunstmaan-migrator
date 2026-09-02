@@ -100,7 +100,11 @@ final class Compiler
         $pdo = $db->pdo();
         $pages = new PageReader($pdo, $this->mapping->offlineCutoff());
         $parts = new PartReader($pdo);
-        $entities = new EntityIndex($this->mapping->entities(), $pages->nodeIdByTranslation());
+        $entities = new EntityIndex(
+            $this->mapping->entities(),
+            $pages->nodeIdByTranslation(),
+            $pages->urlByTranslation(),
+        );
         $builder = new BlockBuilder(
             $parts,
             $this->transforms,
@@ -109,6 +113,7 @@ final class Compiler
             null,
             MediaIndex::load($pdo),
             $entities,
+            RedirectIndex::load($pdo),
         );
         $sequencer = new SequenceEngine($this->mapping->sequence(), $this->mapping->parts(), $parts, $builder, $this->schema);
 

@@ -28,10 +28,13 @@ final readonly class EntityIndex
     /**
      * @param array<string, array<string, mixed>> $entities the mapping's `entities:` lane
      * @param array<int, int> $nodeOfTranslation node translation id => node id, for `ref(nodeLink)`
+     * @param array<int, string> $urlOfTranslation node translation id => legacy URL, for the
+     *   redirect fallback an unresolvable `nodeLink` tries (see `legacyUrlOfNodeLink()`)
      */
     public function __construct(
         private array $entities = [],
         private array $nodeOfTranslation = [],
+        private array $urlOfTranslation = [],
     ) {
     }
 
@@ -86,6 +89,20 @@ final readonly class EntityIndex
             (string) $spec['table'],
             (int) $id,
         );
+    }
+
+    /**
+     * The legacy URL `[NT<id>]` addresses, for the redirect fallback `BlockBuilder::oneLink()`
+     * tries when the ref never resolves to a compiled entry. Null for anything that isn't the
+     * `[NT<id>]` form, or a translation this index has no URL for.
+     */
+    public function legacyUrlOfNodeLink(string $value): ?string
+    {
+        if (preg_match(self::INTERNAL_LINK, trim($value), $m) !== 1) {
+            return null;
+        }
+
+        return $this->urlOfTranslation[(int) $m[1]] ?? null;
     }
 
     /** The legacy table an entity reads, so a `lookup()` can reach a column on the row it points at. */
