@@ -192,8 +192,20 @@ final class IntrospectionCheck
         $out = [];
 
         foreach ($this->subjects() as $subject) {
+            // A column claimed on the subject's own row — as a `map:` value or an `ignore:`
+            // key/value, reasoned or bare — is accounted for even when there is no mapping
+            // file on disk to grep (an in-memory `Mapping::fromArray()`, as every kernel test
+            // builds). Checked ahead of the whole-file text search, which still catches a
+            // column named only in another subject's `ignore:` note.
+            $localText = (string) json_encode([
+                $subject['spec']['map'] ?? [],
+                $subject['spec']['ignore'] ?? [],
+                $subject['spec']['children'] ?? [],
+                $subject['spec']['firstChild'] ?? [],
+            ]);
+
             foreach ($this->introspection->editableColumns($subject['class']) as $column) {
-                if (str_contains($mappingText, $column)) {
+                if (str_contains($mappingText, $column) || str_contains($localText, $column)) {
                     continue;
                 }
 

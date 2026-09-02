@@ -268,14 +268,14 @@ final class Schema
                         $errors[] = sprintf('%s, %s `%s`: missing `%s:`', $subject, $noun, $field, $required);
                     }
                 }
-            }
 
-            // A child row can own a collection of its own — `children:` one level down, the
-            // same shape this method already walks. Recursing is what stops a nested block
-            // wrapper (one block, several nested rows) from validating clean on a mistake
-            // this method would have caught at the top level.
-            if (($child['children'] ?? []) !== []) {
-                $this->checkChildren(sprintf('%s, child `%s`', $subject, $field), $child, $errors);
+                // A child row can own a collection of its own — `children:` one level down, the
+                // same shape this method already walks. Recursing is what stops a nested block
+                // wrapper (one block, several nested rows) from validating clean on a mistake
+                // this method would have caught at the top level.
+                if (($child['children'] ?? []) !== []) {
+                    $this->checkChildren(sprintf('%s, child `%s`', $subject, $field), $child, $errors);
+                }
             }
         }
     }
