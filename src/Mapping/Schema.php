@@ -31,7 +31,8 @@ final class Schema
 
     private const TOP_LEVEL = [
         'version', 'environments', 'merge', 'pages', 'defaults', 'entities',
-        'sequence', 'parts', 'sidecars', 'forms', 'globals', 'redirects', 'transforms', 'unmapped',
+        'sequence', 'columnGroups', 'parts', 'sidecars', 'forms', 'globals', 'redirects',
+        'transforms', 'unmapped',
     ];
 
     private const SIDECAR_KEYS = [
@@ -55,6 +56,8 @@ final class Schema
 
     private const SEQUENCE_KEYS = ['id', 'match', 'guard', 'action', 'block', 'map', 'runs', 'else', 'note'];
 
+    private const COLUMN_GROUP_KEYS = ['contexts', 'block', 'column', 'prepend', 'note'];
+
     private const CONFLICT_KEYS = ['status', 'artifact', 'spec', 'note'];
 
     private const PROMOTE_KEYS = [
@@ -76,6 +79,7 @@ final class Schema
         $this->checkUnreviewed($mapping, $errors);
         $this->checkRefs($mapping, $errors);
         $this->checkSequence($mapping, $errors);
+        $this->checkColumnGroups($mapping, $errors);
         $this->checkLaneCollisions($mapping, $errors);
 
         return $errors;
@@ -640,6 +644,67 @@ final class Schema
 
         if (count($ids) !== count(array_unique($ids))) {
             $errors[] = 'sequence rule ids are not unique';
+        }
+    }
+
+    /**
+     * A `columnGroups:` entry merges two or more simultaneous contexts — a Kunstmaan
+     * multi-column row, `middle-left` next to `middle-right` — into one Matrix block with one
+     * nested entry per context. `contexts:` needs at least two names to merge, and no context
+     * may be claimed by two groups: the compiler routes an emitted block into the first group
+     * whose `block:` matches, so a second claim would just silently never fire.
+     *
+     * @param list<string> $errors
+     */
+    private function checkColumnGroups(Mapping $mapping, array &$errors): void
+    {
+        $claimed = [];
+
+        foreach ($mapping->columnGroups() as $i => $group) {
+            if (!is_array($group)) {
+                $errors[] = sprintf('columnGroups rule #%d is not a mapping', $i);
+
+                continue;
+            }
+
+            foreach (array_diff(array_keys($group), self::COLUMN_GROUP_KEYS) as $key) {
+                $errors[] = sprintf('columnGroups rule #%d: unknown key `%s`', $i, $key);
+            }
+
+            $contexts = $group['contexts'] ?? null;
+
+            if (!is_array($contexts) || count($contexts) < 2
+                || array_filter($contexts, static fn(mixed $c): bool => !is_string($c) || $c === '') !== []
+            ) {
+                $errors[] = sprintf('columnGroups rule #%d: `contexts:` needs at least two context names', $i);
+
+                $contexts = [];
+            }
+
+            foreach (['block', 'column'] as $required) {
+                if (($group[$required] ?? '') === '') {
+                    $errors[] = sprintf('columnGroups rule #%d: missing `%s:`', $i, $required);
+                }
+            }
+
+            if (array_key_exists('prepend', $group) && !is_bool($group['prepend'])) {
+                $errors[] = sprintf('columnGroups rule #%d: `prepend:` is %s, not true or false', $i, get_debug_type($group['prepend']));
+            }
+
+            foreach ($contexts as $context) {
+                if (isset($claimed[$context])) {
+                    $errors[] = sprintf(
+                        'columnGroups: context `%s` is claimed by both rule #%d and rule #%d',
+                        $context,
+                        $claimed[$context],
+                        $i,
+                    );
+
+                    continue;
+                }
+
+                $claimed[$context] = $i;
+            }
         }
     }
 

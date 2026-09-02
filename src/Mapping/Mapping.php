@@ -241,6 +241,18 @@ final class Mapping
         return $this->data['sequence'] ?? [];
     }
 
+    /**
+     * `columnGroups:` — contexts compiled side by side in the legacy template (a Kunstmaan
+     * multi-column row) that merge into one Matrix block with one nested entry per context,
+     * instead of each context becoming its own block. See `Compile\Compiler::mergeColumnGroups()`.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function columnGroups(): array
+    {
+        return $this->data['columnGroups'] ?? [];
+    }
+
     public function version(): int
     {
         return (int) ($this->data['version'] ?? 0);
