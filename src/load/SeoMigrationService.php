@@ -9,6 +9,7 @@ use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
+use Lameco\Kunstmaanmigrator\Payload\SourceUid;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use yii\base\Component;
@@ -36,6 +37,12 @@ use yii\db\Query;
  *
  * Table-name override: the legacy SEO table defaults to the canonical
  * `kuma_seo` name, which is fixed across every Kunstmaan corpus.
+ *
+ * Environment scoping: `EnvironmentPipeline::runAdapters()` calls `migrateAll()` once per
+ * legacy environment (COM / DE / LV / …), with `legacyDb` pointed at whatever database that
+ * environment's pass just adopted. `migrateAll()` only queries `kuma_seo` for state rows that
+ * belong to the environment named in `$context`, so it never runs another environment's
+ * `ref_id` against this pass's database — see `sourceBelongsToEnvironment()`.
  */
 class SeoMigrationService extends Component implements MigrationAdapter
 {
@@ -181,6 +188,22 @@ class SeoMigrationService extends Component implements MigrationAdapter
                 ->all(),
             'source',
         );
+
+        // The migration walks three legacy databases (COM, DE, LV) into one shared Craft
+        // install, and this pass runs once per environment (EnvironmentPipeline::runAdapters()
+        // calls it after each environment's entries exist), with `legacyDb` pointed at
+        // whichever database that environment's pass just adopted. Without this filter, every
+        // pass re-walked every OTHER environment's state rows too and looked their `ref_id` up
+        // against the wrong database — DE's pass could resolve a COM entry's SEO row against a
+        // same-numbered but unrelated DE page. `source` already carries the environment that
+        // wrote it (`<ENV>:<table>`, minted by SourceUid — see PayloadEntrySaver/RefResolver),
+        // so scoping to $context->name here keeps each row's SEO lookup on the database it
+        // actually came from, and every row still gets processed exactly once, on its own
+        // environment's pass.
+        $sources = array_values(array_filter(
+            $sources,
+            fn(string $source): bool => $this->sourceBelongsToEnvironment($source, $context->name),
+        ));
 
         // Respect --fqcns from MigrateController: when the operator scoped the
         // load to one or more legacy FQCNs, only process matching sources.
@@ -419,6 +442,34 @@ class SeoMigrationService extends Component implements MigrationAdapter
         }
 
         return $written;
+    }
+
+    /**
+     * Whether a state row's `source` should be processed against the currently-connected
+     * `legacyDb` (this environment's pass) — the guard the cross-environment SEO bug was
+     * missing.
+     *
+     * `source` for an entry/node row is minted by `SourceUid` as `<ENV>:<table>`, so its
+     * leading segment is the environment that wrote it (see `SourceUid::forRow()`/`forNode()`
+     * and `PayloadEntrySaver::doSave()`, which records state under exactly that string).
+     * `shared:<table>` is the one deliberate exception — `dedupe: true` entities, per
+     * docs/kuma-compile.md, where "the same id means the same thing in every environment", so
+     * the row is safe to resolve against any environment's database and is meant to run on
+     * every pass.
+     *
+     * A `source` with no `<ENV>:` segment at all (no colon) predates this scheme — the same
+     * v1 state-row shape `NavigationMigrationService::resolveEntryIdForNode()` still falls
+     * back to — and is let through unfiltered rather than silently dropped, matching this
+     * method's behaviour before this fix for every row it could already handle.
+     */
+    private function sourceBelongsToEnvironment(string $source, string $environment): bool
+    {
+        $prefix = strstr($source, ':', true);
+        if ($prefix === false) {
+            return true;
+        }
+
+        return $prefix === $environment || $prefix === SourceUid::SHARED;
     }
 
     /**
