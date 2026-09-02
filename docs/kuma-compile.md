@@ -334,6 +334,12 @@ Beyond `column | transform`, a `map:` value can be:
   node the translation belongs to. `externalUrl` is its complement: it drops that form from a column
   that holds either a link or a URL, and counts what it dropped, because a Craft Link field rejects
   `[NT115]` outright and takes the whole entry down with it.
+- `<toggle-column> | translatorFallback('<keyword>')` — for a heading a pagepart never gave a
+  column of its own: the legacy template rendered a Symfony translator string (`'<keyword>' |
+  trans`) unless a `hide_title`-style toggle was on. Reads the toggle from the piped-in column, and
+  when it is off, looks up `<keyword>` in `kuma_translation` for the locale of the translation being
+  compiled. An empty string when the toggle is on; a reported loss (not a blocker) when the toggle
+  is off and no matching translation row exists.
 
 ## Determinism
 

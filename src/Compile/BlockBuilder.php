@@ -6,6 +6,7 @@ namespace Lameco\Kunstmaanmigrator\Compile;
 
 use Lameco\Kunstmaanmigrator\Source\MediaIndex;
 use Lameco\Kunstmaanmigrator\Source\PartReader;
+use Lameco\Kunstmaanmigrator\Source\TranslationIndex;
 use Lameco\Kunstmaanmigrator\Target\Slot;
 use Lameco\Kunstmaanmigrator\Target\TargetSchema;
 
@@ -19,6 +20,16 @@ use Lameco\Kunstmaanmigrator\Target\TargetSchema;
  */
 final class BlockBuilder
 {
+    /**
+     * The Craft site's language for whichever translation is being compiled next.
+     *
+     * Set by `Compiler::site()` before it builds that translation's fields and blocks, the
+     * same way `$block` tracks the current entry type. A pagepart row carries no locale
+     * column of its own: `hide_title | translatorFallback(...)` has nothing else to read to
+     * know which `kuma_translation` row it wants.
+     */
+    private ?string $locale = null;
+
     public function __construct(
         private readonly PartReader $parts,
         private readonly Transforms $transforms,
@@ -28,7 +39,13 @@ final class BlockBuilder
         private readonly ?MediaIndex $media = null,
         private readonly ?EntityIndex $entities = null,
         private ?string $lang = null,
+        private readonly ?TranslationIndex $translations = null,
     ) {
+    }
+
+    public function setLocale(?string $locale): void
+    {
+        $this->locale = $locale;
     }
 
     /**
@@ -297,7 +314,10 @@ final class BlockBuilder
         return $fields;
     }
 
-    /** `column`, `column | transform`, `column | ref(Entity)`, or `link(url, text, newWindow, type)`. */
+    /**
+     * `column`, `column | transform`, `column | ref(Entity)`, `column | translatorFallback('key')`,
+     * or `link(url, text, newWindow, type)`.
+     */
     private function evaluate(string $expression, array $row, string $context, string $target = ''): mixed
     {
         $expression = trim($expression);
@@ -424,6 +444,15 @@ final class BlockBuilder
                 continue;
             }
 
+            // `translatorFallback('key')` reads a rendering-toggle column (the piped-in
+            // value) and, when that toggle is off, substitutes the Symfony translator string
+            // the legacy template would have rendered in its place. `FaqPagePart` has no
+            // heading column at all: without this, the target field is left required and
+            // empty on every FAQ block the toggle does not hide.
+            if (preg_match('/^translatorFallback\(\'([^\']*)\'\)$/', $transform, $m) === 1) {
+                return $this->translatorFallback($value, $m[1], $context);
+            }
+
             // A legacy media column holds an id; the loader resolves a path. Translating
             // here keeps the `asset` transform itself free of any database access.
             if ($transform === 'asset') {
@@ -531,6 +560,41 @@ final class BlockBuilder
         $table = $this->entities?->tableFor($entity);
 
         return $table === null ? null : ($this->parts->row($table, (int) $foreignKey)[$column] ?? null);
+    }
+
+    /**
+     * A heading that has no column of its own, sourced from the translator catalog instead.
+     *
+     * `$toggle` is the raw value of the column piped in ahead of the transform (`hide_title`
+     * for `FaqPagePart`), read the same way the `bool` transform reads a legacy flag. When
+     * the toggle is on, the legacy template rendered nothing, and neither does this: an empty
+     * string, not a lookup miss, so an editor's deliberate "no heading" is never counted as a
+     * loss.
+     *
+     * When the toggle is off, the value comes from `kuma_translation` for the locale
+     * `Compiler::site()` set on this builder before evaluating the current translation. No
+     * locale, or no matching row, is a real gap: the target field is left with nothing where
+     * the live site showed a heading, so it is reported the same way a missing asset is.
+     */
+    private function translatorFallback(mixed $toggle, string $keyword, ?string $context): string
+    {
+        if ($toggle !== null && (int) $toggle === 1) {
+            return '';
+        }
+
+        if ($this->locale === null) {
+            return '';
+        }
+
+        $text = $this->translations?->textFor($keyword, $this->locale);
+
+        if ($text === null) {
+            $this->transforms->recordMissingTranslation($context, $keyword, $this->locale);
+
+            return '';
+        }
+
+        return $text;
     }
 
     /**

@@ -13,6 +13,7 @@ use Lameco\Kunstmaanmigrator\Source\MediaIndex;
 use Lameco\Kunstmaanmigrator\Source\PageReader;
 use Lameco\Kunstmaanmigrator\Source\PartReader;
 use Lameco\Kunstmaanmigrator\Source\TaxonomyReader;
+use Lameco\Kunstmaanmigrator\Source\TranslationIndex;
 use Lameco\Kunstmaanmigrator\Target\TargetSchema;
 
 /**
@@ -117,6 +118,7 @@ final class Compiler
             null,
             MediaIndex::load($pdo),
             $entities,
+            translations: TranslationIndex::load($pdo),
         );
         $sequencer = new SequenceEngine($this->mapping->sequence(), $this->mapping->parts(), $parts, $builder, $this->schema);
 
@@ -513,6 +515,11 @@ final class Compiler
         string $environment,
         PageRow $page,
     ): array {
+        // Everything this call evaluates belongs to one legacy locale. `hide_title |
+        // translatorFallback(...)` has no column to read that locale from, so it reads it
+        // off the builder instead: set here, once, before any field or block is built.
+        $builder->setLocale((string) $translation['lang']);
+
         $entryType = (string) $page->entryType();
         $site = [
             // A rescued offline translation is real content on a locale the old site kept
