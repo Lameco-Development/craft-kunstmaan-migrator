@@ -129,6 +129,16 @@ served.
   `_linkFallback`, or the ref resolves later: the fixup pass overwrites the field with the real
   entry reference the moment it can; with neither a fallback nor a resolution, the field is left
   unset.
+- **Link field pointing at a legacy media/document reference** — `{"_linkAsset": "<kuma_media id>", "label": "…"}`.
+  Emitted when a link URL column carries Kunstmaan's `[M<id>]` media placeholder — typically a
+  document-download button, e.g. `link_url = "/uploads/media/<uuid>/file.pdf?token=[M2317]"` —
+  rather than a plain URL. Resolved at save time via the same JIT asset pipeline `_asset` uses
+  (`AssetMigrationService::resolveFromLegacyId`, by id rather than by URL since the token already
+  names the `kuma_media` row), and written as `{"type": "asset", "value": "{asset:<id>@<siteId>:url}", …}`
+  — the shape `craft\fields\linktypes\Asset` requires. Synchronous, not deferred: unlike
+  `_linkRef`, there is no later pass that could resolve a `kuma_media` row it cannot resolve now,
+  so an unresolved `_linkAsset` (id `<= 0`) drops the link from its containing slot immediately,
+  the same fail-forward contract as an unresolved `_asset`.
 - **Formie form relation** — `{"_form": "kuma:<ENV>:form:<Entity>:<id>"}`, emitted inside its
   list container (`"commonForm": [{"_form": …}]`). The form lane's own grammar: one segment
   more than `sourceUid`, resolved against the state row `FormMigrationService` records

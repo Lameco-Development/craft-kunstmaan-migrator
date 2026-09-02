@@ -131,6 +131,22 @@ final class LinkShapeTest extends TestCase
     }
 
     #[Test]
+    public function a_media_token_embedded_in_a_link_url_becomes_an_asset_ref_for_the_loader_to_resolve(): void
+    {
+        // `[M2317]` is Kunstmaan's own "secure download" link builder, left embedded in an
+        // otherwise-complete URL rather than standing alone the way `[NT<id>]` does — the rest
+        // of that URL has no Craft equivalent, so only the id survives into the payload.
+        self::assertSame(
+            ['link' => ['_linkAsset' => '2317', 'label' => 'Download now']],
+            $this->builder('uspBlockUsp')->fieldsFrom(
+                ['link' => 'link(link_url, link_text)'],
+                ['link_url' => '/uploads/media/65c63a1015021/enreach-esg-policy.pdf?token=[M2317]', 'link_text' => 'Download now'],
+                'Usp',
+            ),
+        );
+    }
+
+    #[Test]
     public function a_bare_email_address_is_typed_as_one(): void
     {
         // Craft only sniffs the link type from a bare string. A map — the only way to carry a
