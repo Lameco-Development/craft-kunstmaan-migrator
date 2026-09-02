@@ -333,6 +333,27 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.3 — 2026-09-03
+
+Found re-verifying 1.2.0-beta.2's fixes against the full three-environment Enreach
+migration — a sixth cross-environment id-collision bug, the same class as
+1.2.0-beta.2's homepage fix but in the redirects lane. Covers the `@enreachComBaseUrl`
+/ wrong-locale redirect symptom behind Trello #137, #152 and #157.
+
+### Fixed
+
+- **A `kuma_redirects` row's destination could resolve to an unrelated entry from a
+  DIFFERENT legacy environment.** `kuma_node_id` is only unique within one
+  environment's own database — COM, DE and LV each restart their own numbering.
+  `RedirectMigrationService::resolveEntryIdForLegacyNode()` resolved a redirect's
+  destination via state sources with no environment in the lookup key at all
+  (`"page"`, `"singleton"`, the bare legacy class name), so a coincidental id match
+  from a different environment's own migration could win. Measured: COM's
+  `/en/products/enreach-contact` redirect resolved to LV's own separate
+  "enreach-contact" product page. Fixed the same way `NavigationMigrationService::
+  resolveEntryIdForNode()` already handles it: try the environment-scoped
+  `"<ENV>:kuma_nodes"` source first.
+
 ## 1.2.0-beta.2 — 2026-09-02
 
 Five fixes found running the full three-environment Enreach migration for the first
