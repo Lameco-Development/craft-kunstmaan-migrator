@@ -39,8 +39,8 @@ final class Schema
     ];
 
     private const PART_KEYS = [
-        'live', 'table', 'block', 'switch', 'map', 'children', 'promote', 'ignore', 'unreviewed',
-        'absorbInto', 'source', 'conflict', 'consumedBy', 'drop', 'manual', 'todo', 'note',
+        'live', 'table', 'block', 'switch', 'map', 'children', 'firstChild', 'promote', 'ignore',
+        'unreviewed', 'absorbInto', 'source', 'conflict', 'consumedBy', 'drop', 'manual', 'todo', 'note',
     ];
 
     private const CHILD_KEYS = ['table', 'fk', 'order', 'map', 'ignore', 'unreviewed', 'todo'];
@@ -238,25 +238,31 @@ final class Schema
     /**
      * Child collections, wherever they hang: off a pagepart or off a page entity.
      *
+     * `firstChild:` reads the same row shape (`table`, `fk`, `order`, `map`) as `children:` —
+     * only what it does with the first row differs, in the compiler, not in the shape a mapping
+     * author writes — so it is checked here too, on a part row that carries it.
+     *
      * @param array<string, mixed> $spec
      * @param list<string> $errors
      */
     private function checkChildren(string $subject, array $spec, array &$errors): void
     {
-        foreach ($spec['children'] ?? [] as $field => $child) {
-            if (!is_array($child)) {
-                $errors[] = sprintf('%s: child `%s` is not a mapping', $subject, $field);
+        foreach (['children' => 'child', 'firstChild' => 'firstChild'] as $key => $noun) {
+            foreach ($spec[$key] ?? [] as $field => $child) {
+                if (!is_array($child)) {
+                    $errors[] = sprintf('%s: %s `%s` is not a mapping', $subject, $noun, $field);
 
-                continue;
-            }
+                    continue;
+                }
 
-            foreach (array_diff(array_keys($child), self::CHILD_KEYS) as $key) {
-                $errors[] = sprintf('%s, child `%s`: unknown key `%s`', $subject, $field, $key);
-            }
+                foreach (array_diff(array_keys($child), self::CHILD_KEYS) as $unknown) {
+                    $errors[] = sprintf('%s, %s `%s`: unknown key `%s`', $subject, $noun, $field, $unknown);
+                }
 
-            foreach (['table', 'fk'] as $required) {
-                if (($child[$required] ?? '') === '') {
-                    $errors[] = sprintf('%s, child `%s`: missing `%s:`', $subject, $field, $required);
+                foreach (['table', 'fk'] as $required) {
+                    if (($child[$required] ?? '') === '') {
+                        $errors[] = sprintf('%s, %s `%s`: missing `%s:`', $subject, $noun, $field, $required);
+                    }
                 }
             }
         }

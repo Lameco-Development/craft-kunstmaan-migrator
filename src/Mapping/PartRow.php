@@ -146,6 +146,18 @@ final class PartRow
         return array_filter($this->arrayOf('children'), is_array(...));
     }
 
+    /**
+     * `firstChild:` — same row shape as a `children:` collection, but only its first row (in
+     * `order:`) is read, and its `map:` lands directly on this part's block instead of a
+     * nested Matrix. See `BlockBuilder::firstChildOf()`.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function firstChild(): array
+    {
+        return array_filter($this->arrayOf('firstChild'), is_array(...));
+    }
+
     /** @return array<string, array<string, mixed>> child table => promotion spec */
     public function promote(): array
     {

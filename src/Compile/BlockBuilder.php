@@ -55,6 +55,7 @@ final class BlockBuilder
         $fields = $this->stampNestedRefs($fields, $fields['_sourcePartRef']);
 
         $fields += $this->childrenOf($spec['children'] ?? [], (string) $block, $partId, $partClass);
+        $fields += $this->firstChildOf($spec['firstChild'] ?? [], (string) $block, $partId, $partClass);
 
         return ['type' => (string) $block, 'fields' => $fields];
     }
@@ -129,6 +130,56 @@ final class BlockBuilder
         $this->block = $previous;
 
         return $out;
+    }
+
+    /**
+     * The first row of one child collection, its `map:` written straight onto the block being
+     * built rather than into a nested Matrix.
+     *
+     * `children:` is right when every row still matters; some collections only ever needed
+     * their first row once the thing they used to be — a slider, a carousel — was retired as a
+     * concept (ContentWithSlider: the client's own call was "just carry over the first image, a
+     * slider adds nothing any more"). Forcing that through `children:` would still produce a
+     * one-block Matrix for content that is really flat. `firstChild:` reads the same row shape
+     * as a child collection (`table`, `fk`, `order`, `map`) but has no field of its own to sit
+     * in: its `map:` targets are paths on `$owner`, exactly like the part's own `map:`.
+     *
+     * The row picked is the first in the collection's existing order — the same `order:` a
+     * `children:` collection would sort by, `id` when the legacy table has no sequence column
+     * of its own. An empty collection contributes nothing, the same as any `map:` expression
+     * that evaluates to null; there is no error to raise over a slider with zero slides.
+     *
+     * @param array<string, array<string, mixed>> $firstChild
+     * @return array<string, mixed>
+     */
+    public function firstChildOf(array $firstChild, string $owner, int $ownerId, string $context): array
+    {
+        $previous = $this->block;
+        $this->block = $owner;
+        $fields = [];
+
+        foreach ($firstChild as $name => $child) {
+            if (!is_array($child) || ($child['table'] ?? '') === '' || ($child['fk'] ?? '') === '') {
+                continue;
+            }
+
+            $rows = $this->parts->children(
+                (string) $child['table'],
+                (string) $child['fk'],
+                $ownerId,
+                (string) ($child['order'] ?? 'weight'),
+            );
+
+            $row = $rows[0] ?? null;
+
+            if ($row !== null) {
+                $fields += $this->fieldsFrom($child['map'] ?? [], $row, $context . '.' . $name);
+            }
+        }
+
+        $this->block = $previous;
+
+        return $fields;
     }
 
     /**
