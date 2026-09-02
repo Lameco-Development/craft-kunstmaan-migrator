@@ -823,13 +823,17 @@ final class Compiler
     /**
      * The form the page owns, referenced from the page itself.
      *
-     * The forms lane compiles a page's `form` context into a Formie form and stops there:
+     * The forms lane compiles a page's form context(s) into a Formie form and stops there:
      * on the first full Enreach run, 70 forms existed and no page pointed at any of them.
      * A page whose form context holds at least one mappable field gets a form block placed
      * right after any prepended contexts in its builder (the caller positions it; this only
      * builds it), carrying `{"_form": <form sourceUid>}` for the loader to resolve against
      * the form lane's state row: the same two-pass contract a `_ref` follows when the target
      * does not exist yet.
+     *
+     * Which context(s) count as "the form context" is per page entity: most pages read the
+     * lane-wide default (`form`), but `PotionsFormPage` overrides it to `main`, because that
+     * is where its own pagepart admin puts SingleLineText/Choice/etc — see `FormsLane`.
      *
      * @param array<string, mixed> $translation
      * @return array{type:string, fields:array<string,mixed>}|null
@@ -847,8 +851,13 @@ final class Compiler
             return null;
         }
 
-        $sequence = $parts->sequence((string) $translation['entity'], (int) $translation['entityId'], $forms->context);
-        $mappable = array_filter($sequence, static fn(array $ref): bool => isset($fieldSpecs[$ref['part']]));
+        $entity = (string) $translation['entity'];
+        $mappable = [];
+
+        foreach ($forms->contextsFor($entity) as $context) {
+            $sequence = $parts->sequence($entity, (int) $translation['entityId'], $context);
+            $mappable = [...$mappable, ...array_filter($sequence, static fn(array $ref): bool => isset($fieldSpecs[$ref['part']]))];
+        }
 
         if ($mappable === []) {
             return null;
@@ -876,7 +885,7 @@ final class Compiler
             return ['type' => $blockType, 'fields' => [$formsHandle => [[
                 '_form' => SourceUid::forForm(
                     $environment,
-                    (string) $translation['entity'],
+                    $entity,
                     (int) $translation['entityId'],
                 ),
             ]]]];

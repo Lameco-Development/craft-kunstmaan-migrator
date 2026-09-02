@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Compile;
 
+use Lameco\Kunstmaanmigrator\Mapping\FormsLane;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 
 use Lameco\Kunstmaanmigrator\Payload\SourceUid;
@@ -56,7 +57,6 @@ final class FormCompiler
             return;
         }
 
-        $context = $forms->context;
         $fieldSpecs = $this->mapping->formFields();
 
         if ($fieldSpecs === []) {
@@ -69,7 +69,7 @@ final class FormCompiler
         $parts = new PartReader($pdo);
         $builder = new BlockBuilder($parts, $this->transforms, $environment);
 
-        foreach ($this->owners($pdo, $context) as $owner) {
+        foreach ($this->owners($pdo, $forms) as $owner) {
             [$entity, $pageId] = $owner;
 
             if ($this->only !== null && !in_array($entity, $this->only, true)) {
@@ -78,37 +78,39 @@ final class FormCompiler
 
             $fields = [];
 
-            foreach ($parts->sequence($entity, $pageId, $context) as $ref) {
-                $fieldSpec = $fieldSpecs[$ref['part']] ?? null;
+            foreach ($forms->contextsFor($entity) as $context) {
+                foreach ($parts->sequence($entity, $pageId, $context) as $ref) {
+                    $fieldSpec = $fieldSpecs[$ref['part']] ?? null;
 
-                if ($fieldSpec === null) {
-                    // A layout bracket (RowStart/Col/RowEnd) or an editorial part
-                    // that happens to sit in a form. `unmapped:` declares those on
-                    // purpose, so this is a count rather than a complaint.
-                    $this->skip(sprintf('no forms: field for %s', $ref['part']));
+                    if ($fieldSpec === null) {
+                        // A layout bracket (RowStart/Col/RowEnd) or an editorial part
+                        // that happens to sit in a form. `unmapped:` declares those on
+                        // purpose, so this is a count rather than a complaint.
+                        $this->skip(sprintf('no forms: field for %s', $ref['part']));
 
-                    continue;
+                        continue;
+                    }
+
+                    $table = (string) ($fieldSpec['table'] ?? '');
+                    $row = $table === '' ? null : $parts->row($table, $ref['id']);
+
+                    if ($row === null) {
+                        $this->skip(sprintf('%s row %d is missing', $ref['part'], $ref['id']));
+
+                        continue;
+                    }
+
+                    $mapped = $builder->fieldsFrom((array) ($fieldSpec['map'] ?? []), $row, $context);
+
+                    $fields[] = [
+                        'type' => (string) ($fieldSpec['type'] ?? ''),
+                        'label' => (string) ($mapped['label'] ?? ''),
+                        'handle' => (string) ($mapped['handle'] ?? ''),
+                        'required' => (bool) ($mapped['required'] ?? false),
+                        'settings' => array_diff_key($mapped, array_flip(['label', 'handle', 'required'])),
+                        'sourceRef' => sprintf('%s:%d', $table, $ref['id']),
+                    ];
                 }
-
-                $table = (string) ($fieldSpec['table'] ?? '');
-                $row = $table === '' ? null : $parts->row($table, $ref['id']);
-
-                if ($row === null) {
-                    $this->skip(sprintf('%s row %d is missing', $ref['part'], $ref['id']));
-
-                    continue;
-                }
-
-                $mapped = $builder->fieldsFrom((array) ($fieldSpec['map'] ?? []), $row, $context);
-
-                $fields[] = [
-                    'type' => (string) ($fieldSpec['type'] ?? ''),
-                    'label' => (string) ($mapped['label'] ?? ''),
-                    'handle' => (string) ($mapped['handle'] ?? ''),
-                    'required' => (bool) ($mapped['required'] ?? false),
-                    'settings' => array_diff_key($mapped, array_flip(['label', 'handle', 'required'])),
-                    'sourceRef' => sprintf('%s:%d', $table, $ref['id']),
-                ];
             }
 
             if ($fields === []) {
@@ -130,38 +132,69 @@ final class FormCompiler
     }
 
     /**
-     * Every (page entity, page id) that carries at least one part in the form
-     * context — read from the data rather than from a page type named in the
-     * mapping, because which page type owns a form is a fact about the corpus.
+     * Every (page entity, page id) that carries at least one part in one of the
+     * lane's contexts — read from the data rather than from a page type named in
+     * the mapping, because which page type owns a form is a fact about the corpus.
+     *
+     * The query casts a wide net — every context any entity's `contextsFor()`
+     * could return, lane-wide default or override alike — because SQL has no
+     * per-row "which entity is this" to filter on ahead of the join. The PHP loop
+     * below narrows each row back down to the context(s) that entity actually
+     * reads, which is what keeps `main` — read here only because `PotionsFormPage`
+     * overrides it — from turning every other page type's `main` content into a
+     * form owner too.
      *
      * @return list<array{0: string, 1: int}>
      */
-    private function owners(PDO $pdo, string $context): array
+    private function owners(PDO $pdo, FormsLane $forms): array
     {
+        $contexts = array_values(array_unique(array_merge(
+            $forms->contexts,
+            ...array_values($forms->contextsByEntity),
+        )));
+
+        if ($contexts === []) {
+            return [];
+        }
+
         // Only pages that are actually live. The part refs survive a page being
         // deleted or unpublished, so the raw list is 745 where the live corpus is
         // 495 — and a migration that creates 250 Formie forms for pages nobody
         // can reach has made the control panel worse, not better. Same live
         // definition the rest of the compiler uses: not deleted, published, with
         // a public version.
+        $placeholders = implode(',', array_fill(0, count($contexts), '?'));
         $statement = $pdo->prepare(
-            'SELECT DISTINCT r.pageEntityname AS entity, r.pageId AS id
+            "SELECT DISTINCT r.pageEntityname AS entity, r.pageId AS id, r.context AS context
              FROM kuma_page_part_refs r
              INNER JOIN kuma_node_versions v
                      ON v.ref_id = r.pageId AND v.ref_entity_name = r.pageEntityname
              INNER JOIN kuma_node_translations t
                      ON t.public_node_version_id = v.id AND t.online = 1
              INNER JOIN kuma_nodes n ON n.id = t.node_id AND n.deleted = 0
-             WHERE r.context = ?
-             ORDER BY r.pageEntityname, r.pageId'
+             WHERE r.context IN ($placeholders)
+             ORDER BY r.pageEntityname, r.pageId"
         );
-        $statement->execute([$context]);
+        $statement->execute($contexts);
 
         $out = [];
+        $seen = [];
 
         foreach ($statement->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $entity = (string) $row['entity'];
             $short = substr($entity, (strrpos($entity, '\\') ?: -1) + 1);
+
+            if (!in_array((string) $row['context'], $forms->contextsFor($short), true)) {
+                continue;
+            }
+
+            $key = $short . ':' . $row['id'];
+
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
             $out[] = [$short, (int) $row['id']];
         }
 
