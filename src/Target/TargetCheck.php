@@ -421,11 +421,12 @@ final class TargetCheck
                 continue;
             }
 
-            // The schema only guesses the nested type when a Matrix allows exactly one; a
-            // page builder allows a dozen, and `block:` is how a `children:` row names the
-            // one it means instead of going unchecked.
+            // `block:` wins when a `children:` row names one explicitly — the same precedence
+            // `BlockBuilder::childrenOf()` gives it over the schema's own guess, for the same
+            // reason: a page builder Matrix allows a dozen nested types, so an explicit name is
+            // a deliberate override, not a fallback the schema's single-type guess should beat.
             $explicitBlock = ($child['block'] ?? '') !== '' ? (string) $child['block'] : null;
-            $nested = $this->schema->nestedTypeOf($owner, (string) $field) ?? $explicitBlock;
+            $nested = $explicitBlock ?? $this->schema->nestedTypeOf($owner, (string) $field);
 
             if ($explicitBlock !== null && !$this->schema->hasEntryType($explicitBlock)) {
                 $errors[] = sprintf('%s: child `%s` names block `%s`, which is not a Craft entry type', $subject, $field, $explicitBlock);
@@ -435,6 +436,19 @@ final class TargetCheck
                 if ($nested !== null && $this->schema->slot($nested, (string) $target) === null) {
                     $errors[] = sprintf('%s: nested `%s` has no field `%s`', $subject, $nested, $target);
                 }
+            }
+
+            // A child row can own a `children:` of its own — `productBrandItems` landing as
+            // one wrapper block with N nested `cardsCards` rather than N wrapper blocks, the
+            // same shape `BlockBuilder::childrenOf()` recurses into. Checked against the
+            // nested type this row resolved to, one level down.
+            if ($nested !== null && ($child['children'] ?? []) !== []) {
+                $this->checkChildren(
+                    sprintf('%s, child `%s`', $subject, $field),
+                    $nested,
+                    (array) $child['children'],
+                    $errors,
+                );
             }
         }
     }

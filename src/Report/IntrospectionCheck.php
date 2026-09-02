@@ -120,6 +120,17 @@ final class IntrospectionCheck
         $out = [];
 
         foreach ($this->subjects() as $subject) {
+            // Same reasoning as `unmappedEditableColumns()`: a `Mapping::fromArray()` (every
+            // kernel test, and any caller with no file on disk) leaves `$mappingText` empty, so
+            // a collection this subject's own `children:` genuinely reads would otherwise be
+            // reported as unclaimed regardless of what the spec says.
+            $localText = (string) json_encode([
+                $subject['spec']['map'] ?? [],
+                $subject['spec']['ignore'] ?? [],
+                $subject['spec']['children'] ?? [],
+                $subject['spec']['firstChild'] ?? [],
+            ]);
+
             foreach ($this->introspection->ownedCollections($subject['class']) as $collection) {
                 if ($collection['field'] === '') {
                     continue;
@@ -129,7 +140,7 @@ final class IntrospectionCheck
 
                 // Named anywhere in the file counts — a `children:` block that reads the
                 // table, or a reasoned note that declines it by name.
-                if (str_contains($mappingText, $needle)) {
+                if (str_contains($mappingText, $needle) || str_contains($localText, $needle)) {
                     continue;
                 }
 

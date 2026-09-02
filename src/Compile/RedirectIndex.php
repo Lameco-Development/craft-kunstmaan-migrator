@@ -19,9 +19,12 @@ use PDO;
  *
  * Loaded once per environment, from the same table and columns
  * `RedirectMigrationService::importDirectRedirects()` reads for the live Retour import — this
- * class does not duplicate that import, only the read, and only origin/target: the loader-side
- * locale-prefix stripping and entry-URI re-resolution it also does are Craft-runtime concerns
- * with nowhere to run this early, at compile time.
+ * class does not duplicate that import, only the read, and only origin/target. It does still
+ * have to strip the origin's locale prefix, the same way that service's own
+ * `stripLegacyLocalePrefix()` does before it queries `kuma_node_translations`: an origin row
+ * reads `/nl/over-ons/team`, and `EntityIndex::legacyUrlOfNodeLink()` — the value this class is
+ * matched against — reads the translation's bare `over-ons/team`, with no prefix at all. Left
+ * unstripped, an origin on any environment with more than one locale never matches.
  */
 final class RedirectIndex
 {
@@ -38,7 +41,8 @@ final class RedirectIndex
         return new self([]);
     }
 
-    public static function load(PDO $pdo): self
+    /** @param list<string> $locales the environment's legacy locale codes, for stripping an origin's `/{locale}/` prefix */
+    public static function load(PDO $pdo, array $locales = []): self
     {
         $targets = [];
 
@@ -49,7 +53,7 @@ final class RedirectIndex
         }
 
         foreach ($rows as $row) {
-            $origin = self::normalise((string) ($row['origin'] ?? ''));
+            $origin = self::normalise(self::stripLocalePrefix((string) ($row['origin'] ?? ''), $locales));
             $target = trim((string) ($row['target'] ?? ''));
 
             // First row wins on a duplicate origin — the same precedence an id-ordered import
@@ -72,6 +76,37 @@ final class RedirectIndex
         $origin = self::normalise($legacyUrl);
 
         return $origin === '' ? null : ($this->targets[$origin] ?? null);
+    }
+
+    /**
+     * Strips a leading `/{locale}/` (or a bare `/{locale}`) segment — the same shape
+     * `RedirectMigrationService::stripLegacyLocalePrefix()` strips loader-side, kept in step
+     * with it rather than duplicated blindly: locale codes come from the mapping's own
+     * `environments.<ENV>.locales`, not a hardcoded guess.
+     *
+     * @param list<string> $locales
+     */
+    private static function stripLocalePrefix(string $path, array $locales): string
+    {
+        $stripped = ltrim(trim($path), '/');
+
+        foreach ($locales as $locale) {
+            if (!is_string($locale) || $locale === '') {
+                continue;
+            }
+
+            if ($stripped === $locale) {
+                return '';
+            }
+
+            $prefix = $locale . '/';
+
+            if (str_starts_with($stripped, $prefix)) {
+                return substr($stripped, strlen($prefix));
+            }
+        }
+
+        return $stripped;
     }
 
     private static function normalise(string $path): string

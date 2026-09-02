@@ -51,9 +51,13 @@ final class BlockBuilder
 
     /**
      * @param array<string, mixed> $spec the mapping's entry for this part
+     * @param bool $hasExternalSubstance true when the caller is about to merge in content this
+     *   method cannot see — an absorbed heading, in `Compiler::blockFor()` — so an otherwise
+     *   empty row must not be turned away: the block earns its place from that merge, not from
+     *   this row's own map.
      * @return array{type:string, fields:array<string,mixed>}|null
      */
-    public function build(string $partClass, int $partId, array $spec): ?array
+    public function build(string $partClass, int $partId, array $spec, bool $hasExternalSubstance = false): ?array
     {
         $table = $spec['table'] ?? null;
         $block = $spec['block'] ?? null;
@@ -85,7 +89,7 @@ final class BlockBuilder
         // field validation passed a ContentMedia block with no heading, text or image, and it
         // rendered as nothing on the page. A block earns its place by having at least one field
         // that reads the row (or a nested/first child collection) end up non-empty.
-        if ($children === [] && $firstChild === [] && !$this->hasSubstance($map, $fields)) {
+        if ($children === [] && $firstChild === [] && !$hasExternalSubstance && !$this->hasSubstance($map, $fields)) {
             return null;
         }
 
@@ -507,7 +511,9 @@ final class BlockBuilder
 
     /**
      * Split `a=b, c=d | lookup(E.f)` on the commas that separate arguments, not the ones
-     * inside a nested call.
+     * inside a nested call or inside a quoted literal — `join(', ', a, b)`'s own separator
+     * argument is exactly that: a comma a naive depth-only split would read as a third,
+     * empty-looking argument boundary instead of the two characters `', '` names.
      *
      * @return list<string>
      */
@@ -515,10 +521,23 @@ final class BlockBuilder
     {
         $out = [];
         $depth = 0;
+        $quote = null;
         $current = '';
 
         foreach (str_split($arguments) as $char) {
-            if ($char === '(') {
+            if ($quote !== null) {
+                $current .= $char;
+
+                if ($char === $quote) {
+                    $quote = null;
+                }
+
+                continue;
+            }
+
+            if ($char === "'" || $char === '"') {
+                $quote = $char;
+            } elseif ($char === '(') {
                 $depth++;
             } elseif ($char === ')') {
                 $depth--;

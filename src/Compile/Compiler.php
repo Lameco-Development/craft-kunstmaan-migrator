@@ -115,6 +115,15 @@ final class Compiler
             $nodeTitles,
             $pages->urlByTranslation(),
         );
+
+        // Read ahead of the builder: `RedirectIndex` needs the legacy locale codes to strip a
+        // `kuma_redirects.origin` row's `/{locale}/` prefix, the same way the loader-side
+        // `RedirectMigrationService::stripLegacyLocalePrefix()` does — without it, an origin
+        // like `/nl/over-ons/team` never matches `kuma_node_translations.url`'s bare
+        // `over-ons/team`, and the redirect fallback silently never fires on a multi-locale
+        // environment such as COM.
+        $locales = ($this->mapping->environments()[$environment] ?? [])['locales'] ?? [];
+
         $builder = new BlockBuilder(
             $parts,
             $this->transforms,
@@ -124,11 +133,9 @@ final class Compiler
             MediaIndex::load($pdo),
             $entities,
             translations: TranslationIndex::load($pdo),
-            redirects: RedirectIndex::load($pdo),
+            redirects: RedirectIndex::load($pdo, array_keys($locales)),
         );
         $sequencer = new SequenceEngine($this->mapping->sequence(), $this->mapping->parts(), $parts, $builder, $this->schema);
-
-        $locales = ($this->mapping->environments()[$environment] ?? [])['locales'] ?? [];
 
         // The Craft section each live node's entry lands in — the only thing a structure
         // parent may be checked against, since Craft cannot parent across sections.
@@ -793,6 +800,27 @@ final class Compiler
             }
 
             if ($columns === []) {
+                // Held-back blocks exist for this group, but none of them carried the named
+                // column — a `column:` typo, or a block whose map puts content somewhere else.
+                // They already left the normal builder/prepend stream above the moment they
+                // were routed into `$columnGroups`, so silently continuing here would lose them
+                // outright. Put every one back where it would have landed without a
+                // `columnGroups:` rule at all, and say why — a clean coverage report must not
+                // imply this ran correctly.
+                $this->skip(sprintf(
+                    "columnGroups[%d]: %s carried no `%s` field on any block — %d block(s) placed without merging",
+                    $index,
+                    implode('+', (array) ($group['contexts'] ?? [])),
+                    $column,
+                    array_sum(array_map('count', $byContext)),
+                ));
+
+                foreach ($byContext as $blocksInContext) {
+                    foreach ($blocksInContext as $block) {
+                        $builderBlocks[] = $block;
+                    }
+                }
+
                 continue;
             }
 
@@ -959,7 +987,15 @@ final class Compiler
             return null;
         }
 
-        $block = $builder->build($emission['part'], $emission['id'], $part->spec);
+        // A row this method's own map leaves empty can still earn its place: the absorb merge
+        // below is about to give it a heading the row itself never held. `build()` cannot see
+        // that from inside the row, so it is told here rather than turning the row away first.
+        $block = $builder->build(
+            $emission['part'],
+            $emission['id'],
+            $part->spec,
+            ($emission['absorb'] ?? []) !== [],
+        );
 
         if ($block === null) {
             return null;

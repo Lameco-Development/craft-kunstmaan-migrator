@@ -58,6 +58,8 @@ final class Schema
 
     private const COLUMN_GROUP_KEYS = ['contexts', 'block', 'column', 'prepend', 'note'];
 
+    private const CONTEXT_TARGET_KEYS = ['field', 'prepend', 'append', 'enabledField'];
+
     private const CONFLICT_KEYS = ['status', 'artifact', 'spec', 'note'];
 
     private const PROMOTE_KEYS = [
@@ -182,6 +184,66 @@ final class Schema
                 'defaults: `offlineCutoff: %s` is not a date the database can compare (expected YYYY-MM-DD)',
                 $cutoff,
             );
+        }
+
+        if (isset($mapping->all()['defaults']['contexts'])) {
+            $this->checkContexts('defaults', $mapping->all()['defaults']['contexts'], $errors);
+        }
+    }
+
+    /**
+     * One `contexts:` entry, wherever it is declared — `defaults.contexts`, or a page's own
+     * override of it. `prepend:`/`append:`/`enabledField:` are read positionally by
+     * `Compiler::site()` with no validation of their own until now: a typo (`enableField:`,
+     * `apppend:`) compiled clean and simply never fired, the quietest possible failure for a
+     * mapping author to hit.
+     *
+     * @param list<string> $errors
+     */
+    private function checkContexts(string $subject, mixed $contexts, array &$errors): void
+    {
+        if (!is_array($contexts)) {
+            $errors[] = sprintf('%s: `contexts:` is not a mapping', $subject);
+
+            return;
+        }
+
+        foreach ($contexts as $context => $target) {
+            if (!is_array($target)) {
+                $errors[] = sprintf('%s, context `%s`: not a mapping', $subject, $context);
+
+                continue;
+            }
+
+            foreach (array_diff(array_keys($target), self::CONTEXT_TARGET_KEYS) as $unknown) {
+                $errors[] = sprintf('%s, context `%s`: unknown key `%s`', $subject, $context, $unknown);
+            }
+
+            if (($target['field'] ?? '') === '') {
+                $errors[] = sprintf('%s, context `%s`: missing `field:`', $subject, $context);
+            }
+
+            foreach (['prepend', 'append'] as $flag) {
+                if (array_key_exists($flag, $target) && !is_bool($target[$flag])) {
+                    $errors[] = sprintf(
+                        '%s, context `%s`: `%s:` is %s, not true or false',
+                        $subject,
+                        $context,
+                        $flag,
+                        get_debug_type($target[$flag]),
+                    );
+                }
+            }
+
+            if (($target['prepend'] ?? false) === true && ($target['append'] ?? false) === true) {
+                $errors[] = sprintf('%s, context `%s`: `prepend:` and `append:` cannot both be true', $subject, $context);
+            }
+
+            if (array_key_exists('enabledField', $target)
+                && (!is_string($target['enabledField']) || $target['enabledField'] === '')
+            ) {
+                $errors[] = sprintf('%s, context `%s`: `enabledField:` is not a non-empty string', $subject, $context);
+            }
         }
     }
 
@@ -373,6 +435,10 @@ final class Schema
         }
 
         $this->checkChildren(sprintf('page `%s`', $name), $spec, $errors);
+
+        if (isset($spec['contexts'])) {
+            $this->checkContexts(sprintf('page `%s`', $name), $spec['contexts'], $errors);
+        }
 
         if (!$completeness) {
             return;
