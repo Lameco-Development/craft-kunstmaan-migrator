@@ -461,7 +461,24 @@ final class BlockBuilder
             // A legacy media column holds an id; the loader resolves a path. Translating
             // here keeps the `asset` transform itself free of any database access.
             if ($transform === 'asset') {
-                $value = $this->media?->pathFor($value) ?? null;
+                $legacyId = $value;
+                $path = $this->media?->pathFor($legacyId) ?? null;
+
+                if ($path === null && $this->media !== null && $this->media->isRemoteVideo($legacyId)) {
+                    // Remote video (Vimeo/YouTube/Dailymotion oEmbed): the kuma_media row has
+                    // no `url` to build a path from — there is no file, so `pathFor()` can only
+                    // ever answer null for it. Emit an id-shaped marker instead of a path; the
+                    // loader's `_asset` resolver (PayloadEntrySaver::resolveNode) recognizes the
+                    // `kuma-media:` prefix and resolves it BY ID through
+                    // AssetMigrationService::resolveFromLegacyId(), which already knows how to
+                    // turn a remote-video row into an Embedded Asset (see ingestRow()'s
+                    // `$isRemoteVideo` branch) — `resolveFromLegacyUrl()`, the path-only sibling
+                    // every other `_asset` node goes through, has no way to represent a row that
+                    // was never given a url in the first place (Trello #183).
+                    $value = 'kuma-media:' . (int) $legacyId;
+                } else {
+                    $value = $path;
+                }
 
                 if ($value === null) {
                     $this->transforms->recordMissingAsset($context, $row[$column] ?? null);
