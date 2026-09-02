@@ -789,12 +789,41 @@ final class Compiler
             }
 
             $column = (string) ($group['column'] ?? '');
-            $columns = [];
+
+            // Each context's blocks are a top-to-bottom stack in Kunstmaan (middle-left's
+            // second Header+Text pair sits BELOW its first, not beside middle-right's first).
+            // The merged block's column list is flat and the template lays it out left-to-right,
+            // wrapping every N entries onto a new row in list order (contentBlock.twig:
+            // `grid-cols-2`, entries placed in field order) — so the list has to be in ROW
+            // order, one entry per context per row, not one context's whole stack followed by
+            // the next's. Concatenating context-by-context (the previous behaviour) paired row 1
+            // of middle-left with row 2 of middle-left — not middle-right's row 1 — the moment
+            // either context held more than one row: exactly the flattened, mis-paired columns
+            // Trello #148 reported ("UNIQUE NUMBER" landing beside "Unique voicemail" instead of
+            // beside "DEVICE SWITCH", its actual middle-right row-mate).
+            $perContext = [];
 
             foreach ((array) ($group['contexts'] ?? []) as $context) {
+                $entries = [];
+
                 foreach ($byContext[(string) $context] ?? [] as $block) {
                     foreach ($block['fields'][$column] ?? [] as $entry) {
-                        $columns[] = $entry;
+                        $entries[] = $entry;
+                    }
+                }
+
+                $perContext[] = $entries;
+            }
+
+            // Contexts need not carry the same number of rows — once the shorter one runs out,
+            // remaining rows simply contribute only the context(s) that still have one.
+            $rowCount = $perContext === [] ? 0 : max(array_map('count', $perContext));
+            $columns = [];
+
+            for ($row = 0; $row < $rowCount; $row++) {
+                foreach ($perContext as $entries) {
+                    if (array_key_exists($row, $entries)) {
+                        $columns[] = $entries[$row];
                     }
                 }
             }

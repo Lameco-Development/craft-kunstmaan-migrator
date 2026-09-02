@@ -490,7 +490,18 @@ final class PayloadEntrySaver
 
         if (array_key_exists('_asset', $node) && is_string($node['_asset'])) {
             $assetStarted = hrtime(true);
-            $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset'], $env, $this->options);
+
+            // `kuma-media:<id>` is BlockBuilder's marker for a remote (oEmbed) video row — one
+            // `kuma_media.url` was never populated for, so there is no path `resolveFromLegacyUrl`
+            // could match against (see BlockBuilder's `asset` transform and MediaIndex::
+            // isRemoteVideo()). Every other `_asset` node still carries a real legacy path/url
+            // and resolves the way it always has. Trello #183.
+            if (preg_match('/^kuma-media:(\d+)$/', $node['_asset'], $mediaIdMatch) === 1) {
+                $resolvedId = $this->assetService->resolveFromLegacyId((int) $mediaIdMatch[1], $env, $this->options);
+            } else {
+                $resolvedId = $this->assetService->resolveFromLegacyUrl($node['_asset'], $env, $this->options);
+            }
+
             $this->assetNs += hrtime(true) - $assetStarted;
             $this->assetCalls++;
 
