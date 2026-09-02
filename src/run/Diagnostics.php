@@ -346,11 +346,20 @@ final class Diagnostics
     }
 
     /**
-     * Can the target's page-builder Matrix fields hold per-locale content at all?
+     * Can the target's Matrix fields hold per-locale content at all: page-builder placements
+     * and sidecar-fed fields alike?
      *
      * The one precondition the loader cannot work around and the only one that is invisible
      * until an editor opens the Latvian page and reads English. It belongs in the preflight
      * because the fix is a project-config change and the run is two hours long.
+     *
+     * A sidecar (`sidecars:` in the mapping, the header tab, for instance) has no `contexts:`
+     * of its own: it decorates whatever page it is joined to through Kunstmaan's polymorphic
+     * ref, and its `map:`/`children:` name target fields directly. `heroButtons` is exactly
+     * that, a Matrix field reached through the header tab's `map:` (a `links()` expression),
+     * and a check that only walked `contexts:` never saw it: `propagationMethod: all` on
+     * `heroButtons` silently kept only the last-written locale's buttons while doctor stayed
+     * green. This check now walks both.
      *
      * @return array{check: string, ok: bool, detail: string}
      */
@@ -365,6 +374,7 @@ final class Diagnostics
         $schema = new TargetModel(new CraftSchemaGateway());
         $contexts = $mapping->all()['defaults']['contexts'] ?? [];
         $methods = [];
+        $entryTypes = [];
 
         foreach ($mapping->pages() as $spec) {
             if (!is_array($spec) || isset($spec['manual'])) {
@@ -376,6 +386,8 @@ final class Diagnostics
             if ($entryType === '') {
                 continue;
             }
+
+            $entryTypes[$entryType] = true;
 
             // `contexts:` names the layout's *instance* handle — `pageBuilder`, not the
             // `commonPageBuilder` field it instances. Asking the field service for the instance
@@ -391,13 +403,35 @@ final class Diagnostics
             }
         }
 
+        // Sidecar rides every entry type the loop above found: it carries no `wanted()` gate
+        // and no page-type restriction of its own, so the fields it maps land wherever the
+        // target entry type happens to have a slot for them (Compiler::sidecarFields() drops
+        // the rest silently and counts them; the same "no slot, no opinion" rule applies here).
+        foreach ($mapping->sidecarRows() as $sidecar) {
+            if (!$sidecar->isMigrated()) {
+                continue;
+            }
+
+            $fields = [...array_keys($sidecar->map()), ...array_keys($sidecar->children())];
+
+            foreach (array_keys($entryTypes) as $entryType) {
+                foreach ($fields as $field) {
+                    $slot = $schema->slot($entryType, (string) $field);
+
+                    if ($slot !== null) {
+                        $methods[$entryType . '.' . $field] = $slot->propagationMethod;
+                    }
+                }
+            }
+        }
+
         $problems = BlockPropagation::problems($methods, $localesPer);
 
         return $this->result(
             'blockPropagation',
             $problems === [],
             $problems === []
-                ? sprintf('%d page-builder field(s) can hold per-locale blocks.', count($methods))
+                ? sprintf('%d Matrix field placement(s) can hold per-locale blocks.', count($methods))
                 : implode(' ', $problems),
         );
     }
