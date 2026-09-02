@@ -333,6 +333,78 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.1 — 2026-09-02
+
+Twelve fixes for the Enreach migration, built on `release/1.1.0-beta` (1.1.0-beta.2 in
+production), covering Trello #137, #141, #142, #143 (mapping-only, not in this tag),
+#145, #148, #149, #150, #151, #152, #155 (mapping-only, not in this tag), #157, #163,
+#169, #183, #185, #186, #187, #188 (mapping-only, not in this tag) and #189
+(mapping-only, not in this tag).
+
+### Added
+
+- `columnGroups:`, a new top-level mapping key: two or more simultaneous contexts
+  (`middle-left`+`middle-right` on ProductPage) collapse into one block with one
+  Matrix column per context, instead of each context becoming its own block in
+  mapping-declaration order.
+- `firstChild:`, a new part-row key: the same row shape as `children:`, but only the
+  first row (in existing order) merges flat onto the parent block instead of becoming
+  a nested Matrix — for a legacy slider/gallery kept for its first image only.
+- `append:` and `enabledField:`, two new per-context keys alongside the existing
+  `prepend:`: `append:` places a context's blocks after everything else, even the
+  form block; `enabledField:` sets a boolean page field to true the moment that
+  context actually produced a block. Both keys are now validated (unknown keys,
+  wrong types) the same way `prepend:` always should have been.
+- `translatorFallback('<key>')`, a new pipe-transform reading `kuma_translation` for
+  the compiling translation's locale — a Kunstmaan pagepart's rendered label (a
+  Symfony translator string, not a database column) as a fallback when the part has
+  no title of its own.
+- `overrides:` on the `forms:` lane: a page-type-specific context (or list of
+  contexts) instead of one context for every page type, for a page type whose
+  form fields sit in a different region than the rest.
+- An unresolvable internal link (`[NT<id>]` addressing a deleted node, or a
+  `RedirectPage` that never becomes an entry) now falls back to the node's manual
+  `kuma_redirects` target as a plain URL, instead of dropping the link — and its
+  label — entirely.
+- `doctor`'s block-propagation check now also walks `sidecars:` fields, not only
+  page `contexts:`, so a `propagationMethod: all` field fed from a sidecar (a hero
+  button, say) is flagged before a run instead of only after one.
+- `IntrospectionCheck` gained a fourth check, `unclaimedOwnedCollections()` — an
+  owning one-to-many association (a page's own child collection, not a join table)
+  the mapping never reads at all, the shape `productBrandItems` on `ProductPage` is.
+  `editableColumns()`, dead code since it was written, is wired in as a fifth.
+
+### Fixed
+
+- **A row with no substance of its own vanished, heading and all.** `BlockBuilder`
+  correctly stopped emitting a block whose every field came from a fixed literal
+  (`contentMediaVariant: 'band'`) — but the check ran before the sequencer's absorbed
+  heading was merged in, so a Header absorbed into an otherwise-bare block took the
+  whole block down with it instead of migrating with that heading.
+- **A Potions page's `text` context, and the form after it, landed at the foot of
+  the page instead of near the top.** `prepend:` existed and was read by nothing for
+  `text`; the form block was always placed last regardless of what came before it.
+- **`SeoMigrationService` scoped a `kuma_seo` lookup to whichever environment's pass
+  happened to be running, not the environment the entry actually came from.** On a
+  shared Craft site fed by more than one legacy environment, the later pass's SEO
+  data could silently overwrite the earlier pass's, on an unrelated page.
+- **A failed remote-video embed recorded itself as permanently resolved.** The
+  placeholder state row used `targetId 0` for "no asset yet"; every caller's
+  already-resolved fast path read that as a real id rather than as "try again."
+- **`RedirectIndex` never matched anything on a multi-locale environment.**
+  `kuma_redirects.origin` carries a locale prefix (`/nl/...`) that
+  `kuma_node_translations.url` never does; the index now strips it the same way the
+  loader-side `RedirectMigrationService` already does, for the same reason.
+- **`mergeColumnGroups()` could drop held-back blocks outright** if none of them
+  carried the group's named column (a `column:` typo, most likely) — they now fall
+  back to normal placement instead, with the reason recorded.
+- **`TargetCheck` let the schema's own single-nested-type guess outrank an explicit
+  `block:` on a `children:` row**, the opposite of what the compiler itself does, and
+  never validated a child row's own nested `children:`.
+- **A comma inside a `join()` separator's own literal split the separator in half**
+  instead of being read as part of it (`splitArguments()` tracked parenthesis depth
+  but not quotes).
+
 ## 1.0.0 (2026-08-24)
 
 
