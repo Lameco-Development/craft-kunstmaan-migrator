@@ -519,6 +519,12 @@ final class Mapping
                     }
                 }
 
+                foreach ($spec['firstChild'] ?? [] as $field => $child) {
+                    if (is_array($child)) {
+                        $subjects[sprintf('%s `%s`, firstChild `%s`', $noun, $name, $field)] = $child;
+                    }
+                }
+
                 foreach ($spec['promote'] ?? [] as $table => $promo) {
                     if (is_array($promo)) {
                         $subjects[sprintf('%s `%s`, promote `%s`', $noun, $name, $table)] = $promo;

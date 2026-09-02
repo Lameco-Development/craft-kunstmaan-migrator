@@ -115,6 +115,19 @@ final class TargetCheck
                 }
             }
 
+            // `firstChild:` writes its map onto the block itself, exactly like the part's own
+            // `map:` — not into a nested Matrix, so it is checked the same way, not through
+            // `checkChildren()` below.
+            foreach ($part->firstChild() as $child) {
+                foreach (array_keys($child['map'] ?? []) as $target) {
+                    $error = $this->checkPath($block, (string) $target);
+
+                    if ($error !== null) {
+                        $errors[] = sprintf('part `%s`: %s', $name, $error);
+                    }
+                }
+            }
+
             $this->checkChildren(sprintf('part `%s`', $name), $block, $part->children(), $errors);
 
             foreach ($part->promote() as $table => $promo) {
