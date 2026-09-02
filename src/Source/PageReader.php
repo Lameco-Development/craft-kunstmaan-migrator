@@ -218,6 +218,32 @@ final class PageReader
         return $ids;
     }
 
+    /**
+     * Node translation id => the legacy URL Kunstmaan served for it.
+     *
+     * `[NT<id>]` addresses a translation whose node may never become a Craft entry — deleted,
+     * or a page type that only compiles into the `redirects:` lane. Kunstmaan still served
+     * this URL, so it is what a manual `kuma_redirects` row is keyed on; the compiler's
+     * redirect-fallback for an unresolvable `_linkRef` needs it, the same reason
+     * `nodeIdByTranslation()` reads unpublished translations too.
+     *
+     * @return array<int, string>
+     */
+    public function urlByTranslation(): array
+    {
+        $urls = [];
+
+        foreach ($this->pdo->query('SELECT id, url FROM kuma_node_translations WHERE url IS NOT NULL') as $row) {
+            $url = trim((string) $row['url']);
+
+            if ($url !== '') {
+                $urls[(int) $row['id']] = $url;
+            }
+        }
+
+        return $urls;
+    }
+
     private static function shortName(string $entity): string
     {
         return substr((string) strrchr($entity, '\\'), 1) ?: $entity;

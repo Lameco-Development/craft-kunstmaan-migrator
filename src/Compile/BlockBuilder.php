@@ -40,6 +40,7 @@ final class BlockBuilder
         private readonly ?EntityIndex $entities = null,
         private ?string $lang = null,
         private readonly ?TranslationIndex $translations = null,
+        private readonly ?RedirectIndex $redirects = null,
     ) {
     }
 
@@ -756,6 +757,14 @@ final class BlockBuilder
      * It addresses a node translation, and the node is what becomes an entry, so it is
      * handed over as a ref for the loader to turn into a reference tag.
      *
+     * The node a `[NT<id>]` addresses is not guaranteed to ever become that entry — it may be
+     * `deleted`, or a page type (a `RedirectPage`) that only compiles into the `redirects:`
+     * lane, never `pages:`. When the ref carries a `_linkFallback` too, the loader writes that
+     * plain URL instead of dropping the link outright if the ref itself never resolves — the
+     * same manual `kuma_redirects` 301 that makes the link work on the old site. Computed here,
+     * at compile time, rather than at save time, so it shows up in a `--dump` payload exactly
+     * like everything else the compiler decided.
+     *
      * @return array<string, string>|null
      */
     private function oneLink(string $url, string $label, bool $newWindow): ?array
@@ -767,7 +776,17 @@ final class BlockBuilder
         }
 
         $ref = $this->entities?->uidFor('nodeLink', $url, $this->environment);
-        $link = $ref !== null ? ['_linkRef' => $ref] : $this->linkTarget($url);
+
+        if ($ref !== null) {
+            $link = ['_linkRef' => $ref];
+            $fallback = $this->redirectFallback($url);
+
+            if ($fallback !== null) {
+                $link['_linkFallback'] = $fallback;
+            }
+        } else {
+            $link = $this->linkTarget($url);
+        }
 
         if (trim($label) !== '') {
             $link['label'] = $label;
@@ -778,6 +797,20 @@ final class BlockBuilder
         }
 
         return $link;
+    }
+
+    /**
+     * The manual `kuma_redirects` target for the node translation `[NT<id>]` names, if the
+     * legacy site has a 301 on file for it — null when nothing was declared to look it up
+     * with, or no such redirect exists.
+     */
+    private function redirectFallback(string $url): ?string
+    {
+        if ($this->entities === null || $this->redirects === null) {
+            return null;
+        }
+
+        return $this->redirects->targetFor($this->entities->legacyUrlOfNodeLink($url));
     }
 
     /**

@@ -456,6 +456,23 @@ final class PayloadEntrySaver
                     'link' => array_intersect_key($node, array_flip(['label', 'target'])),
                 ];
 
+                // The ref's target may never become a Craft entry at all — a deleted node, or
+                // a page type that only compiles into the `redirects:` lane. `BlockBuilder`
+                // already looked for a manual `kuma_redirects` row covering that node's legacy
+                // URL and, when one exists, carried its destination along as `_linkFallback` —
+                // the same 301 that made the link work on the old site. Writing that now beats
+                // dropping the whole link (label included) for a URL that is merely not
+                // resolved *yet*: the fixup pass still overwrites this with the real entry
+                // reference the moment the ref itself resolves.
+                if (isset($node['_linkFallback']) && is_string($node['_linkFallback']) && $node['_linkFallback'] !== '') {
+                    return [
+                        'present' => true,
+                        'value' => $this->linkValueWithLabel(['type' => 'url', 'value' => $node['_linkFallback']], $node),
+                    ];
+                }
+
+                // Unresolved and no fallback: no bogus value is written — the link is dropped
+                // from its containing slot, same fail-forward contract as an unresolved `_ref`.
                 return ['present' => false, 'value' => null];
             }
 
@@ -463,16 +480,10 @@ final class PayloadEntrySaver
             // bare string; hand it a map — which is the only way to carry a label — and it
             // defaults to `url`, then fails the reference tag as an invalid URL and takes the
             // whole entry with it.
-            $link = [
+            $link = $this->linkValueWithLabel([
                 'type' => 'entry',
                 'value' => sprintf('{entry:%d@%d:url}', $resolvedId, $siteId),
-            ];
-
-            foreach (['label', 'target'] as $key) {
-                if (isset($node[$key]) && is_string($node[$key]) && $node[$key] !== '') {
-                    $link[$key] = $node[$key];
-                }
-            }
+            ], $node);
 
             return ['present' => true, 'value' => $link];
         }
@@ -541,6 +552,26 @@ final class PayloadEntrySaver
         }
 
         return ['present' => true, 'value' => $out];
+    }
+
+    /**
+     * `label`/`target` are carried on the payload node beside whichever of `_linkRef`,
+     * `_linkFallback`, or a resolved `{entry:…}`/`{type:url,…}` tag ends up as `value` — every
+     * Link field shape this class writes copies them the same way, so the copy lives once.
+     *
+     * @param array<string, string> $link
+     * @param array<string, mixed> $node
+     * @return array<string, string>
+     */
+    private function linkValueWithLabel(array $link, array $node): array
+    {
+        foreach (['label', 'target'] as $key) {
+            if (isset($node[$key]) && is_string($node[$key]) && $node[$key] !== '') {
+                $link[$key] = $node[$key];
+            }
+        }
+
+        return $link;
     }
 
     /**

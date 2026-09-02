@@ -109,7 +109,12 @@ final class Compiler
         $ancestry = $pages->ancestry();
         $nodeTitles = array_map(static fn(array $node): array => $node['titles'], $ancestry);
 
-        $entities = new EntityIndex($this->mapping->entities(), $pages->nodeIdByTranslation(), $nodeTitles);
+        $entities = new EntityIndex(
+            $this->mapping->entities(),
+            $pages->nodeIdByTranslation(),
+            $nodeTitles,
+            $pages->urlByTranslation(),
+        );
         $builder = new BlockBuilder(
             $parts,
             $this->transforms,
@@ -119,6 +124,7 @@ final class Compiler
             MediaIndex::load($pdo),
             $entities,
             translations: TranslationIndex::load($pdo),
+            redirects: RedirectIndex::load($pdo),
         );
         $sequencer = new SequenceEngine($this->mapping->sequence(), $this->mapping->parts(), $parts, $builder, $this->schema);
 
