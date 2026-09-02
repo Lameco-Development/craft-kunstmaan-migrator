@@ -55,7 +55,34 @@ final class CraftElementWriter implements ElementWriter
             return null;
         }
 
-        return Entry::find()->sectionId($sectionId)->siteId($siteId)->status(null)->one();
+        $entry = Entry::find()->sectionId($sectionId)->siteId($siteId)->status(null)->one();
+
+        if ($entry !== null) {
+            return $entry;
+        }
+
+        // A Single has exactly one entry for the whole section, not one per site — so "no row
+        // for this site" is not the same as "no entry exists". A section on propagationMethod
+        // custom only gets an `elements_sites` row for a site once something actually saves it
+        // there, and a second source environment landing its own HomePage row is often the
+        // first save this section ever sees for that environment's site. Scoped straight to
+        // $siteId, that read as "the Single doesn't exist yet" and the loader created a second
+        // entry beside the one Craft already had. Look across every site before deciding that;
+        // Craft's own CP never lets a Single grow a second entry, only this loader's direct
+        // element-API writes could.
+        $existing = Entry::find()->sectionId($sectionId)->site('*')->status(null)->one();
+
+        if ($existing === null) {
+            return null;
+        }
+
+        // Retarget the found entry at the requested site rather than the one it was found
+        // through — the caller always writes into $siteId, and a site this entry has no row
+        // for yet gets one on save, the same way Craft grows any existing entry into a newly
+        // added site.
+        $existing->siteId = $siteId;
+
+        return $existing;
     }
 
     public function livesOnAnySite(int $elementId, array $siteIds): bool

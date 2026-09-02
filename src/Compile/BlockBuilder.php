@@ -50,13 +50,60 @@ final class BlockBuilder
         }
 
         $this->block = (string) $block;
-        $fields = $this->fieldsFrom($spec['map'] ?? [], $row, $partClass);
+        $map = $spec['map'] ?? [];
+        $fields = $this->fieldsFrom($map, $row, $partClass);
         $fields['_sourcePartRef'] = $this->sourceRef((string) $table, $partId);
         $fields = $this->stampNestedRefs($fields, $fields['_sourcePartRef']);
 
-        $fields += $this->childrenOf($spec['children'] ?? [], (string) $block, $partId, $partClass);
+        $children = $this->childrenOf($spec['children'] ?? [], (string) $block, $partId, $partClass);
+        $fields += $children;
+
+        // A row existing is not the same as a row saying anything. `contentMediaVariant` and
+        // its kin are filled by a literal in the map (`'band'`), never by a column, so they are
+        // set on every row regardless of what that row held — which is how Craft's own required-
+        // field validation passed a ContentMedia block with no heading, text or image, and it
+        // rendered as nothing on the page. A block earns its place by having at least one field
+        // that reads the row (or a nested child collection) end up non-empty.
+        if ($children === [] && !$this->hasSubstance($map, $fields)) {
+            return null;
+        }
 
         return ['type' => (string) $block, 'fields' => $fields];
+    }
+
+    /**
+     * Whether a compiled block carries content, not just its fixed defaults.
+     *
+     * Generic on purpose: it does not know "heading" from "variant" by name, only by how the
+     * map produced them. A quoted literal (`'band'`) is a design fact the mapping supplies
+     * because no column carries it, so it is excluded; everything else in the map reads the
+     * row (a column, `link()`, `ref()`, `coalesce()`, ...) and only appears in `$fields` when
+     * `fieldsFrom()` found a real value there.
+     *
+     * @param array<string, string> $map
+     * @param array<string, mixed> $fields
+     */
+    private function hasSubstance(array $map, array $fields): bool
+    {
+        foreach ($map as $target => $expression) {
+            if ($this->isFixedValue((string) $expression)) {
+                continue;
+            }
+
+            if (preg_match('/^\w+/', (string) $target, $m) === 1 && isset($fields[$m[0]])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** A quoted literal (`'band'`, optionally piped through a further transform) is never content. */
+    private function isFixedValue(string $expression): bool
+    {
+        $column = array_map('trim', explode('|', trim($expression)))[0] ?? '';
+
+        return preg_match("/^'(.*)'$/", $column) === 1;
     }
 
     /**
