@@ -75,7 +75,19 @@ class MigrationStateService extends Component implements MigrationStateReader, M
         if (!$row || $row['targetId'] === null) {
             return null;
         }
-        return (int) $row['targetId'];
+
+        $targetId = (int) $row['targetId'];
+
+        // `record()`'s $targetId parameter is a non-nullable int, so a row that has no
+        // real Craft element to point at (AssetMigrationService::ingestRow()'s remote-video
+        // fallback, when the Embedded Assets oEmbed lookup fails) is written with a literal
+        // 0 rather than a NULL column. 0 can never be a real element id: Craft's elements
+        // table starts its AUTO_INCREMENT at 1. Treat it exactly like "no row" instead: every
+        // fast-path cache-hit check in this codebase already reads a null return as "not
+        // resolved yet, try again", and a stored 0 was slipping past that check as if it
+        // were a resolved id, which meant a failed remote-video embed was never retried on
+        // a later run (Trello #183).
+        return $targetId !== 0 ? $targetId : null;
     }
 
     /**

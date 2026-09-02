@@ -21,7 +21,10 @@ interface MigrationStateReader
 {
     /**
      * Returns the Craft numeric id recorded for (source, sourceKey, siteId),
-     * or null when no row exists or targetId is null.
+     * or null when no row exists, targetId is null, or targetId is the 0
+     * placeholder a fallback path writes for a row that has no real Craft
+     * element yet (e.g. a remote video whose embed lookup failed). 0 is
+     * never a real element id, so it is treated as unresolved.
      *
      * siteId=null matches a site-agnostic row (flat keyCondition treats
      * `['siteId' => null]` as `siteId IS NULL`).
