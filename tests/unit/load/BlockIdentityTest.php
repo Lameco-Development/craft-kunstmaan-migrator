@@ -330,20 +330,45 @@ final class BlockIdentityTest extends TestCase
         self::assertTrue($this->writer->deleted[0]['hardDelete']);
     }
 
-    public function testEveryCraftSiteIsPrunedNotOnlyTheEnvironments(): void
+    public function testAnUnboundCraftSiteIsNeverPrunedButABoundUnpayloadedSiteStillIs(): void
     {
-        // Propagation does not stop at the mapping, so neither can the pruning: `fr` is
-        // bound to no locale and still gets a lookup.
+        // `fr` (9) is bound to no locale in THIS environment's own mapping. Used to read
+        // "propagation does not stop at the mapping, so neither can the pruning" and get
+        // pruned right alongside a genuine in-environment ghost — which is exactly the bug
+        // AUDIT found running two environments against one shared database: a Single (e.g.
+        // `homePage`, `propagationMethod: all` on the *section*) is one entry row across
+        // every Craft site, and COM/DE/LV each run their own separate migration against it.
+        // From inside one environment's own `prune()` call, "a site this environment's
+        // mapping doesn't bind" is indistinguishable from "a site another environment owns
+        // and has already written real content to" — so reaching past `$sites->targets()`
+        // deleted the other environment's blocks outright. Confirmed against MySQL: DE's
+        // `--only=HomePage` run wiped all five of COM's `homePage` Page Builder block sets
+        // the previous run had written, because none of COM's sites were in DE's tiny
+        // `$keep` set (comDeDe only) and every one of them got a lookup here.
+        //
+        // `en` (2) IS bound to this environment and also gets no payload — that is still the
+        // legitimate "ghost from this environment's own propagation" case `prune()` exists
+        // for (see the class below it, `testBlocksOnSitesThePayloadNeverNamedAreDeleted...`),
+        // and must still be pruned.
         $entry = IdentityStubEntry::make(siteId: 1, blocks: [], id: 700);
+        $onEn = IdentityStubEntry::make(siteId: 2, blocks: [
+            'pageBuilder' => [IdentityStubBlock::withId(802, ownerId: 700)],
+        ], layout: IdentityStubFieldLayout::withFields([self::matrixField('pageBuilder')]), id: 700);
         $onFr = IdentityStubEntry::make(siteId: 9, blocks: [
             'pageBuilder' => [IdentityStubBlock::withId(803, ownerId: 700)],
         ], layout: IdentityStubFieldLayout::withFields([self::matrixField('pageBuilder')]), id: 700);
+        $this->writer->willFind(700, $onEn, 2);
         $this->writer->willFind(700, $onFr, 9);
         $this->writer->willFindOnlyOnKnownSites(700);
 
-        $this->identity()->prune($entry, ['default' => [], 'en' => []], $this->sites());
+        $this->identity()->prune($entry, ['default' => []], $this->sites());
 
-        self::assertSame([803], $this->writer->deletedIds());
+        self::assertSame(
+            [802],
+            $this->writer->deletedIds(),
+            '`fr` (803) survives — it is outside this environment, so it is never even a candidate; '
+            . '`en` (802) is still an in-environment ghost and is pruned as before',
+        );
     }
 
     public function testAnUnpayloadedSiteWhereTheEntryHasNoRowIsSkipped(): void
@@ -361,6 +386,10 @@ final class BlockIdentityTest extends TestCase
      * entry only there. Nine Craft sites, rows on two: one site lookup, one
      * localised load, and nothing asked of the seven empty sites — where the
      * old loop issued a null-returning `findById()` each, ~11k per run.
+     *
+     * Site 5 is bound to THIS environment (`fifth`) so it stays a legitimate prune
+     * candidate under the environment-scoped rule above — this test is about the query
+     * count, not about cross-environment reach.
      */
     public function testTheUnlistedSiteWipeAsksForTheEntrysSitesOnceAndLoadsNothingElsewhere(): void
     {
@@ -370,7 +399,10 @@ final class BlockIdentityTest extends TestCase
             $craftSites['site' . $siteId] = [$siteId, 'en-GB'];
         }
 
-        $sites = EnvironmentFactory::sites(['nl' => 'default', 'en' => 'site2', 'de' => 'site3'], $craftSites);
+        $sites = EnvironmentFactory::sites(
+            ['nl' => 'default', 'en' => 'site2', 'de' => 'site3', 'fifth' => 'site5'],
+            $craftSites,
+        );
         $entry = IdentityStubEntry::make(siteId: 1, blocks: [], id: 700);
         $onSite5 = IdentityStubEntry::make(siteId: 5, blocks: [
             'pageBuilder' => [IdentityStubBlock::withId(801, ownerId: 700)],

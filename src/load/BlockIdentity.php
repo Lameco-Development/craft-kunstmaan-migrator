@@ -175,13 +175,45 @@ final class BlockIdentity
     /**
      * Delete the nested entries on sites this payload never named.
      *
-     * Every Craft site, not only this environment's: propagation does not stop at the
-     * mapping, so neither can the pruning. A site with no payload has no content by
-     * definition, so anything found there is a propagation artefact — unless a payloaded
-     * site shares it. A nested entry is one element across the sites it exists on, so the
-     * copy reachable from an unpayloaded site is the same row the payloaded site renders,
-     * and deleting it there takes the content with it: measured at 294 of 825 pages losing
-     * their whole Page Builder on a clean run.
+     * Scoped to sites THIS ENVIRONMENT binds (`$sites->targets()`), not every Craft site —
+     * that used to read "every Craft site, not only this environment's" and reached across
+     * the whole install. It was safe as long as exactly one environment ever wrote a given
+     * Single, and it stopped being safe the moment a second one did.
+     *
+     * A Single (`propagationMethod: all` on the *section*) is one shared entry row across
+     * every Craft site — COM, DE and LV each run their own migration against the *same*
+     * database, in separate CLI invocations, and each writes only its own sites' content to
+     * that one shared entry (`saveEntryForSites()` never saves a site outside `$sites->
+     * targets()` — every non-primary save is `propagate=false`, and a new entry's first save
+     * goes out bare via `withoutBlocks()`, so this module is the only thing that has ever
+     * created a block on a site — Craft's own propagation cannot). A field with
+     * `propagationMethod: none` (or a per-site `propagationKeyFormat`) then keeps genuinely
+     * independent block sets per site, so DE's comDeDe and COM's comFrFr are never "the same
+     * row" the old docblock below described — that description is true only for a field
+     * shared across sites (`propagationMethod: all`), which is a different, already-reported
+     * failure mode (see `reportUnrepresentablePerSiteBlocks()`).
+     *
+     * Reaching past `$sites->targets()` treated every other environment's real, independently
+     * migrated content as "a propagation artefact this payload never named" — which, from
+     * this call alone, is indistinguishable from an actual ghost. Verified against MySQL: COM
+     * migrates the `homePage` Single first, its 5 sites end up with 5 independent block sets
+     * (5–11 blocks each); DE migrates the same Single next, `--only=HomePage`, and this method
+     * — asked to prune sites the *DE* payload never named — found COM's 5 sites still holding
+     * a row each, found blocks there `DE`'s tiny `$keep` set (comDeDe only) didn't recognise,
+     * and hard-deleted every one of them. `elements_owners`/`elements_sites` afterwards showed
+     * comDeDe alone; COM's rows were gone, not merely hidden. A site outside this environment's
+     * own `$sites` was never a save target of this module in the first place, so nothing this
+     * module has ever created a block on lives there for a legitimate reason it can rule out —
+     * excluding it from the candidate set entirely is what makes the intra-environment case
+     * below (the actual "ghost from this environment's own propagation" case) still safe to
+     * prune, while a site another environment owns never enters the loop at all.
+     *
+     * Within `$sites->targets()`, the original reasoning still holds: a site with no payload
+     * has no content by definition, so anything found there is a propagation artefact — unless
+     * a payloaded site shares it. A nested entry is one element across the sites it exists on,
+     * so the copy reachable from an unpayloaded site is the same row the payloaded site
+     * renders, and deleting it there takes the content with it: measured at 294 of 825 pages
+     * losing their whole Page Builder on a clean run.
      *
      * One site lookup per entry, then a localised load only for the sites that have a row:
      * an entry written to two of nine sites has nothing on the other seven, and asking each
@@ -207,8 +239,16 @@ final class BlockIdentity
             return;
         }
 
+        // The candidate pool: sites THIS environment's mapping binds. A site belonging to
+        // another environment's mapping is never a target of this module's own saves, so it
+        // is never a candidate for this module's own pruning either — see the docblock above.
+        $environmentSiteIds = [];
+        foreach ($sites->targets() as $binding) {
+            $environmentSiteIds[$binding->siteId] = true;
+        }
+
         foreach ($this->elements->siteIdsOf((int) $entry->id) as $siteId) {
-            if (isset($keep[$siteId])) {
+            if (isset($keep[$siteId]) || !isset($environmentSiteIds[$siteId])) {
                 continue;
             }
 
