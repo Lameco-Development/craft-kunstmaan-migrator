@@ -45,4 +45,43 @@ final class RedirectDirectImportWiringTest extends TestCase
         // A 301 must land on a live page — placeholders are disabled entries.
         self::assertStringContainsString('getEnabledForSite()', $source);
     }
+
+    /**
+     * 2026-09-03 — `kuma_node_id` is only unique WITHIN one legacy environment's own
+     * database; COM/DE/LV each restart their own numbering. A `kuma_redirects` row
+     * compiled for one environment resolved to an unrelated entry a DIFFERENT
+     * environment happened to record under the same numeric id — measured: COM's
+     * `/en/products/enreach-contact` redirect resolved to LV's own separate
+     * "enreach-contact" product page. `resolveEntryIdForLegacyNode()` now tries the
+     * environment-scoped `"<ENV>:kuma_nodes"` source first, same fix already applied
+     * to `NavigationMigrationService::resolveEntryIdForNode()`. Locks the wiring:
+     * `$environment` must reach every hop between `migrateAll()` and the lookup.
+     */
+    public function testRedirectDestinationResolutionIsScopedToItsOwnEnvironment(): void
+    {
+        $file = (string) (new ReflectionClass(RedirectMigrationService::class))->getFileName();
+        $source = (string) file_get_contents($file);
+
+        self::assertStringContainsString(
+            'importDirectRedirects($context->sites, $context->name',
+            $source,
+            'migrateAll() must pass the environment name into the direct-import chain',
+        );
+        self::assertStringContainsString(
+            "sprintf('%s:kuma_nodes', \$environment)",
+            $source,
+            'resolveEntryIdForLegacyNode() must try the environment-scoped source before the unscoped legacy-compat ones',
+        );
+
+        // The environment-scoped lookup must run BEFORE the unscoped fallback loop,
+        // not after — an unscoped match would otherwise win on a coincidental id
+        // collision even when the correct, scoped entry also exists.
+        $methodStart = strpos($source, 'private function resolveEntryIdForLegacyNode(');
+        self::assertNotFalse($methodStart);
+        $scopedLookup = strpos($source, "sprintf('%s:kuma_nodes', \$environment)", $methodStart);
+        $unscopedLoop = strpos($source, 'array_push($candidateSources,', $methodStart);
+        self::assertNotFalse($scopedLookup);
+        self::assertNotFalse($unscopedLoop);
+        self::assertLessThan($unscopedLoop, $scopedLookup, 'the environment-scoped lookup must be tried first');
+    }
 }

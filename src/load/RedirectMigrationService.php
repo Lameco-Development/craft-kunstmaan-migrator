@@ -136,7 +136,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         // before the RedirectPage lane so an environment with no redirect
         // *pages* still imports its redirect *table*.
         if (self::isRetourAvailable()) {
-            $this->importDirectRedirects($context->sites, $opts, $report);
+            $this->importDirectRedirects($context->sites, $context->name, $opts, $report);
 
             // Opt-in until measured per corpus: a computed 301 for every page
             // whose Craft URI differs from its legacy URL. Structural
@@ -282,7 +282,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
     // Private — legacy redirects table direct import
     // --------------------------------------------------------------------------
 
-    private function importDirectRedirects(SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
+    private function importDirectRedirects(SiteMap $sites, string $environment, MigrationOptions $opts, MigrationReport $report): void
     {
         $rows = $this->legacyDb->queryAll(
             'SELECT id, origin, target, permanent FROM ' . $this->redirectsTable() . ' ORDER BY id',
@@ -290,7 +290,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
         foreach ($rows as $row) {
             try {
-                $this->importOneKumaRedirect($row, $sites, $opts, $report);
+                $this->importOneKumaRedirect($row, $sites, $environment, $opts, $report);
             } catch (\Throwable $e) {
                 $report->incr('failed');
                 $report->warn(
@@ -309,7 +309,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
     /**
      * @param array<string, mixed> $row
      */
-    private function importOneKumaRedirect(array $row, SiteMap $sites, MigrationOptions $opts, MigrationReport $report): void
+    private function importOneKumaRedirect(array $row, SiteMap $sites, string $environment, MigrationOptions $opts, MigrationReport $report): void
     {
         $origin = (string) ($row['origin'] ?? '');
         $target = (string) ($row['target'] ?? '');
@@ -319,7 +319,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
 
         $srcUrl = $this->normalisePath($origin);
-        $destUrl = $this->resolveDestUrl($target, $sites);
+        $destUrl = $this->resolveDestUrl($target, $sites, $environment);
         $httpCode = ((int) ($row['permanent'] ?? 0) === 1) ? 301 : 302;
         $kumaId = (int) ($row['id'] ?? 0);
         $stateKey = 'kuma:' . $kumaId;
@@ -344,7 +344,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
      * legacy path matches a migrated entry's old URL. External URLs (with
      * scheme) and non-matching internal paths pass through verbatim.
      */
-    private function resolveDestUrl(string $rawTarget, SiteMap $sites): string
+    private function resolveDestUrl(string $rawTarget, SiteMap $sites, string $environment): string
     {
         $target = trim($rawTarget);
         if ($target === '') {
@@ -357,7 +357,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
 
         $normalised = $this->normalisePath($target);
-        $resolved = $this->lookupNewUrlByLegacyUrl($normalised, $sites);
+        $resolved = $this->lookupNewUrlByLegacyUrl($normalised, $sites, $environment);
         return $resolved ?? $normalised;
     }
 
@@ -369,7 +369,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
      * kuma_node_translations.url matches the supplied path, then query
      * state for the migrated entry, then resolve the entry's site URL.
      */
-    private function lookupNewUrlByLegacyUrl(string $path, SiteMap $sites): ?string
+    private function lookupNewUrlByLegacyUrl(string $path, SiteMap $sites, string $environment): ?string
     {
         // Strip a configured leading "/{legacy-locale}/" prefix from the URL
         // so it matches kuma_node_translations.url. Locale codes come from the
@@ -391,7 +391,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
 
         $kumaNodeId = (int) $row['kuma_node_id'];
-        $entryId = $this->resolveEntryIdForLegacyNode($kumaNodeId, (string) $row['class']);
+        $entryId = $this->resolveEntryIdForLegacyNode($kumaNodeId, (string) $row['class'], $environment);
         if ($entryId === null) {
             return null;
         }
@@ -517,9 +517,28 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
     /**
      * Find the migrated Craft entry id for a legacy kuma_node_id.
+     *
+     * Tries the environment-scoped `"<ENV>:kuma_nodes"` source first — `kuma_node_id`
+     * is only unique WITHIN one legacy environment's own database, and COM/DE/LV each
+     * restart their own numbering, so two different environments can (and do) each
+     * have a node numbered, say, 62. The unscoped `$legacyClass`/legacy-compat sources
+     * below have no environment in their key at all, so a redirect compiled for one
+     * environment could resolve to an unrelated entry a DIFFERENT environment happened
+     * to record under the same numeric id — measured: COM's `/en/products/enreach-
+     * contact` redirect resolved to LV's own separate "enreach-contact" product page
+     * instead of COM's, because both happened to share a legacy node id. Same fix as
+     * `NavigationMigrationService::resolveEntryIdForNode()`, which already threads
+     * `$environment` through for exactly this reason.
      */
-    private function resolveEntryIdForLegacyNode(int $kumaNodeId, ?string $legacyClass = null): ?int
+    private function resolveEntryIdForLegacyNode(int $kumaNodeId, ?string $legacyClass, string $environment): ?int
     {
+        if ($environment !== '' && $kumaNodeId > 0) {
+            $id = $this->stateService->getTargetId(sprintf('%s:kuma_nodes', $environment), (string) $kumaNodeId);
+            if ($id !== null) {
+                return $id;
+            }
+        }
+
         $candidateSources = [];
         if ($legacyClass !== null && $legacyClass !== '') {
             $candidateSources[] = str_replace('\\', '_', trim($legacyClass, '\\'));
