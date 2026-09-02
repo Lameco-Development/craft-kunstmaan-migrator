@@ -587,6 +587,10 @@ final class Compiler
         $builderBlocks = [];
         $prependedBlocks = [];
 
+        // Blocks an emitted context routes into a column group instead of the builder streams
+        // above, keyed by group index then context — see `mergeColumnGroups()`.
+        $columnGroups = [];
+
         foreach ($page->contexts() as $context => $target) {
             $sequence = $parts->sequence($translation['entity'], $translation['entityId'], $context);
 
@@ -617,10 +621,17 @@ final class Compiler
                     continue;
                 }
 
-                // `prepend: true` is what puts a hero above the body. It was declared in the
-                // mapping and read by nothing, so every `top` part landed *after* the whole
-                // main context — 890 live placements arriving at the foot of the page.
-                if (($target['prepend'] ?? false) === true) {
+                $groupIndex = $this->columnGroupIndexFor($context, $block['type']);
+
+                if ($groupIndex !== null) {
+                    // Held back for `mergeColumnGroups()` below — `middle-left` and
+                    // `middle-right` do not each become their own block; they become one
+                    // column each on the block their `columnGroups:` rule names.
+                    $columnGroups[$groupIndex][$context][] = $block;
+                } elseif (($target['prepend'] ?? false) === true) {
+                    // `prepend: true` is what puts a hero above the body. It was declared in the
+                    // mapping and read by nothing, so every `top` part landed *after* the whole
+                    // main context — 890 live placements arriving at the foot of the page.
                     $prependedBlocks[] = $block;
                 } else {
                     $builderBlocks[] = $block;
@@ -629,6 +640,10 @@ final class Compiler
                 $this->blocks++;
             }
         }
+
+        [$prependedBlocks, $builderBlocks] = $this->mergeColumnGroups(
+            $columnGroups, $prependedBlocks, $builderBlocks, $environment, $translation,
+        );
 
         // A page's own `children:` can target the builder field too — a wrapper block built
         // from a collection rather than a pagepart, landing beside the pagepart-derived blocks
@@ -662,6 +677,109 @@ final class Compiler
         }
 
         return $site;
+    }
+
+    /**
+     * Which `columnGroups:` rule an emitted block belongs to, if any.
+     *
+     * A rule claims a context by name and a block type: `middle-left`/`middle-right` next to
+     * each other in the legacy template both emit a `contentBlock`, and that pairing is what
+     * `columnGroups:` names, not the context alone — a context that happens to also carry an
+     * unrelated block type (an image, say) still emits that block normally.
+     */
+    private function columnGroupIndexFor(string $context, string $blockType): ?int
+    {
+        foreach ($this->mapping->columnGroups() as $index => $group) {
+            if (!is_array($group)) {
+                continue;
+            }
+
+            $contexts = is_array($group['contexts'] ?? null) ? $group['contexts'] : [];
+
+            if (in_array($context, $contexts, true) && (string) ($group['block'] ?? '') === $blockType) {
+                return $index;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Folds the blocks `columnGroupIndexFor()` held back into one merged block per group.
+     *
+     * Kunstmaan lays a two-column row out as two *simultaneous* contexts — `middle-left` and
+     * `middle-right` — each compiled on its own, with no notion of the other. Left alone, that
+     * gives two separate `contentBlock` entries that land wherever mapping order puts them,
+     * which is after the whole `main` context rather than between `top` and `main` where the
+     * row actually sits. `columnGroups:` says which contexts are one row: each one's blocks
+     * contribute their nested column entries — `contentColumns` — to a single merged block, in
+     * the context order the rule declares, so one row becomes one block with one column per
+     * region instead of one block per region.
+     *
+     * The merged block needs an identity of its own for the loader to update it in place on a
+     * re-run: it is not any one legacy pagepart, it is a row of them, so the ref is built from
+     * the page entity itself rather than borrowed from one column's part id. Each column entry
+     * already carries its own `_sourcePartRef` (stamped when its own block was built), so only
+     * the wrapper needs one.
+     *
+     * @param array<int, array<string, list<array{type:string, fields:array<string,mixed>}>>> $columnGroups
+     *   group index => context => blocks held back for that group
+     * @param list<array{type:string, fields:array<string,mixed>}> $prependedBlocks
+     * @param list<array{type:string, fields:array<string,mixed>}> $builderBlocks
+     * @param array<string, mixed> $translation
+     * @return array{0: list<array{type:string, fields:array<string,mixed>}>, 1: list<array{type:string, fields:array<string,mixed>}>}
+     */
+    private function mergeColumnGroups(
+        array $columnGroups,
+        array $prependedBlocks,
+        array $builderBlocks,
+        string $environment,
+        array $translation,
+    ): array {
+        foreach ($this->mapping->columnGroups() as $index => $group) {
+            $byContext = $columnGroups[$index] ?? [];
+
+            if ($byContext === [] || !is_array($group)) {
+                continue;
+            }
+
+            $column = (string) ($group['column'] ?? '');
+            $columns = [];
+
+            foreach ((array) ($group['contexts'] ?? []) as $context) {
+                foreach ($byContext[(string) $context] ?? [] as $block) {
+                    foreach ($block['fields'][$column] ?? [] as $entry) {
+                        $columns[] = $entry;
+                    }
+                }
+            }
+
+            if ($columns === []) {
+                continue;
+            }
+
+            $merged = [
+                'type' => (string) ($group['block'] ?? ''),
+                'fields' => [
+                    $column => array_values($columns),
+                    '_sourcePartRef' => sprintf(
+                        '%s:columnGroup:%s:%d:%s',
+                        $environment,
+                        (string) $translation['entity'],
+                        (int) $translation['entityId'],
+                        implode('+', (array) ($group['contexts'] ?? [])),
+                    ),
+                ],
+            ];
+
+            if (($group['prepend'] ?? false) === true) {
+                $prependedBlocks[] = $merged;
+            } else {
+                $builderBlocks[] = $merged;
+            }
+        }
+
+        return [$prependedBlocks, $builderBlocks];
     }
 
     /**
