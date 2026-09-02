@@ -333,6 +333,51 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.2 — 2026-09-02
+
+Five fixes found running the full three-environment Enreach migration for the first
+time and comparing every reported Trello ticket against the result, built on
+`release/1.2.0-beta` (1.2.0-beta.1). Covers Trello #148, #183, and the raw-token
+link defects behind #142/#185/#209 and the new-since-beta.1 report finding — the
+cross-environment homepage clobber discovered by that same comparison pass.
+
+### Fixed
+
+- **Running a second legacy environment's migration after a first could wipe the
+  first environment's Matrix block content on any Craft Single shared across every
+  site (the Enreach homepage, most visibly).** `BlockIdentity::prune()` asked
+  `ElementWriter::siteIdsOf()` for every Craft site the owner entry has a row on —
+  install-wide, not just the environment currently running — so DE's own save saw
+  COM's five sites as "not in this run's keep-list" and hard-deleted their real,
+  independently-propagated blocks. `prune()` now intersects candidate sites with
+  the `SiteMap` already threaded through every call, scoped to the running
+  environment; a site outside that environment's own mapping is never a deletion
+  candidate.
+- **A remote-video `kuma_media` row (Vimeo/YouTube/Dailymotion oEmbed) mapped with
+  `| asset` was silently dropped, even though the loader has carried remote-video
+  support since 1.2.0-beta.1.** `MediaIndex` only ever indexed rows with a `url`,
+  and a remote-video row has none by construction (its target lives in `metadata`
+  instead) — `pathFor()` always answered null for it, and `BlockBuilder` read that
+  as a dangling reference. The `asset` transform now recognises a remote-video row
+  via `MediaIndex::isRemoteVideo()` and emits an id-shaped marker the loader already
+  knows how to resolve, instead of a path that was never going to exist.
+- **`mergeColumnGroups()` concatenated one context's rows before the other's**
+  instead of interleaving them row by row, so a section with two stacked rows per
+  side (`middle-left`: A, B; `middle-right`: C, D) produced columns paired (A, B)
+  then (C, D) instead of the legacy (A, C) then (B, D).
+- **An unresolvable `[NT<id>]` link in the `globals:` footer-navigation lane wrote
+  the raw token as the link's URL** instead of falling back to the node's manual
+  `kuma_redirects` target, the way every other link on the page already does since
+  1.2.0-beta.1 — this lane builds its links through a different path
+  (`GlobalsMigrationService`, not `BlockBuilder`) that never got the same fallback.
+- **A `[M<id>]` media/document token embedded inside an otherwise-complete URL
+  (Kunstmaan's "secure download" link builder, e.g. a PDF's
+  `?token=[M2317]`) was written to the migrated site verbatim.** `oneLink()` only
+  recognised `[NT<id>]` filling a URL's *entire* value; a `[M<id>]` token embedded
+  mid-string now resolves the referenced `kuma_media` row directly (through the
+  same JIT asset pipeline `| asset` uses) into a real Craft asset link, discarding
+  the legacy download-token plumbing it has no equivalent for.
+
 ## 1.2.0-beta.1 — 2026-09-02
 
 Twelve fixes for the Enreach migration, built on `release/1.1.0-beta` (1.1.0-beta.2 in
