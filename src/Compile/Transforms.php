@@ -353,6 +353,16 @@ final class Transforms
         }
     }
 
+    /**
+     * A `translatorFallback(...)` heading whose keyword has no `kuma_translation` row for the
+     * locale being compiled. The visible title is not hidden, so a blank field here is a real
+     * content gap, not a design choice: worth counting the same way a missing asset is.
+     */
+    public function recordMissingTranslation(?string $context, string $keyword, string $locale): void
+    {
+        $this->record('translatorFallback', sprintf('%s:%s', $keyword, $locale), 'unresolved', $context);
+    }
+
     private function record(string $transform, mixed $from, mixed $to, ?string $context): void
     {
         $this->lossReport[] = ['transform' => $transform, 'from' => $from, 'to' => $to, 'part' => $context];
