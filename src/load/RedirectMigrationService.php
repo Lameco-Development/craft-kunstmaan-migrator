@@ -324,6 +324,16 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         $kumaId = (int) ($row['id'] ?? 0);
         $stateKey = 'kuma:' . $kumaId;
 
+        // Best-effort site scope, same reasoning as `upsertRetourRedirect()`'s docblock:
+        // an admin-managed `kuma_redirects` row's `origin` usually carries the same
+        // "/{locale}/..." shape `stripLegacyLocalePrefix()` already reads for the
+        // destination side. A row whose origin has no recognisable locale prefix falls
+        // through to null (global), same as before this fix.
+        [, $srcLang] = $this->stripLegacyLocalePrefix($srcUrl, $sites);
+        $srcSiteId = $srcLang !== null && $sites->handleForLocale($srcLang) !== null
+            ? $sites->siteIdForHandle((string) $sites->handleForLocale($srcLang))
+            : null;
+
         $this->upsertRetourRedirect(
             srcUrl: $srcUrl,
             destUrl: $destUrl,
@@ -336,6 +346,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
                 'origin' => $origin,
                 'targetRaw' => $target,
             ],
+            siteId: $srcSiteId,
         );
     }
 
@@ -665,6 +676,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
                     'lang' => $lang,
                 ],
                 associatedElementId: $entryId,
+                siteId: $siteId,
             );
         }
     }
@@ -704,6 +716,17 @@ class RedirectMigrationService extends Component implements MigrationAdapter
      * passes its id back into saveRedirect to take the update branch
      * (Pitfall 5 avoidance per RESEARCH.md §3).
      *
+     * `$siteId` scopes the redirect to one Craft site rather than leaving it global
+     * (Retour's own `siteId = null` meaning). Two different legacy environments can
+     * each have their own page whose legacy URL happens to be the identical string
+     * (COM's own `en`-locale "enreach-contact" and LV's separate `en`-locale
+     * "enreach-contact" both normalise to `/en/products/enreach-contact`) — left
+     * global, migrating the second environment silently overwrote the first's
+     * correct redirect, because Retour has no way to tell the two apart without a
+     * site to scope on. Every caller that knows which site a redirect is for now
+     * passes it; a caller that genuinely cannot derive one (a `kuma_redirects` row
+     * with no recognisable locale prefix) still passes null, same as before.
+     *
      * @param array<string, mixed> $extraMeta merged into state row meta
      */
     private function upsertRetourRedirect(
@@ -715,6 +738,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         MigrationReport $report,
         array $extraMeta = [],
         ?int $associatedElementId = null,
+        ?int $siteId = null,
     ): void {
         if ($srcUrl === '' || $destUrl === '') {
             $report->incr('skipped');
@@ -729,7 +753,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             return;
         }
 
-        $existing = Retour::$plugin->redirects->getRedirectByRedirectSrcUrl($srcUrl, null);
+        $existing = Retour::$plugin->redirects->getRedirectByRedirectSrcUrl($srcUrl, $siteId);
 
         // Retour's StaticRedirects model has typed properties (int associatedElementId,
         // string hitLastTime) and no `redirectEnabled` property. Passing null / unknown
@@ -744,7 +768,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             'redirectMatchType' => 'exactmatch',
             'redirectDestUrl' => $destUrl,
             'redirectHttpCode' => $httpCode,
-            'siteId' => null,
+            'siteId' => $siteId,
             'associatedElementId' => $associatedElementId ?? 0,
             'hitCount' => 0,
             'enabled' => true,
