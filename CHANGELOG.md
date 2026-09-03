@@ -333,6 +333,29 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.4 — 2026-09-03
+
+Found re-verifying 1.2.0-beta.3's redirect fix against a full three-environment
+re-migration — a second, related bug in the same lane, built on
+`release/1.2.0-beta` (1.2.0-beta.3).
+
+### Fixed
+
+- **A redirect could be silently overwritten by a same-named redirect from a
+  different legacy environment.** `kuma_redirects.origin` and a section-move's
+  legacy URL are plain path strings with no environment marker, and every
+  Retour redirect the migrator wrote (or looked up) used `siteId = null` —
+  Retour's own "applies to every site" bucket. COM's own `en`-locale
+  "enreach-contact" page and LV's separate `en`-locale "enreach-contact" page
+  both normalise to `/en/products/enreach-contact`; migrating LV after COM
+  silently overwrote COM's correct redirect with LV's own, because nothing
+  told Retour the two were for different sites. `upsertRetourRedirect()` now
+  takes an explicit site id and passes it to both the existing-row lookup and
+  the saved record; threaded from every call site that can derive one.
+  Verified against the live corpus: the two environments' redirects for that
+  path now coexist as two site-scoped rows instead of one clobbering the
+  other.
+
 ## 1.2.0-beta.3 — 2026-09-03
 
 Found re-verifying 1.2.0-beta.2's fixes against the full three-environment Enreach
