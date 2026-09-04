@@ -649,6 +649,17 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             return;
         }
 
+        // Every entry this pass reads was written by the entry-save pass that just
+        // finished, in the same process. `upsertNodeMenuNode()`'s own `findById()`
+        // hits Craft's element cache, which still holds whatever it last cached for
+        // that id — nothing before this line ever cleared it. Node 47 ("Partner
+        // Tooling") measured the bug directly: `elements_sites.title` is correctly
+        // "Partner Tooling", but the title this pass wrote to the nav node was its
+        // own literal '(untitled)' fallback, because the cached read came back
+        // titleless. One invalidation here, not per node — the pass can read
+        // hundreds of nodes, and every one needs the same fresh state.
+        $this->elements()->invalidateCaches();
+
         // Resolve the primary-locale Kuma code (e.g. 'nl') for sort
         // ordering. Falls back to whatever the first sites map entry
         // points at, then to empty (which makes COALESCE fire below).

@@ -333,6 +333,25 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.7 — 2026-09-04
+
+Found live on staging after the first full (non-`--entries-only`) run: the mega-menu
+rendered a mix of real labels and Craft's own `(untitled)` fallback, built on
+`release/1.2.0-beta` (1.2.0-beta.6).
+
+### Fixed
+
+- **The NodeMenu pass read a stale, titleless copy of an entry the entry pass had
+  already saved.** Measured directly: kuma_node 47 ("Partner Tooling") resolves to
+  entry 15186, whose `elements_sites.title` is correctly "Partner Tooling" — but
+  `NavigationMigrationService::upsertNodeMenuNode()`'s own `findById()` call hit
+  Craft's element cache, still holding whatever it last cached for that id, and
+  nothing before this pass ever cleared it. `SeoMigrationService` and
+  `AssetMigrationService` already call `invalidateCaches()` periodically during
+  their own loops for the same class of problem; `migrateNodeMenu()` now does the
+  same once, before it starts reading entries — the whole pass can read hundreds
+  of nodes, all needing the same fresh state, not a clear before each one.
+
 ## 1.2.0-beta.6 — 2026-09-04
 
 Three Trello reports (#159, #137) turned into one shared engineering gap and one wrong

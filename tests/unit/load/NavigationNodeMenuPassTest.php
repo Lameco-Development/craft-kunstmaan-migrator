@@ -159,6 +159,32 @@ final class NavigationNodeMenuPassTest extends TestCase
         self::assertNotEmpty($nav->registeredNodeIds(), 'verbb reads a node from its temp registry, so registration must precede the save');
     }
 
+    /**
+     * Kuma node 47 ("Partner Tooling") measured the bug directly: a real entry
+     * with a real title, migrated moments earlier by the entry pass in the same
+     * process, and this pass still wrote its own '(untitled)' fallback — because
+     * `findById()` hit Craft's element cache, and nothing before this pass ever
+     * cleared it. `InMemoryElementWriter` cannot model a stale cache read, so
+     * this pins the fix at the level it can: the pass must invalidate before it
+     * starts reading entries, not leave that to whatever adapter happened to run
+     * before it.
+     */
+    public function testCachesAreInvalidatedBeforeEntriesAreReadSoAJustMigratedTitleIsNotStale(): void
+    {
+        $state = new InMemoryMigrationState();
+        $this->entryExistsFor($state, 2, 500);
+        $svc = $this->service(
+            new FakeLegacyDb([[$this->row(2, 1)]]),
+            $w = new InMemoryElementWriter(),
+            new InMemoryNavigationGateway(['mainNav' => self::NAV_ID]),
+            $state,
+        );
+
+        $this->runPass($svc, new MigrationReport());
+
+        self::assertGreaterThanOrEqual(1, $w->cacheInvalidations);
+    }
+
     public function testTheSavedNodeIsRecordedSoARerunUpdatesRatherThanDuplicates(): void
     {
         $state = new InMemoryMigrationState();
