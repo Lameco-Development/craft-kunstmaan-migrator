@@ -337,7 +337,12 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             return null;
         }
 
-        $stateKey = 'kuma_menu_item:' . $kumaItemId;
+        // Environment-scoped: `kuma_menu_item_id`, like `kuma_node_id`, only restarts at 1
+        // within one legacy environment's own database. A bare key here is the same
+        // cross-environment collision `resolveEntryIdForNode()` guards against for the
+        // entry it points a node AT — COM's and LV's own item 47 would otherwise share one
+        // saved NavNode, and whichever environment runs last overwrites the other's.
+        $stateKey = $environment . ':kuma_menu_item:' . $kumaItemId;
         $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
 
         $type = (string) ($item['type'] ?? '');
@@ -858,7 +863,16 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         MigrationOptions $opts,
         MigrationReport $report,
     ): ?int {
-        $stateKey = 'kuma_node:' . $kumaNodeId;
+        // Environment-scoped, for the same reason `resolveEntryIdForNode()` below tries
+        // `<ENV>:kuma_nodes` before anything else: `kuma_node_id` only restarts at 1
+        // within one legacy environment's own database. A bare key here collided on it
+        // anyway — COM's kuma_node 47 ("Partner Tooling") and LV's own, unrelated
+        // kuma_node 47 shared this exact state row, so LV's run (processed after COM's)
+        // overwrote COM's already-correct saved node with LV's entry id — one which has
+        // no title on COM's site at all, hence the literal '(untitled)' fallback below.
+        // Measured directly on the corpus: the saved node's elementId was LV's target,
+        // not COM's, and `kunstmaanmigrator_state` held both under the one bare key.
+        $stateKey = $environment . ':kuma_node:' . $kumaNodeId;
         $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
 
         $entryId = $this->resolveEntryIdForNode($kumaNodeId, $refId, $fqcn, $environment);

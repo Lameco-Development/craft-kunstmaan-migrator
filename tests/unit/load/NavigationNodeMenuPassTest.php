@@ -74,6 +74,7 @@ final class NavigationNodeMenuPassTest extends TestCase
         NavigationMigrationService $svc,
         MigrationReport $report,
         bool $dryRun = false,
+        string $environment = 'COM',
     ): void {
         (new ReflectionMethod($svc, 'migrateNodeMenu'))->invoke(
             $svc,
@@ -81,7 +82,7 @@ final class NavigationNodeMenuPassTest extends TestCase
             $this->sites(),
             self::PRIMARY_SITE_ID,
             'default',
-            'COM',
+            $environment,
             new MigrationOptions(dryRun: $dryRun),
             $report,
         );
@@ -199,8 +200,38 @@ final class NavigationNodeMenuPassTest extends TestCase
         $this->runPass($svc, new MigrationReport());
 
         self::assertCount(1, $state->recorded);
-        self::assertSame('kuma_node:2', $state->recorded[0]['key']);
+        self::assertSame('COM:kuma_node:2', $state->recorded[0]['key']);
         self::assertSame('navigation_node', $state->recorded[0]['targetType']);
+    }
+
+    /**
+     * `kuma_node_id` only restarts at 1 within one legacy environment's own database —
+     * measured directly on the live corpus: COM's node 47 ("Partner Tooling") and LV's
+     * own, unrelated node 47 both exist. `resolveEntryIdForNode()` already scopes its
+     * own entry lookup to `<ENV>:kuma_nodes`, but the pass's OWN saved-node identity
+     * (`$stateKey`) did not — so COM's and LV's node 2 shared one state row and one
+     * saved NavNode, and whichever environment ran second overwrote the first's node
+     * with its own (unrelated) entry and, since that entry has no title on the
+     * shared site, the literal `(untitled)` fallback.
+     */
+    public function testTwoEnvironmentsWithTheSameNumericKumaNodeIdDoNotShareASavedNode(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('COM:kuma_nodes', '2', 500);
+        $state->willResolve('LV:kuma_nodes', '2', 999);
+        $svc = $this->service(
+            new FakeLegacyDb([[$this->row(2, 1)], [$this->row(2, 1)]]),
+            $w = new InMemoryElementWriter(),
+            new InMemoryNavigationGateway(['mainNav' => self::NAV_ID]),
+            $state,
+        );
+
+        $this->runPass($svc, new MigrationReport(), environment: 'COM');
+        $this->runPass($svc, new MigrationReport(), environment: 'LV');
+
+        self::assertCount(2, $w->saved, 'each environment\'s own node 2 gets its own saved NavNode');
+        $elementIds = array_map(static fn(array $s): int => $s['element']->elementId, $w->saved);
+        self::assertSame([500, 999], $elementIds, 'COM\'s node keeps pointing at COM\'s entry after LV\'s run');
     }
 
     public function testANodeWhoseEntryHasNotMigratedYetIsSkippedWithAWarningRatherThanKillingThePass(): void

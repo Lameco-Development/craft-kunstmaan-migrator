@@ -391,7 +391,7 @@ final class NavigationMenuBundlePassTest extends TestCase
 
         self::assertSame(1, $report->counts['created'] ?? 0);
         self::assertCount(1, $state->recorded);
-        self::assertSame('kuma_menu_item:10', $state->recorded[0]['key']);
+        self::assertSame('COM:kuma_menu_item:10', $state->recorded[0]['key']);
         self::assertSame(self::NAV_ID, $state->recorded[0]['meta']['navId'] ?? null);
 
         // Per-locale isolation: every site other than the source one is
@@ -614,7 +614,7 @@ final class NavigationMenuBundlePassTest extends TestCase
     public function testARerunUpdatesTheExistingNodeInsteadOfCreatingASecond(): void
     {
         $state = new InMemoryMigrationState();
-        $state->willResolve('navigation', 'kuma_menu_item:10', 900);
+        $state->willResolve('navigation', 'COM:kuma_menu_item:10', 900);
         $writer = new InMemoryElementWriter();
         $writer->willFind(900, $this->bareNode(900));
         $svc = $this->service(

@@ -221,7 +221,7 @@ final class NavigationNodeMenuEdgeTest extends TestCase
         $existing = (new \ReflectionClass(NavNode::class))->newInstanceWithoutConstructor();
         $existing->id = 900;
         $state = new InMemoryMigrationState();
-        $state->willResolve('navigation', 'kuma_node:2', 900);
+        $state->willResolve('navigation', 'COM:kuma_node:2', 900);
         $this->entryExistsFor($state, 2, 500);
         $writer = new InMemoryElementWriter();
         $writer->willFind(900, $existing);

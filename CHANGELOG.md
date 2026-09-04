@@ -333,11 +333,36 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.8 — 2026-09-04
+
+Beta.7's cache-invalidation fix did not resolve the bug: re-verified directly against the
+same corpus and kuma_node 47 ("Partner Tooling") still saved as `(untitled)`, still linked
+to the wrong entry. `Elements::invalidateAllCaches()` only clears Craft's TagDependency-based
+data/template cache; `getElementById()` runs a fresh `ElementQuery::one()` on every call
+regardless, so there was nothing stale for it to invalidate.
+
+### Fixed
+
+- **The NodeMenu (and MenuBundle) pass's own saved-node identity collided across
+  environments.** `kuma_node_id`/`kuma_menu_item_id` only restart at 1 within one legacy
+  environment's own database — the same class of bug fixed earlier this cycle in
+  `RedirectMigrationService`, `Retour`'s upsert, and the SEO sidecar. `upsertNodeMenuNode()`'s
+  and `upsertNavNode()`'s state keys (`kuma_node:<id>`, `kuma_menu_item:<id>`) were not
+  scoped by environment, unlike the pass's own entry lookup (`resolveEntryIdForNode()`,
+  which already tries `<ENV>:kuma_nodes` first). COM's kuma_node 47 and LV's own,
+  unrelated kuma_node 47 shared one state row: LV's pass ran after COM's, found COM's
+  already-saved node through the bare key, and overwrote its `elementId` with LV's own
+  resolved entry — which has no title on the shared site, producing the literal
+  `(untitled)` fallback. Both state keys are now prefixed with the environment.
+
 ## 1.2.0-beta.7 — 2026-09-04
 
 Found live on staging after the first full (non-`--entries-only`) run: the mega-menu
 rendered a mix of real labels and Craft's own `(untitled)` fallback, built on
 `release/1.2.0-beta` (1.2.0-beta.6).
+
+**Superseded by 1.2.0-beta.8**: this diagnosis was wrong. The cache invalidation below is
+harmless but did not fix the bug; the real cause was a cross-environment state-key collision.
 
 ### Fixed
 
