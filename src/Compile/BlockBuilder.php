@@ -59,6 +59,14 @@ final class BlockBuilder
      */
     public function build(string $partClass, int $partId, array $spec, bool $hasExternalSubstance = false): ?array
     {
+        if (($spec['block'] ?? null) === null && isset($spec['switch'])) {
+            $spec = $this->applySwitch($spec, $partId);
+
+            if ($spec === null) {
+                return null;
+            }
+        }
+
         $table = $spec['table'] ?? null;
         $block = $spec['block'] ?? null;
 
@@ -94,6 +102,111 @@ final class BlockBuilder
         }
 
         return ['type' => (string) $block, 'fields' => $fields];
+    }
+
+    /**
+     * A `switch:` part names no `block:` of its own — it picks one per row, from a list of
+     * `when:`/`block:` cases plus a catch-all `else:`. Resolves the winning case and returns
+     * `$spec` with that case's `block:` spliced in, its `map:`/`children:` overriding the
+     * part's own when the case declares one — the two blocks a switch chooses between rarely
+     * share a field's shape (a photo slot is not an icon slot), so a case that says nothing
+     * inherits the shared map, one that does replaces it outright.
+     *
+     * @param array<string, mixed> $spec
+     * @return array<string, mixed>|null null when no case matches and there is no `else:`
+     */
+    private function applySwitch(array $spec, int $partId): ?array
+    {
+        $cases = is_array($spec['switch'] ?? null) ? array_values(array_filter($spec['switch'], is_array(...))) : [];
+
+        if ($cases === []) {
+            return null;
+        }
+
+        // Every case reads the same legacy child rows — they differ in target block and field
+        // map, never in which rows they read — so the probe collection is whichever case names
+        // one first, and its rows are what every `when:` is evaluated against.
+        $probeRows = [];
+
+        foreach ($cases as $case) {
+            foreach (is_array($case['children'] ?? null) ? $case['children'] : [] as $child) {
+                if (is_array($child) && isset($child['table'], $child['fk'])) {
+                    $probeRows = $this->parts->children(
+                        (string) $child['table'],
+                        (string) $child['fk'],
+                        $partId,
+                        (string) ($child['order'] ?? 'weight'),
+                    );
+
+                    break 2;
+                }
+            }
+        }
+
+        $winner = null;
+
+        foreach ($cases as $case) {
+            if (array_key_exists('else', $case)) {
+                $winner = $case;
+
+                break;
+            }
+
+            $when = $case['when'] ?? null;
+
+            if (is_string($when) && $this->evaluateSwitchCondition($when, $probeRows)) {
+                $winner = $case;
+
+                break;
+            }
+        }
+
+        if ($winner === null || !isset($winner['block'])) {
+            return null;
+        }
+
+        return [
+            ...$spec,
+            'block' => $winner['block'],
+            'map' => $winner['map'] ?? ($spec['map'] ?? []),
+            'children' => $winner['children'] ?? ($spec['children'] ?? []),
+            'firstChild' => $winner['firstChild'] ?? ($spec['firstChild'] ?? []),
+        ];
+    }
+
+    /**
+     * `children.all(item.<column> == null)` / `children.any(item.<column> != null)` — the only
+     * shape a `switch:` condition takes. Reads the named column straight off each probed row
+     * (before any transform), because the question a switch answers — which block, not what
+     * value — is decided on presence, not on a formatted result.
+     *
+     * @param list<array<string, mixed>> $rows
+     */
+    private function evaluateSwitchCondition(string $expression, array $rows): bool
+    {
+        if (preg_match('/^children\.(all|any)\(item\.(\w+)\s*(==|!=)\s*null\)$/', trim($expression), $m) !== 1) {
+            return false;
+        }
+
+        [, $quantifier, $column, $operator] = $m;
+
+        $isNull = static function (array $row) use ($column): bool {
+            $value = $row[$column] ?? null;
+
+            return $value === null || $value === '';
+        };
+
+        // `all()` over no rows is vacuously true, `any()` is false — the same convention an
+        // empty set gets everywhere else a `when:` might run.
+        if ($rows === []) {
+            return $quantifier === 'all';
+        }
+
+        $test = static fn(array $row): bool => $operator === '==' ? $isNull($row) : !$isNull($row);
+
+        return $quantifier === 'all'
+            ? array_reduce($rows, static fn(bool $carry, array $row): bool => $carry && $test($row), true)
+            : array_reduce($rows, static fn(bool $carry, array $row): bool => $carry || $test($row), false);
     }
 
     /**

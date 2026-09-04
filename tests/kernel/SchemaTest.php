@@ -200,12 +200,41 @@ final class SchemaTest extends TestCase
               COM: { database: legacy, locales: { en: comEnUs } }
             parts:
               Email: { block: contentBlock }
-            forms:
-              fields:
-                Email: { type: email }
+            unmapped:
+              parts:
+                Email: "dead on this corpus"
             YAML);
 
-        self::assertStringContainsString('claimed by both `parts` and `forms`', $errors[0]);
+        self::assertStringContainsString('claimed by both `parts` and `unmapped`', $errors[0]);
+    }
+
+    /**
+     * `forms` is not really a lane over the same rows: `FormCompiler` reads its own
+     * `PartReader::sequence()` scoped to the `form` context, and `parts` compilation only
+     * ever reads `contexts()`, which excludes `form` by construction — so the same class,
+     * `Header` say, can be a heading absorbed into a Page Builder block wherever it sits in
+     * `main`, and independently a Formie heading field wherever it sits in `form`. Trello
+     * #137: this collision is what actually blocked adding the second lane, not a missing
+     * `forms: fields:` entry.
+     */
+    #[Test]
+    public function a_class_claimed_by_both_parts_and_forms_is_not_ambiguous(): void
+    {
+        $errors = $this->validate(<<<'YAML'
+            version: 1
+            environments:
+              COM: { database: legacy, locales: { en: comEnUs } }
+            parts:
+              Header: { consumedBy: sequence }
+            forms:
+              fields:
+                Header: { type: heading }
+            YAML);
+
+        self::assertSame(
+            [],
+            array_values(array_filter($errors, static fn(string $e): bool => str_contains($e, 'claimed by both'))),
+        );
     }
 
     #[Test]

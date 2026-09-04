@@ -365,6 +365,62 @@ final class Schema
     }
 
     /**
+     * `switch:` — a list of `when:`/`block:` cases plus one catch-all `else:`, in place of a
+     * single `block:` when a part legitimately becomes different blocks depending on its own
+     * content. Each case names exactly one of `when:` or `else:`, never both and never
+     * neither — a case that could match nothing and fall through nothing is a mapping typo,
+     * not a decision. A case's own `map:`/`children:`/`firstChild:` (when it has one) get the
+     * same shape check `checkChildren` already runs for a part's shared ones.
+     *
+     * @param list<string> $errors
+     */
+    private function checkSwitch(string $subject, mixed $switch, array &$errors): void
+    {
+        if (!is_array($switch) || $switch === []) {
+            $errors[] = sprintf('%s: `switch:` is not a non-empty list', $subject);
+
+            return;
+        }
+
+        $sawElse = false;
+
+        foreach ($switch as $i => $case) {
+            $label = sprintf('%s, switch case #%d', $subject, (int) $i + 1);
+
+            if (!is_array($case)) {
+                $errors[] = sprintf('%s: not a mapping', $label);
+
+                continue;
+            }
+
+            if (($case['block'] ?? '') === '') {
+                $errors[] = sprintf('%s: missing `block:`', $label);
+            }
+
+            $hasWhen = isset($case['when']);
+            $hasElse = array_key_exists('else', $case);
+
+            if ($hasWhen === $hasElse) {
+                $errors[] = sprintf('%s: needs exactly one of `when:` or `else:`', $label);
+            }
+
+            if ($hasWhen && !is_string($case['when'])) {
+                $errors[] = sprintf('%s: `when:` is not a string', $label);
+            }
+
+            if ($hasElse) {
+                $sawElse = true;
+            }
+
+            $this->checkChildren($label, $case, $errors);
+        }
+
+        if (!$sawElse) {
+            $errors[] = sprintf('%s: no `else:` case — a row every `when:` misses has nowhere to go', $subject);
+        }
+    }
+
+    /**
      * Every `ref(<Entity>)` has to name something.
      *
      * A misspelled entity name compiles to no relation at all rather than to an error: the FK
@@ -613,6 +669,10 @@ final class Schema
 
         $this->checkChildren(sprintf('part `%s`', $class), $spec, $errors);
 
+        if (isset($spec['switch'])) {
+            $this->checkSwitch(sprintf('part `%s`', $class), $spec['switch'], $errors);
+        }
+
         // A promoted collection becomes entries elsewhere plus a relation back, so it
         // needs a destination and the field that points at it.
         foreach ($spec['promote'] ?? [] as $childTable => $promo) {
@@ -814,12 +874,26 @@ final class Schema
         }
     }
 
-    /** A class claimed by two lanes has an ambiguous target. @param list<string> $errors */
+    /**
+     * A class claimed by two lanes has an ambiguous target — EXCEPT `forms`, which is not
+     * really a lane over the same rows at all. `FormCompiler::compile()` reads its own
+     * `PartReader::sequence()` scoped to the `form` context (or the few pages `forms:
+     * overrides:` re-scope to `main`), and looks a part class up in `formFields()` alone —
+     * it never touches `parts()`. `parts` lane compilation only ever runs `contexts()`,
+     * which `defaults.contexts` deliberately excludes `form` from. So the same class name —
+     * `Header`, say — can be a `consumedBy: sequence` heading absorbed into a Page Builder
+     * block wherever it sits in `main`, and independently a Formie `heading` field wherever
+     * it sits in `form`: two different rows, two different contexts, two different compilers,
+     * never the same row read twice. `parts`/`globals`/`unmapped` still share one bucket —
+     * those three DO compete over the same context space (`unmapped:` is exactly "not sent
+     * to `parts:`", not a separate context).
+     *
+     * @param list<string> $errors
+     */
     private function checkLaneCollisions(Mapping $mapping, array &$errors): void
     {
         $lanes = [
             'parts' => array_keys($mapping->parts()),
-            'forms' => array_keys($mapping->formFields()),
             'globals' => array_keys($mapping->globalParts()),
             'unmapped' => array_keys($mapping->unmappedParts()),
         ];

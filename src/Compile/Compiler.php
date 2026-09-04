@@ -1108,7 +1108,9 @@ final class Compiler
 
         // Anything with no block to build is counted, so the run report names it; whether
         // that was a decision or a hole is the coverage report's distinction to draw.
-        if ($part === null || $part->block() === null) {
+        // `blocks()` (plural) covers a `switch:` part too — it names no single `block:`,
+        // only cases that resolve to one at build time.
+        if ($part === null || $part->blocks() === []) {
             $this->skip($emission['part']);
 
             return null;

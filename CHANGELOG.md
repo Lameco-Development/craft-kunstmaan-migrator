@@ -333,6 +333,42 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.6 — 2026-09-04
+
+Three Trello reports (#159, #137) turned into one shared engineering gap and one wrong
+cross-lane rule, built on `release/1.2.0-beta` (1.2.0-beta.5).
+
+### Added
+
+- **`switch:` — documented since `MAPPING-DSL.md`'s first draft, never implemented.**
+  `PartRow::switchCases()` already parsed a part's `switch:` cases; nothing evaluated one.
+  `BlockBuilder::build()` read `spec['block']` as a static string and returned early when a
+  switch-only part had none, and `Compiler::blockFor()`'s "does this part have a block" gate
+  read `PartRow::block()` (singular — also null for a switch part), so a switch part was
+  skipped before `build()` ever ran. Both fixed: a `when: children.any(item.<col> != null)`
+  / `children.all(...)` condition is evaluated against the same child rows every case reads,
+  the first match wins (`else:` is the catch-all), and the winning case's own `map:`/
+  `children:`/`firstChild:` replace the part's shared ones outright — the two blocks a
+  switch chooses between rarely share a field's shape. Mapped in enreach-craft-website:
+  `Feature`, whose highlight items mixed real photos and small icons under one
+  unconditional `iconCardsBlock` target — a photo now gets `cardsBlock`, whose `image` slot
+  is not sized for an icon. Verified against the live corpus: 12 iconCardsBlock instances
+  stay icon-based, 41 switch to cardsBlock.
+
+### Fixed
+
+- **A part class could not be claimed by both `parts` and `forms`, and the two lanes never
+  actually compete for a row.** `FormCompiler::compile()` reads its own `PartReader::sequence()`
+  scoped to the `form` context (or the few pages `forms: overrides:` re-scope to `main`); `parts`
+  compilation only ever reads `contexts()`, which `defaults.contexts` excludes `form` from by
+  construction. So `Header` — a `consumedBy: sequence` heading absorbed into a Page Builder
+  block wherever it sits in `main` — can independently be a Formie `heading` field wherever it
+  sits in `form`, and the schema's blanket cross-lane collision check refused that as
+  ambiguous. `parts`/`globals`/`unmapped` still share one collision bucket — those three do
+  compete over the same context space; `forms` does not, and is checked separately now.
+  Unblocks mapping `Header` into `forms: fields:` for PotionsLandingPage's "Book a Demo"-style
+  section titles, previously dropped with no lane at all.
+
 ## 1.2.0-beta.5 — 2026-09-04
 
 Built on `release/1.2.0-beta` (1.2.0-beta.4), from a Trello report (#215) that
