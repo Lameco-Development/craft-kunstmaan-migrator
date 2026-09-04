@@ -333,6 +333,35 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.5 — 2026-09-04
+
+Built on `release/1.2.0-beta` (1.2.0-beta.4), from a Trello report (#215) that
+`casePage`'s `body` and `results` fields arrived empty on every case.
+
+### Added
+
+- **`prose:`, a new page-row key, for an entry type with no Page Builder.**
+  `casePage` (D29) reads its narrative from the same kind of pagepart
+  sequence any other page does, but `contexts:` streams a sequence into
+  Matrix blocks — and `casePage.pageBuilder` does not exist, so every part
+  was dropped. `Compiler::site()` had said as much in a comment
+  ("casePage and partnerPage carry their own structured fields instead")
+  without doing it. `prose:` reads a context's sequence and concatenates it
+  into one HTML string for a plain field instead: a `Header` part folds
+  into `<h#>` (unwrapping the `<p>` Kunstmaan's own widget stores its title
+  in, so it does not nest inside the heading), a `Text` part contributes
+  its own `content | ckeditor`. Any other part class in the sequence — a
+  case's inline `Quote`, `RawHtml`, `Button`, `ContentMedia` and others,
+  measured on the Enreach corpus — is skipped and counted per type, the
+  same visibility a block type a field disallows already gets, rather than
+  silently dropped as before.
+  `results` stays unmapped: nothing in the legacy sequence marks where a
+  case's narrative ends and its results begin — the headings that occur
+  ("Summary", "Background", "Communications needs", ...) are per-case
+  prose, not a consistent section title — so recovering it needs an editor
+  to split the migrated `body` by hand, not a pattern the mapping can
+  infer.
+
 ## 1.2.0-beta.4 — 2026-09-03
 
 Found re-verifying 1.2.0-beta.3's redirect fix against a full three-environment

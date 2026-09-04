@@ -684,6 +684,19 @@ final class Compiler
             }
         }
 
+        // `prose:` reads its own contexts, separately from the `contexts()` loop above: those
+        // stream a sequence into Matrix blocks for a Page Builder, and casePage has none —
+        // D29 took it out on purpose (see docs/content-model/sections/casePage.md). The
+        // sequence is the same kind of pagepart list; the sink is one HTML string instead of
+        // a row of blocks.
+        foreach ($page->prose() as $context => $field) {
+            $html = $this->proseFor($parts, $builder, $translation, $context, $field);
+
+            if ($html !== null) {
+                $pageFields[$field] = $html;
+            }
+        }
+
         [$prependedBlocks, $builderBlocks] = $this->mergeColumnGroups(
             $columnGroups, $prependedBlocks, $builderBlocks, $environment, $translation,
         );
@@ -722,6 +735,95 @@ final class Compiler
         }
 
         return $site;
+    }
+
+    /**
+     * One `prose:` context, rendered as a single HTML string instead of a row of blocks.
+     *
+     * Reads the same ordered pagepart list `contexts()` would, but only two part classes
+     * are renderable prose: `Text` (its own `content | ckeditor` value, unwrapped) and
+     * `Header` (folded into an `<h#>` of its own — the concatenation IS the structure, so a
+     * heading has nowhere to be absorbed INTO the way it would inside a Page Builder). Any
+     * other part class in the sequence is skipped and counted, same as a block type a field
+     * disallows — silent narrowing here would just move D29's problem, not solve it.
+     */
+    private function proseFor(PartReader $parts, BlockBuilder $builder, array $translation, string $context, string $field): ?string
+    {
+        $sequence = $parts->sequence($translation['entity'], $translation['entityId'], $context);
+        $chunks = [];
+
+        foreach ($sequence as $entry) {
+            $part = $this->mapping->partRow($entry['part']);
+            $table = $part?->table();
+
+            if ($table === null) {
+                $this->skip(sprintf('prose:%s -> %s has no table', $entry['part'], $field));
+
+                continue;
+            }
+
+            $row = $parts->row($table, $entry['id']);
+
+            if ($row === null) {
+                continue;
+            }
+
+            $html = match ($entry['part']) {
+                'Text' => (string) ($builder->fieldsFrom(
+                    ['html' => 'content | ckeditor'],
+                    $row,
+                    $entry['part'],
+                    lang: $translation['lang'],
+                )['html'] ?? ''),
+                'Header' => $this->proseHeading($builder, $row, $entry['part'], (string) $translation['lang']),
+                default => null,
+            };
+
+            if ($html === null) {
+                $this->skip(sprintf('prose:%s not renderable — dropped from %s', $entry['part'], $field));
+
+                continue;
+            }
+
+            if ($html !== '') {
+                $chunks[] = $html;
+            }
+        }
+
+        $html = implode('', $chunks);
+
+        return $html !== '' ? $html : null;
+    }
+
+    /**
+     * A `Header` pagepart, folded into an `<h#>` for `proseFor()`.
+     *
+     * `title` is Kunstmaan's own rich-text widget output — always block-wrapped, usually in
+     * a bare `<p>` — so it is unwrapped first; nesting a `<p>` inside an `<h2>` is invalid
+     * HTML and every browser's parser silently closes the heading early to fix it.
+     */
+    private function proseHeading(BlockBuilder $builder, array $row, string $context, string $lang): string
+    {
+        $fields = $builder->fieldsFrom(
+            ['title' => 'title | inlineHtml', 'niv' => 'niv | titleLevel'],
+            $row,
+            $context,
+            lang: $lang,
+        );
+
+        $title = trim((string) ($fields['title'] ?? ''));
+
+        if ($title === '') {
+            return '';
+        }
+
+        $level = preg_match('/^h[1-6]$/', (string) ($fields['niv'] ?? '')) === 1
+            ? (string) $fields['niv']
+            : 'h2';
+
+        $title = preg_replace('#^<p>(.*)</p>$#s', '$1', $title) ?? $title;
+
+        return sprintf('<%1$s>%2$s</%1$s>', $level, $title);
     }
 
     /**

@@ -47,7 +47,7 @@ final class Schema
     private const CHILD_KEYS = ['table', 'fk', 'order', 'block', 'map', 'children', 'ignore', 'unreviewed', 'todo'];
 
     private const PAGE_KEYS = ['live', 'table', 'section', 'entryType', 'map', 'children', 'ignore',
-        'unreviewed', 'contexts', 'postDate', 'manual', 'drop', 'todo', 'note', ];
+        'unreviewed', 'contexts', 'prose', 'postDate', 'manual', 'drop', 'todo', 'note', ];
 
     private const ENTITY_KEYS = ['live', 'table', 'section', 'entryType', 'title', 'softDelete', 'dedupe',
         'single', 'children', 'map', 'ignore', 'unreviewed', 'todo', 'note', ];
@@ -247,6 +247,28 @@ final class Schema
         }
     }
 
+    /**
+     * `prose:` — unlike `contexts:`, there is no `field:`/`prepend:`/`enabledField:` shape
+     * to check: each entry is just `context: plain field handle`, because the target is one
+     * HTML string, not a Matrix a block can be prepended into or a switch can gate.
+     *
+     * @param list<string> $errors
+     */
+    private function checkProse(string $subject, mixed $prose, array &$errors): void
+    {
+        if (!is_array($prose)) {
+            $errors[] = sprintf('%s: `prose:` is not a mapping', $subject);
+
+            return;
+        }
+
+        foreach ($prose as $context => $field) {
+            if (!is_string($field) || $field === '') {
+                $errors[] = sprintf('%s, prose `%s`: not a non-empty field handle', $subject, $context);
+            }
+        }
+    }
+
     /** @param list<string> $errors */
     private function checkEnvironments(Mapping $mapping, array &$errors): void
     {
@@ -438,6 +460,10 @@ final class Schema
 
         if (isset($spec['contexts'])) {
             $this->checkContexts(sprintf('page `%s`', $name), $spec['contexts'], $errors);
+        }
+
+        if (isset($spec['prose'])) {
+            $this->checkProse(sprintf('page `%s`', $name), $spec['prose'], $errors);
         }
 
         if (!$completeness) {

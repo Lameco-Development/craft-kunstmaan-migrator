@@ -113,6 +113,27 @@ final class PageRow
     }
 
     /**
+     * Contexts read as concatenated rich text into a plain field, for an entry type with no
+     * Page Builder — `casePage`'s `body`, say. Distinct from `contexts()`: those stream a
+     * sequence into Matrix blocks; this renders the same kind of sequence into one HTML
+     * string, because the target field is `commonCkeditorDefault`, not a Matrix.
+     *
+     * @return array<string, string> context => plain field handle
+     */
+    public function prose(): array
+    {
+        $out = [];
+
+        foreach ($this->arrayOf('prose') as $context => $field) {
+            if (is_string($field) && $field !== '') {
+                $out[(string) $context] = $field;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * The Kunstmaan contexts this page's block stream is read from, each with the
      * Craft field it lands in. Every context has a `field`; the rest of the
      * target (`prepend:`) is passed through.
