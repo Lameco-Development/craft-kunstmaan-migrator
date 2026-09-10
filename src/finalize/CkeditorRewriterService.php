@@ -469,22 +469,43 @@ class CkeditorRewriterService extends Component
         return $this->ntToEntryCache[$ntId] ?? null;
     }
 
+    /**
+     * Media state keys are `{ENV}:kuma_media:{id}` — `kuma_media.id` restarts at
+     * 1 per legacy database, so the environment is part of the identity. This
+     * cache is keyed by the bare legacy id, which only holds within one
+     * environment, so it may only be warmed from that environment's own rows.
+     * The resolver is what knows which environment is running; without one there
+     * is nothing to scope against and the cache stays cold rather than adopting
+     * another environment's assets.
+     */
     private function warmKumaMediaCacheFromState(): void
     {
-        if ($this->migrationState === null) {
+        if (
+            $this->migrationState === null
+            || $this->assetResolver === null
+            || !method_exists($this->assetResolver, 'environmentName')
+        ) {
             $this->kumaMediaCacheWarm = true;
             return;
         }
+
+        $environment = (string) $this->assetResolver->environmentName();
+        if ($environment === '') {
+            $this->kumaMediaCacheWarm = true;
+            return;
+        }
+
+        $prefix = $environment . ':kuma_media:';
 
         foreach ($this->migrationState->all('media') as $row) {
             if (($row['targetType'] ?? null) !== 'asset' || empty($row['targetId'])) {
                 continue;
             }
             $sourceKey = (string) ($row['sourceKey'] ?? '');
-            if (!str_starts_with($sourceKey, 'kuma_media:')) {
+            if (!str_starts_with($sourceKey, $prefix)) {
                 continue;
             }
-            $kumaMediaId = (int) substr($sourceKey, strlen('kuma_media:'));
+            $kumaMediaId = (int) substr($sourceKey, strlen($prefix));
             if ($kumaMediaId > 0) {
                 $this->kumaMediaIdCache[$kumaMediaId] = (int) $row['targetId'];
             }
