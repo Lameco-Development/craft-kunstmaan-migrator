@@ -51,7 +51,7 @@ use yii\base\Component;
  *
  * Image id resolution: og_image_id / twitter_image_id are numeric
  * kuma_media primary keys; resolved to Craft numeric asset ids via
- * MigrationStateService::getTargetId('media', 'kuma_media:<id>').
+ * MigrationStateService::getTargetId('media', '<ENV>:kuma_media:<id>').
  * Unresolvable ids return null (caller is already warned via the Plan 03
  * asset scanner).
  *
@@ -69,10 +69,13 @@ class SeomaticPayloadBuilder extends Component
 
     /**
      * @param array<string, mixed>|null $seoRow
+     * @param string $environment the mapping's key for the legacy environment this
+     *                            row was read from — part of the media state key,
+     *                            because kuma_media ids collide across databases
      *
      * @return array<string, mixed>
      */
-    public function build(?array $seoRow, int $siteId): array
+    public function build(?array $seoRow, int $siteId, string $environment): array
     {
         $row = $seoRow ?? [];
 
@@ -82,7 +85,7 @@ class SeomaticPayloadBuilder extends Component
         // og_image_id → numeric Craft asset id via state. twitter_image_id
         // is resolved separately below in the twitter-overrides block (and
         // gated on differing from og_image — see comment there).
-        $ogImageId = $this->resolveMediaId($row['og_image_id'] ?? null);
+        $ogImageId = $this->resolveMediaId($row['og_image_id'] ?? null, $environment);
 
         $ogTitle = $this->str($row, 'og_title') ?: $metaTitle;
         $ogDescription = $this->str($row, 'og_description') ?: $metaDescription;
@@ -176,7 +179,7 @@ class SeomaticPayloadBuilder extends Component
         // twitterImage only when the source row has its own twitter image
         // AND it differs from og_image (avoids ~91% of redundant rows per
         // SEO-COVERAGE-DIAGNOSTIC.md — the `sameAsSeo` default covers them).
-        $rawTwitterImageId = $this->resolveMediaId($row['twitter_image_id'] ?? null);
+        $rawTwitterImageId = $this->resolveMediaId($row['twitter_image_id'] ?? null, $environment);
         if ($rawTwitterImageId !== null && $rawTwitterImageId !== $ogImageId) {
             $metaGlobalVars['twitterImage'] = (string) $rawTwitterImageId;
             $metaBundleSettings['twitterImageSource'] = 'fromAsset';
@@ -213,7 +216,7 @@ class SeomaticPayloadBuilder extends Component
         return $v === null ? '' : (string) $v;
     }
 
-    private function resolveMediaId(mixed $kumaMediaId): ?int
+    private function resolveMediaId(mixed $kumaMediaId, string $environment): ?int
     {
         if ($kumaMediaId === null || $kumaMediaId === '' || $kumaMediaId === 0) {
             return null;
@@ -222,20 +225,32 @@ class SeomaticPayloadBuilder extends Component
         if ($id <= 0) {
             return null;
         }
-        return $this->lookupCraftAssetId($id);
+        return $this->lookupCraftAssetId($id, $environment);
     }
 
-    private function lookupCraftAssetId(int $kumaMediaId): ?int
+    /**
+     * `kuma_media.id` restarts at 1 in every legacy database, so the environment
+     * that read the row is part of the asset's identity — `AssetMigrationService`
+     * writes the state row under `{ENV}:kuma_media:{id}` for that reason. Looking
+     * one up bare returned whichever environment migrated that id first: 23 DE
+     * pages on the Enreach corpus took their og:image from a COM asset that
+     * merely shared a primary key.
+     *
+     * An id this environment has not migrated now resolves to null — no image —
+     * rather than to the wrong one. That is a miss the asset scanner already
+     * warns about, and it is fixed by ingesting that environment's own media.
+     */
+    private function lookupCraftAssetId(int $kumaMediaId, string $environment): ?int
     {
         if ($this->resolver !== null) {
             $result = ($this->resolver)($kumaMediaId);
             return $result === null ? null : (int) $result;
         }
 
-        if ($this->migrationState === null) {
+        if ($this->migrationState === null || $environment === '') {
             return null;
         }
 
-        return $this->migrationState->getTargetId('media', 'kuma_media:' . $kumaMediaId);
+        return $this->migrationState->getTargetId('media', $environment . ':kuma_media:' . $kumaMediaId);
     }
 }
