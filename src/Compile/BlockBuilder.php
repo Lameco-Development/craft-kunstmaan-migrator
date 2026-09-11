@@ -190,7 +190,7 @@ final class BlockBuilder
 
         [, $quantifier, $column, $operator] = $m;
 
-        $isNull = static function (array $row) use ($column): bool {
+        $isNull = static function(array $row) use ($column): bool {
             $value = $row[$column] ?? null;
 
             return $value === null || $value === '';
