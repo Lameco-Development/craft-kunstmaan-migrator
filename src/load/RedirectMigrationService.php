@@ -166,6 +166,14 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
         $report->incr('compiled', count($records));
 
+        // An `--add-sites` run writes the redirect pages of the sites it adds, and no others.
+        [$records, $otherSites] = self::recordsForAddedSites($records, $opts->addSites);
+
+        if ($otherSites > 0) {
+            $report->incr('skipped', $otherSites);
+            $report->incr('redirects.otherSite', $otherSites);
+        }
+
         if ($opts->dryRun) {
             return $report;
         }
@@ -183,7 +191,7 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
                 $entry = $this->elements()->findById($entryId, Entry::class, $siteId);
 
-                return $entry === null || $entry->uri === null ? null : '/' . ltrim($entry->uri, '/');
+                return $entry === null ? null : self::destinationForUri($entry->uri);
             },
             function(string $from, string $to, int $code, string $key, array $meta) use ($opts): array {
                 $result = $this->importOne($from, $to, $code, $key, $meta, $opts->force);
@@ -295,9 +303,11 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             'SELECT id, origin, target, permanent FROM ' . $this->redirectsTable() . ' ORDER BY id',
         );
 
+        $addedSiteIds = $this->addedSiteIds($opts, $sites);
+
         foreach ($rows as $row) {
             try {
-                $this->importOneKumaRedirect($row, $sites, $environment, $opts, $report);
+                $this->importOneKumaRedirect($row, $sites, $environment, $opts, $report, $addedSiteIds);
             } catch (\Throwable $e) {
                 $report->incr('failed');
                 $report->warn(
@@ -315,8 +325,9 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
     /**
      * @param array<string, mixed> $row
+     * @param list<int> $addedSiteIds the sites an `--add-sites` run adds; empty on any other run
      */
-    private function importOneKumaRedirect(array $row, SiteMap $sites, string $environment, MigrationOptions $opts, MigrationReport $report): void
+    private function importOneKumaRedirect(array $row, SiteMap $sites, string $environment, MigrationOptions $opts, MigrationReport $report, array $addedSiteIds = []): void
     {
         $origin = (string) ($row['origin'] ?? '');
         $target = (string) ($row['target'] ?? '');
@@ -326,10 +337,6 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
 
         $srcUrl = $this->normalisePath($origin);
-        $destUrl = $this->resolveDestUrl($target, $sites, $environment);
-        $httpCode = ((int) ($row['permanent'] ?? 0) === 1) ? 301 : 302;
-        $kumaId = (int) ($row['id'] ?? 0);
-        $stateKey = 'kuma:' . $kumaId;
 
         // Best-effort site scope, same reasoning as `upsertRetourRedirect()`'s docblock:
         // an admin-managed `kuma_redirects` row's `origin` usually carries the same
@@ -340,6 +347,21 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         $srcSiteId = $srcLang !== null && $sites->handleForLocale($srcLang) !== null
             ? $sites->siteIdForHandle((string) $sites->handleForLocale($srcLang))
             : null;
+
+        // An `--add-sites` run writes the redirects of the sites it adds. Retour lacking one
+        // for another site means an editor deleted it or the first run never wrote it, and
+        // this run cannot tell which, so it leaves the row alone.
+        if ($opts->addSites !== [] && !self::siteIsBeingAdded($srcSiteId, $addedSiteIds)) {
+            $report->incr('skipped');
+            $report->incr('redirects.otherSite');
+
+            return;
+        }
+
+        $destUrl = $this->resolveDestUrl($target, $sites, $environment);
+        $httpCode = ((int) ($row['permanent'] ?? 0) === 1) ? 301 : 302;
+        $kumaId = (int) ($row['id'] ?? 0);
+        $stateKey = 'kuma:' . $kumaId;
 
         $this->upsertRetourRedirect(
             srcUrl: $srcUrl,
@@ -434,8 +456,9 @@ class RedirectMigrationService extends Component implements MigrationAdapter
                 continue;
             }
             $entry = $this->elements()->findById($entryId, Entry::class, $siteId);
-            if ($entry !== null && $entry->uri !== null) {
-                return '/' . ltrim($entry->uri, '/');
+            $destination = $entry === null ? null : self::destinationForUri($entry->uri);
+            if ($destination !== null) {
+                return $destination;
             }
         }
 
@@ -636,6 +659,10 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
 
         foreach ($sites->configured() as $lang => $handle) {
+            if ($opts->addSites !== [] && !in_array((string) $handle, $opts->addSites, true)) {
+                continue;
+            }
+
             $legacyUrl = $legacyUrls[$lang] ?? null;
 
             if ($legacyUrl === null) {
@@ -874,6 +901,82 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             ->one();
 
         return is_array($row) ? $row : null;
+    }
+
+    /**
+     * The Retour destination for an entry's URI, or null when the entry has none.
+     *
+     * The home page's URI is Craft's `__home__` sentinel, not a path. Written as a path it
+     * became a redirect to `/__home__`, which Retour prefixes with the requesting site's
+     * base path and which then 404s on every site. Retour resolves a relative destination
+     * on the site the request came in on, so the home page is `/`.
+     */
+    public static function destinationForUri(?string $uri): ?string
+    {
+        if ($uri === null) {
+            return null;
+        }
+
+        return $uri === Element::HOMEPAGE_URI ? '/' : '/' . ltrim($uri, '/');
+    }
+
+    /**
+     * The compiled redirect-page records a run writes, and how many it leaves out.
+     *
+     * An `--add-sites` run writes the records of the sites it adds. A redirect page on another
+     * site that Retour lacks was either deleted by an editor or never written by the first
+     * run, and this run cannot tell which. Without `--add-sites` every record passes, and so
+     * does a record without a site handle, so the load still reports it as malformed.
+     *
+     * @param list<mixed> $records
+     * @param list<string> $addSites
+     * @return array{0: list<mixed>, 1: int}
+     */
+    public static function recordsForAddedSites(array $records, array $addSites): array
+    {
+        if ($addSites === []) {
+            return [$records, 0];
+        }
+
+        $kept = array_values(array_filter(
+            $records,
+            static fn(mixed $record): bool => !is_array($record)
+                || !is_string($record['siteHandle'] ?? null)
+                || in_array($record['siteHandle'], $addSites, true),
+        ));
+
+        return [$kept, count($records) - count($kept)];
+    }
+
+    /**
+     * Whether an `--add-sites` run writes a redirect scoped to this site. A global redirect,
+     * with no site, belongs to none of the added sites.
+     *
+     * @param list<int> $addedSiteIds
+     */
+    public static function siteIsBeingAdded(?int $siteId, array $addedSiteIds): bool
+    {
+        return $siteId !== null && in_array($siteId, $addedSiteIds, true);
+    }
+
+    /**
+     * The ids of the sites an `--add-sites` run adds, as this environment maps them.
+     *
+     * @return list<int>
+     */
+    private function addedSiteIds(MigrationOptions $opts, SiteMap $sites): array
+    {
+        $ids = [];
+
+        foreach ($opts->addSites as $handle) {
+            $id = $sites->siteIdForHandle($handle);
+
+            if ($id !== null) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
     }
 
     /**

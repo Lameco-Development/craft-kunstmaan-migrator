@@ -280,7 +280,10 @@ written, and clears Craft's copy of the primary's SEO only on a row the entry
 pass has just added. The redirect pass creates redirects and leaves every
 existing one alone — an earlier run's, an editor's, or one Retour made itself
 — and Retour's own URI-change redirects are off while a run is in progress,
-since every URI a run passes through would otherwise become one. The
+since every URI a run passes through would otherwise become one. With
+`--add-sites` it writes only the redirects of the sites named: a legacy
+redirect for another site that Retour lacks may be one an editor deleted, so
+it is left out and counted as `redirects.otherSite`. The
 navigation pass adds nodes and leaves the ones an earlier run made — their
 title, link, status and place in the tree — as they are. The translation pass
 adds missing keys to the catalogs and to the CP translations without
