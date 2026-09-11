@@ -333,6 +333,29 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.10 — 2026-09-11
+
+Two redirect defects, found checking the service-provider site on the Enreach
+staging copy before it replaced staging's database.
+
+### Fixed
+
+- **A redirect to the home page lands on it.** The redirect-page lane and the
+  legacy redirects table wrote the target entry's URI as the destination, and
+  the home page's URI is Craft's `__home__` sentinel. Retour received
+  `/__home__`, prefixed it with the requesting site's base path and answered
+  404. The home page is now `/`, which Retour resolves to the home page of the
+  site the request came in on. Both PartnerConnect redirects on Enreach
+  pointed at `/__home__`, one of them since the first migration.
+- **`--add-sites` keeps the redirect pass to the sites it names.** The pass
+  wrote every legacy redirect Retour lacked, on any site: adding `comSp` also
+  wrote an English redirect that the first run never wrote or an editor had
+  deleted since. With `--add-sites`, a redirect page is written only on an
+  added site, a `kuma_redirects` row only when the locale of its origin maps
+  to one (a row without a locale is global and left out), and section moves
+  only on those sites. What is left out counts as `skipped` and
+  `redirects.otherSite`. A run without `--add-sites` is unchanged.
+
 ## 1.2.0-beta.9 — 2026-09-11
 
 Found adding the Enreach service-provider site (`sp`, misread as Spanish and
