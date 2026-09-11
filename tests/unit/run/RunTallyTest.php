@@ -123,6 +123,22 @@ final class RunTallyTest extends TestCase
         self::assertSame(1, $tally->counts['updated']);
     }
 
+    public function testAnExistingEntryThatGainedASiteIsCountedAsSuchNotAsSkipped(): void
+    {
+        // A run that added the service-provider site to 1,100 existing Enreach entries
+        // reported them as skipped beside "updated: 0" — true of the rows it left alone,
+        // and silent about the one it wrote.
+        $tally = new RunTally();
+
+        $tally->absorb(new SaveResult('kuma:COM:nt_page:7', 70, false, [], sitesAdded: true), refreshesExisting: false);
+        $tally->absorb(new SaveResult('kuma:COM:nt_page:8', 80, false, []), refreshesExisting: false);
+        $tally->absorb(new SaveResult('kuma:COM:nt_page:9', 90, false, [], sitesAdded: true), refreshesExisting: true);
+
+        self::assertSame(1, $tally->counts['sitesAdded']);
+        self::assertSame(1, $tally->counts['skipped']);
+        self::assertSame(1, $tally->counts['updated'], 'under --force the whole entry was refreshed, which says more');
+    }
+
     public function testUnresolvedAssetsKeepEveryOccurrenceAndOfferTheDistinctReferences(): void
     {
         $tally = new RunTally();

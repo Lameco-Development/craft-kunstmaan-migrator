@@ -191,6 +191,7 @@ final class PayloadEntrySaver
             $this->options->force,
             null,
             $tally,
+            $this->options->addSites,
         );
 
         // A Craft Address supports the primary site and no other, so an address on a payload
@@ -221,7 +222,13 @@ final class PayloadEntrySaver
         // no field. Recording that resolution would erase a deferral the entry still needs —
         // a resumed run did exactly that to a placeholder whose parent existed by the time
         // the run came back round, and the fixup pass then had nothing to repair.
-        $untouched = $wasAlreadySaved && !$this->options->force && (int) $entry->id === $existingEntryId;
+        //
+        // A site added to the existing entry counts as written: its parent ref, resolved
+        // above, went into that site's row, and a deferral it still carries is this run's.
+        $untouched = $wasAlreadySaved
+            && !$this->options->force
+            && (int) $entry->id === $existingEntryId
+            && !$this->entryService->lastSaveWrote();
         $meta = $untouched ? [] : ['pendingRefs' => $deferredRefs];
 
         // What the SEO pass looks for. `SeoMigrationService` reads `refIdsByLocale` — its own
@@ -266,6 +273,7 @@ final class PayloadEntrySaver
             unresolvedAssets: $unresolvedAssets,
             mediaTokenIssues: $mediaTokenIssues,
             droppedAddresses: $droppedAddresses,
+            sitesAdded: $wasAlreadySaved && !$this->options->force && $this->entryService->lastSaveWrote(),
         );
     }
 

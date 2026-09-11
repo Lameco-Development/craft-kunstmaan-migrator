@@ -219,6 +219,7 @@ final class FixupFakeEntryMigrationService extends EntryMigrationService
         bool $force = false,
         ?MigrationReport $report = null,
         ?RunTally $tally = null,
+        array $addSites = [],
     ): Entry {
         /** @var Entry $entry */
         $entry = (new ReflectionClass(Entry::class))->newInstanceWithoutConstructor();

@@ -205,13 +205,16 @@ class LoadController extends Controller
 
                 return '/' . ltrim($entry->uri, '/');
             },
-            static function(string $srcUrl, string $destUrl, int $httpCode, string $stateKey, array $extraMeta) use ($plugin): array {
-                $result = $plugin->redirectMigrationService->importOne($srcUrl, $destUrl, $httpCode, $stateKey, $extraMeta);
+            function(string $srcUrl, string $destUrl, int $httpCode, string $stateKey, array $extraMeta) use ($plugin): array {
+                $result = $plugin->redirectMigrationService->importOne($srcUrl, $destUrl, $httpCode, $stateKey, $extraMeta, $this->force);
                 if (($result->counts['created'] ?? 0) > 0) {
                     return ['outcome' => 'created'];
                 }
                 if (($result->counts['updated'] ?? 0) > 0) {
                     return ['outcome' => 'updated'];
+                }
+                if (($result->counts['skipped'] ?? 0) > 0) {
+                    return ['outcome' => 'skipped'];
                 }
 
                 return ['outcome' => 'failed', 'message' => $result->warnings[0] ?? 'Retour refused to save the redirect.'];
@@ -331,6 +334,9 @@ class LoadController extends Controller
                 $created++;
             } elseif (($outcome['outcome'] ?? null) === 'updated') {
                 $updated++;
+            } elseif (($outcome['outcome'] ?? null) === 'skipped') {
+                // A redirect with this source already exists and the run does not rewrite it.
+                $skipped++;
             } else {
                 $report[] = [
                     'from' => $from,

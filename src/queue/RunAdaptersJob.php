@@ -32,6 +32,9 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
     public array $remainingEnvironments = [];
     public bool $dryRun = false;
     public bool $force = false;
+
+    /** @var list<string> site handles to add to existing entries without `force` */
+    public array $addSites = [];
     public bool $entriesOnly = false;
     /** @var list<string>|null */
     public ?array $only = null;
@@ -92,6 +95,7 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
                 'remainingEnvironments' => array_values(array_slice($this->remainingEnvironments, 1)),
                 'dryRun' => $this->dryRun,
                 'force' => $this->force,
+                'addSites' => $this->addSites,
                 'entriesOnly' => $this->entriesOnly,
                 'only' => $this->only,
                 'chainCorpusPasses' => $this->chainCorpusPasses,

@@ -45,6 +45,9 @@ final class InMemoryElementWriter implements ElementWriter
      */
     public array $reads = [];
 
+    /** @var list<array{id:int, siteId:int}> every propagateTo(), in call order */
+    public array $propagated = [];
+
     /** How many times a module asked which sites an element has a row on. */
     public int $siteLookups = 0;
 
@@ -214,6 +217,22 @@ final class InMemoryElementWriter implements ElementWriter
         $this->reads[] = ['id' => $id, 'siteId' => $siteId];
 
         return $this->findable[$this->key($id, $siteId)] ?? $this->findable[$this->key($id, null)] ?? null;
+    }
+
+    /**
+     * As Craft does it: the site's row is a clone of the instance given, which is what
+     * hands a new site the primary's blocks as ghosts for `BlockIdentity::reconcile()`.
+     */
+    public function propagateTo(ElementInterface $element, int $siteId): void
+    {
+        $this->propagated[] = ['id' => (int) $element->id, 'siteId' => $siteId];
+        $this->sitesOf[(int) $element->id][$siteId] = true;
+
+        if (!isset($this->findable[$this->key((int) $element->id, $siteId)])) {
+            $clone = clone $element;
+            $clone->siteId = $siteId;
+            $this->findable[$this->key((int) $element->id, $siteId)] = $clone;
+        }
     }
 
     public function invalidateCaches(): void

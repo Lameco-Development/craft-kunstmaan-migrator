@@ -191,6 +191,11 @@ final class CraftElementWriter implements ElementWriter
         return Craft::$app->elements->getElementById($id, $class, $siteId);
     }
 
+    public function propagateTo(ElementInterface $element, int $siteId): void
+    {
+        Craft::$app->elements->propagateElement($element, $siteId);
+    }
+
     public function invalidateCaches(): void
     {
         Craft::$app->elements->invalidateAllCaches();

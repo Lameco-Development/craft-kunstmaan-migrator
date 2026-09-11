@@ -658,6 +658,10 @@ final class RefusingDeleteWriter implements ElementWriter
         return null;
     }
 
+    public function propagateTo(ElementInterface $element, int $siteId): void
+    {
+    }
+
     public function invalidateCaches(): void
     {
     }

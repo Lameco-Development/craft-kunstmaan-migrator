@@ -14,6 +14,7 @@ use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\RetourUriChangeGuard;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
@@ -73,6 +74,9 @@ final class EnvironmentPipeline
      */
     public static function build(Mapping $mapping, RunSettings $settings): self
     {
+        // Every run — console, queued environment or adapters job — builds its pipeline here.
+        RetourUriChangeGuard::suspend();
+
         $gateway = new CraftSchemaGateway();
         $plugin = Plugin::getInstance();
         $transforms = new Transforms($mapping->all()['transforms'] ?? []);
@@ -399,6 +403,7 @@ final class EnvironmentPipeline
         return new MigrationOptions(
             dryRun: $settings->dryRun,
             force: $settings->force,
+            addSites: $settings->addSites,
             skipAssets: $settings->skipAssets,
         );
     }

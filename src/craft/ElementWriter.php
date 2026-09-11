@@ -153,6 +153,14 @@ interface ElementWriter
     public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface;
 
     /**
+     * Give an existing element a row on a site it does not live on yet, cloned from the
+     * instance given — Craft's `propagateElement()`. A save with `propagate=false` never
+     * creates one, and a section with custom propagation admits the element onto the site
+     * only when its per-site status map names it, so set that first.
+     */
+    public function propagateTo(ElementInterface $element, int $siteId): void;
+
+    /**
      * Invalidates Craft's element caches after a bulk write.
      */
     public function invalidateCaches(): void;

@@ -250,6 +250,7 @@ media in rich text, and the URI pass settles every Structure entry's URL.
 | `--only=PartnerPage` | one page type / entity, comma separated |
 | `--limit=N` | stop after N entries |
 | `--force` | re-save entries that already exist |
+| `--add-sites=comSp` | write these sites onto entries that already exist, without `--force` — for a locale mapped after the first run (see below) |
 | `--entries-only` | skip the adapters, the fixup, finalize and URI passes |
 | `--finalize-only` | run the finalize pass alone (idempotent, safe to re-run) |
 | `--queue` | hand the run to Craft's queue as one chained sequence: each environment runs in ~50-node batches, its last batch pushes that environment's adapters, which push the next environment, with the fixup, finalize and URI passes chained after the last one — see **Running from the control panel** below |
@@ -257,6 +258,36 @@ media in rich text, and the URI pass settles every Structure entry's URL.
 | `--fail-on-loss` | exit non-zero when the run lost content, not only when it failed |
 | `--resave` | also re-save every migrated section with Craft's `resave/entries` when the run finishes (off by default; see below) |
 | `--allow-drift` | run even though the legacy corpus has grown past the mapping |
+
+**A locale mapped after the first run.** A re-run leaves an entry that already
+exists alone unless `--force` says otherwise — and `--force` rewrites every
+site of every entry from the legacy database, over whatever editors changed
+since. A site the payload names that the entry has no row on is the
+exception: it is written on its own, with the locale's content, and the
+rows the entry already has are not saved. Sections that propagate to every
+site (`all`, `siteGroup`) give a new site its rows the moment the site is
+added — copies of the primary — so for those the run cannot tell a row it
+never wrote from one it did; name the site with `--add-sites=<handle>` and
+it is written the same way. So the whole of "add a site later" is: create
+the Craft site, map the locale to it, run the environment once with
+`--add-sites` naming it.
+
+**Without `--force`, a run adds and never rewrites** — in every pass, not only
+the entries. A site added to an existing entry leaves the entry where it is in
+the structure and keeps its post date, expiry date and authors, which Craft
+stores once for all sites. The SEO pass writes only the site rows it has never
+written, and clears Craft's copy of the primary's SEO only on a row the entry
+pass has just added. The redirect pass creates redirects and leaves every
+existing one alone — an earlier run's, an editor's, or one Retour made itself
+— and Retour's own URI-change redirects are off while a run is in progress,
+since every URI a run passes through would otherwise become one. The
+navigation pass adds nodes and leaves the ones an earlier run made — their
+title, link, status and place in the tree — as they are. The translation pass
+adds missing keys to the catalogs and to the CP translations without
+overwriting any, and the finalize pass saves a row only when it resolved
+something in it. `--force` is the one way to refresh
+existing content from the legacy database, and it overwrites whatever editors
+changed since.
 
 **The run settles its own URLs.** A Structure entry's URI is its parent's URI
 plus its slug, computed at save time — and the parent is not always written

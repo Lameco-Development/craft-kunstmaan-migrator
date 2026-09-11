@@ -24,6 +24,8 @@ final class RunSettings
         public readonly ?string $dumpDir = null,
         /** Skip the asset stage entirely. */
         public readonly bool $skipAssets = false,
+        /** @var list<string> site handles to add to existing entries without `force` */
+        public readonly array $addSites = [],
     ) {
     }
 

@@ -79,6 +79,18 @@ final class MigrateController extends Controller
     /** Refresh entries that already exist. */
     public bool $force = false;
 
+    /**
+     * Craft site handles to write onto entries that already exist, comma separated — without
+     * `--force`, so nothing else on those entries is touched.
+     *
+     * A locale mapped after the first run has its pages already in Craft: a re-run finds them
+     * through the state table and leaves them alone, new site included. Without this flag the
+     * run still writes a named site the entry has no row on; this flag extends that to the
+     * rows Craft made on its own when the site joined a section that propagates to it
+     * (`all`, `siteGroup`) — copies of the primary that carry none of the locale's content.
+     */
+    public ?string $addSites = null;
+
     /** Compile and report without writing to Craft. */
     public bool $dryRun = false;
 
@@ -185,7 +197,7 @@ final class MigrateController extends Controller
         return array_merge(
             parent::options($actionID),
             [
-                'mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'entriesOnly',
+                'mapping', 'legacyEnv', 'limit', 'force', 'addSites', 'dryRun', 'dump', 'entriesOnly',
                 'finalizeOnly', 'only', 'queue', 'failOnLoss', 'skipAssets', 'resave',
                 'allowDrift',
             ],
@@ -257,6 +269,7 @@ final class MigrateController extends Controller
             only: $only,
             dumpDir: $this->dump,
             skipAssets: $this->skipAssets,
+            addSites: $this->csvList($this->addSites),
         );
 
         // Finalize compiles nothing and needs no target schema, but it does need the legacy
@@ -312,6 +325,7 @@ final class MigrateController extends Controller
                 'limit' => $this->limit,
                 'entriesOnly' => $this->entriesOnly,
                 'only' => $only,
+                'addSites' => $this->csvList($this->addSites),
                 'chainCorpusPasses' => true,
                 'fullCorpus' => $fullCorpus,
                 'mappingHash' => sha1((string) file_get_contents($this->mapping)),
@@ -640,13 +654,19 @@ final class MigrateController extends Controller
     /** @return ?list<string> */
     private function onlyList(): ?array
     {
-        if ($this->only === null || trim($this->only) === '') {
-            return null;
-        }
-
-        $names = array_values(array_filter(array_map(trim(...), explode(',', $this->only)), static fn(string $n): bool => $n !== ''));
+        $names = $this->csvList($this->only);
 
         return $names === [] ? null : $names;
+    }
+
+    /** @return list<string> */
+    private function csvList(?string $raw): array
+    {
+        if ($raw === null || trim($raw) === '') {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(trim(...), explode(',', $raw)), static fn(string $n): bool => $n !== ''));
     }
 
     private function writerFor(string $env): PayloadWriter

@@ -159,11 +159,18 @@ final class RunTally
     /**
      * Everything one save reported, in one place — so no reader can drop half
      * of it. Which count a non-created entry lands in depends on whether the
-     * saver refreshes existing entries (`--force`).
+     * saver refreshes existing entries (`--force`), and otherwise on whether it
+     * gained a site: `sitesAdded` is an existing entry that was otherwise left
+     * alone, which a report of 0 updated and 1,837 skipped used to hide.
      */
     public function absorb(SaveResult $result, bool $refreshesExisting): void
     {
-        $this->count($result->created ? 'created' : ($refreshesExisting ? 'updated' : 'skipped'));
+        $this->count(match (true) {
+            $result->created => 'created',
+            $refreshesExisting => 'updated',
+            $result->sitesAdded => 'sitesAdded',
+            default => 'skipped',
+        });
 
         foreach ($result->unresolvedAssets as $entry) {
             $this->unresolvedAssets[] = ['sourceUid' => $result->sourceUid] + $entry;

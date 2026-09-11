@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\load\NavigationMigrationService;
 use Lameco\Kunstmaanmigrator\tests\support\FakeLegacyDb;
@@ -48,9 +49,32 @@ final class NavigationParentLinkageTest extends TestCase
         return $node;
     }
 
-    private function link(NavigationMigrationService $svc, array $itemToNodeId, MigrationReport $report): void
+    /**
+     * The linkage mechanics, in isolation. With `force` every migrated child is placed; without
+     * it only the nodes this run created are, and a unit call has created none.
+     */
+    private function link(NavigationMigrationService $svc, array $itemToNodeId, MigrationReport $report, bool $force = true): void
     {
-        (new ReflectionMethod($svc, 'applyParentLinkage'))->invoke($svc, $itemToNodeId, $report);
+        (new ReflectionMethod($svc, 'applyParentLinkage'))->invoke($svc, $itemToNodeId, $report, new MigrationOptions(force: $force));
+    }
+
+    public function testWithoutForceANodeAnEarlierRunMadeKeepsItsPlace(): void
+    {
+        // An editor may have moved the node since the first run; re-parenting it under its
+        // legacy parent would undo that on every site that shares the nav's structure.
+        $writer = new InMemoryElementWriter();
+        $writer->willFind(200, $this->node(200));
+        $report = new MigrationReport();
+
+        $this->link(
+            $this->service($writer, new FakeLegacyDb([[['id' => 2, 'parent_id' => 1]]])),
+            [1 => 100, 2 => 200],
+            $report,
+            force: false,
+        );
+
+        self::assertSame([], $writer->saved, 'no structure move for a node this run did not create');
+        self::assertSame([], $report->warnings);
     }
 
     public function testAChildWhoseNodeCannotBeFoundIsNotSaved(): void

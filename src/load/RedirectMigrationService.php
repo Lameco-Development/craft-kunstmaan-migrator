@@ -185,8 +185,8 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
                 return $entry === null || $entry->uri === null ? null : '/' . ltrim($entry->uri, '/');
             },
-            function(string $from, string $to, int $code, string $key, array $meta): array {
-                $result = $this->importOne($from, $to, $code, $key, $meta);
+            function(string $from, string $to, int $code, string $key, array $meta) use ($opts): array {
+                $result = $this->importOne($from, $to, $code, $key, $meta, $opts->force);
 
                 if (($result->counts['created'] ?? 0) > 0) {
                     return ['outcome' => 'created'];
@@ -194,6 +194,10 @@ class RedirectMigrationService extends Component implements MigrationAdapter
 
                 if (($result->counts['updated'] ?? 0) > 0) {
                     return ['outcome' => 'updated'];
+                }
+
+                if (($result->counts['skipped'] ?? 0) > 0) {
+                    return ['outcome' => 'skipped'];
                 }
 
                 return ['outcome' => 'failed', 'message' => $result->warnings[0] ?? 'Retour refused to save the redirect.'];
@@ -271,9 +275,12 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         int $httpCode,
         string $stateKey,
         array $extraMeta = [],
+        bool $force = false,
     ): MigrationReport {
         $report = new MigrationReport();
-        $this->upsertRetourRedirect($srcUrl, $destUrl, $httpCode, $stateKey, new MigrationOptions(), $report, $extraMeta);
+        // Without `force` an existing redirect with this source is left alone and counted as
+        // skipped — the same as every other write in a run without `--force`.
+        $this->upsertRetourRedirect($srcUrl, $destUrl, $httpCode, $stateKey, new MigrationOptions(force: $force), $report, $extraMeta);
 
         return $report;
     }
@@ -753,8 +760,6 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             return;
         }
 
-        $existing = Retour::$plugin->redirects->getRedirectByRedirectSrcUrl($srcUrl, $siteId);
-
         // Retour's StaticRedirects model has typed properties (int associatedElementId,
         // string hitLastTime) and no `redirectEnabled` property. Passing null / unknown
         // keys triggers TypeError / UnknownPropertyException inside new StaticRedirectsModel($config)
@@ -773,6 +778,20 @@ class RedirectMigrationService extends Component implements MigrationAdapter
             'hitCount' => 0,
             'enabled' => true,
         ];
+
+        $existing = Retour::$plugin->redirects->getRedirectByRedirectSrcUrl($srcUrl, $siteId)
+            ?: $this->rowSaveRedirectWouldOverwrite($config);
+
+        // Without `--force` a run adds redirects; it does not rewrite them. A redirect with this
+        // source already exists — an earlier run's, an editor's, or one Retour made itself when
+        // a URI changed — and any of the three may have been edited since. A re-run over the
+        // Enreach staging copy rewrote 341 destinations and 244 site scopes this way.
+        if (!empty($existing) && !$opts->force) {
+            $report->incr('skipped');
+
+            return;
+        }
+
         if (!empty($existing) && !empty($existing['id'])) {
             $config['id'] = (int) $existing['id'];
         }
@@ -790,7 +809,11 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
 
         // After save, fetch the id (Retour's saveRedirect doesn't return it).
-        $saved = Retour::$plugin->redirects->getRedirectByRedirectSrcUrl($srcUrl, null);
+        // The row just saved, found the way saveRedirect() stored it: by the normalised source
+        // and its site. Asked by the raw source with no site, Retour returns the first row with
+        // that source on any site, so a site-scoped redirect was recorded against another
+        // site's row, or not at all.
+        $saved = $this->rowSaveRedirectWouldOverwrite($config);
         $retourId = (int) ($saved['id'] ?? 0);
 
         if ($retourId > 0) {
@@ -812,6 +835,45 @@ class RedirectMigrationService extends Component implements MigrationAdapter
         }
 
         $report->incr(!empty($existing) ? 'updated' : 'created');
+    }
+
+    /**
+     * The row Retour's `saveRedirect()` would update for this config, found exactly the way it
+     * finds it: the source urldecoded, passed through Retour's own redirect model (whose
+     * validators normalise the parsed source), then matched on that and the exact site.
+     * Asking `getRedirectByRedirectSrcUrl()` instead let three legacy `/tel: …` redirects past
+     * the add-only gate on the Enreach staging copy — `/tel:%20+31…` decodes to two spaces,
+     * Retour stores one — and `saveRedirect()` rewrote them anyway.
+     *
+     * @param array<string, mixed> $config what the caller is about to hand saveRedirect()
+     * @return array<string, mixed>|null
+     */
+    private function rowSaveRedirectWouldOverwrite(array $config): ?array
+    {
+        unset($config['id']);
+
+        if (($config['redirectMatchType'] ?? '') === 'exactmatch') {
+            $config['redirectSrcUrl'] = urldecode((string) ($config['redirectSrcUrl'] ?? ''));
+            $config['redirectSrcUrlParsed'] = urldecode((string) ($config['redirectSrcUrlParsed'] ?? ''));
+        }
+
+        $model = new \nystudio107\retour\models\StaticRedirects($config);
+
+        // saveRedirect() refuses a config that does not validate, so it overwrites nothing.
+        if (!$model->validate()) {
+            return null;
+        }
+
+        $attributes = $model->getAttributes();
+        $siteId = empty($attributes['siteId']) ? null : (int) $attributes['siteId'];
+
+        $row = (new \craft\db\Query())
+            ->from('{{%retour_static_redirects}}')
+            ->where(['redirectSrcUrlParsed' => $attributes['redirectSrcUrlParsed']])
+            ->andWhere(['siteId' => $siteId])
+            ->one();
+
+        return is_array($row) ? $row : null;
     }
 
     /**

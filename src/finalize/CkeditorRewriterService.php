@@ -768,7 +768,7 @@ class CkeditorRewriterService extends Component
         return $path;
     }
 
-    private function stripUnresolvedMarkers(string $html): string
+    public function stripUnresolvedMarkers(string $html): string
     {
         return preg_replace('/<!-- MIGRATION:UNRESOLVED sourceB64=[A-Za-z0-9_-]+ -->/', '', $html) ?? $html;
     }

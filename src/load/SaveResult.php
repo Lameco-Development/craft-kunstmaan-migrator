@@ -45,6 +45,8 @@ final class SaveResult
          * @var list<array{field: string, site: string}>
          */
         public readonly array $droppedAddresses = [],
+        /** An existing entry, left alone except for a site it gained — see `--add-sites`. */
+        public readonly bool $sitesAdded = false,
     ) {
     }
 }

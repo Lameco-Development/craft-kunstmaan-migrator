@@ -210,7 +210,13 @@ final class CkeditorFinalizeService
                 ));
             }
 
-            if ($rewritten === $html) {
+            // Nothing resolved when the only difference is the unresolved markers the rewrite
+            // appends. The marker sits inside the tag and CKEditor escapes it on save, so saving
+            // such a row anyway grew it by a stray `&gt;` on every run — 12 rows of the Enreach
+            // corpus, two of them existing content on sites the run never meant to touch.
+            if ($rewritten === $html
+                || $this->rewriter->stripUnresolvedMarkers($rewritten) === $this->rewriter->stripUnresolvedMarkers($html)
+            ) {
                 continue;
             }
 

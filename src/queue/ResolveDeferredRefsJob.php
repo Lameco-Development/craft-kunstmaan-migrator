@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\queue\BaseJob;
+use Lameco\Kunstmaanmigrator\craft\RetourUriChangeGuard;
 use Lameco\Kunstmaanmigrator\load\FixupService;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\MaintenanceGuard;
@@ -48,6 +49,9 @@ final class ResolveDeferredRefsJob extends BaseJob implements RetryableJobInterf
         if (ProductionGuard::isProduction()) {
             throw new RuntimeException('Refusing to resolve references against CRAFT_ENVIRONMENT=production');
         }
+
+        // A pass run as its own job saves elements outside any pipeline; see RetourUriChangeGuard.
+        RetourUriChangeGuard::suspend();
 
         $plugin = Plugin::getInstance();
 

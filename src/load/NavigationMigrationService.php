@@ -131,6 +131,14 @@ class NavigationMigrationService extends Component implements MigrationAdapter
     private const STATE_SOURCE = 'navigation';
 
     /**
+     * Nodes this run created. Without `--force` only these are placed in the tree: a node an
+     * earlier run made keeps the place an editor may have moved it to.
+     *
+     * @var array<int, true>
+     */
+    private array $createdNodeIds = [];
+
+    /**
      * Slice 2 — FQCN-substring patterns that mark a Page entity as a
      * Single section in Craft (rendered via `preloadSingles` Twig var,
      * not as a regular nav entry). Mirrors scaffolder's
@@ -167,6 +175,8 @@ class NavigationMigrationService extends Component implements MigrationAdapter
 
     public function migrateAll(MigrationOptions $opts, EnvironmentContext $context): MigrationReport
     {
+        $this->createdNodeIds = [];
+
         $report = new MigrationReport();
 
         if (!$this->isGateOpen($report)) {
@@ -299,7 +309,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         // the map. Items whose parent failed in the first pass are
         // reported and skipped — they remain as roots.
         if (!$opts->dryRun && $itemToNodeId !== []) {
-            $this->applyParentLinkage($itemToNodeId, $report);
+            $this->applyParentLinkage($itemToNodeId, $report, $opts);
         }
 
         // Slice 2: NodeMenu pass. Runs after MenuBundle so a single
@@ -374,7 +384,33 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         if ($existingNodeId !== null) {
             $node = $this->elements()->findById($existingNodeId, NavNode::class, $siteId);
         }
+
+        // Without `--force` a node an earlier run made is left exactly as it is: an editor may
+        // have renamed, re-linked, disabled or moved it since. Its id still anchors the
+        // children this run adds under it.
+        if ($node !== null && !$opts->force) {
+            $report->incr('skipped');
+
+            return (int) $node->id;
+        }
+
+        $isNew = $node === null;
         if ($node === null) {
+            if ($existingNodeId !== null) {
+                // An earlier run made this node and it is gone since — deleted on purpose, as the
+                // Enreach header was when it was rebuilt from the live site. Without `--force` it
+                // stays deleted. Recreating it without a way to record the new id (record()
+                // refuses to repoint a key) added the same 391 nodes to the header on every run.
+                if (!$opts->force) {
+                    $report->incr('skipped');
+
+                    return null;
+                }
+
+                // With `--force` it comes back, and the stale key must go so the new id is kept.
+                $this->stateService->forget(self::STATE_SOURCE, $stateKey);
+            }
+
             $node = $this->newNavNode();
         }
 
@@ -462,6 +498,9 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         }
 
         $newNodeId = (int) $node->id;
+        if ($isNew) {
+            $this->createdNodeIds[$newNodeId] = true;
+        }
         $this->stateService->record(
             source: self::STATE_SOURCE,
             key: $stateKey,
@@ -488,7 +527,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      *
      * @param array<int, int> $itemToNodeId  kumaItemId → verbb node id
      */
-    private function applyParentLinkage(array $itemToNodeId, MigrationReport $report): void
+    private function applyParentLinkage(array $itemToNodeId, MigrationReport $report, MigrationOptions $opts): void
     {
         $childIds = array_keys($itemToNodeId);
         if ($childIds === []) {
@@ -526,6 +565,10 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             $kumaParentId = (int) ($row['parent_id'] ?? 0);
             $childNodeId = $itemToNodeId[$kumaChildId] ?? null;
             $parentNodeId = $itemToNodeId[$kumaParentId] ?? null;
+            if ($childNodeId !== null && !$opts->force && !isset($this->createdNodeIds[$childNodeId])) {
+                continue;
+            }
+
             if ($childNodeId === null || $parentNodeId === null) {
                 if ($childNodeId !== null && $parentNodeId === null) {
                     $report->warn(sprintf(
@@ -816,6 +859,12 @@ class NavigationMigrationService extends Component implements MigrationAdapter
                 $childVerbbId = $kumaNodeIdToVerbbId[$kumaNodeId] ?? null;
                 $parentVerbbId = $kumaNodeIdToVerbbId[$kumaParentId] ?? null;
 
+                // Without `--force` only nodes this run created are placed; an existing node keeps
+                // the place an editor may have moved it to.
+                if ($childVerbbId !== null && !$opts->force && !isset($this->createdNodeIds[$childVerbbId])) {
+                    continue;
+                }
+
                 if ($childVerbbId === null || $parentVerbbId === null) {
                     continue;
                 }
@@ -899,7 +948,33 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         if ($existingNodeId !== null) {
             $node = $this->elements()->findById($existingNodeId, NavNode::class, $primarySiteId);
         }
+
+        // Without `--force` a node an earlier run made is left exactly as it is: an editor may
+        // have renamed, re-linked, disabled or moved it since. Its id still anchors the
+        // children this run adds under it.
+        if ($node !== null && !$opts->force) {
+            $report->incr('skipped');
+
+            return (int) $node->id;
+        }
+
+        $isNew = $node === null;
         if ($node === null) {
+            if ($existingNodeId !== null) {
+                // An earlier run made this node and it is gone since — deleted on purpose, as the
+                // Enreach header was when it was rebuilt from the live site. Without `--force` it
+                // stays deleted. Recreating it without a way to record the new id (record()
+                // refuses to repoint a key) added the same 391 nodes to the header on every run.
+                if (!$opts->force) {
+                    $report->incr('skipped');
+
+                    return null;
+                }
+
+                // With `--force` it comes back, and the stale key must go so the new id is kept.
+                $this->stateService->forget(self::STATE_SOURCE, $stateKey);
+            }
+
             $node = $this->newNavNode();
         }
 
@@ -937,6 +1012,9 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         }
 
         $newNodeId = (int) $node->id;
+        if ($isNew) {
+            $this->createdNodeIds[$newNodeId] = true;
+        }
         $this->stateService->record(
             source: self::STATE_SOURCE,
             key: $stateKey,

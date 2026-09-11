@@ -270,6 +270,121 @@ final class EntryMigrationServiceSaveTest extends TestCase
         self::assertSame([], $this->writer->created);
     }
 
+    public function testARerunWithoutForceAddsTheSitesThePayloadNamesThatTheEntryDoesNotLiveOnYet(): void
+    {
+        // A locale mapped after the first run: the entry exists, so the re-run would leave it
+        // alone — and the new site's content with it. The site the entry lacks is written on
+        // its own; the sites it already has are not saved again, so an editor's changes there
+        // survive.
+        $existing = SaveStubEntry::make(self::SECTION, self::TYPE, 1, assignBlockIdsFrom: 100);
+        $existing->id = 500;
+        $existing->title = 'Over ons (edited in the CP)';
+        $existing->blocksByField['pageBuilder'] = [];
+        $this->state->willResolve(self::SOURCE, '42', 500);
+        $this->state->updateMeta(self::SOURCE, '42', null, ['blockIds' => ['default' => ['Text:1' => '99']]]);
+        $this->writer->willFind(500, $existing, 1);
+        $this->writer->willFindOnlyOnKnownSites(500);
+
+        $entry = $this->save([
+            'default' => $this->siteData('Over ons', ['pageBuilder' => $this->blocks('Text:1')]),
+            'en' => $this->siteData('About us', ['pageBuilder' => $this->blocks('Text:2')]),
+        ]);
+
+        self::assertSame($existing, $entry);
+        self::assertSame([['id' => 500, 'siteId' => 2]], $this->writer->propagated, 'the row Craft never made is asked for explicitly');
+        self::assertSame([], $this->writer->created);
+
+        $onEn = $this->writer->findById(500, Entry::class, 2);
+        self::assertInstanceOf(SaveStubEntry::class, $onEn);
+        self::assertSame([$onEn], array_column($this->writer->saved, 'element'), 'only the site the entry lacked is written');
+        self::assertSame('About us', $onEn->title);
+        self::assertSame('Over ons (edited in the CP)', $existing->title, 'the primary row is not touched');
+        self::assertSame([], $existing->fieldValuesPerSave);
+        self::assertSame([2 => true], $existing->enabledMap, 'the status map admits the entry onto the new site, and names no other');
+        self::assertSame(
+            ['blockIds' => ['default' => ['Text:1' => '99'], 'en' => ['Text:2' => '100']], 'seoPending' => [2]],
+            $this->state->metaOf(self::SOURCE, '42'),
+            'the new site joins the block map, the primary keeps the ids the first run recorded, and the SEO pass is told',
+        );
+        self::assertTrue($this->svc->lastSaveWrote());
+    }
+
+    public function testAddingASiteNeverMovesTheEntryOrChangesItsDates(): void
+    {
+        // Structure position, post and expiry date and authors are one value per entry in
+        // Craft. The payload carries the legacy ones with every locale; written with a new
+        // site's row they re-parent and re-date the entry on every site — on the Enreach
+        // staging copy that reverted an editor's move of 14 pages and 85 post dates.
+        $existing = SaveStubEntry::make(self::SECTION, self::TYPE, 1);
+        $existing->id = 500;
+        $existing->postDate = new \DateTime('2019-12-17 12:46:00');
+        $this->state->willResolve(self::SOURCE, '42', 500);
+        $this->writer->willFind(500, $existing, 1);
+        $this->writer->willFindOnlyOnKnownSites(500);
+
+        $en = $this->siteData('About us');
+        $en['parentId'] = 77;
+        $en['postDate'] = new \DateTimeImmutable('2022-03-10 12:46:00');
+        $en['authorId'] = 3;
+        $en['fieldValues']['expiryDate'] = '2030-01-01';
+
+        $this->save(['default' => $this->siteData('Over ons'), 'en' => $en]);
+
+        $onEn = $this->writer->findById(500, Entry::class, 2);
+        self::assertInstanceOf(SaveStubEntry::class, $onEn);
+        self::assertSame([], $onEn->parentIdsSet, 'the entry stays where it is in the structure');
+        self::assertSame('2019-12-17 12:46:00', $onEn->postDate?->format('Y-m-d H:i:s'));
+        self::assertNull($onEn->expiryDate);
+        self::assertArrayNotHasKey('expiryDate', $onEn->capturedFieldValues);
+        self::assertSame('About us', $onEn->title, 'the per-site values still land');
+    }
+
+    public function testAddSitesRewritesANamedSiteEvenWhenCraftAlreadyPropagatedARowThere(): void
+    {
+        // A section that propagates to every site gives a new site its rows the moment the
+        // site is added — copies of the primary. Those rows exist, so "sites the entry lacks"
+        // misses them; the operator names the site instead, and it is written with its own
+        // payload while the primary is still left alone.
+        $existing = SaveStubEntry::make(self::SECTION, self::TYPE, 1);
+        $existing->id = 500;
+        $existing->title = 'Over ons (edited in the CP)';
+        $onEn = SaveStubEntry::make(self::SECTION, self::TYPE, 2);
+        $onEn->id = 500;
+        $onEn->title = 'Over ons (edited in the CP)';
+        $this->state->willResolve(self::SOURCE, '42', 500);
+        $this->writer->willFind(500, $existing, 1);
+        $this->writer->willFind(500, $onEn, 2);
+
+        $this->svc->saveEntryForSites(self::SECTION, self::TYPE, self::SOURCE, 42, [
+            'default' => $this->siteData('Over ons'),
+            'en' => $this->siteData('About us'),
+        ], $this->sites(), false, null, null, ['en']);
+
+        self::assertSame([], $this->writer->propagated, 'the row is already there');
+        self::assertSame([$onEn], array_column($this->writer->saved, 'element'));
+        self::assertSame('About us', $onEn->title);
+        self::assertSame('Over ons (edited in the CP)', $existing->title);
+        self::assertTrue($this->svc->lastSaveWrote());
+    }
+
+    public function testARerunWithoutForceAddsNothingWhenThePayloadNamesNoSiteTheEntryLacks(): void
+    {
+        $existing = SaveStubEntry::make(self::SECTION, self::TYPE, 1);
+        $existing->id = 500;
+        $this->state->willResolve(self::SOURCE, '42', 500);
+        $this->writer->willFind(500, $existing, 1);
+        $this->writer->willLiveOn(500, [2]);
+
+        $this->save([
+            'default' => $this->siteData('Over ons'),
+            'en' => $this->siteData('About us'),
+        ]);
+
+        self::assertSame([], $this->writer->saved);
+        self::assertSame([], $this->writer->propagated);
+        self::assertFalse($this->svc->lastSaveWrote());
+    }
+
     public function testARerunWithForceReloadsTheEntryAndSavesItAgain(): void
     {
         $existing = SaveStubEntry::make(self::SECTION, self::TYPE, 1);
@@ -401,6 +516,11 @@ final class EntryMigrationServiceSaveTest extends TestCase
             public function updateSlugAndUri(ElementInterface $element): void
             {
                 $this->inner->updateSlugAndUri($element);
+            }
+
+            public function propagateTo(ElementInterface $element, int $siteId): void
+            {
+                $this->inner->propagateTo($element, $siteId);
             }
 
             public function invalidateCaches(): void
@@ -598,6 +718,15 @@ final class SaveStubEntry extends Entry
     public function setEnabledForSite(array|bool $enabledForSite): void
     {
         $this->enabledMap = is_array($enabledForSite) ? $enabledForSite : [];
+    }
+
+    /** @var list<mixed> every setParentId(), in order */
+    public array $parentIdsSet = [];
+
+    public function setParentId(mixed $parentId): void
+    {
+        $this->parentIdsSet[] = $parentId;
+        parent::setParentId($parentId);
     }
 
     public function setFieldValues(array $values): void

@@ -71,6 +71,7 @@ final class NavigationNodeMenuEdgeTest extends TestCase
         NavigationMigrationService $svc,
         MigrationReport $report,
         string $primarySiteHandle = 'default',
+        bool $force = false,
     ): void {
         (new ReflectionMethod($svc, 'migrateNodeMenu'))->invoke(
             $svc,
@@ -79,7 +80,7 @@ final class NavigationNodeMenuEdgeTest extends TestCase
             self::PRIMARY_SITE_ID,
             $primarySiteHandle,
             'COM',
-            new MigrationOptions(),
+            new MigrationOptions(force: $force),
             $report,
         );
     }
@@ -191,6 +192,10 @@ final class NavigationNodeMenuEdgeTest extends TestCase
                 return null;
             }
 
+            public function propagateTo(ElementInterface $element, int $siteId): void
+            {
+            }
+
             public function invalidateCaches(): void
             {
             }
@@ -216,7 +221,7 @@ final class NavigationNodeMenuEdgeTest extends TestCase
         self::assertStringContainsString('saveElement refused NodeMenu node for kuma_node id=2', implode("\n", $report->warnings));
     }
 
-    public function testARerunFindsTheExistingNodeAndCountsAnUpdate(): void
+    public function testAForcedRerunFindsTheExistingNodeAndCountsAnUpdate(): void
     {
         $existing = (new \ReflectionClass(NavNode::class))->newInstanceWithoutConstructor();
         $existing->id = 900;
@@ -228,13 +233,70 @@ final class NavigationNodeMenuEdgeTest extends TestCase
         $svc = $this->service($state, $writer, new FakeLegacyDb([[$this->row(2, 1)]]));
         $report = new MigrationReport();
 
-        $this->runPass($svc, $report);
+        $this->runPass($svc, $report, force: true);
 
         self::assertSame(1, $report->counts['updated'] ?? 0);
         self::assertSame(0, $report->counts['created'] ?? 0);
         self::assertCount(1, $writer->saved);
         self::assertSame($existing, $writer->saved[0]['element'], 'the existing node is re-saved, not replaced');
         self::assertSame(500, $existing->elementId, 'the re-run refreshes the link to the entry');
+    }
+
+    public function testARerunWithoutForceLeavesTheExistingNodeAlone(): void
+    {
+        // An editor may have renamed, re-linked, disabled or moved the node since the first run;
+        // re-saving it with the legacy values would undo that on staging.
+        $existing = (new \ReflectionClass(NavNode::class))->newInstanceWithoutConstructor();
+        $existing->id = 900;
+        $existing->elementId = 321;
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'COM:kuma_node:2', 900);
+        $this->entryExistsFor($state, 2, 500);
+        $writer = new InMemoryElementWriter();
+        $writer->willFind(900, $existing);
+        $svc = $this->service($state, $writer, new FakeLegacyDb([[$this->row(2, 1)]]));
+        $report = new MigrationReport();
+
+        $this->runPass($svc, $report);
+
+        self::assertSame([], $writer->saved, 'nothing is re-saved');
+        self::assertSame(1, $report->counts['skipped'] ?? 0);
+        self::assertSame(321, $existing->elementId, 'the link an editor set stays');
+    }
+
+    public function testANodeAnEarlierRunMadeThatIsGoneStaysGoneWithoutForce(): void
+    {
+        // The Enreach header was rebuilt from the live site, which deleted every node the first
+        // run made. Recreating them — with no way to record the new id, since record() will not
+        // repoint a key — added the same 391 nodes to that header on every run.
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'COM:kuma_node:2', 900);
+        $this->entryExistsFor($state, 2, 500);
+        $writer = new InMemoryElementWriter();
+        $svc = $this->service($state, $writer, new FakeLegacyDb([[$this->row(2, 1)]]));
+        $report = new MigrationReport();
+
+        $this->runPass($svc, $report);
+
+        self::assertSame([], $writer->saved, 'the deleted node is not recreated');
+        self::assertSame(1, $report->counts['skipped'] ?? 0);
+        self::assertSame(900, $state->getTargetId('navigation', 'COM:kuma_node:2'), 'the record of it is left as it was');
+    }
+
+    public function testWithForceAGoneNodeIsRecreatedAndItsNewIdRecorded(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'COM:kuma_node:2', 900);
+        $this->entryExistsFor($state, 2, 500);
+        $writer = new InMemoryElementWriter();
+        $writer->nextId = 950;
+        $svc = $this->service($state, $writer, new FakeLegacyDb([[$this->row(2, 1)]]));
+        $report = new MigrationReport();
+
+        $this->runPass($svc, $report, force: true);
+
+        self::assertSame([950], $writer->savedIds());
+        self::assertSame(950, $state->getTargetId('navigation', 'COM:kuma_node:2'), 'the stale key gave way to the new node');
     }
 
     public function testALinkageFailureIsReportedPerNodeAndSparesTheRest(): void
@@ -265,6 +327,11 @@ final class NavigationNodeMenuEdgeTest extends TestCase
             public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
             {
                 return $this->inner->findById($id, $class, $siteId);
+            }
+
+            public function propagateTo(ElementInterface $element, int $siteId): void
+            {
+                $this->inner->propagateTo($element, $siteId);
             }
 
             public function invalidateCaches(): void
@@ -323,6 +390,10 @@ final class NavigationNodeMenuEdgeTest extends TestCase
             public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
             {
                 return null;
+            }
+
+            public function propagateTo(ElementInterface $element, int $siteId): void
+            {
             }
 
             public function invalidateCaches(): void

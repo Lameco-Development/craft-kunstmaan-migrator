@@ -199,7 +199,7 @@ class TranslationMigrationService extends Component implements MigrationAdapter
                 continue;
             }
             try {
-                $this->writeCatalog($sitePath, $craftLang, $keywords);
+                $this->writeCatalog($sitePath, $craftLang, $keywords, $opts->force);
                 $report->incr('created');
             } catch (Throwable $e) {
                 $report->incr('failed');
@@ -256,7 +256,7 @@ class TranslationMigrationService extends Component implements MigrationAdapter
         if (!$opts->dryRun
             && Craft::$app->plugins->getPlugin('enupal-translate') !== null
         ) {
-            $this->upsertEnupalRows($catalogs, $report);
+            $this->upsertEnupalRows($catalogs, $report, $opts->force);
         }
 
         return $report;
@@ -284,10 +284,20 @@ class TranslationMigrationService extends Component implements MigrationAdapter
      *
      * @param array<string, string> $keywords
      */
-    private function writeCatalog(string $sitePath, string $lang, array $keywords): void
+    private function writeCatalog(string $sitePath, string $lang, array $keywords, bool $overwrite = true): void
     {
         $dir = $sitePath . DIRECTORY_SEPARATOR . $lang;
         $file = $dir . DIRECTORY_SEPARATOR . 'site.php';
+
+        // Without `--force` the catalog is added to, not replaced: a key already in the file
+        // keeps its value, so a translation someone corrected by hand survives a re-run.
+        if (!$overwrite && is_file($file)) {
+            $current = (static fn(string $path): mixed => include $path)($file);
+
+            if (is_array($current)) {
+                $keywords = $current + $keywords;
+            }
+        }
 
         if (!is_dir($dir)) {
             FileHelper::createDirectory($dir, 0775);
@@ -316,7 +326,7 @@ class TranslationMigrationService extends Component implements MigrationAdapter
      *
      * @param array<string, array<string, string>> $catalogs language → keyword → text
      */
-    private function upsertEnupalRows(array $catalogs, MigrationReport $report): void
+    private function upsertEnupalRows(array $catalogs, MigrationReport $report, bool $overwrite = true): void
     {
         $sourceMessageTable = '{{%enupaltranslate_sourcemessage}}';
         $messageTable = '{{%enupaltranslate_message}}';
@@ -402,12 +412,37 @@ class TranslationMigrationService extends Component implements MigrationAdapter
             }
         }
 
+        // Without `--force` only keys with no message row at all are written: a translation an
+        // editor changed in the CP stays as it is. Presence is by `id` alone because that is
+        // enupal's primary key — one message row per source key, whatever its language. An
+        // upsert per (key, language) therefore rewrote the one row a key has with whichever
+        // language came last: a re-run over the Enreach staging copy overwrote 121 of 172,
+        // pt-BR rows included, with English text.
+        $present = [];
+        if (!$overwrite) {
+            try {
+                foreach ((new \craft\db\Query())->select(['id'])->from($messageTable)->column($db) as $id) {
+                    $present[(int) $id] = true;
+                }
+            } catch (Throwable $e) {
+                $report->warn(sprintf('Could not read enupaltranslate_message (%s); CP translations left untouched.', $e->getMessage()));
+
+                return;
+            }
+        }
+
         // UPSERT message rows per (sourceId, language)
         foreach ($catalogs as $lang => $byKey) {
             foreach ($byKey as $kw => $text) {
                 $sourceId = $idByMessage[$kw] ?? null;
-                if ($sourceId === null) {
+                if ($sourceId === null || isset($present[$sourceId])) {
                     continue;
+                }
+
+                if (!$overwrite) {
+                    // The row this writes is the key's only one; a later language must not
+                    // replace it in the same run.
+                    $present[$sourceId] = true;
                 }
                 try {
                     $db->createCommand()

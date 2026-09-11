@@ -541,6 +541,10 @@ final class NavigationMenuBundlePassTest extends TestCase
                 return null;
             }
 
+            public function propagateTo(ElementInterface $element, int $siteId): void
+            {
+            }
+
             public function invalidateCaches(): void
             {
             }
@@ -611,8 +615,35 @@ final class NavigationMenuBundlePassTest extends TestCase
         self::assertSame(1, $report->counts['skipped'] ?? 0);
     }
 
-    public function testARerunUpdatesTheExistingNodeInsteadOfCreatingASecond(): void
+    public function testAForcedRerunUpdatesTheExistingNodeInsteadOfCreatingASecond(): void
     {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'COM:kuma_menu_item:10', 900);
+        $writer = new InMemoryElementWriter();
+        $writer->willFind(900, $this->bareNode(900));
+        $svc = $this->service(
+            $this->legacyDb([
+                [$this->menu()],
+                [$this->item(10)],
+                [],
+            ]),
+            $writer,
+            new InMemoryNavigationGateway(['top' => self::NAV_ID]),
+            $state,
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(force: true), $this->context());
+
+        self::assertSame(1, $report->counts['updated'] ?? 0);
+        self::assertSame(0, $report->counts['created'] ?? 0);
+        self::assertCount(1, $writer->saved);
+        self::assertSame(900, (int) $writer->saved[0]['element']->id, 'the existing node is re-saved, not replaced');
+    }
+
+    public function testARerunWithoutForceLeavesTheExistingNodeAlone(): void
+    {
+        // An editor may have renamed, re-linked, disabled or moved the node since; without
+        // --force a run adds nodes and leaves the ones an earlier run made as they are.
         $state = new InMemoryMigrationState();
         $state->willResolve('navigation', 'COM:kuma_menu_item:10', 900);
         $writer = new InMemoryElementWriter();
@@ -630,10 +661,32 @@ final class NavigationMenuBundlePassTest extends TestCase
 
         $report = $svc->migrateAll(new MigrationOptions(), $this->context());
 
-        self::assertSame(1, $report->counts['updated'] ?? 0);
-        self::assertSame(0, $report->counts['created'] ?? 0);
-        self::assertCount(1, $writer->saved);
-        self::assertSame(900, (int) $writer->saved[0]['element']->id, 'the existing node is re-saved, not replaced');
+        self::assertSame([], $writer->saved, 'nothing is re-saved');
+        self::assertSame(1, $report->counts['skipped'] ?? 0);
+        self::assertSame(0, $report->counts['updated'] ?? 0);
+    }
+
+    public function testAMenuNodeAnEarlierRunMadeThatIsGoneStaysGoneWithoutForce(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'COM:kuma_menu_item:10', 900);
+        $writer = new InMemoryElementWriter();
+        $svc = $this->service(
+            $this->legacyDb([
+                [$this->menu()],
+                [$this->item(10)],
+                [],
+            ]),
+            $writer,
+            new InMemoryNavigationGateway(['top' => self::NAV_ID]),
+            $state,
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(), $this->context());
+
+        self::assertSame([], $writer->saved, 'a node someone deleted is not recreated');
+        self::assertSame(1, $report->counts['skipped'] ?? 0);
+        self::assertSame(0, $report->counts['updated'] ?? 0);
     }
 
     public function testAChildItemIsRelinkedUnderItsParentAfterTheFirstPass(): void
@@ -689,6 +742,10 @@ final class NavigationMenuBundlePassTest extends TestCase
             public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
             {
                 throw new RuntimeException('lookup exploded');
+            }
+
+            public function propagateTo(ElementInterface $element, int $siteId): void
+            {
             }
 
             public function invalidateCaches(): void

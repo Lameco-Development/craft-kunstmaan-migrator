@@ -12,6 +12,7 @@ use craft\fields\Matrix;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\sites\SiteBinding;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use RuntimeException;
 use yii\base\Component;
@@ -105,6 +106,7 @@ class EntryMigrationService extends Component
         bool $force = false,
         ?MigrationReport $report = null,
         ?RunTally $tally = null,
+        array $addSites = [],
     ): Entry {
         $configuredHandles = $sites->handles();
         if ($configuredHandles === []) {
@@ -162,10 +164,28 @@ class EntryMigrationService extends Component
             // dominates the Load: Entries stage on re-runs. Callers pass
             // force=true (typically threaded from MigrationOptions->force)
             // to refresh field values from a newer extract/transform output.
+            //
+            // One exception: a site the payload names that the entry does not live on — a
+            // locale mapped after the first run. That site is written on its own, and the
+            // rows the entry already has are left exactly as they are, so an editor's work
+            // since the first run survives. `$addSites` widens "does not live on" to rows
+            // Craft made itself when the site joined a propagating section.
             if ($entry !== null && !$force) {
+                $this->lastSaveWrote = false;
+                $toAdd = $this->sitesToAdd($entry, $perSite, $targets, $addSites);
+
+                if ($toAdd === []) {
+                    return $entry;
+                }
+
+                $this->addSitesToExistingEntry($entry, $toAdd, $perSite, $primarySite, $stateSource, (string) $stateKey, $report);
+                $this->lastSaveWrote = true;
+
                 return $entry;
             }
         }
+
+        $this->lastSaveWrote = true;
 
         // ------------------------------------------------------------------ 2
         // Construct fresh entry when not found
@@ -473,6 +493,171 @@ class EntryMigrationService extends Component
     // --------------------------------------------------------------------------
     // Private helpers
     // --------------------------------------------------------------------------
+
+    /**
+     * Whether the last `saveEntryForSites()` wrote anything: a new entry, a forced refresh,
+     * or a site added to an existing one. False when the entry existed and was left alone —
+     * the caller then must not record this run's ref resolution over the deferrals the entry
+     * still needs.
+     */
+    public function lastSaveWrote(): bool
+    {
+        return $this->lastSaveWrote;
+    }
+
+    private bool $lastSaveWrote = false;
+
+    /**
+     * The bound sites the payload names that an existing entry still has to be written on:
+     * those it has no row on, plus those the operator listed in `$addSites`.
+     *
+     * @param array<string, mixed> $perSite
+     * @param list<SiteBinding>    $targets
+     * @param list<string>         $addSites
+     * @return list<SiteBinding>
+     */
+    private function sitesToAdd(Entry $entry, array $perSite, array $targets, array $addSites): array
+    {
+        $lives = array_flip($this->elements()->siteIdsOf((int) $entry->id));
+        $out = [];
+
+        foreach ($targets as $binding) {
+            if (!isset($perSite[$binding->handle])) {
+                continue;
+            }
+
+            if (!isset($lives[$binding->siteId]) || in_array($binding->handle, $addSites, true)) {
+                $out[] = $binding;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Write the named sites onto an existing entry, each with its own payload, and nothing
+     * else: no primary save, no borrowed title, no prune of the sites the payload never
+     * named. A site with no row yet gets one through `propagateTo()` — Craft's clone of the
+     * primary, ghosts included, which `reconcile()` then clears before the site's own blocks
+     * are written, the same way a secondary save always has.
+     *
+     * @param list<SiteBinding>    $toAdd
+     * @param array<string, mixed> $perSite
+     */
+    private function addSitesToExistingEntry(
+        Entry $entry,
+        array $toAdd,
+        array $perSite,
+        SiteBinding $primarySite,
+        string $stateSource,
+        string $stateKey,
+        ?MigrationReport $report,
+    ): void {
+        $existingMeta = $this->stateService->get($stateSource, $stateKey)['meta'] ?? null;
+        $blocks = BlockIdentity::fromMeta($this->elements(), $existingMeta, $primarySite->handle);
+        $lives = array_flip($this->elements()->siteIdsOf((int) $entry->id));
+        $kunstmaanSourceId = $stateSource . ':' . $stateKey;
+
+        $added = [];
+
+        foreach ($toAdd as $binding) {
+            // Structure position, post and expiry date and authors are one value per entry in
+            // Craft, not one per site. Written with a new site's row they would move and
+            // re-date the entry on every site — reverting an editor's move since the first
+            // run, as they did to 14 pages of the Enreach staging copy.
+            $siteData = self::withoutEntryLevelAttributes((array) $perSite[$binding->handle]);
+            $siteData['fieldValues']['kunstmaanSourceId'] ??= $kunstmaanSourceId;
+            $enabled = (bool) ($siteData['enabled'] ?? $siteData['online'] ?? false);
+
+            if (!isset($lives[$binding->siteId])) {
+                // A `custom`-propagation section admits the entry onto a site only when the
+                // status map names it. The map names this site alone: the rows the entry
+                // already has keep their own status (`Entry::getSupportedSites()` counts
+                // them in regardless), and no site the payload never named is created.
+                $entry->setEnabledForSite([$binding->siteId => $enabled]);
+                $this->elements()->propagateTo($entry, $binding->siteId);
+            }
+
+            $localised = $this->elements()->findById((int) $entry->id, Entry::class, $binding->siteId);
+
+            if ($localised === null) {
+                $this->warn(sprintf('site "%s" has no row for %s:%s after propagation; skipped', $binding->handle, $stateSource, $stateKey));
+                continue;
+            }
+
+            $blocks->reconcile($localised, $binding->handle, (array) ($siteData['fieldValues'] ?? []));
+            $this->applyPerSiteData($localised, $siteData, $blocks, $report, $stateSource, $stateKey, $binding->handle);
+            // A row Craft propagated took the section's default status, not the locale's.
+            $localised->setEnabledForSite($enabled);
+            $localised->resaving = true;
+
+            if (!$this->elements()->save($localised)) {
+                $this->warn(sprintf(
+                    'site "%s" save failed for %s:%s — %s',
+                    $binding->handle,
+                    $stateSource,
+                    $stateKey,
+                    json_encode($localised->getErrors()),
+                ));
+                continue;
+            }
+
+            $blocks->record($binding->handle, $localised);
+            $added[] = $binding->siteId;
+        }
+
+        $metaUpdate = [];
+
+        if ($blocks->tracked() !== []) {
+            $metaUpdate['blockIds'] = $blocks->tracked();
+        }
+
+        // The handshake with the SEO pass: these rows started as Craft's copy of the primary,
+        // SEO included, so a locale with no legacy SEO of its own must have that copy cleared.
+        // The pass consumes the list; without it, a run without `--force` leaves SEO it did
+        // not write alone, which is what keeps an editor's SEO on every other row.
+        if ($added !== []) {
+            $metaUpdate['seoPending'] = array_values(array_unique([...self::seoPendingOf($existingMeta), ...$added]));
+        }
+
+        if ($metaUpdate !== []) {
+            $this->stateService->updateMeta($stateSource, $stateKey, null, $metaUpdate);
+        }
+    }
+
+    /** Entry attributes Craft stores once for all sites; a site's save must not carry them. */
+    private const ENTRY_LEVEL_ATTRIBUTES = ['parentId', 'postDate', 'expiryDate', 'authorId'];
+
+    /**
+     * @param array<string, mixed> $siteData
+     * @return array<string, mixed>
+     */
+    private static function withoutEntryLevelAttributes(array $siteData): array
+    {
+        foreach (self::ENTRY_LEVEL_ATTRIBUTES as $attribute) {
+            unset($siteData[$attribute]);
+
+            if (isset($siteData['fieldValues']) && is_array($siteData['fieldValues'])) {
+                unset($siteData['fieldValues'][$attribute]);
+            }
+        }
+
+        return $siteData;
+    }
+
+    /**
+     * The site ids a state row's meta still has pending for the SEO pass.
+     *
+     * @return list<int>
+     */
+    public static function seoPendingOf(mixed $meta): array
+    {
+        if (is_string($meta)) {
+            $meta = json_decode($meta, true);
+        }
+
+        return is_array($meta) ? array_map(intval(...), array_values((array) ($meta['seoPending'] ?? []))) : [];
+    }
 
     /**
      * Apply per-site title/slug/parent/postDate/fieldValues onto an Entry.

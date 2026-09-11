@@ -167,6 +167,7 @@ final class AssetResolutionFakeEntryMigrationService extends EntryMigrationServi
         bool $force = false,
         ?MigrationReport $report = null,
         ?RunTally $tally = null,
+        array $addSites = [],
     ): Entry {
         $this->lastPerSite = $perSite;
 

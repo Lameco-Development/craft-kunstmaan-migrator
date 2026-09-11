@@ -44,6 +44,9 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
     public string $environment = '';
     public bool $dryRun = false;
     public bool $force = false;
+
+    /** @var list<string> site handles to add to existing entries without `force` */
+    public array $addSites = [];
     public ?int $limit = null;
     public bool $entriesOnly = false;
     /** @var list<string>|null */
@@ -182,6 +185,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             limit: $this->limit,
             entriesOnly: $this->entriesOnly,
             only: $this->only,
+            addSites: $this->addSites,
         );
         $this->tally = new RunTally();
         $this->pipeline = EnvironmentPipeline::build($mapping, $this->settings);
@@ -352,6 +356,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             'remainingEnvironments' => $this->remainingEnvironments,
             'dryRun' => $this->dryRun,
             'force' => $this->force,
+            'addSites' => $this->addSites,
             'entriesOnly' => $this->entriesOnly,
             'only' => $this->only,
             'chainCorpusPasses' => $this->chainCorpusPasses,

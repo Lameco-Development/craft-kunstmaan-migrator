@@ -63,6 +63,14 @@ class SeoMigrationService extends Component implements MigrationAdapter
     private const SEO_FIELD_HANDLE = 'seo';
 
     /**
+     * `<entryId>:<siteId>` of every pair this pass wrote on an earlier run, loaded once per
+     * run. Without `--force` those pairs are left alone: an editor may have changed them.
+     *
+     * @var array<string, true>
+     */
+    private array $written = [];
+
+    /**
      * Whether this entry already holds SEO worth clearing on this site.
      *
      * Reads the stored value rather than the rendered one: an empty SEOmatic bundle still
@@ -217,6 +225,13 @@ class SeoMigrationService extends Component implements MigrationAdapter
             $sources = array_values(array_intersect($sources, $allowedSources));
         }
 
+        $this->written = [];
+        if (!$opts->force) {
+            foreach ($this->stateService->all(self::STATE_SOURCE) as $row) {
+                $this->written[(string) ($row['sourceKey'] ?? '')] = true;
+            }
+        }
+
         $rowCount = 0;
         foreach ($sources as $source) {
             foreach ($this->stateService->all($source) as $stateRow) {
@@ -312,6 +327,14 @@ class SeoMigrationService extends Component implements MigrationAdapter
             ? $directRefIdsByLocale
             : (array) ($metaArr['refIdsByLocale'] ?? []);
 
+        // Sites the entry pass added to this entry since this pass last ran. Their rows began
+        // as Craft's copy of the primary, SEO included, so they are the only rows a run
+        // without `--force` clears. See EntryMigrationService::addSitesToExistingEntry().
+        $pending = EntryMigrationService::seoPendingOf($metaArr);
+        $settled = [];
+        $alreadyWritten = 0;
+        $leftAlone = 0;
+
         // D-08-19 — pre-fetch every per-locale kuma_seo row.
         //
         // refIdsByLocale is the authoritative per-locale ref_id map written by
@@ -351,9 +374,18 @@ class SeoMigrationService extends Component implements MigrationAdapter
             // all sites that have no Kunstmaan SEO row.
             $seoRow = $seoByLocale[$locale] ?? null;
 
+            // Without `--force` a run adds; it does not rewrite. SEO this pass wrote on an
+            // earlier run may have been edited since — a re-run over the Enreach staging copy
+            // rewrote 1,120 of them, editors' titles and descriptions included.
+            if (!$opts->force && isset($this->written[$entryId . ':' . $siteId])) {
+                $alreadyWritten++;
+                continue;
+            }
+
             $entry = $this->elements()->findById($entryId, Entry::class, $siteId);
             if ($entry === null) {
                 // Site disabled for this entry — skip silently.
+                $settled[] = $siteId;
                 continue;
             }
 
@@ -365,6 +397,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
                 $field = null;
             }
             if ($field === null) {
+                $settled[] = $siteId;
                 continue;
             }
 
@@ -383,6 +416,15 @@ class SeoMigrationService extends Component implements MigrationAdapter
             // expensive call available. It put the SEO pass on a fifteen-hour trajectory.
             if ($seoRow === null && !$this->hasStoredSeo($entry)) {
                 $skippedEmpty++;
+                $settled[] = $siteId;
+                continue;
+            }
+
+            // Nothing legacy to write and something stored. Without `--force` that is cleared
+            // only on a row the entry pass just added — Craft's copy of the primary. On any
+            // other row it may be SEO an editor typed.
+            if ($seoRow === null && !$opts->force && !in_array($siteId, $pending, true)) {
+                $leftAlone++;
                 continue;
             }
 
@@ -412,6 +454,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
             // Pitfall 2 — propagate=false on every per-site save
             if ($saved) {
                 $written++;
+                $settled[] = $siteId;
                 $this->stateService->record(
                     source: self::STATE_SOURCE,
                     key: $entryId . ':' . $siteId,
@@ -437,8 +480,23 @@ class SeoMigrationService extends Component implements MigrationAdapter
             }
         }
 
+        // Hand the settled sites back, so a later run never clears SEO an editor adds to one of
+        // these rows afterwards.
+        $remaining = array_values(array_diff($pending, $settled));
+        if (!$opts->dryRun && $remaining !== $pending) {
+            $this->stateService->updateMeta($source, $sourceKey, null, ['seoPending' => $remaining]);
+        }
+
         if ($skippedEmpty > 0) {
             $report->incr('seo.skippedEmpty', $skippedEmpty);
+        }
+
+        if ($alreadyWritten > 0) {
+            $report->incr('seo.alreadyWritten', $alreadyWritten);
+        }
+
+        if ($leftAlone > 0) {
+            $report->incr('seo.leftAlone', $leftAlone);
         }
 
         return $written;

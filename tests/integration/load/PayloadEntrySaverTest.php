@@ -248,6 +248,7 @@ final class FakeEntryMigrationService extends EntryMigrationService
         bool $force = false,
         ?MigrationReport $report = null,
         ?RunTally $tally = null,
+        array $addSites = [],
     ): Entry {
         if ($this->throwForStateKey !== null && (string) $stateKey === $this->throwForStateKey) {
             throw new RuntimeException('simulated save failure for stateKey ' . $stateKey);

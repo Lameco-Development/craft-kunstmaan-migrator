@@ -116,6 +116,23 @@ final class CkeditorRewriterServiceTest extends TestCase
         self::assertStringNotContainsString('MIGRATION:UNRESOLVED', $out);
     }
 
+    public function testAMarkerIsAllThatChangesWhenNothingResolves(): void
+    {
+        // The finalize pass saves a row only when something resolved, and tells a rewrite that
+        // merely appended markers apart by stripping them from both sides. CKEditor escapes a
+        // marker left inside a tag into a stray `&gt;`, so saving such a row anyway grew it
+        // by one on every run.
+        $svc = $this->service();
+        $svc->seedUrlIdCache([]);
+        $html = '<p><a href="https://www.enreach.com/uploads/media/abc/tool.exe">&gt;&gt;&gt;Klik her</a></p>';
+
+        $out = $svc->rewrite($html, 10);
+
+        self::assertNotSame($html, $out, 'the rewrite marks what it could not resolve');
+        self::assertSame($html, $svc->stripUnresolvedMarkers($out));
+        self::assertSame($html, $svc->stripUnresolvedMarkers($svc->rewrite($out, 10)), 'a second pass adds nothing either');
+    }
+
     public function testEmitsUnresolvedMarkerForMissingAssetUrl(): void
     {
         $svc = $this->service();

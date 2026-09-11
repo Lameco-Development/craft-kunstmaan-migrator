@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\queue;
 
 use craft\queue\BaseJob;
+use Lameco\Kunstmaanmigrator\craft\RetourUriChangeGuard;
 use Lameco\Kunstmaanmigrator\finalize\FinalizePass;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\MaintenanceGuard;
@@ -44,6 +45,9 @@ final class FinalizeJob extends BaseJob implements RetryableJobInterface
         if (ProductionGuard::isProduction()) {
             throw new RuntimeException('Refusing to finalize against CRAFT_ENVIRONMENT=production');
         }
+
+        // A pass run as its own job saves elements outside any pipeline; see RetourUriChangeGuard.
+        RetourUriChangeGuard::suspend();
 
         if (!is_file($this->mappingPath)) {
             throw new RuntimeException(sprintf('Mapping file is gone: %s', $this->mappingPath));

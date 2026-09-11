@@ -7,6 +7,7 @@ namespace Lameco\Kunstmaanmigrator\queue;
 use craft\queue\BaseJob;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
+use Lameco\Kunstmaanmigrator\craft\RetourUriChangeGuard;
 use Lameco\Kunstmaanmigrator\finalize\StructureUriPass;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\RunLog;
@@ -37,6 +38,9 @@ final class RecomputeStructureUrisJob extends BaseJob implements RetryableJobInt
         if (ProductionGuard::isProduction()) {
             throw new RuntimeException('Refusing to recompute URIs against CRAFT_ENVIRONMENT=production');
         }
+
+        // A pass run as its own job saves elements outside any pipeline; see RetourUriChangeGuard.
+        RetourUriChangeGuard::suspend();
 
         if (!is_file($this->mappingPath)) {
             throw new RuntimeException(sprintf('Mapping file is gone: %s', $this->mappingPath));

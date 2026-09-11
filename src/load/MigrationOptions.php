@@ -33,6 +33,15 @@ final class MigrationOptions
         public int $verbosity = 0,      // 0 = quiet, 1 = normal, 2 = verbose
         public int $batchSize = 50,
         public ?array $legacyClassFilter = null,
+        /**
+         * Site handles to write on every existing entry whose payload names them, without
+         * `force` — for a site mapped after the first run. A site the entry has no row on
+         * is written that way regardless; this list is for the rows Craft already made when
+         * the site joined a section that propagates to it.
+         *
+         * @var list<string>
+         */
+        public array $addSites = [],
         public bool $skipAssets = false, // --skipAssets: skip the Assets stage
                                          // AND per-entry ingestOne() calls
                                          // during atomic load. Migrated entries
