@@ -333,6 +333,69 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.9 — 2026-09-11
+
+Found adding the Enreach service-provider site (`sp`, misread as Spanish and
+left `!unmapped`) to a staging database editors were already working in. A
+re-run either skipped the pages that existed or, with `--force`, rewrote them
+over the edits made since. Every rule below was measured by diffing the
+database before and after a run; with all of them, a second run changes
+nothing at all.
+
+### Added
+
+- **A site mapped after the first run is added to existing entries, and
+  nothing else on them is touched.** A re-run left an entry that already
+  existed alone unless `--force` said otherwise — and `--force` rewrites every
+  site of every entry over an editor's work since. Now a site the payload
+  names that the entry has no row on is written on its own (Craft's
+  `propagateElement()` behind a new `ElementWriter::propagateTo()`, ghosts
+  reconciled the way a secondary save always has), and the rows the entry
+  already has are not saved. `--add-sites=<handle>` extends that to the rows
+  Craft made itself when the site joined a section that propagates to it.
+  The run counts such entries as `sitesAdded`, no longer as `skipped`.
+  Found on the Enreach corpus when the `sp` locale — the service-provider
+  site, misread as Spanish and marked `!unmapped` — had to join a staging
+  database editors were already working in.
+
+### Fixed
+
+- **Without `--force`, no pass rewrites what already exists.** Adding a site
+  no longer carries the entry's parent, post date, expiry date or authors,
+  which Craft keeps once for all sites. The SEO pass skips site rows it wrote
+  before and clears copied SEO only on rows the entry pass just added (a
+  `seoPending` handshake in the entry's state meta). The navigation pass
+  leaves nodes an earlier run made alone — title, link, status and place in
+  the tree — places only the nodes it creates, and no longer recreates a node
+  it made that someone has deleted since. It did that on every run and could
+  not record the new id, because `record()` refuses to repoint a key: on the
+  Enreach staging copy, whose header nav had been rebuilt from the live site,
+  each run added the same 391 nodes to it again. `--force` still recreates,
+  now clearing the stale key first so the new node is recorded. The redirect pass leaves
+  existing Retour redirects alone, found the way Retour's own `saveRedirect()`
+  finds them — the config normalised through Retour's redirect model, then
+  matched on the parsed source and exact site — and compiled `RedirectPage`
+  records honour `--force` too. The same lookup records the redirect it just
+  saved, which had gone unrecorded for site-scoped redirects. The
+  translation pass only adds catalog keys and CP translations, keyed on
+  enupal's primary key (`id` alone), which also stops one language
+  overwriting another's row. A re-run over the Enreach staging copy without
+  these rules moved 14 pages back under their legacy parent — undoing an
+  editor's restructure, and with it the 20 redirects Retour had made for it —
+  re-dated 85 entries, and rewrote 1,120 SEO values, 341 redirect
+  destinations and 122 CP translations.
+- **Retour's URI-change redirects are suspended for a run.** Retour answered
+  every URI a run passed through with an "old → new" redirect, and its
+  `saveRedirect()` overwrites an existing redirect with the same source: on
+  the Enreach staging copy, 480 redirects from URIs that were never public,
+  and two real ones rewritten to point at disabled `-2` rows.
+  `RetourUriChangeGuard` turns the setting off for the run's process only;
+  the redirect pass computes the redirects a run owes from the legacy URLs.
+- **The finalize pass no longer re-saves what it cannot resolve.** A rewrite
+  that only appended unresolved markers was saved anyway; CKEditor escaped
+  the marker into a stray `&gt;`, so such a row grew by one on every run —
+  12 rows of the Enreach corpus, two of them existing content.
+
 ## 1.2.0-beta.8 — 2026-09-04
 
 Beta.7's cache-invalidation fix did not resolve the bug: re-verified directly against the
