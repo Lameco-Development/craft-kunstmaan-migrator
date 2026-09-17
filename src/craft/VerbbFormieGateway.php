@@ -245,7 +245,10 @@ final class VerbbFormieGateway implements FormGateway
      *
      * It is also frequently blank or duplicated within one form, and a collision
      * silently overwriting an earlier field is the other failure worth
-     * preventing here.
+     * preventing here. Falling back to the label is what keeps a field that has no
+     * `internal_name` off a generic handle — and is also why the result has to be
+     * cut to length, which `FormFieldSettings::uniqueHandle()` does: a label is a
+     * sentence, and Formie validates a handle at 64 characters.
      *
      * @param array<string, mixed> $spec
      * @param array<string, mixed> $taken
@@ -255,16 +258,9 @@ final class VerbbFormieGateway implements FormGateway
         $base = StringHelper::toHandle((string) ($spec['handle'] ?? ''));
 
         if ($base === '') {
-            $base = StringHelper::toHandle((string) ($spec['label'] ?? '')) ?: 'field';
+            $base = StringHelper::toHandle((string) ($spec['label'] ?? ''));
         }
 
-        $handle = $base;
-        $suffix = 1;
-
-        while (isset($taken[$handle])) {
-            $handle = $base . ++$suffix;
-        }
-
-        return $handle;
+        return FormFieldSettings::uniqueHandle($base, $taken);
     }
 }

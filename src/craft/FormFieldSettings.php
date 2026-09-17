@@ -30,6 +30,48 @@ final class FormFieldSettings
     ];
 
     /**
+     * The width of Formie's `handle` column, which it also validates against.
+     *
+     * A field that fails validation fails the layout, and a failed layout fails the form:
+     * one handle a character too long costs the whole form, not the field.
+     */
+    private const HANDLE_LENGTH = 64;
+
+    /**
+     * A handle that fits, and that no other field in the form has taken.
+     *
+     * The derivation itself — folding `Prénom` down to ASCII — needs a booted Craft and
+     * stays in the gateway; this is the part that does not, and it is the part with the
+     * two edge cases. A legacy field frequently has no `internal_name` at all, so the
+     * handle comes from the label instead, and a label is a sentence: one live Header
+     * derives 65 characters from "Operator Connect Mobile on Teams. Ook voor jouw
+     * organisatie? Neem nu contact op".
+     *
+     * The suffix counts towards the limit too — appending it to a name already at the
+     * limit is how the clamp would hand back exactly what it was there to prevent.
+     *
+     * @param array<string, mixed> $taken handles already used in this form
+     */
+    public static function uniqueHandle(string $base, array $taken, int $max = self::HANDLE_LENGTH): string
+    {
+        $base = substr(trim($base), 0, $max);
+
+        if ($base === '') {
+            $base = 'field';
+        }
+
+        $handle = $base;
+        $suffix = 1;
+
+        while (isset($taken[$handle])) {
+            $next = (string) ++$suffix;
+            $handle = substr($base, 0, $max - strlen($next)) . $next;
+        }
+
+        return $handle;
+    }
+
+    /**
      * An options field's rows.
      *
      * A mapping supplies the labels — `choices | lines` — and the value is the label,

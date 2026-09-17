@@ -158,4 +158,39 @@ final class FormFieldSettingsTest extends TestCase
 
         self::assertSame('Terms & conditions', $nodes[0]['content'][0]['text']);
     }
+
+    #[Test]
+    public function a_handle_longer_than_the_column_is_cut_to_fit(): void
+    {
+        // One live Header in the corpus has no internal_name and a sentence for a label,
+        // which derives a 65-character handle. Formie validates handles at 64, and a field
+        // that fails validation fails the layout, which fails the whole form — one refused
+        // form out of 101 over one character.
+        $base = str_repeat('a', 80);
+
+        self::assertSame(str_repeat('a', 64), FormFieldSettings::uniqueHandle($base, []));
+    }
+
+    #[Test]
+    public function a_repeated_handle_gets_a_suffix_that_also_fits(): void
+    {
+        $base = str_repeat('a', 64);
+        $taken = [$base => true, str_repeat('a', 63) . '2' => true];
+
+        self::assertSame(str_repeat('a', 63) . '3', FormFieldSettings::uniqueHandle($base, $taken));
+    }
+
+    #[Test]
+    public function a_field_with_nothing_to_name_it_is_still_given_a_handle(): void
+    {
+        self::assertSame('field', FormFieldSettings::uniqueHandle('', []));
+        self::assertSame('field2', FormFieldSettings::uniqueHandle('', ['field' => true]));
+    }
+
+    #[Test]
+    public function a_handle_that_fits_is_left_exactly_as_it_is(): void
+    {
+        self::assertSame('amountUsers', FormFieldSettings::uniqueHandle('amountUsers', []));
+        self::assertSame('email2', FormFieldSettings::uniqueHandle('email', ['email' => true]));
+    }
 }
