@@ -164,4 +164,62 @@ final class TransformsTest extends TestCase
         );
         self::assertSame(1, $t->lossCount(), 'the addresses it could not carry are counted');
     }
+
+    #[Test]
+    public function a_legacy_choice_list_is_one_option_per_line(): void
+    {
+        // 1,291 of the corpus's 1,544 Choice rows store CRLF, and 41 carry stray
+        // whitespace around an option — both are invisible in the control panel and
+        // neither is part of the label an editor typed.
+        self::assertSame(
+            ['2 - 5', '6 - 20', '21 - 50', '51+'],
+            $this->transforms()->apply('lines', "2 - 5\r\n6 - 20\r\n 21 - 50 \n51+"),
+        );
+    }
+
+    #[Test]
+    public function a_single_choice_is_a_list_of_one_rather_than_nothing(): void
+    {
+        // 101 rows hold one option and no line break — a consent sentence the German
+        // forms keep in `choices` rather than in `label`. Read as "empty" they would
+        // leave the field with Formie's own placeholder and lose the only option there is.
+        self::assertSame(
+            ['Hiermit willige ich ein, dass die Daten genutzt werden.'],
+            $this->transforms()->apply('lines', 'Hiermit willige ich ein, dass die Daten genutzt werden.'),
+        );
+    }
+
+    #[Test]
+    public function an_empty_choice_list_yields_nothing_to_set(): void
+    {
+        // `BlockBuilder::fieldsFrom()` drops `[]`, so the field keeps whatever default
+        // the target offers instead of being handed an empty option list.
+        $t = $this->transforms();
+
+        self::assertSame([], $t->apply('lines', ''));
+        self::assertSame([], $t->apply('lines', null));
+        self::assertSame([], $t->apply('lines', "\r\n  \n"), 'blank lines are not options');
+    }
+
+    #[Test]
+    public function a_repeated_option_is_dropped_and_counted(): void
+    {
+        // No row in the current corpus repeats an option, but Formie refuses a field
+        // whose option labels are not unique — so the duplicate has to go, and going
+        // silently is how a form would come back one option short with no trace.
+        $t = $this->transforms();
+
+        self::assertSame(['Ja', 'Nee'], $t->apply('lines', "Ja\nNee\nJa"));
+        self::assertSame(1, $t->lossCount());
+    }
+
+    #[Test]
+    public function a_flag_column_becomes_an_attribute_only_when_it_is_set(): void
+    {
+        $t = $this->transforms();
+
+        self::assertSame(['data-option' => ''], $t->apply("attribute('data-option')", '1'));
+        self::assertNull($t->apply("attribute('data-option')", '0'));
+        self::assertNull($t->apply("attribute('data-option')", null));
+    }
 }
