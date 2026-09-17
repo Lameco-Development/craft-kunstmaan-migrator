@@ -333,6 +333,59 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.11 — 2026-09-17
+
+The forms lane read a legacy form field's label, its options and its type from
+nowhere, so a migrated form arrived as a list of fields called "Field 2".
+Measured on the Enreach corpus: 281 of 1,077 fields across 101 forms.
+
+### Added
+
+- **`lines`** — a legacy textarea that holds a list, one entry per line, which
+  is how Kunstmaan stores a Choice field's options. Splits on `\R` (1,291 of
+  the corpus's 1,544 rows are CRLF), trims (41 rows carry stray whitespace),
+  drops blank lines, and drops a repeated option with a loss recorded: Formie
+  refuses an options field whose labels are not unique, so keeping one fails
+  the whole form and dropping it in silence returns a form an option short.
+- **`attribute('name')`** — a legacy boolean expressed as the presence of an
+  HTML attribute. `send_as_option` is the shape it exists for: an install
+  marks the fields whose answers belong in a CRM's `options` bucket and reads
+  the marker back with `isset()`, so the value is empty on purpose.
+- **`switch:` in the `forms:` lane** — a field's type chosen per row. Kunstmaan
+  has one `Choice` part and renders it as a select, a radio group or a checkbox
+  group from `expanded` and `multiple`, the Symfony ChoiceType flags it stores
+  on the row; one `type:` per legacy class made all three a dropdown, which on
+  the reference corpus was 36 of 51 live placements answering the wrong
+  question. `RowCondition` is a second condition shape rather than a bigger
+  first one — `BlockBuilder`'s switch asks about a part's *children*, this asks
+  about the row's own columns — with `lines(column)` for the one thing a column
+  cannot say by itself: how many options a textarea holds. That count separates
+  a checkbox group from a consent checkbox, which is one box with a sentence
+  beside it and not a group of one. A row no case claims is skipped and
+  counted, never handed to the first case.
+- **`FormFieldSettings`** — where a mapping's vocabulary meets Formie's: option
+  rows, label/value attribute rows, and a ProseMirror document for a rich
+  description. Free of Formie symbols so it is testable without the plugin
+  installed, which is what the `FormGateway` seam is for.
+
+### Fixed
+
+- **A consent checkbox keeps its link.** A legacy `Checkbox` is a single box
+  with one label and no options, and 674 of the corpus's 1,855 rows keep an
+  anchor inside that label. Pointed at a multi-option field it rendered nothing
+  and printed the anchor as literal tags. As an `agree` field the sentence is a
+  description beside the box, the link works, and the label — which still names
+  the field in the control panel, in notifications and in a CRM payload — is
+  hidden in render so the text is not shown twice.
+- **A null no longer overwrites a target's default.** A legacy column that
+  holds nothing left the field's own default in place instead of blanking it.
+- **A derived field handle is cut to the width Formie validates.** A field with
+  no `internal_name` takes its handle from its label, and a label is a
+  sentence: one live Header derived 65 characters. Formie validates a handle at
+  64, a field that fails validation fails the layout, and a failed layout fails
+  the form — so one character cost the whole form. The dedupe suffix counts
+  towards the limit too.
+
 ## 1.2.0-beta.10 — 2026-09-11
 
 Two redirect defects, found checking the service-provider site on the Enreach
