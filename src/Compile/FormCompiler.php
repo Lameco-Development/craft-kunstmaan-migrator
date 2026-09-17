@@ -100,10 +100,16 @@ final class FormCompiler
                         continue;
                     }
 
-                    $mapped = $builder->fieldsFrom((array) ($fieldSpec['map'] ?? []), $row, $context);
+                    $resolved = $this->caseFor($fieldSpec, $row, $ref['part']);
+
+                    if ($resolved === null) {
+                        continue;
+                    }
+
+                    $mapped = $builder->fieldsFrom((array) ($resolved['map'] ?? []), $row, $context);
 
                     $fields[] = [
-                        'type' => (string) ($fieldSpec['type'] ?? ''),
+                        'type' => (string) ($resolved['type'] ?? ''),
                         'label' => (string) ($mapped['label'] ?? ''),
                         'handle' => (string) ($mapped['handle'] ?? ''),
                         'required' => (bool) ($mapped['required'] ?? false),
@@ -129,6 +135,51 @@ final class FormCompiler
                 'fields' => $fields,
             ]);
         }
+    }
+
+    /**
+     * The field spec this row gets, once a `switch:` has had its say.
+     *
+     * One legacy class is not always one form field. Kunstmaan has a single `Choice`
+     * part and decides between a select, a radio group and a checkbox group from
+     * `expanded` and `multiple` — Symfony's ChoiceType flags, kept on the row. A
+     * mapping that names one `type:` for the class makes all three a dropdown, which
+     * on the Enreach corpus was 36 of 51 live placements answering the wrong question.
+     *
+     * Cases are read in order and the first match wins, `- else: true` being the case
+     * that always does. A row no case claims is skipped and counted rather than handed
+     * to the first one: the mapping has not decided about that configuration, and a
+     * guessed widget is what the switch exists to prevent.
+     *
+     * @param array<string, mixed> $spec
+     * @param array<string, mixed> $row
+     *
+     * @return array<string, mixed>|null
+     */
+    private function caseFor(array $spec, array $row, string $part): ?array
+    {
+        $cases = $spec['switch'] ?? null;
+
+        if (!is_array($cases) || $cases === []) {
+            return $spec;
+        }
+
+        foreach ($cases as $case) {
+            if (!is_array($case)) {
+                continue;
+            }
+
+            $wins = ($case['else'] ?? false) === true
+                || RowCondition::matches((string) ($case['when'] ?? ''), $row);
+
+            if ($wins) {
+                return [...$spec, ...$case];
+            }
+        }
+
+        $this->skip(sprintf('no forms: case for %s', $part));
+
+        return null;
     }
 
     /**

@@ -114,11 +114,13 @@ final class VerbbFormieGateway implements FormGateway
                     ?: 'Field ' . ($index + 1);
                 $field->required = (bool) ($spec['required'] ?? false);
 
-                foreach ((array) ($spec['settings'] ?? []) as $key => $value) {
+                foreach ($this->settings((array) ($spec['settings'] ?? [])) as $key => $value) {
                     if ($field->canSetProperty($key)) {
                         $field->$key = $value;
                     }
                 }
+
+                $this->hideLabelBehindDescription($field);
 
                 $built[$field->handle] = $field;
             } catch (Throwable $e) {
@@ -180,6 +182,60 @@ final class VerbbFormieGateway implements FormGateway
     }
 
     /**
+     * A field's settings, in the shapes Formie stores them in.
+     *
+     * A mapping states an options list as lines and an attribute set as a map, because
+     * those are the shapes the legacy columns have and the shapes a reviewer can read.
+     * Formie stores both as rows, and a rich-text description as a ProseMirror document.
+     * `FormFieldSettings` is where the two vocabularies meet; anything it has no opinion
+     * about passes through untouched.
+     *
+     * A null is dropped rather than assigned. A legacy column that holds nothing must
+     * leave the target's own default alone — assigning null over it is how a field loses
+     * a placeholder, or a default value, to a column that simply was not filled in.
+     *
+     * @param array<string, mixed> $settings
+     *
+     * @return array<string, mixed>
+     */
+    private function settings(array $settings): array
+    {
+        if (array_key_exists('options', $settings)) {
+            $settings['options'] = FormFieldSettings::options($settings['options']);
+        }
+
+        if (array_key_exists('inputAttributes', $settings)) {
+            $settings['inputAttributes'] = FormFieldSettings::inputAttributes($settings['inputAttributes']);
+        }
+
+        if (array_key_exists('description', $settings)) {
+            $settings['description'] = FormFieldSettings::prose($settings['description']);
+        }
+
+        return array_filter($settings, static fn(mixed $value): bool => $value !== null);
+    }
+
+    /**
+     * A field whose description carries its own text shows it once.
+     *
+     * `Agree` renders the label like any other field and the description beside the
+     * checkbox. A legacy consent checkbox has one text for both — it is the label AND
+     * the sentence next to the box — so a migrated one prints it twice unless the label
+     * steps back. The label itself stays: it is what the control panel lists the field
+     * under, what a notification names it by, and what the CRM receives.
+     */
+    private function hideLabelBehindDescription(object $field): void
+    {
+        if (!$field->canGetProperty('description') || !$field->canSetProperty('labelPosition')) {
+            return;
+        }
+
+        if (!empty($field->description) && ($field->labelPosition ?? null) === null) {
+            $field->labelPosition = \verbb\formie\positions\Hidden::class;
+        }
+    }
+
+    /**
      * A handle Formie will accept, unique within the form.
      *
      * Legacy `internal_name` is what an editor typed. On the real corpus that
@@ -189,7 +245,10 @@ final class VerbbFormieGateway implements FormGateway
      *
      * It is also frequently blank or duplicated within one form, and a collision
      * silently overwriting an earlier field is the other failure worth
-     * preventing here.
+     * preventing here. Falling back to the label is what keeps a field that has no
+     * `internal_name` off a generic handle — and is also why the result has to be
+     * cut to length, which `FormFieldSettings::uniqueHandle()` does: a label is a
+     * sentence, and Formie validates a handle at 64 characters.
      *
      * @param array<string, mixed> $spec
      * @param array<string, mixed> $taken
@@ -199,16 +258,9 @@ final class VerbbFormieGateway implements FormGateway
         $base = StringHelper::toHandle((string) ($spec['handle'] ?? ''));
 
         if ($base === '') {
-            $base = StringHelper::toHandle((string) ($spec['label'] ?? '')) ?: 'field';
+            $base = StringHelper::toHandle((string) ($spec['label'] ?? ''));
         }
 
-        $handle = $base;
-        $suffix = 1;
-
-        while (isset($taken[$handle])) {
-            $handle = $base . ++$suffix;
-        }
-
-        return $handle;
+        return FormFieldSettings::uniqueHandle($base, $taken);
     }
 }

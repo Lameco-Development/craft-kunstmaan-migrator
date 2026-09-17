@@ -46,6 +46,7 @@ final class Transforms
             'mailto' => 'Email link',
             'tel' => 'Phone link',
             'externalUrl' => 'External link only — refuses internal legacy links',
+            'lines' => 'A list — one entry per line, as a legacy textarea holds it',
             'beforeComma' => 'The part before the first comma',
             'afterComma' => 'The part after the first comma',
         ];
@@ -53,6 +54,13 @@ final class Transforms
 
     public function apply(string $name, mixed $value, ?string $context = null): mixed
     {
+        // `attribute('data-option')` takes its name in the mapping rather than carrying
+        // it in the value, so it cannot be a `match` arm. Kept here beside the others
+        // rather than in BlockBuilder: it reads nothing but the column it is piped.
+        if (preg_match('/^attribute\(\'([^\']*)\'\)$/', $name, $m) === 1) {
+            return $this->attribute($m[1], $value);
+        }
+
         return match ($name) {
             'titleLevel' => $this->titleLevel($value, $context),
             'colorScheme' => $this->colorScheme($value, $context),
@@ -62,6 +70,7 @@ final class Transforms
             'ckeditor' => $this->ckeditor($value),
             'inlineHtml' => $this->inlineHtml($value),
             'externalUrl' => $this->externalUrl($value, $context),
+            'lines' => $this->lines($value, $context),
             'beforeComma' => $this->commaPart($value, 0),
             'afterComma' => $this->commaPart($value, 1),
             'url' => $this->url($value, $context),
@@ -71,6 +80,64 @@ final class Transforms
             'ref' => $value === null ? null : ['_ref' => (string) $value],
             default => $this->configured($name, $value, $context),
         };
+    }
+
+    /**
+     * A legacy textarea that holds a list — one entry per line.
+     *
+     * Kunstmaan's `Choice` keeps its options this way, and the line ending is whatever
+     * the browser that saved the row sent: 1,291 of the corpus's 1,544 rows are CRLF,
+     * 41 carry stray whitespace, and a blank line is a stray keystroke rather than an
+     * option. `\R` is what reads all three the same.
+     *
+     * A duplicate is dropped and counted. Formie refuses an options field whose labels
+     * are not unique, so keeping one would fail the whole form — and dropping it in
+     * silence is how a form comes back an option short with nothing to point at.
+     *
+     * @return list<string>
+     */
+    private function lines(mixed $value, ?string $context): array
+    {
+        $text = trim((string) ($value ?? ''));
+
+        if ($text === '') {
+            return [];
+        }
+
+        $out = [];
+
+        foreach (preg_split('/\R/u', $text) ?: [] as $line) {
+            $line = trim($line);
+
+            if ($line === '') {
+                continue;
+            }
+
+            if (in_array($line, $out, true)) {
+                $this->record('lines', $line, 'dropped as a duplicate', $context);
+
+                continue;
+            }
+
+            $out[] = $line;
+        }
+
+        return $out;
+    }
+
+    /**
+     * A legacy boolean that a target expresses as the presence of an HTML attribute.
+     *
+     * `send_as_option` is the shape this exists for: the Enreach install marks a field
+     * whose answer belongs in the CRM's `options` bucket with `data-option`, and reads
+     * it back with `isset()` — the attribute's presence is the whole signal, so the
+     * value is empty on purpose.
+     *
+     * @return array<string, string>|null attribute => value, or null when the flag is off
+     */
+    private function attribute(string $name, mixed $value): ?array
+    {
+        return $value !== null && (int) $value === 1 ? [$name => ''] : null;
     }
 
     /**
