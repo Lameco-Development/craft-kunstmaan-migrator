@@ -7,8 +7,10 @@ namespace Lameco\Kunstmaanmigrator\tests\kernel;
 use Lameco\Kunstmaanmigrator\Compile\Compiler;
 use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Report\Readiness;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Lameco\Kunstmaanmigrator\Target\Slot;
+use Lameco\Kunstmaanmigrator\Target\TargetCheck;
 use Lameco\Kunstmaanmigrator\Target\TargetSchema;
 use PDO;
 use PHPUnit\Framework\Attributes\Test;
@@ -487,5 +489,91 @@ final class PerContextFieldsTest extends TestCase
         }
 
         self::assertSame($entries, $batched);
+    }
+
+    private static function formsField(string $field): string
+    {
+        return str_replace('  context: form', "  context: form\n  field: " . $field, self::FORMS);
+    }
+
+    private function mapping(string $yaml): Mapping
+    {
+        return Mapping::fromFile($this->mappingFile($yaml));
+    }
+
+    #[Test]
+    public function a_forms_field_no_page_type_has_fails_validate(): void
+    {
+        // A typo here passed validate and dropped every form block at compile, one skip per page.
+        $mapping = $this->mapping(self::HEAD . self::MULTI . self::PARTS . self::formsField('berkvensNlSidbar'));
+
+        self::assertSame(
+            ['forms.field: no page entry type has a Matrix `berkvensNlSidbar` — every form block would be dropped'],
+            (new TargetCheck($this->schema()))->check($mapping),
+        );
+    }
+
+    #[Test]
+    public function a_forms_field_some_page_types_lack_is_a_warning_for_those_types(): void
+    {
+        // `forms.field` is lane-wide; a page type without it may simply never hold a form.
+        $mapping = $this->mapping(self::HEAD . self::MULTI . self::PARTS . self::formsField('berkvensNlSidebar'));
+        $check = new TargetCheck($this->schema());
+
+        self::assertSame([], $check->check($mapping));
+        $warning = 'page `CataloguePage` lands its form block in `berkvensNlSidebar`, which `cataloguePage`'
+            . ' does not have — a form on these pages is dropped';
+
+        self::assertSame([$warning], $check->pagesWithNoBlockField($mapping));
+    }
+
+    #[Test]
+    public function readiness_credits_the_forms_field_to_the_forms_lane(): void
+    {
+        // Every context on the builder: the sidebar is filled by the form block alone.
+        $mapping = $this->mapping(self::HEAD . self::SINGLE . self::PARTS . self::formsField('berkvensNlSidebar'));
+        $suppliers = [];
+
+        foreach ((new Readiness($mapping, $this->schema()))->all() as $r) {
+            if ($r->subject === 'ContentPage') {
+                $suppliers[$r->field] = $r->supplier;
+            }
+        }
+
+        self::assertSame('forms', $suppliers['berkvensNlSidebar'] ?? null);
+        self::assertSame('blocks', $suppliers['pageBuilderBerkvensNl'] ?? null);
+    }
+
+    /** MULTI with ContentPage's own `map:` also writing the sidebar. */
+    private static function mapsTheSidebar(): string
+    {
+        return str_replace(
+            "    entryType: contentPage\n",
+            "    entryType: contentPage\n    map: { berkvensNlSidebar: id }\n",
+            self::MULTI,
+        );
+    }
+
+    #[Test]
+    public function blocks_replacing_a_mapped_value_on_the_same_field_are_reported(): void
+    {
+        // The block stream has always won the builder; now any context field — or `forms.field` —
+        // can collide with what `map:`, `children:` or a sidecar put there. The stream still wins,
+        // but the value it replaces is counted, not lost in silence.
+        [$entries, $compiler] = $this->compile(self::HEAD . self::mapsTheSidebar() . self::PARTS);
+
+        self::assertSame([self::text(2, 'openingstijden'), self::text(3, 'adres')], self::fieldsOf($entries[0])['berkvensNlSidebar']);
+        self::assertSame(1, $compiler->skipped()['contentPage.berkvensNlSidebar: blocks replace a value from map/children/sidecars'] ?? null);
+    }
+
+    #[Test]
+    public function a_page_mapping_a_field_its_blocks_land_in_fails_validate(): void
+    {
+        $mapping = $this->mapping(self::HEAD . self::mapsTheSidebar() . self::PARTS);
+
+        self::assertSame(
+            ['page `ContentPage`: `berkvensNlSidebar` is both mapped and a block field — the blocks replace the mapped value'],
+            (new TargetCheck($this->schema()))->check($mapping),
+        );
     }
 }

@@ -291,7 +291,11 @@ forms:
   accept is still dropped, and counted, when its own context's field rejects it — and
   `migrate`'s placement warning reports it by context.
 - **The form block** goes at the foot of `forms.field` when set, else of the page's main
-  builder: the first context's field.
+  builder: the first context's field. `validate --craft` fails a `forms.field` no page entry
+  type has as a Matrix, and warns per page type that lacks it.
+- **Blocks own their field.** A field that both a context (or `forms.field`) and the page's
+  `map:`/`children:` write is a `validate` error; when a sidecar collides at compile, the blocks
+  win and the replaced value is counted in the run report.
 
 ## Non-node tables
 

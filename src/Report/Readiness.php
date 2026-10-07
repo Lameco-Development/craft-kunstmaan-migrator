@@ -383,6 +383,14 @@ final class Readiness
             $fields[$field] = 'blocks';
         }
 
+        // The form block lands in `forms.field` when the lane names one; a builder already
+        // credited to `blocks` keeps that credit.
+        $forms = $this->mapping->forms();
+
+        if ($forms->declared && $forms->field !== null) {
+            $fields[$forms->field] ??= 'forms';
+        }
+
         return $fields;
     }
 

@@ -22,7 +22,7 @@ final class TargetCheck
     /** @return list<string> */
     public function check(Mapping $mapping): array
     {
-        $errors = $this->checkStructural($mapping);
+        $errors = [...$this->checkStructural($mapping), ...$this->checkFormsField($mapping)];
 
         foreach ($mapping->pageRows() as $name => $page) {
             if (!$page->isMigrated()) {
@@ -62,6 +62,25 @@ final class TargetCheck
             }
 
             $this->checkChildren(sprintf('page `%s`', $name), $entryType, $page->children(), $errors);
+
+            // A field the page writes itself and the block stream also fills: the blocks win at
+            // compile, so the mapped value is dropped on every page that has any blocks there.
+            $blockFields = $page->contextFields();
+            $formsField = $this->formsField($mapping);
+
+            if ($formsField !== null) {
+                $blockFields[] = $formsField;
+            }
+
+            $written = array_map(strval(...), [...array_keys($page->map()), ...array_keys($page->children())]);
+
+            foreach (array_values(array_unique(array_intersect($written, $blockFields))) as $field) {
+                $errors[] = sprintf(
+                    'page `%s`: `%s` is both mapped and a block field — the blocks replace the mapped value',
+                    $name,
+                    $field,
+                );
+            }
         }
 
         foreach ($mapping->entityRows() as $name => $entity) {
@@ -211,9 +230,71 @@ final class TargetCheck
                     $entryType,
                 );
             }
+
+            $formsField = $this->formsField($mapping);
+
+            if ($formsField !== null && !$this->isMatrix((string) $entryType, $formsField)) {
+                $warnings[] = sprintf(
+                    'page `%s` lands its form block in `%s`, which `%s` does not have — a form on these'
+                    . ' pages is dropped',
+                    $name,
+                    $formsField,
+                    $entryType,
+                );
+            }
         }
 
         return $warnings;
+    }
+
+    /**
+     * `forms.field` names a Matrix on no page type at all: a typo, and every form block in the
+     * corpus is dropped at compile. A page type that merely lacks it is `pagesWithNoBlockField()`'s
+     * warning instead — the field is lane-wide, and a type that never holds a form need not carry it.
+     *
+     * @return list<string>
+     */
+    private function checkFormsField(Mapping $mapping): array
+    {
+        $field = $this->formsField($mapping);
+
+        if ($field === null) {
+            return [];
+        }
+
+        $pageTypes = [];
+
+        foreach ($mapping->pageRows() as $page) {
+            $entryType = (string) $page->entryType();
+
+            if ($page->compiles() && $this->schema->hasEntryType($entryType)) {
+                $pageTypes[] = $entryType;
+            }
+        }
+
+        foreach ($pageTypes as $entryType) {
+            if ($this->isMatrix($entryType, $field)) {
+                return [];
+            }
+        }
+
+        return $pageTypes === [] ? [] : [sprintf(
+            'forms.field: no page entry type has a Matrix `%s` — every form block would be dropped',
+            $field,
+        )];
+    }
+
+    /** The declared `forms.field`, or null when the lane is off or falls back to the builder. */
+    private function formsField(Mapping $mapping): ?string
+    {
+        $forms = $mapping->forms();
+
+        return $forms->declared ? $forms->field : null;
+    }
+
+    private function isMatrix(string $entryType, string $field): bool
+    {
+        return $this->schema->slot($entryType, $field)?->isMatrix() === true;
     }
 
     /**

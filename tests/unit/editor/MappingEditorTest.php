@@ -495,6 +495,55 @@ final class MappingEditorTest extends TestCase
         self::assertSame(['sidebarContactBlock', 'textBlock', 'uspBlock'], $editor->availableBlocks());
     }
 
+    /**
+     * The fallbacks the compiler applies apply here too: a context with no `field:` streams into
+     * `pageBuilder`, a mapping with no `defaults.contexts` into `commonPageBuilder`, and the form
+     * block into `forms.field` — each of which used to contribute nothing to the list.
+     */
+    public function testAvailableBlocksResolveContextsAndTheFormsFieldAsTheCompilerDoes(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'mapping') . '.yaml';
+
+        file_put_contents($path, <<<'YAML'
+            version: 1
+            environments:
+              COM:
+                database: legacy
+                locales: { nl: berkvensNl }
+            pages:
+              ContentPage: { entryType: contentPage }
+              CataloguePage:
+                entryType: cataloguePage
+                contexts:
+                  main: {}
+              Dropped: { entryType: droppedPage, drop: 'not migrated' }
+            forms:
+              context: form
+              field: formsMatrix
+              fields: {}
+            YAML);
+
+        $schema = $this->createStub(SchemaGateway::class);
+        $schema->method('blockTypesFor')->willReturnCallback(
+            static fn(string $entryType, string $field): array => match ("$entryType.$field") {
+                'contentPage.commonPageBuilder' => ['textBlock'],
+                'cataloguePage.pageBuilder' => ['uspBlock'],
+                'contentPage.formsMatrix' => ['formBlock'],
+                'droppedPage.commonPageBuilder' => ['neverOffered'],
+                default => [],
+            },
+        );
+
+        $editor = new MappingEditor(
+            SettingsFactory::make(['mappingPath' => $path]),
+            $schema,
+            new TargetModel($schema),
+            new InMemoryTargetCatalogue(),
+        );
+
+        self::assertSame(['formBlock', 'textBlock', 'uspBlock'], $editor->availableBlocks());
+    }
+
     /** Two open pages, as `mapping/init` leaves them. */
     private function mappingFile(): string
     {
