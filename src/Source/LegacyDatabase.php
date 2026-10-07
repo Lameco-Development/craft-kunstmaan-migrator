@@ -25,10 +25,7 @@ final class LegacyDatabase
         SQL;
 
     /** @var array<string, int>|null */
-    private ?array $livePartClasses = null;
-
-    /** @var array<string, bool>|null short name => whether more than one live class answers to it */
-    private ?array $sharedShortNames = null;
+    private ?array $livePartPlacements = null;
 
     public function __construct(
         private readonly PDO $pdo,
@@ -95,7 +92,6 @@ final class LegacyDatabase
             pagesByLocale: $this->livePagesByLocale(),
             allPartRefs: $this->countAllPartRefs(),
             pageContextStacks: $this->livePageContextStacks(),
-            partClasses: $this->livePartClasses(),
         );
     }
 
@@ -189,7 +185,7 @@ final class LegacyDatabase
         $counts = [];
 
         foreach ($this->pdo->query($sql) as $row) {
-            $counts[self::shortName((string) $row['entity'])] = (int) $row['n'];
+            $counts[PartClass::basename((string) $row['entity'])] = (int) $row['n'];
         }
 
         arsort($counts);
@@ -198,39 +194,18 @@ final class LegacyDatabase
     }
 
     /**
-     * Live pagepart placements, keyed by the short pagepart class name — or by the fully
-     * qualified one where two live classes share the short name.
+     * Live pagepart placements by fully qualified class name.
      *
-     * The app's `TextPagePart` and Kunstmaan's are two classes with two tables, and folded into
-     * one `Text` count the second was invisible to every total that should have flagged it. A
-     * short name only one live class answers to stays as it was.
-     *
-     * @return array<string, int> pagepart class key (`partKey()`) => live placements
-     */
-    public function livePartPlacements(): array
-    {
-        $counts = [];
-
-        foreach ($this->livePartClasses() as $class => $n) {
-            $key = $this->partKey($class);
-            $counts[$key] = ($counts[$key] ?? 0) + $n;
-        }
-
-        arsort($counts);
-
-        return $counts;
-    }
-
-    /**
-     * Live pagepart placements by fully qualified class name — what tells two namespaces that
-     * share a short name apart.
+     * Never folded to the short name: two namespaces can share one (the app's `TextPagePart` and
+     * Kunstmaan's), each with its own table, and which row claims each class is the mapping's
+     * call (`Mapping::partKey()`). A report that wants short names asks `PartClass::reported()`.
      *
      * @return array<string, int> fully qualified pagepart class => live placements
      */
-    public function livePartClasses(): array
+    public function livePartPlacements(): array
     {
-        if ($this->livePartClasses !== null) {
-            return $this->livePartClasses;
+        if ($this->livePartPlacements !== null) {
+            return $this->livePartPlacements;
         }
 
         $sql = sprintf(
@@ -250,31 +225,7 @@ final class LegacyDatabase
 
         arsort($counts);
 
-        return $this->livePartClasses = $counts;
-    }
-
-    /**
-     * The key a live class is reported under: its short name, unless another live class shares
-     * it, then its fully qualified name.
-     */
-    private function partKey(string $entity): string
-    {
-        if ($this->sharedShortNames === null) {
-            $classes = [];
-
-            foreach (array_keys($this->livePartClasses()) as $class) {
-                $classes[PartClass::shortName((string) $class)][] = $class;
-            }
-
-            $this->sharedShortNames = array_map(
-                static fn(array $all): bool => count($all) > 1,
-                $classes,
-            );
-        }
-
-        $short = PartClass::shortName($entity);
-
-        return ($this->sharedShortNames[$short] ?? false) ? PartClass::normalize($entity) : $short;
+        return $this->livePartPlacements = $counts;
     }
 
     /**
@@ -366,7 +317,7 @@ final class LegacyDatabase
             $out[] = [
                 'lang' => (string) $row['lang'],
                 'context' => (string) $row['context'],
-                'part' => self::shortName((string) $row['entity'], 'PagePart'),
+                'part' => PartClass::shortName((string) $row['entity']),
                 'entity' => (string) $row['entity'],
                 'id' => (int) $row['partId'],
                 'sequence' => (int) $row['sequence'],
@@ -386,7 +337,7 @@ final class LegacyDatabase
      * from the corpus rather than guessed from the mapping. The context is part of the pairing
      * because each context writes to its own Matrix, with its own allow-list.
      *
-     * @return array<string, array<string, array<string, int>>> short page entity => context => pagepart class key (`partKey()`) => live placements
+     * @return array<string, array<string, array<string, int>>> short page entity => context => fully qualified pagepart class => live placements
      */
     public function livePlacementsByPageType(): array
     {
@@ -401,8 +352,8 @@ final class LegacyDatabase
         $out = [];
 
         foreach ($this->pdo->query($sql) as $row) {
-            $page = self::shortName((string) $row['entity']);
-            $part = $this->partKey((string) $row['part']);
+            $page = PartClass::basename((string) $row['entity']);
+            $part = PartClass::normalize((string) $row['part']);
             $context = (string) $row['context'];
             $out[$page][$context][$part] = ($out[$page][$context][$part] ?? 0) + (int) $row['n'];
         }
@@ -423,7 +374,7 @@ final class LegacyDatabase
      * legacy Kunstmaan install often still is.
      *
      * @return array<string, array<string, array<string, array<string, array{stacks: int, placements: int}>>>>
-     *         short page entity => context => lang => sorted part class keys (`partKey()`), comma-joined => totals
+     *         short page entity => context => lang => sorted fully qualified part classes, comma-joined => totals
      */
     public function livePageContextStacks(): array
     {
@@ -462,7 +413,7 @@ final class LegacyDatabase
                 $flush($stack);
                 $key = $rowKey;
                 $stack = [
-                    'page' => self::shortName((string) $row['entity']),
+                    'page' => PartClass::basename((string) $row['entity']),
                     'context' => (string) $row['context'],
                     'lang' => (string) $row['lang'],
                     'classes' => [],
@@ -470,7 +421,7 @@ final class LegacyDatabase
                 ];
             }
 
-            $stack['classes'][$this->partKey((string) $row['part'])] = true;
+            $stack['classes'][PartClass::normalize((string) $row['part'])] = true;
             ++$stack['placements'];
         }
 
@@ -514,7 +465,7 @@ final class LegacyDatabase
             $out[(int) $row['nodeId']][] = [
                 'lang' => (string) $row['lang'],
                 'context' => (string) $row['context'],
-                'part' => self::shortName((string) $row['entity'], 'PagePart'),
+                'part' => PartClass::shortName((string) $row['entity']),
                 'entity' => (string) $row['entity'],
                 'id' => (int) $row['partId'],
                 'sequence' => (int) $row['sequence'],
@@ -669,7 +620,7 @@ final class LegacyDatabase
         $counts = [];
 
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $counts[self::shortName((string) $row['part'], 'PagePart')] = [
+            $counts[PartClass::shortName((string) $row['part'])] = [
                 'live' => (int) $row['n'],
                 'preceded' => (int) $row['p'],
             ];
@@ -679,21 +630,22 @@ final class LegacyDatabase
     }
 
     /**
-     * Short pagepart class name => every fully qualified entity name that shares it.
+     * Every pagepart entity name the refs table holds, spelled exactly as it stores it — what a
+     * query filtering on `page_part_entityname` has to bind.
      *
-     * A list rather than a string because the corpus has genuine collisions: `GoogleMapsPagePart`
-     * exists under both `App\Entity\PageParts` and `Lameco\MasterBundle\Entity\PageParts`, and
-     * the mapping names the short class. Keeping one of the two silently halves the count.
+     * Which of them a row reads is the mapping's call (`Mapping::partKey()`): the corpus has
+     * genuine short-name collisions — `GoogleMapsPagePart` under both `App\Entity\PageParts` and
+     * `Lameco\MasterBundle\Entity\PageParts` — and a short-name row reads every class of the
+     * name that no qualified row claims.
      *
-     * @return array<string, list<string>>
+     * @return list<string>
      */
     public function partEntities(): array
     {
         $entities = [];
 
         foreach ($this->pdo->query('SELECT DISTINCT page_part_entityname FROM kuma_page_part_refs') as $row) {
-            $entity = (string) $row['page_part_entityname'];
-            $entities[self::shortName($entity, 'PagePart')][] = $entity;
+            $entities[] = (string) $row['page_part_entityname'];
         }
 
         return $entities;
@@ -716,17 +668,5 @@ final class LegacyDatabase
         $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 
         return ['rows' => (int) ($row['n'] ?? 0), 'empty' => (int) ($row['empties'] ?? 0)];
-    }
-
-    /** Strips the PHP namespace, and optionally a class-name suffix, from a Doctrine entity name. */
-    private static function shortName(string $entity, string $suffix = ''): string
-    {
-        $short = substr((string) strrchr($entity, '\\'), 1) ?: $entity;
-
-        if ($suffix !== '' && str_ends_with($short, $suffix)) {
-            $short = substr($short, 0, -strlen($suffix));
-        }
-
-        return $short;
     }
 }

@@ -162,33 +162,16 @@ final class Mapping
     }
 
     /**
-     * The key that claims a live class in some lane, or null when none does.
-     *
-     * A live class is reported by its short name, or by its fully qualified one when its short
-     * name is shared (`LegacyDatabase::livePartClasses()`). A qualified class falls back to its
-     * short-name row, as compile does; a short one is also claimed by the one qualified row
-     * naming it, so a qualified key on a class that collides nowhere is not a hole.
+     * The key that claims a live class in some lane, or null when none does: the row
+     * `partKey()` resolves it to — its qualified row, else its short-name row — when that row
+     * is accounted for. The corpus names every class by its qualified name, so this is the
+     * same resolution compile makes.
      */
     public function claimingKey(string $class): ?string
     {
-        $accounted = $this->accountedParts();
+        $key = $this->partKey($class);
 
-        if (PartClass::isQualified($class)) {
-            $key = $this->partKey($class);
-
-            return isset($accounted[$key]) ? $key : null;
-        }
-
-        if (isset($accounted[$class])) {
-            return $class;
-        }
-
-        $qualified = array_values(array_filter(
-            array_keys($accounted),
-            static fn($key): bool => PartClass::isQualified((string) $key) && PartClass::shortName((string) $key) === $class,
-        ));
-
-        return count($qualified) === 1 ? (string) $qualified[0] : null;
+        return isset($this->accountedParts()[$key]) ? $key : null;
     }
 
     /**

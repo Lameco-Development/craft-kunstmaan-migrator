@@ -6,7 +6,6 @@ namespace Lameco\Kunstmaanmigrator\load;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\PageRow;
-use Lameco\Kunstmaanmigrator\Source\PartClass;
 
 /**
  * The things an explanation needs that do not change from node to node.
@@ -27,8 +26,8 @@ final readonly class ExplainContext
      * @param array<string, array{blocks: list<string>, page: list<string>}> $contextsByPage
      *        short page entity => its own split, where a page's `contexts:` replaces the defaults;
      *        a page not named here is judged by `$contexts` / `$pageContexts`
-     * @param array<string, string> $qualified fully qualified pagepart class => the row key claiming it,
-     *        for the classes the mapping keys by their qualified name (`Mapping::partKey()`)
+     * @param ?\Closure(string): string $partKey a placement's entity => the row key claiming it
+     *        (`Mapping::partKey()`); null keys every placement by its short name
      */
     public function __construct(
         public string $environment,
@@ -38,7 +37,7 @@ final readonly class ExplainContext
         public array $locales,
         public array $pageContexts = [],
         public array $contextsByPage = [],
-        public array $qualified = [],
+        public ?\Closure $partKey = null,
     ) {
     }
 
@@ -86,22 +85,8 @@ final readonly class ExplainContext
             $locales,
             $defaults['page'],
             $byPage,
-            self::qualified($mapping),
+            $mapping->partKey(...),
         );
-    }
-
-    /** @return array<string, string> */
-    private static function qualified(Mapping $mapping): array
-    {
-        $out = [];
-
-        foreach (array_keys($mapping->accountedParts()) as $key) {
-            if (PartClass::isQualified((string) $key)) {
-                $out[PartClass::normalize((string) $key)] = (string) $key;
-            }
-        }
-
-        return $out;
     }
 
     /**
@@ -119,9 +104,9 @@ final readonly class ExplainContext
         return EntryExplanation::reconcile(
             $this->environment,
             $blockIds,
-            $this->qualified === [] ? $legacyParts : array_map(
+            $this->partKey === null ? $legacyParts : array_map(
                 // Keyed as compile keys them, so the lane, the table and a page fill all match.
-                fn(array $part): array => ['part' => $this->qualified[PartClass::normalize($part['entity'])] ?? $part['part']] + $part,
+                fn(array $part): array => ['part' => ($this->partKey)($part['entity'])] + $part,
                 $legacyParts,
             ),
             $this->lanes,

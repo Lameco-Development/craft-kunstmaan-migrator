@@ -98,6 +98,7 @@ final class ExplainContextTest extends TestCase
     {
         $text = self::header('banner');
         $text[0]['part'] = 'Text';
+        $text[0]['entity'] = 'App\\Entity\\PageParts\\TextPagePart';
 
         $result = self::context()->reconcile([], $text, 'HeroPage', ['nl' => ['banner' => null]]);
 

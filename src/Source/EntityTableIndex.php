@@ -58,7 +58,7 @@ final class EntityTableIndex
 
             $parts = explode('\\', (string) $class);
             $basename = (string) end($parts);
-            $tables[self::shortName($basename)] = (string) $spec['table'];
+            $tables[PartClass::shortName($basename)] = (string) $spec['table'];
             $qualifiedTables[PartClass::normalize((string) $class)] = (string) $spec['table'];
 
             foreach ((array) ($spec['associations'] ?? []) as $assoc) {
@@ -71,7 +71,7 @@ final class EntityTableIndex
 
                 $targetParts = explode('\\', $target);
                 $collection = ['table' => (string) $spec['table'], 'fk' => (string) $joinColumns[0]];
-                $children[self::shortName((string) end($targetParts))][] = $collection;
+                $children[PartClass::shortName((string) end($targetParts))][] = $collection;
                 $qualifiedChildren[PartClass::normalize($target)][] = $collection;
             }
         }
@@ -122,7 +122,7 @@ final class EntityTableIndex
             }
 
             $class = $file->getBasename('.php');
-            $tables[self::shortName($class)] = $m[1];
+            $tables[PartClass::shortName($class)] = $m[1];
 
             if (preg_match('/^namespace\s+([^;\s]+)\s*;/m', $source, $ns) === 1) {
                 $qualifiedTables[PartClass::normalize($ns[1] . '\\' . $class)] = $m[1];
@@ -131,7 +131,7 @@ final class EntityTableIndex
             $owner = self::ownerOf($source);
 
             if ($owner !== null) {
-                $children[self::shortName($owner['entity'])][] = ['table' => $m[1], 'fk' => $owner['fk']];
+                $children[PartClass::shortName($owner['entity'])][] = ['table' => $m[1], 'fk' => $owner['fk']];
             }
         }
 
@@ -231,10 +231,5 @@ final class EntityTableIndex
     public function isEmpty(): bool
     {
         return $this->tables === [];
-    }
-
-    private static function shortName(string $class): string
-    {
-        return str_ends_with($class, 'PagePart') ? substr($class, 0, -8) : $class;
     }
 }

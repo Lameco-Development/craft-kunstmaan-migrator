@@ -20,7 +20,7 @@ final class FillMeasurer
     /** @var array<string, array{live:int, preceded:int}> */
     private array $preceded = [];
 
-    /** @var array<string, list<string>> */
+    /** @var list<string> every pagepart entity name, as the refs table spells it */
     private array $entities = [];
 
     /** @var list<string> */
@@ -182,16 +182,16 @@ final class FillMeasurer
     }
 
     /**
-     * The entity names, as the refs table spells them, whose placements a row reads: a short-name
-     * row reads every class of that name except those a row keyed by the qualified name claims.
+     * The entity names, as the refs table spells them, whose placements a row reads — those
+     * `Mapping::partKey()` resolves to it, as compile does.
      *
      * @return list<string>
      */
-    private function entitiesOf(string $subject): array
+    private function entitiesOf(string $key): array
     {
         return array_values(array_filter(
-            $this->entities[PartClass::shortName($subject)] ?? [],
-            fn(string $entity): bool => $this->mapping->partKey($entity) === $subject,
+            $this->entities,
+            fn(string $entity): bool => $this->mapping->partKey($entity) === $key,
         ));
     }
 
@@ -200,6 +200,11 @@ final class FillMeasurer
     {
         $part = (string) $this->headPart();
 
-        return $this->entities[$part] ?? [$part];
+        $entities = array_values(array_filter(
+            $this->entities,
+            static fn(string $entity): bool => PartClass::shortName($entity) === $part,
+        ));
+
+        return $entities ?: [$part];
     }
 }

@@ -54,11 +54,21 @@ final class PartClassSurveyTest extends TestCase
     }
 
     #[Test]
-    public function live_classes_are_counted_by_their_fully_qualified_name(): void
+    public function every_live_count_names_a_class_by_its_qualified_name_whether_or_not_it_collides(): void
     {
+        // Which row claims a class is the mapping's call (`Mapping::partKey()`), not the
+        // database's: a short name here would hide a class the mapping keys by its qualified one.
+        $db = $this->db();
+        $video = 'Kunstmaan\MediaPagePartBundle\Entity\VideoPagePart';
+
+        self::assertSame([self::KM_TEXT => 2, self::APP_TEXT => 1, $video => 1], $db->livePartPlacements());
         self::assertSame(
-            [self::KM_TEXT => 2, self::APP_TEXT => 1, 'Kunstmaan\MediaPagePartBundle\Entity\VideoPagePart' => 1],
-            $this->db()->livePartClasses(),
+            ['HomePage' => ['main' => [self::APP_TEXT => 1, $video => 1, self::KM_TEXT => 2]]],
+            $db->livePlacementsByPageType(),
+        );
+        self::assertSame(
+            ['HomePage' => ['main' => ['en' => [implode(',', [self::APP_TEXT, $video, self::KM_TEXT]) => ['stacks' => 1, 'placements' => 4]]]]],
+            $db->livePageContextStacks(),
         );
     }
 

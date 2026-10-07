@@ -77,7 +77,7 @@ final class ValidateCommand extends Command
             $liveParts = [];
 
             foreach (LegacyDatabase::connectAll($mapping->databases(), Dsn::fromEnvironment()) as $db) {
-                $liveParts = PartClass::tally($liveParts, $db->livePartClasses());
+                $liveParts = PartClass::tally($liveParts, $db->livePartPlacements());
             }
         }
 

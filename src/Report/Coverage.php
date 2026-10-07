@@ -20,11 +20,8 @@ use Lameco\Kunstmaanmigrator\Source\PartClass;
  */
 final class Coverage
 {
-    /** @var array<string, int> */
-    private array $partPlacements = [];
-
     /** @var array<string, int> fully qualified pagepart class => live placements, across every snapshot */
-    private array $partClasses = [];
+    private array $partPlacements = [];
 
     /** @var array<string, int> */
     private array $pageTypes = [];
@@ -71,11 +68,7 @@ final class Coverage
     {
         $this->ambiguous = null;
 
-        foreach ($this->byClaimingKey($snapshot) as $class => $n) {
-            $this->partPlacements[$class] = ($this->partPlacements[$class] ?? 0) + $n;
-        }
-
-        $this->partClasses = PartClass::tally($this->partClasses, $snapshot->partClasses);
+        $this->partPlacements = PartClass::tally($this->partPlacements, $snapshot->partPlacements);
 
         foreach ($snapshot->pageTypes as $entity => $n) {
             $this->pageTypes[$entity] = ($this->pageTypes[$entity] ?? 0) + $n;
@@ -107,36 +100,6 @@ final class Coverage
                 }
             }
         }
-    }
-
-    /**
-     * The snapshot's placements, with a class the mapping keys by its qualified name counted
-     * under that name even where nothing collides and the corpus reports it by its short one —
-     * compile reads it through the qualified row, so coverage must too.
-     *
-     * @return array<string, int>
-     */
-    private function byClaimingKey(LiveSnapshot $snapshot): array
-    {
-        $placements = $snapshot->partPlacements;
-
-        foreach ($snapshot->partClasses as $class => $n) {
-            $short = PartClass::shortName((string) $class);
-            $key = $this->mapping->partKey((string) $class);
-
-            if ($key === $short || !isset($placements[$short])) {
-                continue;
-            }
-
-            $placements[$short] -= $n;
-            $placements[$key] = ($placements[$key] ?? 0) + $n;
-
-            if ($placements[$short] <= 0) {
-                unset($placements[$short]);
-            }
-        }
-
-        return $placements;
     }
 
     /**
@@ -199,14 +162,25 @@ final class Coverage
         return false;
     }
 
-    /** @return array<string, int> pagepart class => live placements, unclaimed by any lane */
+    /**
+     * Live placements no lane claims, by short name — or by the qualified one where more than one
+     * live class shares the short name (`PartClass::reported()`).
+     *
+     * @return array<string, int> pagepart class => live placements, unclaimed by any lane
+     */
     public function unclaimedParts(): array
     {
-        return array_filter(
-            $this->partPlacements,
-            fn(int $n, string $class): bool => $this->claim($class) === null,
-            ARRAY_FILTER_USE_BOTH,
-        );
+        $names = PartClass::reportNames(array_keys($this->partPlacements));
+        $out = [];
+
+        foreach ($this->partPlacements as $class => $n) {
+            if ($this->claim((string) $class) === null) {
+                $name = $names[(string) $class];
+                $out[$name] = ($out[$name] ?? 0) + $n;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -220,7 +194,7 @@ final class Coverage
     {
         // Summed across databases: one database may hold only the app's class and another only
         // Kunstmaan's, and the one short-name row still reads one table for both.
-        return $this->mapping->unresolvedPartCollisions($this->partClasses + $this->partPlacements, $this->tables);
+        return $this->mapping->unresolvedPartCollisions($this->partPlacements, $this->tables);
     }
 
     /** @return array<string, int> page entity => live pages, unclaimed by any lane */
@@ -285,10 +259,6 @@ final class Coverage
                 foreach (array_keys($collision['classes']) as $member) {
                     $this->ambiguous[(string) $member] = true;
                 }
-
-                // A database where one class of the name was live alone reports it by the short
-                // name; those placements fall through to the same ambiguous row.
-                $this->ambiguous[$collision['key']] = true;
             }
         }
 

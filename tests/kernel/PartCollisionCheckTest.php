@@ -24,6 +24,7 @@ final class PartCollisionCheckTest extends TestCase
 {
     private const APP_TEXT = 'App\Entity\PageParts\TextPagePart';
     private const KM_TEXT = 'Kunstmaan\PagePartBundle\Entity\TextPagePart';
+    private const KM_VIDEO = 'Kunstmaan\MediaPagePartBundle\Entity\VideoPagePart';
 
     private function mapping(string $parts): Mapping
     {
@@ -107,11 +108,11 @@ final class PartCollisionCheckTest extends TestCase
 
     private function coverage(Mapping $mapping): Coverage
     {
-        // What `livePartPlacements()` reports: the colliding classes by their qualified names.
+        // What `livePartPlacements()` reports: every class by its qualified name.
         $coverage = new Coverage($mapping);
         $coverage->ingest(new LiveSnapshot(
             environment: 'COM',
-            partPlacements: [self::KM_TEXT => 405, self::APP_TEXT => 133, 'Video' => 38],
+            partPlacements: [self::KM_TEXT => 405, self::APP_TEXT => 133, self::KM_VIDEO => 38],
             pageTypes: ['ContentPage' => 20],
             pagesByLocale: ['en' => 20],
             allPartRefs: 10_000,
@@ -201,8 +202,8 @@ final class PartCollisionCheckTest extends TestCase
     #[Test]
     public function an_environment_where_only_one_class_of_the_name_is_live_still_counts_it_under_its_own_row(): void
     {
-        // Nothing collides there, so the corpus reports Kunstmaan's Text as `Text`; compile still
-        // reads it through its qualified row, and coverage has to agree.
+        // Nothing collides there; compile still reads Kunstmaan's Text through its qualified row,
+        // and coverage has to agree.
         $coverage = new Coverage($this->mapping(<<<'YAML'
             parts:
               Text: { table: app_text_parts, block: textBlock, map: { body: text } }
@@ -210,11 +211,10 @@ final class PartCollisionCheckTest extends TestCase
             YAML));
         $coverage->ingest(new LiveSnapshot(
             environment: 'COM',
-            partPlacements: ['Text' => 36],
+            partPlacements: [self::KM_TEXT => 36],
             pageTypes: ['ContentPage' => 5],
             pagesByLocale: ['en' => 5],
             allPartRefs: 1_000,
-            partClasses: [self::KM_TEXT => 36],
         ));
 
         self::assertSame(['dropped' => 36], $coverage->placementsByLane());
@@ -240,16 +240,16 @@ final class PartCollisionCheckTest extends TestCase
         foreach ($environments as $environment => $classes) {
             $coverage->ingest(new LiveSnapshot(
                 environment: $environment,
-                partPlacements: ['Text' => array_sum($classes)],
+                partPlacements: $classes,
                 pageTypes: ['ContentPage' => 5],
                 pagesByLocale: ['en' => 5],
                 allPartRefs: 1_000,
-                partClasses: $classes,
             ));
             $live = PartClass::tally($live, $classes);
         }
 
         self::assertTrue($coverage->hasHoles());
+        self::assertSame([self::KM_TEXT => 405, self::APP_TEXT => 133], $coverage->unclaimedParts());
         self::assertSame(
             [['key' => 'Text', 'table' => 'app_text_parts', 'classes' => [self::APP_TEXT => 133, self::KM_TEXT => 405]]],
             $coverage->unresolvedCollisions(),
@@ -287,7 +287,6 @@ final class PartCollisionCheckTest extends TestCase
             pageTypes: ['ContentPage' => 5],
             pagesByLocale: ['en' => 5],
             allPartRefs: 1_000,
-            partClasses: $live,
         ));
 
         self::assertFalse($coverage->hasHoles());

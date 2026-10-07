@@ -33,10 +33,67 @@ final class PartClass
     /** `App\Entity\PageParts\TextPagePart` => `Text`. A short name passes through unchanged. */
     public static function shortName(string $class): string
     {
-        $class = self::normalize($class);
-        $short = substr((string) strrchr($class, '\\'), 1) ?: $class;
+        $short = self::basename($class);
 
         return str_ends_with($short, 'PagePart') ? substr($short, 0, -8) : $short;
+    }
+
+    /**
+     * Any Doctrine entity name without its namespace — `App\Entity\Pages\HomePage` => `HomePage`.
+     * A page entity is keyed by this; a pagepart by `shortName()`, which also drops the suffix.
+     */
+    public static function basename(string $class): string
+    {
+        $class = self::normalize($class);
+
+        return substr((string) strrchr($class, '\\'), 1) ?: $class;
+    }
+
+    /**
+     * Live counts as a report lists them: by short name, except where more than one live class
+     * shares it, then each by its qualified name with its own count. Presentation only — which
+     * row a class compiles from is `Mapping::partKey()`'s call.
+     *
+     * @param array<string, int> $classes fully qualified class => live placements
+     * @return array<string, int> report name => live placements, largest first
+     */
+    public static function reported(array $classes): array
+    {
+        $names = self::reportNames(array_keys($classes));
+        $out = [];
+
+        foreach ($classes as $class => $n) {
+            $name = $names[(string) $class];
+            $out[$name] = ($out[$name] ?? 0) + $n;
+        }
+
+        arsort($out);
+
+        return $out;
+    }
+
+    /**
+     * The name a report gives each class (`reported()`).
+     *
+     * @param list<string|int> $classes every live class, fully qualified
+     * @return array<string, string> class, as given => its report name
+     */
+    public static function reportNames(array $classes): array
+    {
+        $byShort = [];
+
+        foreach ($classes as $class) {
+            $byShort[self::shortName((string) $class)][self::normalize((string) $class)] = true;
+        }
+
+        $names = [];
+
+        foreach ($classes as $class) {
+            $short = self::shortName((string) $class);
+            $names[(string) $class] = count($byShort[$short]) > 1 ? self::normalize((string) $class) : $short;
+        }
+
+        return $names;
     }
     /**
      * Live placements by fully qualified class, summed over databases. A collision is a corpus

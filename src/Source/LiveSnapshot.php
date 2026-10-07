@@ -13,15 +13,14 @@ namespace Lameco\Kunstmaanmigrator\Source;
 final readonly class LiveSnapshot
 {
     /**
-     * @param array<string, int> $partPlacements short pagepart class => live placements
+     * @param array<string, int> $partPlacements fully qualified pagepart class => live placements
+     *        (`livePartPlacements()`); a mapping row claims each through `Mapping::partKey()`
      * @param array<string, int> $pageTypes      short page entity    => live pages
      * @param array<string, int> $pagesByLocale  legacy lang          => live pages
      * @param array<string, array<string, array<string, array<string, array{stacks: int, placements: int}>>>> $pageContextStacks
-     *        short page entity => context => lang => the mix of part classes one page translation
-     *        holds there => how many stacks hold that mix, and their placements (`livePageContextStacks()`)
-     * @param array<string, int> $partClasses fully qualified pagepart class => live placements
-     *        (`livePartClasses()`); what a mapping keying a class by its qualified name needs where
-     *        nothing collides and `$partPlacements` reports it by its short name
+     *        short page entity => context => lang => the mix of fully qualified part classes one page
+     *        translation holds there => how many stacks hold that mix, and their placements
+     *        (`livePageContextStacks()`)
      */
     public function __construct(
         public string $environment,
@@ -30,7 +29,6 @@ final readonly class LiveSnapshot
         public array $pagesByLocale,
         public int $allPartRefs,
         public array $pageContextStacks = [],
-        public array $partClasses = [],
     ) {
     }
 }
