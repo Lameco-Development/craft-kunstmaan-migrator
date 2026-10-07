@@ -43,6 +43,17 @@ final class FileTransformTest extends TestCase
     }
 
     #[Test]
+    public function a_list_of_names_becomes_a_list_of_asset_paths(): void
+    {
+        // `m2m(...) | file(...)` reads a list; casting it to a string gave `/uploads/x/Array`.
+        self::assertSame(
+            [['_asset' => '/uploads/documents/a.pdf'], ['_asset' => '/uploads/documents/b.pdf']],
+            (new Transforms())->apply('file(uploads/documents)', ['a.pdf', null, ' ', 'b.pdf']),
+        );
+        self::assertNull((new Transforms())->apply('file(uploads/documents)', []));
+    }
+
+    #[Test]
     public function the_editor_offers_it_beside_asset(): void
     {
         self::assertArrayHasKey('file', Transforms::available());

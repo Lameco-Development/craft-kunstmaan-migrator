@@ -286,8 +286,14 @@ seen (cached afterwards by state key `legacy_url:<sha1(path)>`).
 Any other `/uploads/<dir>/…` path — what `file(<dir>)` emits for catalogue
 files that have no `kuma_media` row — resolves the same way, beside the media
 root: a root named `…/uploads/media` is read from its parent `…/uploads`, and a
-root named anywhere else is taken to be the uploads directory itself. Same
-state key, so one file named by many rows is one asset. Under
+root named anywhere else is taken to be the uploads directory itself. Such a
+file is keyed by the file found, `legacy_file:<sha1(realpath)>`, not by the
+path asked for: NL and FR checkouts that both hold
+`/uploads/documents/montage.pdf` are two assets, while one file named by many
+rows — or reached through another environment's root in the `mediaRoot`
+fallback chain — is one. The key follows the checkout's mount path, so moving
+the checkout re-ingests these files. The path is a file name rather than a
+URL, so `#` and `?` are part of it. Under
 `assetFolderStrategy: legacy-tree` such a file has no `kuma_folders` chain and
 lands in `{targetSubfolder}/[{ENV}/]<dir>/` (`migrated/models_import/`); the
 `year` strategy is unchanged.

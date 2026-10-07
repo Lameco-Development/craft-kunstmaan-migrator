@@ -343,10 +343,22 @@ final class Transforms
      * them apart, and does not need to. Bare `file` takes a value that already carries its
      * path from the web root (`uploads/model_photos/7.jpg`).
      *
-     * @return array{_asset: string}|null
+     * A list — an `m2m(...)` read — becomes a list of nodes, one per name, in order, the way
+     * `ref()` treats one; a blank name is dropped.
+     *
+     * @return array{_asset: string}|list<array{_asset: string}>|null
      */
     private function file(mixed $value, string $dir): ?array
     {
+        if (is_array($value)) {
+            $nodes = array_values(array_filter(
+                array_map(fn(mixed $one): ?array => $this->file($one, $dir), $value),
+                static fn(?array $node): bool => $node !== null,
+            ));
+
+            return $nodes === [] ? null : $nodes;
+        }
+
         $name = ltrim(trim((string) ($value ?? '')), '/');
 
         if ($name === '') {

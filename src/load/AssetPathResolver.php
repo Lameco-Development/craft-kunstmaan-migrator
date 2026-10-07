@@ -76,6 +76,15 @@ class AssetPathResolver
     }
 
     /**
+     * Whether a legacy path is under Kunstmaan's media directory, `/uploads/media/…` — a file
+     * `kuma_media` knows — rather than another uploads directory or a loose name.
+     */
+    public static function isMediaPath(string $url): bool
+    {
+        return str_starts_with('/' . ltrim($url, '/'), '/uploads/media/');
+    }
+
+    /**
      * Resolves any legacy `/uploads/…` path against one configured media root.
      *
      * `/uploads/media/…` and bare names go through `resolveLocal()` unchanged. Anything else
@@ -89,7 +98,7 @@ class AssetPathResolver
      */
     public static function resolveUpload(?string $url, string $mediaRoot): ?string
     {
-        if ($url !== null && preg_match('#^/?uploads/(?!media/)(.+)$#', $url, $m) === 1) {
+        if ($url !== null && !self::isMediaPath($url) && preg_match('#^/?uploads/(.+)$#', $url, $m) === 1) {
             $root = rtrim($mediaRoot, '/' . DIRECTORY_SEPARATOR);
             $uploads = basename($root) === 'media' ? dirname($root) : $root;
 
@@ -108,7 +117,7 @@ class AssetPathResolver
      */
     public static function uploadDir(string $url): ?string
     {
-        if (preg_match('#^/?uploads/(?!media/)(.+)/[^/]+$#', $url, $m) !== 1) {
+        if (self::isMediaPath($url) || preg_match('#^/?uploads/(.+)/[^/]+$#', $url, $m) !== 1) {
             return null;
         }
 

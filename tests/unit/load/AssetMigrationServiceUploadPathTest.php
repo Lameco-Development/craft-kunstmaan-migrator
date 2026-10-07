@@ -18,8 +18,9 @@ use ReflectionMethod;
  * `_asset` paths outside `kuma_media` — the `/uploads/<dir>/<name>` a `file(<dir>)` transform
  * emits for catalogue tables that store a file name rather than a media id.
  *
- * They resolve against the same `mediaRoot` chain as `/uploads/media/…`, under the same
- * `legacy_url:<sha1(path)>` state key, so one file referenced from many rows is one asset.
+ * They resolve against the same `mediaRoot` chain as `/uploads/media/…`, keyed by the file
+ * found (`legacy_file:<sha1(realpath)>`), so one file referenced from many rows is one asset
+ * and two checkouts holding the same relative path are two.
  */
 final class AssetMigrationServiceUploadPathTest extends TestCase
 {
@@ -37,11 +38,35 @@ final class AssetMigrationServiceUploadPathTest extends TestCase
 
     protected function tearDown(): void
     {
+        foreach (['nl', 'fr'] as $checkout) {
+            @unlink($this->web . '/' . $checkout . '/documents/montage.pdf');
+            @rmdir($this->web . '/' . $checkout . '/documents');
+            @rmdir($this->web . '/' . $checkout . '/media');
+            @rmdir($this->web . '/' . $checkout);
+        }
         @unlink($this->web . '/uploads/models_import/A12.jpg');
         @rmdir($this->web . '/uploads/models_import');
         @rmdir($this->web . '/uploads/media');
         @rmdir($this->web . '/uploads');
         @rmdir($this->web);
+    }
+
+    /**
+     * A second legacy uploads directory, `<web>/<name>/{media,<file>}`.
+     *
+     * @return string the uploads directory
+     */
+    private function checkout(string $name, ?string $file): string
+    {
+        $uploads = $this->web . '/' . $name;
+        @mkdir($uploads . '/media', 0777, true);
+
+        if ($file !== null) {
+            @mkdir(dirname($uploads . '/' . $file), 0777, true);
+            file_put_contents($uploads . '/' . $file, $name . '-bytes');
+        }
+
+        return $uploads;
     }
 
     private function env(bool $prefix = false): EnvironmentContext
@@ -53,11 +78,68 @@ final class AssetMigrationServiceUploadPathTest extends TestCase
     {
         $service = new AssetMigrationService();
         $service->migrationState = new UploadStateMap([
-            'media|legacy_url:' . sha1(self::PATH) => ['targetId' => 88],
+            'media|legacy_file:' . sha1((string) realpath($this->web . self::PATH)) => ['targetId' => 88],
         ]);
 
         self::assertSame(88, $service->resolveFromLegacyUrl(self::PATH, $this->env()));
         self::assertSame(88, $service->resolveFromLegacyUrl(self::PATH, $this->env()));
+    }
+
+    public function testTheSamePathInTwoCheckoutsIsTwoAssets(): void
+    {
+        // NL and FR are separate legacy installs migrated into one Craft database. Each has its
+        // own `/uploads/documents/montage.pdf`; keyed by path alone, FR silently took NL's file.
+        $nl = $this->checkout('nl', 'documents/montage.pdf');
+        $fr = $this->checkout('fr', 'documents/montage.pdf');
+        $service = new AssetMigrationService();
+        $service->migrationState = new UploadStateMap([
+            'media|legacy_file:' . sha1((string) realpath($nl . '/documents/montage.pdf')) => ['targetId' => 88],
+            'media|legacy_file:' . sha1((string) realpath($fr . '/documents/montage.pdf')) => ['targetId' => 99],
+        ]);
+
+        $nlEnv = EnvironmentFactory::make('NL', mediaRoots: [$nl . '/media']);
+        $frEnv = EnvironmentFactory::make('FR', mediaRoots: [$fr . '/media']);
+
+        self::assertSame(88, $service->resolveFromLegacyUrl('/uploads/documents/montage.pdf', $nlEnv));
+        self::assertSame(99, $service->resolveFromLegacyUrl('/uploads/documents/montage.pdf', $frEnv));
+    }
+
+    public function testAFileFoundUnderASharedRootIsOneAsset(): void
+    {
+        // The mediaRoots fallback chain: FR does not have the file, finds it under NL's root, and
+        // is meant to reuse NL's asset rather than fetch a second copy of the same file.
+        $nl = $this->checkout('nl', 'documents/montage.pdf');
+        $fr = $this->checkout('fr', null);
+        $service = new AssetMigrationService();
+        $service->migrationState = new UploadStateMap([
+            'media|legacy_file:' . sha1((string) realpath($nl . '/documents/montage.pdf')) => ['targetId' => 88],
+        ]);
+
+        $frEnv = EnvironmentFactory::make('FR', mediaRoots: [$fr . '/media', $nl . '/media']);
+
+        self::assertSame(88, $service->resolveFromLegacyUrl('/uploads/documents/montage.pdf', $frEnv));
+    }
+
+    public function testAFileNameWithAHashOrQuestionMarkIsTakenLiterally(): void
+    {
+        // `file()` emits a file name, not a URL: `a#1.pdf` is the name on disk, and reading it
+        // as a URL truncated it to `a`, a file that does not exist.
+        $service = new AssetMigrationService();
+        $state = [];
+
+        foreach (['a#1.pdf' => 61, 'b?v=2.pdf' => 62] as $name => $id) {
+            file_put_contents($this->web . '/uploads/models_import/' . $name, 'pdf-bytes');
+            $state['media|legacy_file:' . sha1((string) realpath($this->web . '/uploads/models_import/' . $name))] = ['targetId' => $id];
+        }
+        $service->migrationState = new UploadStateMap($state);
+
+        try {
+            self::assertSame(61, $service->resolveFromLegacyUrl('/uploads/models_import/a#1.pdf', $this->env()));
+            self::assertSame(62, $service->resolveFromLegacyUrl('/uploads/models_import/b?v=2.pdf', $this->env()));
+        } finally {
+            @unlink($this->web . '/uploads/models_import/a#1.pdf');
+            @unlink($this->web . '/uploads/models_import/b?v=2.pdf');
+        }
     }
 
     public function testAMissingFileResolvesToNothingAndRecordsNothing(): void

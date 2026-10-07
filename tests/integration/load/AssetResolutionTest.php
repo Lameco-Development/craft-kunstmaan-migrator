@@ -346,8 +346,10 @@ final class AssetResolutionTest extends TestCase
         // The real resolver, not the fake: `file(uploads/models_import)` emits these paths,
         // and the media root the mapping states is `…/uploads/media`.
         mkdir($this->tempMediaRoot . '/uploads/media', 0755, true);
+        mkdir($this->tempMediaRoot . '/uploads/models_import', 0755, true);
+        file_put_contents($this->tempMediaRoot . '/uploads/models_import/A12.jpg', 'jpg-bytes');
         $state = new AssetResolutionInMemoryMigrationStateService();
-        $state->record('media', 'legacy_url:' . sha1('/uploads/models_import/A12.jpg'), 'asset', 701);
+        $state->record('media', 'legacy_file:' . sha1((string) realpath($this->tempMediaRoot . '/uploads/models_import/A12.jpg')), 'asset', 701);
         $entryService = new AssetResolutionFakeEntryMigrationService();
         $entryService->stateService = $state;
         $assetService = new AssetMigrationService();
@@ -370,6 +372,8 @@ final class AssetResolutionTest extends TestCase
             $secondMedia = $entryService->lastPerSite['en']['fieldValues']['media'];
             $missing = $save(14, '/uploads/models_import/gone.jpg');
         } finally {
+            @unlink($this->tempMediaRoot . '/uploads/models_import/A12.jpg');
+            @rmdir($this->tempMediaRoot . '/uploads/models_import');
             @rmdir($this->tempMediaRoot . '/uploads/media');
             @rmdir($this->tempMediaRoot . '/uploads');
         }
@@ -464,8 +468,8 @@ final class AssetResolutionTest extends TestCase
     }
 
     /**
-     * A `children:` collection into an Assets field emits one `{_asset}` per child row. Each
-     * resolves to a one-id list, so the field has to be flattened back into one id list — in the
+     * A `children:` collection into an Assets field emits one `{_asset}` per child row, as does
+     * `m2m(...) | file(...)` per name. Each resolves to a one-id list, so the field has to be flattened back into one id list — in the
      * collection's order, with an unresolved row dropped — or Craft is handed `[[501], [502]]`.
      */
     public function testAListOfAssetNodesResolvesToOneFlatIdListInOrder(): void

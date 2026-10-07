@@ -243,23 +243,34 @@ class AssetMigrationService extends Component
      * file name under `/uploads/models_import/` or `/uploads/documents/` with no `kuma_media`
      * row at all, and a `file(<dir>)` transform hands those over as the same `_asset` node.
      * They are found beside the media root (see `AssetPathResolver::resolveUpload()`) and keyed
-     * the same way, `legacy_url:<sha1(path)>`, so one file named by many rows is one asset.
+     * by the file found, `legacy_file:<sha1(realpath)>`: one file named by many rows is one
+     * asset, and the same relative path in two environments' checkouts is two.
      */
     public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
-        $path = parse_url($legacyUrl, PHP_URL_PATH);
-        if (!is_string($path) || $path === '') {
-            $path = preg_replace('/[?#].*$/', '', $legacyUrl) ?? $legacyUrl;
+        $path = '/' . ltrim($legacyUrl, '/');
+
+        // A rich-text `/uploads/media/…` URL may carry a query or fragment; a path outside it is
+        // what `file()` emitted, a file name and not a URL, so `a#1.pdf` stays `a#1.pdf`.
+        if (!str_starts_with($path, '/uploads/') || AssetPathResolver::isMediaPath($path)) {
+            $path = parse_url($legacyUrl, PHP_URL_PATH);
+            if (!is_string($path) || $path === '') {
+                $path = preg_replace('/[?#].*$/', '', $legacyUrl) ?? $legacyUrl;
+            }
+            $path = '/' . ltrim($path, '/');
         }
-        $path = '/' . ltrim($path, '/');
         if (!str_starts_with($path, '/uploads/')) {
             return 0;
         }
 
-        $stateKey = 'legacy_url:' . sha1($path);
-        $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
-        if ($existing !== null) {
-            return (int) $existing;
+        $isMedia = AssetPathResolver::isMediaPath($path);
+
+        if ($isMedia) {
+            $stateKey = 'legacy_url:' . sha1($path);
+            $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
+            if ($existing !== null) {
+                return (int) $existing;
+            }
         }
 
         $sourcePath = null;
@@ -275,6 +286,18 @@ class AssetMigrationService extends Component
 
         if ($sourcePath === null) {
             return 0;
+        }
+
+        if (!$isMedia) {
+            // Keyed by the file it found, not the path it was asked for: NL and FR are separate
+            // checkouts that both hold `/uploads/documents/montage.pdf`, and a path key handed FR
+            // NL's asset. The real path still keeps one asset per file where an environment's
+            // fallback root is another environment's — that sharing is the point of the chain.
+            $stateKey = 'legacy_file:' . sha1($sourcePath);
+            $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
+            if ($existing !== null) {
+                return (int) $existing;
+            }
         }
 
         $contentType = function_exists('mime_content_type') ? (string) @mime_content_type($sourcePath) : '';
@@ -295,7 +318,7 @@ class AssetMigrationService extends Component
             // strategy never applied to anything at all.
             // A path outside `/uploads/media/` has no kuma_media row to read a folder from;
             // `targetFolderPath()` places it under its own uploads directory instead.
-            'folder_id' => str_starts_with($path, '/uploads/media/') ? $this->legacyFolderIdForPath($path) : 0,
+            'folder_id' => $isMedia ? $this->legacyFolderIdForPath($path) : 0,
         ], $rootDir, $opts, $counts, $stateKey, $env);
 
         if ($asset instanceof Asset) {

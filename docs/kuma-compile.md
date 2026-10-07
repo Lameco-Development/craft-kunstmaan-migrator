@@ -466,7 +466,8 @@ Beyond `column | transform`, a `map:` value can be:
   `{_asset: "/uploads/models_import/A12.jpg"}`, the same node `asset` emits. Catalogue tables store
   files that way; the directory was a fact of the legacy template, so the mapping states it. A
   value that already starts with the directory is not prefixed twice, and bare `file` takes a value
-  that carries its own path from the web root (`uploads/model_photos/7.jpg`). Validation rejects a
+  that carries its own path from the web root (`uploads/model_photos/7.jpg`). A list — an
+  `m2m(...)` read — becomes one `_asset` node per name, in order. Validation rejects a
   directory outside `uploads/`, because the loader resolves nothing else.
 
 ## Determinism
