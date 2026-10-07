@@ -25,6 +25,31 @@ namespace Lameco\Kunstmaanmigrator\run;
 final class BlockPropagation
 {
     /**
+     * How many locales each environment actually writes to a site.
+     *
+     * A locale declared `!unmapped` resolves to null and writes nothing, so it cannot own a
+     * block set; counting it made a single-site group read as multi-locale. The same rule
+     * `MappingPreflight` uses to list the locales deliberately not migrated.
+     *
+     * @param array<string, mixed> $environments `Mapping::environments()`
+     * @return array<string, int> legacy environment => locales mapped to a site
+     */
+    public static function mappedLocaleCounts(array $environments): array
+    {
+        $counts = [];
+
+        foreach ($environments as $env => $spec) {
+            $locales = is_array($spec) ? (array) ($spec['locales'] ?? []) : [];
+            $counts[(string) $env] = count(array_filter(
+                $locales,
+                static fn(mixed $handle): bool => is_string($handle) && $handle !== '',
+            ));
+        }
+
+        return $counts;
+    }
+
+    /**
      * @param array<string, ?string> $methods    Matrix field handle => propagation method, or
      *                                           null when the target has no such field
      * @param array<string, int>     $localesPer legacy environment => locales the mapping maps

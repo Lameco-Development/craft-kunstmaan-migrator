@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\run;
 
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\BlockPropagation;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -67,5 +68,36 @@ final class BlockPropagationTest extends TestCase
             ['commonPageBuilder' => null],
             ['COM' => 4],
         ));
+    }
+
+    #[Test]
+    public function a_locale_declared_unmapped_writes_no_site_and_is_not_counted(): void
+    {
+        // Berkvens NL: `en` is `!unmapped`, so only `berkvensNl` is ever written. Counting the
+        // declaration as a second locale failed doctor on a single-site group.
+        $path = tempnam(sys_get_temp_dir(), 'kkm-locales-');
+        file_put_contents($path, <<<'YAML'
+            version: 1
+            environments:
+              NL:
+                database: legacy_nl
+                locales:
+                  nl: berkvensNl
+                  en: !unmapped "no English site"
+              COM:
+                database: legacy_com
+                locales:
+                  en: comEn
+                  de: comDe
+            YAML);
+
+        try {
+            $counts = BlockPropagation::mappedLocaleCounts(Mapping::fromFile($path)->environments());
+        } finally {
+            unlink($path);
+        }
+
+        self::assertSame(['NL' => 1, 'COM' => 2], $counts);
+        self::assertSame([], BlockPropagation::problems(['pageBuilderBerkvensNl' => 'all'], ['NL' => $counts['NL']]));
     }
 }
