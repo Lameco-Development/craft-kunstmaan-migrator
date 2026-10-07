@@ -581,7 +581,9 @@ final class TargetCheck
 
     /**
      * A child collection has to land in a Matrix, and its columns in fields the nested entry
-     * type actually has — whether the owner is a Page Builder block or a page entry type.
+     * type actually has — whether the owner is a Page Builder block or a page entry type. An
+     * Assets field takes one asset per row, so its map holds the one expression that yields it;
+     * a Table field takes the map's targets as column handles, checked when the schema lists them.
      *
      * @param array<string, array<string, mixed>> $children the row's `children:`
      * @param list<string> $errors
@@ -597,8 +599,40 @@ final class TargetCheck
                 continue;
             }
 
+            $map = is_array($child['map'] ?? null) ? $child['map'] : [];
+
+            if ($slot->type === 'Assets') {
+                if (count($map) !== 1) {
+                    $errors[] = sprintf(
+                        '%s: `%s.%s` is an Assets field, so its `map:` holds exactly one value — it holds %d',
+                        $subject,
+                        $owner,
+                        $field,
+                        count($map),
+                    );
+                }
+
+                continue;
+            }
+
+            if ($slot->type === 'Table') {
+                foreach (array_keys($map) as $column) {
+                    if ($slot->columns !== null && !in_array((string) $column, $slot->columns, true)) {
+                        $errors[] = sprintf('%s: Table `%s.%s` has no column `%s`', $subject, $owner, $field, $column);
+                    }
+                }
+
+                continue;
+            }
+
             if (!$slot->isMatrix()) {
-                $errors[] = sprintf('%s: `%s.%s` is %s, not a Matrix', $subject, $owner, $field, $slot->type);
+                $errors[] = sprintf(
+                    '%s: `%s.%s` is %s — a `children:` collection fills a Matrix, Assets or Table field',
+                    $subject,
+                    $owner,
+                    $field,
+                    $slot->type,
+                );
 
                 continue;
             }

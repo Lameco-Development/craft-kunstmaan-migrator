@@ -82,4 +82,49 @@ final class CraftSchemaTest extends TestCase
         self::assertSame('structure', $this->schema()->sectionType('archive'));
         self::assertNull($this->schema()->sectionEntryTypes('archive'));
     }
+
+    #[Test]
+    public function a_table_field_reports_its_column_handles_and_other_fields_none(): void
+    {
+        $dir = sys_get_temp_dir() . '/kuma-schema-' . uniqid();
+        mkdir($dir . '/fields', 0755, true);
+        mkdir($dir . '/entryTypes');
+        file_put_contents($dir . '/fields/openingHours--1111.yaml', <<<'YAML'
+            handle: openingHours
+            name: 'Opening hours'
+            type: craft\fields\Table
+            settings:
+              columns:
+                __assoc__:
+                  -
+                    - col1
+                    - __assoc__:
+                        - [handle, day]
+                        - [heading, Day]
+                        - [type, singleline]
+                  -
+                    - col2
+                    - __assoc__:
+                        - [handle, opening]
+                        - [heading, Opens]
+                        - [type, time]
+            YAML);
+        file_put_contents($dir . '/fields/images--2222.yaml', "handle: images\nname: Images\ntype: craft\\fields\\Assets\n");
+        file_put_contents($dir . '/entryTypes/contactPage--3333.yaml', <<<'YAML'
+            handle: contactPage
+            name: Contact
+            fieldLayouts:
+              4444:
+                - elements:
+                    - { type: 'craft\fieldlayoutelements\CustomField', fieldUid: '1111', handle: null }
+                    - { type: 'craft\fieldlayoutelements\CustomField', fieldUid: '2222', handle: null }
+            YAML);
+
+        $schema = CraftSchema::fromProjectConfig($dir);
+
+        self::assertSame('Table', $schema->slot('contactPage', 'openingHours')?->type);
+        self::assertSame(['day', 'opening'], $schema->slot('contactPage', 'openingHours')->columns);
+        self::assertSame('Assets', $schema->slot('contactPage', 'images')?->type);
+        self::assertNull($schema->slot('contactPage', 'images')->columns);
+    }
 }

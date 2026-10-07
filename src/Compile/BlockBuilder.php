@@ -60,7 +60,7 @@ final class BlockBuilder
     }
 
     /**
-     * Child collections of one owner row, as Matrix blocks.
+     * Child collections of one owner row, as Matrix blocks — or as assets or Table rows.
      *
      * `$owner` is the entry type the Matrix lives on — a block for a pagepart's children, a
      * page entry type for a page entity's own collections. Both ask the same question of the
@@ -71,8 +71,11 @@ final class BlockBuilder
      * stability follows from the parent block's own ref. Without it a re-run appends instead
      * of replacing: three legacy branches became six, then nine.
      *
+     * A field the schema knows as an Assets or Table field takes the rows in its own shape
+     * instead — see `collectedValue()`.
+     *
      * @param array<string, array<string, mixed>> $children
-     * @return array<string, list<array{type:string, fields:array<string,mixed>}>>
+     * @return array<string, list<mixed>>
      */
     public function childrenOf(
         array $children,
@@ -96,6 +99,16 @@ final class BlockBuilder
                 $ownerId,
                 (string) ($child['order'] ?? 'weight'),
             );
+
+            $collected = $this->collectedValue($owner, (string) $field, $child, $rows, $context);
+
+            if ($collected !== null) {
+                if ($collected !== []) {
+                    $out[(string) $field] = $collected;
+                }
+
+                continue;
+            }
 
             $blocks = [];
 
@@ -127,6 +140,54 @@ final class BlockBuilder
         }
 
         $this->block = $previous;
+
+        return $out;
+    }
+
+    /**
+     * Child rows bound for a field that is not a Matrix, or null when the field is one — or when
+     * the schema cannot say, which keeps the Matrix shape every mapping before this assumed.
+     *
+     * An Assets field takes one `{_asset}` per row, in the collection's order: the row's mapped
+     * value is the asset, so the map holds one expression. A Table field takes one row per child
+     * row, keyed by the map's targets — the Table's column handles, which Craft reads in place of
+     * its `colN` ids. Neither carries a `_sourcePartRef`: an asset is a relation and a Table row
+     * is a value, so there is no element whose identity a re-run would need to thread.
+     *
+     * @param array<string, mixed> $child
+     * @param list<array<string, mixed>> $rows
+     * @return list<mixed>|null
+     */
+    private function collectedValue(string $owner, string $field, array $child, array $rows, string $context): ?array
+    {
+        $type = $this->schema?->slot($owner, $field)?->type;
+
+        if ($type !== 'Assets' && $type !== 'Table') {
+            return null;
+        }
+
+        $map = is_array($child['map'] ?? null) ? $child['map'] : [];
+        $out = [];
+
+        foreach ($rows as $childRow) {
+            // A Table's columns are no fields of the owner's, so nothing is asked of the schema
+            // about them: '' names no entry type.
+            $values = $this->fieldsFrom($map, $childRow, $context . '.' . $field, '');
+
+            if ($values === []) {
+                continue;
+            }
+
+            if ($type === 'Table') {
+                $out[] = $values;
+
+                continue;
+            }
+
+            foreach ($values as $value) {
+                $out[] = $value;
+            }
+        }
 
         return $out;
     }

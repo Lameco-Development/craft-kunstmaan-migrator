@@ -74,7 +74,7 @@ final class CraftSchema implements TargetSchema
         return new self($layouts, $sections);
     }
 
-    /** @return array<string, array{handle:?string, type:string, nested:list<string>, default:?string, propagationMethod:?string}> uid => field */
+    /** @return array<string, array{handle:?string, type:string, nested:list<string>, default:?string, propagationMethod:?string, columns:?list<string>}> uid => field */
     private static function readFields(string $dir): array
     {
         $fields = [];
@@ -98,6 +98,7 @@ final class CraftSchema implements TargetSchema
                 'propagationMethod' => isset($data['settings']['propagationMethod'])
                     ? (string) $data['settings']['propagationMethod']
                     : null,
+                'columns' => self::columnsOf($data['settings']['columns'] ?? null),
             ];
         }
 
@@ -117,6 +118,32 @@ final class CraftSchema implements TargetSchema
         }
 
         return $fields;
+    }
+
+    /**
+     * A Table field's column handles, which is what a `children:` map into it keys its rows by.
+     * Craft stores the columns under `colN` ids with the handle as a setting; a column with no
+     * handle cannot be addressed by one, so it is left out.
+     *
+     * @return list<string>|null null when the field has no columns setting — no Table
+     */
+    private static function columnsOf(mixed $columns): ?array
+    {
+        if (!is_array($columns)) {
+            return null;
+        }
+
+        $handles = [];
+
+        foreach ($columns as $column) {
+            $handle = is_array($column) ? (string) ($column['handle'] ?? '') : '';
+
+            if ($handle !== '') {
+                $handles[] = $handle;
+            }
+        }
+
+        return $handles;
     }
 
     /**
@@ -150,7 +177,7 @@ final class CraftSchema implements TargetSchema
 
     /**
      * @param array<string, mixed> $entryType
-     * @param array<string, array{handle:?string, type:string, nested:list<string>, default:?string, propagationMethod:?string}> $fields
+     * @param array<string, array{handle:?string, type:string, nested:list<string>, default:?string, propagationMethod:?string, columns:?list<string>}> $fields
      * @return array<string, Slot>
      */
     private static function slotsOf(array $entryType, array $fields): array
@@ -176,6 +203,7 @@ final class CraftSchema implements TargetSchema
                             nested: $field['nested'],
                             default: $field['default'],
                             propagationMethod: $field['propagationMethod'],
+                            columns: $field['columns'],
                         );
                     }
                 }

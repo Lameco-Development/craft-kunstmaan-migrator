@@ -12,6 +12,8 @@ final readonly class Slot
      * @param ?string $default          the value Craft writes when a fresh element omits this field
      * @param ?string $propagationMethod how a Matrix shares its blocks across sites — `all` means
      *                                   one set for every site, which two locales cannot both own
+     * @param list<string>|null $columns a Table field's column handles; null when the field is no
+     *                                   Table or the source does not say
      */
     public function __construct(
         public string $handle,
@@ -20,6 +22,7 @@ final readonly class Slot
         public array $nested = [],
         public ?string $default = null,
         public ?string $propagationMethod = null,
+        public ?array $columns = null,
     ) {
     }
 
