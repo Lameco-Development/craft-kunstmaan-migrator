@@ -447,6 +447,54 @@ final class MappingEditorTest extends TestCase
         );
     }
 
+    /**
+     * The blocks offered are the ones some context field accepts — every context's own field,
+     * a page's own `contexts:` replacing the defaults, as the compiler reads them (#89).
+     */
+    public function testAvailableBlocksFollowEachPagesOwnContextFields(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'mapping') . '.yaml';
+
+        file_put_contents($path, <<<'YAML'
+            version: 1
+            environments:
+              COM:
+                database: legacy
+                locales: { nl: berkvensNl }
+            defaults:
+              contexts:
+                content: { field: pageBuilderBerkvensNl }
+                right_column: { field: berkvensNlSidebar }
+            pages:
+              ContentPage: { entryType: contentPage }
+              CataloguePage:
+                entryType: cataloguePage
+                contexts:
+                  footer_content: { field: berkvensNlBelowListing }
+            YAML);
+
+        $schema = $this->createStub(SchemaGateway::class);
+        $schema->method('blockTypesFor')->willReturnCallback(
+            static fn(string $entryType, string $field): array => match ("$entryType.$field") {
+                'contentPage.pageBuilderBerkvensNl' => ['textBlock'],
+                'contentPage.berkvensNlSidebar' => ['sidebarContactBlock'],
+                'cataloguePage.berkvensNlBelowListing' => ['uspBlock'],
+                // Not a field the catalogue page streams: its own contexts replace the defaults.
+                'cataloguePage.berkvensNlSidebar' => ['neverOffered'],
+                default => [],
+            },
+        );
+
+        $editor = new MappingEditor(
+            SettingsFactory::make(['mappingPath' => $path]),
+            $schema,
+            new TargetModel($schema),
+            new InMemoryTargetCatalogue(),
+        );
+
+        self::assertSame(['sidebarContactBlock', 'textBlock', 'uspBlock'], $editor->availableBlocks());
+    }
+
     /** Two open pages, as `mapping/init` leaves them. */
     private function mappingFile(): string
     {

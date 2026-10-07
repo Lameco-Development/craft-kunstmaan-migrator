@@ -9,7 +9,8 @@ namespace Lameco\Kunstmaanmigrator\Mapping;
  *
  * The lane's per-field rows stay on `Mapping::formFields()`; this is the rest of
  * it: whether it is declared at all, which Kunstmaan context holds a page's form,
- * and the block the lane emits (with the field on it the lane fills itself).
+ * the Matrix field a page's form block lands in (`field:`, else the page's main
+ * builder), and the block the lane emits (with the field on it the lane fills itself).
  */
 final class FormsLane
 {
@@ -20,6 +21,7 @@ final class FormsLane
         public readonly string $context,
         public readonly ?string $emitBlock,
         public readonly ?string $emitField,
+        public readonly ?string $field = null,
     ) {
     }
 
@@ -37,6 +39,7 @@ final class FormsLane
             context: is_string($context) && $context !== '' ? $context : self::DEFAULT_CONTEXT,
             emitBlock: self::string($emit, 'block'),
             emitField: self::string($emit, 'field'),
+            field: self::string($spec, 'field'),
         );
     }
 

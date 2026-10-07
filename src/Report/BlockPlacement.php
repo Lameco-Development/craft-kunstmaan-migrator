@@ -33,14 +33,14 @@ final class BlockPlacement
     }
 
     /**
-     * @param array<string, array<string, int>> $livePairs page entity => pagepart class => placements
-     * @return list<array{page: string, entryType: string, field: string, part: string, block: string, placements: int}>
+     * @param array<string, array<string, array<string, int>>> $livePairs page entity => context => pagepart class => placements
+     * @return list<array{page: string, entryType: string, context: string, field: string, part: string, block: string, placements: int}>
      */
     public function rejections(array $livePairs): array
     {
         $out = [];
 
-        foreach ($livePairs as $page => $parts) {
+        foreach ($livePairs as $page => $contexts) {
             $row = $this->mapping->pageRow((string) $page);
 
             if ($row === null || !$row->compiles()) {
@@ -53,14 +53,28 @@ final class BlockPlacement
                 continue;
             }
 
-            foreach ($parts as $part => $placements) {
-                foreach ($this->blocksOf((string) $part) as $block) {
-                    $field = $this->rejectedBy($entryType, $block, $row->contextFields());
+            $streamed = $row->contexts();
 
-                    if ($field !== null) {
+            foreach ($contexts as $context => $parts) {
+                // A context the page does not stream compiles to nothing; no allow-list drops it.
+                if (!isset($streamed[$context])) {
+                    continue;
+                }
+
+                // Each context writes to its own field (#89): that field's allow-list is the one
+                // that decides, however many other fields on the page would take the block.
+                $field = (string) $streamed[$context]['field'];
+
+                foreach ($parts as $part => $placements) {
+                    foreach ($this->blocksOf((string) $part) as $block) {
+                        if (!$this->rejects($entryType, $field, $block)) {
+                            continue;
+                        }
+
                         $out[] = [
                             'page' => (string) $page,
                             'entryType' => $entryType,
+                            'context' => (string) $context,
                             'field' => $field,
                             'part' => (string) $part,
                             'block' => $block,
@@ -76,35 +90,18 @@ final class BlockPlacement
         return $out;
     }
 
-    /**
-     * The field that rejects this block, or null when some field accepts it.
-     *
-     * A page can stream into more than one context field, and one of them accepting the block is
-     * enough for the content to land. Only a block every hosting field rejects is lost.
-     *
-     * @param list<string> $fields the page's context fields
-     */
-    private function rejectedBy(string $entryType, string $block, array $fields): ?string
+    /** Whether the field is there and leaves the block off its allow-list. */
+    private function rejects(string $entryType, string $field, string $block): bool
     {
-        $rejecting = null;
+        $slot = $this->schema->slot($entryType, $field);
 
-        foreach ($fields as $field) {
-            $slot = $this->schema->slot($entryType, $field);
-
-            // A field that is not there is `pagesWithNoBlockField()`'s finding, not this one.
-            // Reporting it here too would double-count the same placements.
-            if ($slot === null) {
-                continue;
-            }
-
-            if ($slot->nested === [] || in_array($block, $slot->nested, true)) {
-                return null;
-            }
-
-            $rejecting ??= $field;
+        // A field that is not there is `pagesWithNoBlockField()`'s finding, not this one.
+        // Reporting it here too would double-count the same placements.
+        if ($slot === null) {
+            return false;
         }
 
-        return $rejecting;
+        return $slot->nested !== [] && !in_array($block, $slot->nested, true);
     }
 
     /** @return list<string> */

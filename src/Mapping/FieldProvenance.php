@@ -48,6 +48,7 @@ final class FieldProvenance
         $pageEntryTypes = [];
         $receives = [];
         $pageFeeders = [];
+        $contextFields = [];
 
         foreach ($pages as $name => $row) {
             $entryType = $row->entryType();
@@ -59,6 +60,11 @@ final class FieldProvenance
             $pageEntryTypes[$entryType] = true;
             $receives[$entryType][] = $name;
 
+            // Every context writes to its own field, and a page's own `contexts:` decides which.
+            foreach ($row->contextFields() as $field) {
+                $contextFields[$entryType][$field] = true;
+            }
+
             foreach ($row->map() as $field => $expression) {
                 $pageFeeders[$entryType][self::rootField((string) $field)][] =
                     ['lane' => 'pages', 'name' => $name, 'expression' => (string) $expression];
@@ -68,12 +74,6 @@ final class FieldProvenance
         $pageEntryTypes = array_keys($pageEntryTypes);
 
         // Lane-invariant facts, once.
-        $contextFields = [];
-
-        foreach ($mapping->defaultContexts() as $context) {
-            $contextFields[(string) $context['field']] = true;
-        }
-
         $sidecarMaps = [];
 
         foreach ($mapping->sidecarRows() as $name => $sidecar) {
@@ -147,7 +147,7 @@ final class FieldProvenance
                 $fields[$field] = [
                     'required' => isset($required[$field]),
                     'feeders' => $feeders,
-                    'partsCount' => isset($contextFields[$field]) ? $partsBlocks : null,
+                    'partsCount' => isset($contextFields[$entryType][$field]) ? $partsBlocks : null,
                 ];
             }
 

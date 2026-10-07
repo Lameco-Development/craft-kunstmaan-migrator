@@ -164,20 +164,22 @@ final class MappingEditor
     public function availableBlocks(): array
     {
         $document = $this->document();
-        $contexts = (array) ($document->all()['defaults']['contexts'] ?? []);
+        $defaults = (array) ($document->all()['defaults']['contexts'] ?? []);
         $entryTypes = [];
 
+        // A page's own `contexts:` replaces the defaults, and each context writes to its own field.
         foreach ($document->lane('pages') as $page) {
             $entryType = is_array($page) ? ($page['entryType'] ?? null) : null;
 
             if (is_string($entryType) && $entryType !== '') {
-                $entryTypes[$entryType] = true;
+                $own = $page['contexts'] ?? null;
+                $entryTypes[$entryType] = array_merge($entryTypes[$entryType] ?? [], array_values(is_array($own) ? $own : $defaults));
             }
         }
 
         $blocks = [];
 
-        foreach (array_keys($entryTypes) as $entryType) {
+        foreach ($entryTypes as $entryType => $contexts) {
             foreach ($contexts as $context) {
                 $field = is_array($context) ? ($context['field'] ?? null) : null;
 

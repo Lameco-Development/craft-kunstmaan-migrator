@@ -7,6 +7,8 @@ namespace Lameco\Kunstmaanmigrator\tests\kernel;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Report\BlockPlacement;
 use Lameco\Kunstmaanmigrator\Target\CraftSchema;
+use Lameco\Kunstmaanmigrator\Target\Slot;
+use Lameco\Kunstmaanmigrator\Target\TargetSchema;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -36,23 +38,94 @@ final class BlockPlacementTest extends TestCase
             block: contentColumn
         YAML;
 
-    /** @param array<string, array<string, int>> $pairs */
-    private function rejections(array $pairs, string $yaml = self::MAPPING): array
+    private const TWO_FIELDS = <<<'YAML'
+        version: 1
+        defaults:
+          contexts:
+            main:  { field: mainBuilder }
+            extra: { field: sideBuilder }
+        pages:
+          ContentPage:
+            table: content_pages
+            entryType: contentPage
+            section: pages
+        parts:
+          Callout:
+            table: callout_page_parts
+            block: calloutBlock
+        YAML;
+
+    /** @param array<string, array<string, array<string, int>>> $pairs page => context => part => placements */
+    private function rejections(array $pairs, string $yaml = self::MAPPING, ?TargetSchema $schema = null): array
     {
         $path = tempnam(sys_get_temp_dir(), 'kuma') . '.yaml';
         file_put_contents($path, $yaml);
 
         return (new BlockPlacement(
             Mapping::fromFile($path),
-            CraftSchema::fromProjectConfig(__DIR__ . '/fixtures/craft'),
+            $schema ?? CraftSchema::fromProjectConfig(__DIR__ . '/fixtures/craft'),
         ))->rejections($pairs);
+    }
+
+    /** A page with two Matrix fields: the main one takes columns, the side one callouts. */
+    private function twoFields(): TargetSchema
+    {
+        return new class() implements TargetSchema {
+            public function hasEntryType(string $handle): bool
+            {
+                return $handle === 'contentPage';
+            }
+
+            public function hasSection(string $handle): bool
+            {
+                return true;
+            }
+
+            public function sectionType(string $handle): ?string
+            {
+                return null;
+            }
+
+            public function sectionEntryTypes(string $handle): ?array
+            {
+                return null;
+            }
+
+            public function slots(string $entryType): array
+            {
+                return $entryType === 'contentPage' ? [
+                    'mainBuilder' => new Slot('mainBuilder', 'Matrix', false, ['contentColumn']),
+                    'sideBuilder' => new Slot('sideBuilder', 'Matrix', false, ['calloutBlock']),
+                ] : [];
+            }
+
+            public function slot(string $entryType, string $field): ?Slot
+            {
+                return $this->slots($entryType)[$field] ?? null;
+            }
+
+            public function requiredFields(string $entryType): array
+            {
+                return [];
+            }
+
+            public function pathFor(string $entryType, string $field): ?string
+            {
+                return null;
+            }
+
+            public function nestedTypeOf(string $entryType, string $field): ?string
+            {
+                return null;
+            }
+        };
     }
 
     #[Test]
     public function a_pairing_that_occurs_and_is_rejected_is_reported_with_its_cost(): void
     {
         // `contentColumns` accepts `contentColumn` only, and 28 live Callouts sit on ContentPage.
-        $rejections = $this->rejections(['ContentPage' => ['Callout' => 28]]);
+        $rejections = $this->rejections(['ContentPage' => ['main' => ['Callout' => 28]]]);
 
         self::assertCount(1, $rejections);
         self::assertSame(28, $rejections[0]['placements']);
@@ -66,36 +139,50 @@ final class BlockPlacementTest extends TestCase
         // The whole reason this is data-driven. Statically, `calloutBlock` is rejected by
         // `contentColumns` — but if no Callout ever sits on a ContentPage, that is the content
         // model working as designed and warning about it is noise on every project.
-        self::assertSame([], $this->rejections(['ContentPage' => ['Column' => 100]]));
+        self::assertSame([], $this->rejections(['ContentPage' => ['main' => ['Column' => 100]]]));
     }
 
     #[Test]
     public function a_page_the_mapping_does_not_migrate_is_not_reported(): void
     {
-        self::assertSame([], $this->rejections(['SomeOtherPage' => ['Callout' => 28]]));
+        self::assertSame([], $this->rejections(['SomeOtherPage' => ['main' => ['Callout' => 28]]]));
     }
 
     #[Test]
-    public function one_accepting_context_field_is_enough(): void
+    public function each_context_is_judged_by_its_own_field(): void
     {
-        // A page can stream into more than one context, and the content lands as long as one of
-        // them takes the block. Only a block every hosting field rejects is lost.
-        self::assertSame([], $this->rejections(['ContentPage' => ['Callout' => 5]], <<<'YAML'
-            version: 1
-            defaults:
-              contexts:
-                main:  { field: contentColumns }
-                extra: { field: layout }
-            pages:
-              ContentPage:
-                table: content_pages
-                entryType: calloutBlock
-                section: pages
-            parts:
-              Callout:
-                table: callout_page_parts
-                block: calloutBlock
-            YAML));
+        // Each context writes to its own field (#89), so another field accepting the block does
+        // not save it: the Callouts in `main` are dropped by `mainBuilder` while the ones in
+        // `extra` land in `sideBuilder`. The report used to call both fine.
+        $rejections = $this->rejections(['ContentPage' => [
+            'main' => ['Callout' => 5],
+            'extra' => ['Callout' => 7],
+        ]], self::TWO_FIELDS, $this->twoFields());
+
+        self::assertCount(1, $rejections);
+        self::assertSame('main', $rejections[0]['context']);
+        self::assertSame('mainBuilder', $rejections[0]['field']);
+        self::assertSame(5, $rejections[0]['placements']);
+    }
+
+    #[Test]
+    public function a_context_the_page_does_not_stream_is_not_reported(): void
+    {
+        // Nothing compiles a context the mapping does not stream; its parts are not dropped by
+        // any allow-list, and `state/explain` already names them as left out by decision.
+        self::assertSame([], $this->rejections(['ContentPage' => ['sidebar' => ['Callout' => 9]]], self::TWO_FIELDS, $this->twoFields()));
+    }
+
+    #[Test]
+    public function a_pages_own_contexts_decide_its_fields(): void
+    {
+        $rejections = $this->rejections(['ContentPage' => ['extra' => ['Callout' => 4]]], str_replace(
+            "    section: pages\n",
+            "    section: pages\n    contexts:\n      extra: { field: mainBuilder }\n",
+            self::TWO_FIELDS,
+        ), $this->twoFields());
+
+        self::assertSame('mainBuilder', $rejections[0]['field'] ?? null);
     }
 
     #[Test]
@@ -103,7 +190,7 @@ final class BlockPlacementTest extends TestCase
     {
         // `pagesWithNoBlockField()` reports a field that is not there. Counting the same
         // placements here as well would double-count them.
-        self::assertSame([], $this->rejections(['ContentPage' => ['Callout' => 28]], <<<'YAML'
+        self::assertSame([], $this->rejections(['ContentPage' => ['main' => ['Callout' => 28]]], <<<'YAML'
             version: 1
             defaults:
               contexts:
@@ -123,7 +210,7 @@ final class BlockPlacementTest extends TestCase
     #[Test]
     public function the_costliest_pairing_leads(): void
     {
-        $rejections = $this->rejections(['ContentPage' => ['Callout' => 3]], <<<'YAML'
+        $rejections = $this->rejections(['ContentPage' => ['main' => ['Callout' => 3]]], <<<'YAML'
             version: 1
             defaults:
               contexts:

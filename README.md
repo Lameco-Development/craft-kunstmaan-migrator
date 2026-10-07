@@ -343,8 +343,8 @@ Every command prints machine-readable JSON or NDJSON to stdout and exits
 non-zero on failure.
 
 **A page entry type with no block field is a warning, not an error.** `contexts:`
-names the Matrix a page's blocks stream into; when the target's entry type has no such
-field, every part on every node of that type is dropped, and the compiler currently
+names, per Kunstmaan context, the Matrix that context's blocks stream into; when the
+target's entry type has no such field, every part on every node of that type is dropped, and the compiler currently
 says so once per node into a run report two hours in. `validate` says it from two YAML
 files. It stays a warning because only the data says what it costs — on the reference
 corpus it fires for five page types, and four of them hold no live pageparts at all

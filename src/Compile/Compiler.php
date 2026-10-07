@@ -575,8 +575,12 @@ final class Compiler
             $site['postDate'] = date(DATE_ATOM, (int) strtotime((string) $postDate));
         }
 
-        $builderBlocks = [];
-        $prependedBlocks = [];
+        // Each context writes to its own field: `content` to the Page Builder, `right_column` to
+        // a sidebar Matrix, a catalogue's `footer_content` to the Matrix below its listing. Every
+        // block used to land in the first context's field whatever its context named, so only a
+        // single-field mapping could be expressed. Buckets keep the order fields first appear in.
+        /** @var array<string, array{prepended: list<array<string, mixed>>, blocks: list<array<string, mixed>>}> $byField */
+        $byField = [];
 
         foreach ($page->contexts() as $context => $target) {
             $sequence = $parts->sequence($translation['entity'], $translation['entityId'], $context);
@@ -591,6 +595,8 @@ final class Compiler
 
                 continue;
             }
+
+            $byField[$field] ??= ['prepended' => [], 'blocks' => []];
 
             foreach ($sequencer->apply($sequence) as $emission) {
                 $block = $this->blockFor($emission, $builder, $builder->environment());
@@ -610,27 +616,28 @@ final class Compiler
 
                 // `prepend: true` is what puts a hero above the body. It was declared in the
                 // mapping and read by nothing, so every `top` part landed *after* the whole
-                // main context — 890 live placements arriving at the foot of the page.
-                if (($target['prepend'] ?? false) === true) {
-                    $prependedBlocks[] = $block;
-                } else {
-                    $builderBlocks[] = $block;
-                }
+                // main context — 890 live placements arriving at the foot of the page. It
+                // prepends within the field it names, not across fields.
+                $byField[$field][($target['prepend'] ?? false) === true ? 'prepended' : 'blocks'][] = $block;
 
                 $this->blocks++;
             }
         }
 
-        $builderBlocks = array_merge($prependedBlocks, $builderBlocks);
-
         $formBlock = $this->formBlockFor($parts, $translation, $page, $environment);
 
         if ($formBlock !== null) {
-            $builderBlocks[] = $formBlock;
+            $field = $this->formField($page);
+            $byField[$field] ??= ['prepended' => [], 'blocks' => []];
+            $byField[$field]['blocks'][] = $formBlock;
         }
 
-        if ($builderBlocks !== []) {
-            $pageFields[$page->builderField()] = $builderBlocks;
+        foreach ($byField as $field => $bucket) {
+            $blocks = array_merge($bucket['prepended'], $bucket['blocks']);
+
+            if ($blocks !== []) {
+                $pageFields[$field] = $blocks;
+            }
         }
 
         if ($pageFields !== []) {
@@ -674,7 +681,7 @@ final class Compiler
         }
 
         $entryType = (string) $page->entryType();
-        $field = $page->builderField();
+        $field = $this->formField($page);
         $slot = $this->schema?->slot($entryType, $field);
 
         if ($slot === null || !$slot->isMatrix()) {
@@ -704,6 +711,12 @@ final class Compiler
         $this->skip(sprintf('form on %s: no allowed block carries a Forms field', $entryType));
 
         return null;
+    }
+
+    /** Where a page's form block lands: `forms.field` when declared, else the main builder. */
+    private function formField(PageRow $page): string
+    {
+        return $this->mapping->forms()->field ?? $page->builderField();
     }
 
     /** The one Forms-type field on a block type, or null when there is none or several. */

@@ -743,10 +743,11 @@ final class MigrateController extends Controller
 
         foreach (array_slice($rejections, 0, 20) as $r) {
             $this->stderr(sprintf(
-                "  · %s  %s -> %s is not allowed on %s.%s — %s placements\n",
+                "  · %s  %s -> %s (in `%s`) is not allowed on %s.%s — %s placements\n",
                 (string) $r['env'],
                 (string) $r['part'],
                 (string) $r['block'],
+                (string) $r['context'],
                 (string) $r['entryType'],
                 (string) $r['field'],
                 number_format((int) $r['placements']),
