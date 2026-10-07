@@ -34,7 +34,7 @@ use yii\base\Component;
  *    currently wired to a console flag (no caller sets it up yet).
  *
  * Each successful ingest writes a state row via MigrationStateService:
- *   source='media', sourceKey='kuma_media:{id}',
+ *   source='media', sourceKey='{ENV}:kuma_media:{id}',
  *   targetType='asset' (local file) or 'video' (remote),
  *   targetId=<craft asset id | 0>, targetUid=<asset uid | null>,
  *   meta={ originalUrl, location, contentType, videoId? }
@@ -186,7 +186,7 @@ class AssetMigrationService extends Component
     public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
         // Fast path: state already has this media id → return its target id.
-        $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, 'kuma_media:' . $legacyId, null);
+        $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, self::mediaStateKey($legacyId, $env), null);
         if ($existing !== null) {
             return (int) $existing;
         }
@@ -198,8 +198,35 @@ class AssetMigrationService extends Component
 
         // ingestOne returned null — could be remote video (state row written,
         // no Asset element) or an unresolvable miss. Re-check state.
-        $resolved = $this->migrationState?->getTargetId(self::STATE_SOURCE, 'kuma_media:' . $legacyId, null);
+        $resolved = $this->migrationState?->getTargetId(self::STATE_SOURCE, self::mediaStateKey($legacyId, $env), null);
         return $resolved !== null ? (int) $resolved : 0;
+    }
+
+    /**
+     * The state key for one kuma_media row, scoped to the environment that read it.
+     *
+     * `kuma_media.id` restarts at 1 in every legacy database, so a bare key made
+     * COM's media 5 and DE's media 5 one identity — the same cross-environment
+     * collision `resolveEntryIdForNode()` guards against for nodes. On the Enreach
+     * corpus 1,862 ids exist in both COM and DE against different files; 104 had
+     * been claimed by whichever environment ran first, and 23 DE pages resolved
+     * og:image to a COM asset through the collided key.
+     *
+     * Unlike the `legacy-tree` folder prefix this is deliberately not conditional
+     * on the mapping holding more than one environment. A folder prefix is
+     * cosmetic, but a key format that changed shape when a second environment was
+     * added would silently orphan every row already written.
+     *
+     * `legacy_url:` keys stay global on purpose: they are keyed by file path, and
+     * the mediaRoots fallback chain (DE → [DE root, COM root]) means a DE page
+     * resolving to a file under COM's root is the intended sharing. Scoping those
+     * would fetch a second copy of the same file for every environment.
+     */
+    private static function mediaStateKey(int $mediaId, ?EnvironmentContext $env): string
+    {
+        $name = $env?->name ?? '';
+
+        return $name !== '' ? $name . ':kuma_media:' . $mediaId : 'kuma_media:' . $mediaId;
     }
 
     private static function jitOptions(?MigrationOptions $opts): MigrationOptions
@@ -501,7 +528,7 @@ class AssetMigrationService extends Component
         ?EnvironmentContext $env = null,
     ): ?Asset {
         $mediaId = (int) $row['id'];
-        $key = $stateKey ?? 'kuma_media:' . $mediaId;
+        $key = $stateKey ?? self::mediaStateKey($mediaId, $env);
 
         // D-08-20 fast-path: `--skip-assets` (CLI: options['skipAssets']=true)
         // short-circuits BEFORE any kuma_media payload read, FS stat, or

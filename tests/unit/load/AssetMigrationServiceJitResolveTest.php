@@ -53,7 +53,7 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
         $service = new AssetMigrationService();
         // legacyDb deliberately left null — any DB read would fatal the test.
         $service->migrationState = new JitStateMap([
-            'media|kuma_media:42' => ['targetId' => 123],
+            'media|COM:kuma_media:42' => ['targetId' => 123],
         ]);
 
         self::assertSame(123, $service->resolveFromLegacyId(42, $this->env()));
@@ -95,7 +95,7 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
             'url' => '/uploads/media/pics/one.png',
             'content_type' => 'image/png',
         ]);
-        $state = new JitStateMap(['media|kuma_media:42' => ['targetId' => 123]]);
+        $state = new JitStateMap(['media|COM:kuma_media:42' => ['targetId' => 123]]);
         $service->migrationState = $state;
 
         $resolver = $service->resolverFor($this->env([$this->mediaRoot]), new MigrationOptions(skipAssets: true));
@@ -104,6 +104,44 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
         self::assertSame(0, $resolver->resolveFromLegacyId(5), 'skipAssets travels with the resolver');
         self::assertSame(0, $resolver->resolveFromLegacyUrl('/uploads/media/pics/one.png'));
         self::assertSame([], $state->recorded);
+    }
+
+    public function testTheSameLegacyIdInTwoEnvironmentsResolvesToTwoDifferentAssets(): void
+    {
+        // The bug this scoping exists for. `kuma_media.id` restarts at 1 in every
+        // legacy database, so COM's media 42 and DE's media 42 are unrelated
+        // files. Under a bare key whichever environment migrated first owned the
+        // id and the other silently inherited its asset — on the Enreach corpus
+        // 1,862 ids collided this way and 23 DE pages rendered a COM og:image.
+        $service = new AssetMigrationService();
+        // legacyDb deliberately left null: a correct lookup never leaves state.
+        $service->migrationState = new JitStateMap([
+            'media|COM:kuma_media:42' => ['targetId' => 123],
+            'media|DE:kuma_media:42' => ['targetId' => 456],
+        ]);
+
+        self::assertSame(123, $service->resolveFromLegacyId(42, EnvironmentFactory::make('COM')));
+        self::assertSame(456, $service->resolveFromLegacyId(42, EnvironmentFactory::make('DE')));
+    }
+
+    public function testAnEnvironmentThatHasNotMigratedAnIdDoesNotInheritAnothersAsset(): void
+    {
+        // The other half of the contract: a miss must stay a miss. The bare row is
+        // one an earlier version wrote, before the key carried an environment — it
+        // belongs to nobody now, so LV resolves to nothing rather than inheriting
+        // whichever environment happened to write it. Both misses fall through to
+        // ingestOne's warned miss, so Craft must be loadable.
+        if (!class_exists(\Craft::class, false)) {
+            require dirname(__DIR__, 3) . '/vendor/craftcms/cms/src/Craft.php';
+        }
+
+        $service = new AssetMigrationService();
+        $service->migrationState = new JitStateMap([
+            'media|COM:kuma_media:42' => ['targetId' => 123],
+            'media|kuma_media:42' => ['targetId' => 456],
+        ]);
+
+        self::assertSame(0, $service->resolveFromLegacyId(42, EnvironmentFactory::make('LV')));
     }
 
     public function testIngestOneWithoutAWiredConnectionIsAWarnedMissNotAFatal(): void

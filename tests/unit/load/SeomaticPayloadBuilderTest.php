@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
+use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use Lameco\Kunstmaanmigrator\load\SeomaticPayloadBuilder;
 use PHPUnit\Framework\TestCase;
 
@@ -28,7 +29,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
     {
         $builder = new SeomaticPayloadBuilder();
         $builder->setResolver(static fn(int $id): ?int => null);
-        $payload = $builder->build(null, 1);
+        $payload = $builder->build(null, 1, 'COM');
 
         // Null row → 6-key shape with empty string scalars (no asset id).
         $this->assertArrayHasKey('metaGlobalVars', $payload);
@@ -54,7 +55,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
             'og_description' => 'OGD',
             'og_image_id' => 42,
         ];
-        $payload = $builder->build($row, 1);
+        $payload = $builder->build($row, 1, 'COM');
 
         $this->assertArrayHasKey('metaGlobalVars', $payload);
         $vars = $payload['metaGlobalVars'];
@@ -85,7 +86,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
             'meta_description' => 'MetaDesc',
             // og_title and og_description deliberately absent
         ];
-        $payload = $builder->build($row, 1);
+        $payload = $builder->build($row, 1, 'COM');
         $vars = $payload['metaGlobalVars'];
 
         // Fallback chain: og_title ?: meta_title; og_description ?: meta_description.
@@ -97,7 +98,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
     {
         $builder = new SeomaticPayloadBuilder();
         $builder->setResolver(static fn(int $id): ?int => null);
-        $payload = $builder->build(null, 1);
+        $payload = $builder->build(null, 1, 'COM');
 
         $this->assertArrayHasKey('metaBundleSettings', $payload);
         $settings = $payload['metaBundleSettings'];
@@ -117,7 +118,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
             'meta_title' => 'T',
             'meta_robots' => 'noindex,nofollow',
         ];
-        $payload = $builder->build($row, 1);
+        $payload = $builder->build($row, 1, 'COM');
 
         // Non-empty meta_robots flows through to metaGlobalVars.robots
         // verbatim. SEOmatic reads metaGlobalVars.robots directly at
@@ -135,15 +136,15 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $builder->setResolver(static fn(int $id): ?int => null);
 
         // Null row → no robots key (SEOmatic falls back to sitewide default).
-        $nullPayload = $builder->build(null, 1);
+        $nullPayload = $builder->build(null, 1, 'COM');
         $this->assertArrayNotHasKey('robots', $nullPayload['metaGlobalVars']);
 
         // Empty-string meta_robots is treated identically.
-        $emptyPayload = $builder->build(['meta_robots' => ''], 1);
+        $emptyPayload = $builder->build(['meta_robots' => ''], 1, 'COM');
         $this->assertArrayNotHasKey('robots', $emptyPayload['metaGlobalVars']);
 
         // Row missing the key entirely (older callers) — same.
-        $absentPayload = $builder->build(['meta_title' => 'T'], 1);
+        $absentPayload = $builder->build(['meta_title' => 'T'], 1, 'COM');
         $this->assertArrayNotHasKey('robots', $absentPayload['metaGlobalVars']);
     }
 
@@ -156,13 +157,13 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $builder = new SeomaticPayloadBuilder();
         $builder->setResolver(static fn(int $id): ?int => null);
 
-        $populated = $builder->build(['meta_robots' => 'noindex'], 1);
+        $populated = $builder->build(['meta_robots' => 'noindex'], 1, 'COM');
         $this->assertArrayNotHasKey('robotsSource', $populated['metaBundleSettings']);
 
-        $empty = $builder->build(['meta_robots' => ''], 1);
+        $empty = $builder->build(['meta_robots' => ''], 1, 'COM');
         $this->assertArrayNotHasKey('robotsSource', $empty['metaBundleSettings']);
 
-        $null = $builder->build(null, 1);
+        $null = $builder->build(null, 1, 'COM');
         $this->assertArrayNotHasKey('robotsSource', $null['metaBundleSettings']);
     }
 
@@ -183,7 +184,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $payload = $builder->build([
             'meta_title' => 'Page meta title',
             'twitter_title' => 'Custom twitter title',
-        ], 1);
+        ], 1, 'COM');
 
         $this->assertSame('Custom twitter title', $payload['metaGlobalVars']['twitterTitle']);
         $this->assertSame('fromCustom', $payload['metaBundleSettings']['twitterTitleSource']);
@@ -197,7 +198,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $payload = $builder->build([
             'meta_description' => 'Page meta desc',
             'twitter_description' => 'Custom twitter desc',
-        ], 1);
+        ], 1, 'COM');
 
         $this->assertSame('Custom twitter desc', $payload['metaGlobalVars']['twitterDescription']);
         $this->assertSame('fromCustom', $payload['metaBundleSettings']['twitterDescriptionSource']);
@@ -213,7 +214,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $builder = new SeomaticPayloadBuilder();
         $builder->setResolver(static fn(int $id): ?int => null);
 
-        $nullPayload = $builder->build(null, 1);
+        $nullPayload = $builder->build(null, 1, 'COM');
         $this->assertArrayNotHasKey('twitterTitle', $nullPayload['metaGlobalVars']);
         $this->assertArrayNotHasKey('twitterDescription', $nullPayload['metaGlobalVars']);
         $this->assertArrayNotHasKey('twitterTitleSource', $nullPayload['metaBundleSettings']);
@@ -222,7 +223,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $emptyPayload = $builder->build([
             'twitter_title' => '',
             'twitter_description' => '',
-        ], 1);
+        ], 1, 'COM');
         $this->assertArrayNotHasKey('twitterTitle', $emptyPayload['metaGlobalVars']);
         $this->assertArrayNotHasKey('twitterDescription', $emptyPayload['metaGlobalVars']);
     }
@@ -237,7 +238,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $payload = $builder->build([
             'og_image_id' => 10,
             'twitter_image_id' => 20,
-        ], 1);
+        ], 1, 'COM');
 
         $this->assertSame('200', $payload['metaGlobalVars']['twitterImage']);
         $this->assertSame('fromAsset', $payload['metaBundleSettings']['twitterImageSource']);
@@ -257,7 +258,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $payload = $builder->build([
             'og_image_id' => 10,
             'twitter_image_id' => 20,
-        ], 1);
+        ], 1, 'COM');
 
         $this->assertArrayNotHasKey('twitterImage', $payload['metaGlobalVars']);
         $this->assertArrayNotHasKey('twitterImageSource', $payload['metaBundleSettings']);
@@ -273,7 +274,7 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $payload = $builder->build([
             'og_image_id' => 10,
             'twitter_image_id' => null,
-        ], 1);
+        ], 1, 'COM');
 
         $this->assertArrayNotHasKey('twitterImage', $payload['metaGlobalVars']);
         $this->assertArrayNotHasKey('twitterImageSource', $payload['metaBundleSettings']);
@@ -290,10 +291,70 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $payload = $builder->build([
             'og_image_id' => null,
             'twitter_image_id' => 20,
-        ], 1);
+        ], 1, 'COM');
 
         $this->assertSame('200', $payload['metaGlobalVars']['twitterImage']);
         $this->assertSame('fromAsset', $payload['metaBundleSettings']['twitterImageSource']);
         $this->assertSame([200], $payload['metaBundleSettings']['twitterImageIds']);
+    }
+
+    public function testOgImageIsLookedUpUnderTheEnvironmentScopedStateKey(): void
+    {
+        // The bug this scoping exists for. `kuma_media.id` restarts at 1 in each
+        // legacy database, so COM's media 42 and DE's media 42 are different
+        // files. A bare lookup handed whichever environment migrated first, and
+        // 23 DE pages on the Enreach corpus rendered a COM asset as og:image.
+        $state = new RecordingStateService(['COM:kuma_media:42' => 900, 'DE:kuma_media:42' => 901]);
+
+        $com = new SeomaticPayloadBuilder();
+        $com->migrationState = $state;
+        $comPayload = $com->build(['meta_title' => 'T', 'og_image_id' => 42], 1, 'COM');
+
+        $de = new SeomaticPayloadBuilder();
+        $de->migrationState = $state;
+        $dePayload = $de->build(['meta_title' => 'T', 'og_image_id' => 42], 1, 'DE');
+
+        $this->assertSame([900], $comPayload['metaBundleSettings']['seoImageIds']);
+        $this->assertSame([901], $dePayload['metaBundleSettings']['seoImageIds']);
+        $this->assertSame(['COM:kuma_media:42', 'DE:kuma_media:42'], $state->keys);
+    }
+
+    public function testAnEnvironmentWithNoAssetOfItsOwnEmitsNoOgImage(): void
+    {
+        // A miss must stay a miss rather than fall back to another environment's
+        // asset: no image is recoverable, the wrong image is not.
+        $state = new RecordingStateService(['COM:kuma_media:42' => 900]);
+
+        $builder = new SeomaticPayloadBuilder();
+        $builder->migrationState = $state;
+        $payload = $builder->build(['meta_title' => 'T', 'og_image_id' => 42], 1, 'LV');
+
+        $this->assertArrayNotHasKey('seoImageIds', $payload['metaBundleSettings']);
+        $this->assertSame(['LV:kuma_media:42'], $state->keys);
+    }
+}
+
+/**
+ * Records the state keys the builder asks for, so the environment scoping is
+ * asserted on the key itself rather than only on the resolved id.
+ *
+ * @internal
+ */
+final class RecordingStateService extends MigrationStateService
+{
+    /** @var list<string> */
+    public array $keys = [];
+
+    /** @param array<string, int> $map */
+    public function __construct(private readonly array $map = [])
+    {
+        parent::__construct();
+    }
+
+    public function getTargetId(string $source, string $key, ?int $siteId = null): ?int
+    {
+        $this->keys[] = $key;
+
+        return $this->map[$key] ?? null;
     }
 }

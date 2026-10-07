@@ -251,6 +251,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
                         $siteLocales,
                         $opts,
                         $report,
+                        $context->name,
                     );
                     if ($written > 0) {
                         $report->incr('updated', $written);
@@ -300,6 +301,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
         array $siteLocales,
         MigrationOptions $opts,
         MigrationReport $report,
+        string $environment,
         ?array $directRefIdsByLocale = null,
     ): int {
         // Resolve legacy ref_entity_name + canonical ref_id (used as the fallback
@@ -406,7 +408,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
                 continue;
             }
 
-            $payload = $this->seoPayload->build($seoRow, $siteId);
+            $payload = $this->seoPayload->build($seoRow, $siteId, $environment);
 
             // A locale with no legacy SEO row gets an explicit empty payload, to clear
             // anything Craft propagated from the primary site during the entry save. That is

@@ -24,6 +24,18 @@ final class AssetResolver
     ) {
     }
 
+    /**
+     * Which environment these lookups are bound to.
+     *
+     * The rewriter warms a cache straight off the state table rather than
+     * through this resolver, and media state keys are environment-scoped, so it
+     * needs the name to know which rows are its own.
+     */
+    public function environmentName(): string
+    {
+        return $this->env->name;
+    }
+
     public function resolveFromLegacyId(int $kumaMediaId): int
     {
         return $this->assets->resolveFromLegacyId($kumaMediaId, $this->env, $this->opts);
