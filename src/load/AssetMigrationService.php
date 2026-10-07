@@ -15,6 +15,7 @@ use Lameco\Kunstmaanmigrator\craft\SpicywebEmbedGateway;
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\run\RunTally;
+use Lameco\Kunstmaanmigrator\Source\MediaIndex;
 use RuntimeException;
 use Throwable;
 use yii\base\Component;
@@ -272,9 +273,19 @@ class AssetMigrationService extends Component
      * They are found beside the media root (see `AssetPathResolver::resolveUpload()`) and keyed
      * by the file found, `legacy_file:<sha1(realpath)>`: one file named by many rows is one
      * asset, and the same relative path in two environments' checkouts is two.
+     *
+     * `kuma:media:<id>` is the one form that is not a path. A remote video (YouTube, Vimeo) has
+     * no file and no url, so the compile names its `kuma_media` id instead
+     * (`Source\MediaIndex`), and it resolves by id: the route that builds an embedded asset,
+     * under the same environment-scoped `<ENV>:kuma_media:<id>` key. Unlike a path it needs the
+     * legacy DB connection.
      */
     public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
+        if (preg_match('/^' . preg_quote(MediaIndex::ID_REFERENCE_PREFIX, '/') . '(\d+)$/D', $legacyUrl, $m) === 1) {
+            return $this->resolveFromLegacyId((int) $m[1], $env, $opts);
+        }
+
         $path = '/' . ltrim($legacyUrl, '/');
 
         // A rich-text `/uploads/media/…` URL may carry a query or fragment; a path outside it is

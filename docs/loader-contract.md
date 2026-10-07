@@ -298,6 +298,20 @@ URL, so `#` and `?` are part of it. Under
 lands in `{targetSubfolder}/[{ENV}/]<dir>/` (`migrated/models_import/`); the
 `year` strategy is unchanged.
 
+### `_asset: "kuma:media:<id>"` — a remote video, resolved by id
+
+A remote video (`kuma_media.content_type` `remote/…`: YouTube, Vimeo) has no
+file and no url, so `| asset` cannot hand over a path. The compile emits
+`{"_asset": "kuma:media:<id>"}` instead, and `resolveFromLegacyUrl()` passes it
+to `resolveFromLegacyId()` — the same route a `{{kuma:media:<id>}}` token takes.
+It reads the row from the legacy DB (so this form, unlike a path, needs the
+connection), builds the video's URL from the serialized `metadata` code
+(`RemoteVideoUrl`; a pasted `?rel=0`, `watch?v=…` or whole provider URL is
+normalised), and, when spicyweb/craft-embedded-assets is installed, saves an
+embedded asset through `EmbedGateway`. State key: `<ENV>:kuma_media:<id>`.
+Without the plugin, or for a code no provider claims, it stays unresolved and
+is reported like any other unresolved `_asset`.
+
 - Resolved (`> 0`) — the numeric Craft asset id is substituted for the node,
   the same shape a resolved `_ref` produces.
 - Unresolved (`0`, meaning no media root is configured, the path isn't under

@@ -106,6 +106,32 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
         self::assertSame([], $state->recorded);
     }
 
+    public function testAMediaIdReferenceResolvesByIdUnderTheEnvironmentsOwnKey(): void
+    {
+        // `kuma:media:<id>` is what the compile emits for a remote video, which has no path.
+        // It goes the id route — the one that builds an embedded asset — and so lands on the
+        // same environment-scoped state key a `{{kuma:media:<id>}}` token does.
+        $service = new AssetMigrationService();
+        // legacyDb deliberately left null: a correct lookup never leaves state.
+        $service->migrationState = new JitStateMap([
+            'media|FR:kuma_media:1381' => ['targetId' => 77],
+            'media|NL:kuma_media:1381' => ['targetId' => 88],
+        ]);
+
+        self::assertSame(77, $service->resolveFromLegacyUrl('kuma:media:1381', EnvironmentFactory::make('FR')));
+        self::assertSame(88, $service->resolveFromLegacyUrl('kuma:media:1381', EnvironmentFactory::make('NL')));
+    }
+
+    public function testAMediaIdReferenceToAMissingRowResolvesToNothing(): void
+    {
+        $service = new AssetMigrationService();
+        $service->legacyDb = new JitLegacyDb(null);
+        $service->migrationState = new JitStateMap();
+
+        self::assertSame(0, $service->resolveFromLegacyUrl('kuma:media:999', $this->env()));
+        self::assertSame([':id' => 999], $service->legacyDb->queryOneCalls[0][1]);
+    }
+
     public function testTheSameLegacyIdInTwoEnvironmentsResolvesToTwoDifferentAssets(): void
     {
         // The bug this scoping exists for. `kuma_media.id` restarts at 1 in every
