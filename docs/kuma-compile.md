@@ -296,8 +296,8 @@ forms:
   builder: the first context's field. `validate --craft` fails a `forms.field` no page entry
   type has as a Matrix, and warns per page type that lacks it.
 - **Blocks own their field.** A field that both a context (or `forms.field`) and the page's
-  `map:`/`children:` write is a `validate` error; when a sidecar collides at compile, the blocks
-  win and the replaced value is counted in the run report.
+  `map:`/`children:` (or a page part) write is a `validate --craft` error; when a sidecar collides at
+  compile, the blocks win and the replaced value is counted in the run report.
 
 ## Page contexts: a part onto the page's own fields
 
@@ -336,7 +336,9 @@ parts:
   `consumedBy: page`, a part whose `requires:` fields came out empty (which lets the next part try).
   A `consumedBy: page` part outside a `target: page` context becomes nothing, and is counted too.
 - **The page's own map wins** a collision, exactly as with sidecars; the page part in turn wins over
-  a sidecar, since it sits in the page's own content tree.
+  a sidecar, since it sits in the page's own content tree. A field the page's block stream fills
+  is the exception: the blocks win it, `validate --craft` rejects a page part that targets one, and a
+  replaced value is counted in the run report.
 - **A constant** is a quoted literal in the map: `heroType: "'image'"`. YAML strips one level of
   quotes, so `heroType: 'image'` would read a column called `image`.
 - **`requires:`** guards a target invariant the field layout cannot express: `heroSlides` is

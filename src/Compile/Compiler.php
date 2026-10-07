@@ -647,10 +647,10 @@ final class Compiler
             }
 
             // The stream wins the field, as it always won the builder — but any context field and
-            // `forms.field` can now be one `map:`, `children:` or a sidecar also wrote, and the
-            // value it replaces is counted rather than lost in silence.
+            // `forms.field` can now be one `map:`, `children:`, a sidecar or a page part also
+            // wrote, and the value it replaces is counted rather than lost in silence.
             if (isset($pageFields[$field])) {
-                $this->skip(sprintf('%s.%s: blocks replace a value from map/children/sidecars', $entryType, $field));
+                $this->skip(sprintf('%s.%s: blocks replace a value from map/children/sidecars/page parts', $entryType, $field));
             }
 
             $pageFields[$field] = $blocks;

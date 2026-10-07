@@ -517,4 +517,39 @@ final class PageFieldsLaneTest extends TestCase
             $fields['heroSlides']['feeders'],
         );
     }
+
+    /** The image hero also writing the main builder — a field its page's block stream fills. */
+    private static function headerWritesTheBuilder(): string
+    {
+        return str_replace(
+            "      heroImage: header_image_id | asset\n",
+            "      heroImage: header_image_id | asset\n      pageBuilderBerkvensNl: title\n",
+            self::MAPPING,
+        );
+    }
+
+    #[Test]
+    public function blocks_replacing_a_page_part_value_are_counted(): void
+    {
+        [$entries, $compiler] = $this->compile(self::headerWritesTheBuilder());
+
+        self::assertSame(
+            [['type' => 'textBlock', 'fields' => ['content' => 'Onze deuren', '_sourcePartRef' => 'NL:text_parts:1']]],
+            self::fieldsOf($entries[17])['pageBuilderBerkvensNl'],
+        );
+        self::assertSame(
+            1,
+            $compiler->skipped()['berkvensNlContentPage.pageBuilderBerkvensNl: blocks replace a value from map/children/sidecars/page parts'] ?? null,
+        );
+    }
+
+    #[Test]
+    public function the_target_check_rejects_a_page_part_writing_a_block_field(): void
+    {
+        self::assertSame(
+            ['part `Header`: `pageBuilderBerkvensNl` is a block field on page `TextPage` — the blocks replace the page part\'s value',
+                'part `Header`: `pageBuilderBerkvensNl` is a block field on page `LandingPage` — the blocks replace the page part\'s value', ],
+            (new TargetCheck(self::schema()))->check(Mapping::fromFile(self::mappingFile(self::headerWritesTheBuilder()))),
+        );
+    }
 }

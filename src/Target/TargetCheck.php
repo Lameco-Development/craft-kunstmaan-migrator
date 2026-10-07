@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Target;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\PageRow;
 use Lameco\Kunstmaanmigrator\Mapping\PartRow;
 
 /**
@@ -66,16 +67,9 @@ final class TargetCheck
 
             // A field the page writes itself and the block stream also fills: the blocks win at
             // compile, so the mapped value is dropped on every page that has any blocks there.
-            $blockFields = $page->contextFields();
-            $formsField = $this->formsField($mapping);
-
-            if ($formsField !== null) {
-                $blockFields[] = $formsField;
-            }
-
             $written = array_map(strval(...), [...array_keys($page->map()), ...array_keys($page->children())]);
 
-            foreach (array_values(array_unique(array_intersect($written, $blockFields))) as $field) {
+            foreach (array_values(array_intersect($written, $this->blockFields($mapping, $page))) as $field) {
                 $errors[] = sprintf(
                     'page `%s`: `%s` is both mapped and a block field — the blocks replace the mapped value',
                     $name,
@@ -195,9 +189,45 @@ final class TargetCheck
 
                 $this->checkChildren(sprintf('part `%s`', $name), $entryType, $part->children(), $errors);
             }
+
+            // The block stream wins a field it fills, so a page part writing one is lost on every
+            // page that has blocks there.
+            $written = array_map(strval(...), [...array_keys($part->map()), ...array_keys($part->children())]);
+
+            foreach ($mapping->pageRows() as $pageName => $page) {
+                if (!$page->compiles() || $page->pageContexts() === []) {
+                    continue;
+                }
+
+                foreach (array_values(array_intersect($written, $this->blockFields($mapping, $page))) as $field) {
+                    $errors[] = sprintf(
+                        "part `%s`: `%s` is a block field on page `%s` — the blocks replace the page part's value",
+                        $name,
+                        $field,
+                        $pageName,
+                    );
+                }
+            }
         }
 
         return $errors;
+    }
+
+    /**
+     * The fields a page's block stream fills: each context's, and `forms.field` when declared.
+     *
+     * @return list<string>
+     */
+    private function blockFields(Mapping $mapping, PageRow $page): array
+    {
+        $fields = $page->contextFields();
+        $formsField = $this->formsField($mapping);
+
+        if ($formsField !== null) {
+            $fields[] = $formsField;
+        }
+
+        return array_values(array_unique($fields));
     }
 
     /**
