@@ -336,4 +336,22 @@ final class ReadinessTest extends TestCase
 
         self::assertNotNull($this->find($requirements, 'contentBlock', 'contentColumns'));
     }
+
+    #[Test]
+    public function a_field_required_only_under_a_layout_condition_is_conditional_not_missing(): void
+    {
+        // berkvensNlContentPage.heroSlides: required only when heroType = slider, through a
+        // field-layout element condition. Nothing about it blocks an entry whose hero is an image.
+        $requirements = $this->requirements(<<<'YAML'
+            version: 1
+            parts:
+              Hero:
+                table: hero_page_parts
+                block: heroBanner
+            YAML);
+
+        self::assertSame(Requirement::CONDITIONAL, $this->find($requirements, 'heroBanner', 'heading')?->verdict());
+        self::assertSame(Requirement::CONDITIONAL, $this->find($requirements, 'heroBanner', 'subheading')?->verdict(), 'a conditional tab conditions its fields');
+        self::assertSame(Requirement::MISSING, $this->find($requirements, 'heroBanner', 'kicker')?->verdict(), 'a condition with no rules is no condition');
+    }
 }

@@ -361,6 +361,7 @@ final class Readiness
                 totalTransform: $source !== null && $this->survivesEmpty((string) $source),
                 craftDefault: $slot->default,
                 required: $slot->required,
+                conditional: $slot->conditional,
             );
         }
 

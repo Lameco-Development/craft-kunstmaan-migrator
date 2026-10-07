@@ -77,6 +77,8 @@ final class CraftSchemaGateway implements SchemaGateway
 
         $slots = [];
         foreach ($layout->getTabs() as $tab) {
+            $tabConditional = self::hasConditionRules($tab->getElementCondition());
+
             foreach ($tab->getElements() as $element) {
                 if (!($element instanceof CustomField)) {
                     continue;
@@ -106,6 +108,7 @@ final class CraftSchemaGateway implements SchemaGateway
                     // A Table row is read by colId or column handle only; a `children:` key that
                     // is neither is dropped from every row, so `mapping check` needs the handles.
                     'columns' => $field instanceof Table ? Slot::columnHandlesOf($field->columns) : null,
+                    'conditional' => $tabConditional || self::hasConditionRules($element->getElementCondition()),
                 ];
             }
         }
@@ -142,6 +145,12 @@ final class CraftSchemaGateway implements SchemaGateway
         }
 
         return [];
+    }
+
+    /** A condition with no rules is what Craft holds for "always shown" — same reading as `CraftSchema`. */
+    private static function hasConditionRules(?\craft\base\conditions\ConditionInterface $condition): bool
+    {
+        return $condition !== null && $condition->getConditionRules() !== [];
     }
 
     /**

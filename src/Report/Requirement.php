@@ -19,6 +19,7 @@ final class Requirement
     public const DEFAULTED = 'default';
     public const PARTIAL = 'partial';
     public const MISSING = 'missing';
+    public const CONDITIONAL = 'conditional';
 
     public function __construct(
         public readonly string $lane,
@@ -34,6 +35,8 @@ final class Requirement
         public readonly ?string $craftDefault = null,
         /** Whether the entry type marks the field required. An optional field is never a blocker, only a hole. */
         public readonly bool $required = true,
+        /** Whether the layout shows the field only under an element condition, so it is required only there. */
+        public readonly bool $conditional = false,
     ) {
     }
 
@@ -86,6 +89,12 @@ final class Requirement
             return self::DEFAULTED;
         }
 
+        // Required only where a layout condition shows the field: an entry the condition hides
+        // saves without it, so this is a question for the entries where it holds, not a blocker.
+        if ($this->conditional) {
+            return self::CONDITIONAL;
+        }
+
         return $this->isSupplied() ? self::PARTIAL : self::MISSING;
     }
 
@@ -95,6 +104,7 @@ final class Requirement
         return match ($this->verdict()) {
             self::MISSING => 'set a default in the mapping, or relax the field in Craft',
             self::PARTIAL => 'add a fallback for the empty rows, or relax the field in Craft',
+            self::CONDITIONAL => 'none unless the layout condition holds — supply it for the entries where it does, or relax the field in Craft',
             self::DEFAULTED => sprintf('none — Craft writes `%s`; override in the mapping to choose otherwise', (string) $this->craftDefault),
             default => '',
         };
@@ -105,7 +115,7 @@ final class Requirement
         return match ($this->verdict()) {
             self::MISSING => $this->live ?? 0,
             self::PARTIAL => $this->empty ?? 0,
-            self::DEFAULTED => $this->empty ?? $this->live ?? 0,
+            self::DEFAULTED, self::CONDITIONAL => $this->empty ?? $this->live ?? 0,
             default => 0,
         };
     }

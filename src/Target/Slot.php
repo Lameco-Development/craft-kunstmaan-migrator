@@ -14,6 +14,8 @@ final readonly class Slot
      *                                   one set for every site, which two locales cannot both own
      * @param list<string>|null $columns a Table field's column handles; null when the field is no
      *                                   Table or the source does not say
+     * @param bool $conditional          the layout shows the field only under an element condition
+     *                                   (on the field or its tab), so `required` binds only there
      */
     public function __construct(
         public string $handle,
@@ -23,6 +25,7 @@ final readonly class Slot
         public ?string $default = null,
         public ?string $propagationMethod = null,
         public ?array $columns = null,
+        public bool $conditional = false,
     ) {
     }
 

@@ -1,0 +1,57 @@
+handle: heroBanner
+name: 'Hero Banner'
+fieldLayouts:
+  abab3434:
+    tabs:
+      -
+        elementCondition: null
+        elements:
+          -
+            # Required only when the hero is a slider — the berkvensNlContentPage.heroSlides shape.
+            elementCondition:
+              class: craft\elements\conditions\entries\EntryCondition
+              conditionRules:
+                -
+                  class: craft\fields\conditions\OptionsFieldConditionRule
+                  fieldUid: ffff8888
+                  operator: in
+                  uid: abab5656
+                  values:
+                    - slider
+              elementType: craft\elements\Entry
+              fieldContext: global
+            fieldUid: cccc3333
+            handle: heading
+            required: true
+            type: craft\fieldlayoutelements\CustomField
+          -
+            # A condition with no rules shows the field always.
+            elementCondition:
+              class: craft\elements\conditions\entries\EntryCondition
+              conditionRules: []
+              elementType: craft\elements\Entry
+            fieldUid: cccc3333
+            handle: kicker
+            required: true
+            type: craft\fieldlayoutelements\CustomField
+        name: Content
+      -
+        elementCondition:
+          class: craft\elements\conditions\entries\EntryCondition
+          conditionRules:
+            -
+              class: craft\fields\conditions\OptionsFieldConditionRule
+              fieldUid: ffff8888
+              operator: in
+              uid: abab7878
+              values:
+                - slider
+          elementType: craft\elements\Entry
+        elements:
+          -
+            elementCondition: null
+            fieldUid: cccc3333
+            handle: subheading
+            required: true
+            type: craft\fieldlayoutelements\CustomField
+        name: Slider

@@ -158,8 +158,12 @@ final class CraftSchema implements TargetSchema
     {
         $slots = [];
 
-        $walk = static function(mixed $node) use (&$walk, &$slots, $fields): void {
+        // A field under an element condition — its own, or its tab's — exists on an entry only
+        // when the condition holds, and so does its `required`. The walk carries the flag down.
+        $walk = static function(mixed $node, bool $conditional = false) use (&$walk, &$slots, $fields): void {
             if (is_array($node)) {
+                $conditional = $conditional || self::hasConditionRules($node['elementCondition'] ?? null);
+
                 if (str_ends_with((string) ($node['type'] ?? ''), 'CustomField')) {
                     $uid = (string) ($node['fieldUid'] ?? '');
                     $field = $fields[$uid] ?? null;
@@ -178,12 +182,13 @@ final class CraftSchema implements TargetSchema
                             default: $field['default'],
                             propagationMethod: $field['propagationMethod'],
                             columns: $field['columns'],
+                            conditional: $conditional,
                         );
                     }
                 }
 
                 foreach ($node as $child) {
-                    $walk($child);
+                    $walk($child, $conditional);
                 }
             }
         };
@@ -191,6 +196,12 @@ final class CraftSchema implements TargetSchema
         $walk($entryType['fieldLayouts'] ?? []);
 
         return $slots;
+    }
+
+    /** A condition with no rules is what Craft stores for "always shown". */
+    private static function hasConditionRules(mixed $condition): bool
+    {
+        return is_array($condition) && is_array($condition['conditionRules'] ?? null) && $condition['conditionRules'] !== [];
     }
 
     public function hasEntryType(string $handle): bool
