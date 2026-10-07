@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Target;
 
+use Lameco\Kunstmaanmigrator\Compile\BlockBuilder;
+use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\PageRow;
 use Lameco\Kunstmaanmigrator\Mapping\PartRow;
@@ -108,7 +110,7 @@ final class TargetCheck
             }
         }
 
-        $errors = [...$errors, ...$this->checkPageParts($mapping)];
+        $errors = [...$errors, ...$this->checkPageParts($mapping), ...$this->checkSidecars($mapping)];
 
         foreach ($mapping->partRows() as $name => $part) {
             $block = $part->block();
@@ -233,6 +235,47 @@ final class TargetCheck
         }
 
         return array_map(strval(...), array_keys($hosts));
+    }
+
+    /**
+     * A sidecar decorates every page it is joined to, so its `children:` address the fields of
+     * any page entry type the mapping compiles. Each type that has the field must hold it in a
+     * shape the collection can fill — a misspelt Table column is dropped from every row, an
+     * Assets map of two values writes neither. A field no such type has is a typo: each one says
+     * so. A type that merely lacks it is the compiler's to drop and count, as for a page part.
+     *
+     * @return list<string>
+     */
+    private function checkSidecars(Mapping $mapping): array
+    {
+        $hosts = [];
+
+        foreach ($mapping->pageRows() as $page) {
+            $entryType = (string) $page->entryType();
+
+            if ($page->compiles() && $this->schema->hasEntryType($entryType)) {
+                $hosts[$entryType] = true;
+            }
+        }
+
+        $hosts = array_map(strval(...), array_keys($hosts));
+        $errors = [];
+
+        foreach ($mapping->sidecarRows() as $name => $sidecar) {
+            if (!$sidecar->isMigrated()) {
+                continue;
+            }
+
+            foreach ($sidecar->children() as $field => $child) {
+                $holding = $this->hostsWith($hosts, (string) $field);
+
+                foreach ($holding !== [] ? $holding : $hosts as $entryType) {
+                    $this->checkChildren(sprintf('sidecar `%s`', $name), $entryType, [$field => $child], $errors);
+                }
+            }
+        }
+
+        return $errors;
     }
 
     /**
@@ -601,7 +644,7 @@ final class TargetCheck
 
             $map = is_array($child['map'] ?? null) ? $child['map'] : [];
 
-            if ($slot->type === 'Assets') {
+            if ($slot->isAssets()) {
                 if (count($map) !== 1) {
                     $errors[] = sprintf(
                         '%s: `%s.%s` is an Assets field, so its `map:` holds exactly one value — it holds %d',
@@ -610,12 +653,22 @@ final class TargetCheck
                         $field,
                         count($map),
                     );
+                } elseif (!BlockBuilder::yieldsAsset((string) reset($map))) {
+                    $errors[] = sprintf(
+                        '%s: `%s.%s` is an Assets field, so `%s: %s` must end in an asset transform (%s)',
+                        $subject,
+                        $owner,
+                        $field,
+                        (string) array_key_first($map),
+                        (string) reset($map),
+                        implode(', ', array_map(static fn(string $t): string => '`| ' . $t . '`', Transforms::ASSET_TRANSFORMS)),
+                    );
                 }
 
                 continue;
             }
 
-            if ($slot->type === 'Table') {
+            if ($slot->isTable()) {
                 foreach (array_keys($map) as $column) {
                     if ($slot->columns !== null && !in_array((string) $column, $slot->columns, true)) {
                         $errors[] = sprintf('%s: Table `%s.%s` has no column `%s`', $subject, $owner, $field, $column);

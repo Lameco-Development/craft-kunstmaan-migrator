@@ -429,10 +429,16 @@ sidecars:
 - **Table:** each row becomes a map keyed by the `map:` targets, which are the Table's column
   handles; an empty row is left out.
 - Neither carries a `_sourcePartRef` — there is no nested element to thread on a re-run.
-- `validate --craft` accepts a `children:` target that is a Matrix, Assets or Table field and errors
-  on any other; an Assets target whose `map:` is not exactly one value is an error, and so is a
-  Table column the field does not have (when project config lists its columns). Sidecar
-  `children:` are not target-checked, as sidecar `map:` is not.
+- `validate --craft` and `mapping check` accept a `children:` target that is a Matrix, Assets or
+  Table field and error on any other. An Assets target's `map:` holds exactly one value, and that
+  value must end in a transform that emits an asset (`| asset`, or a `coalesce()` of such) — a
+  bare `media_id` would hand Craft raw legacy ids, related to whichever asset carries them. A Table
+  column the field does not have is an error too: Craft reads a row by column id or handle only,
+  so any other key is dropped from every row. Both schema readers know the columns — project config
+  and the live site.
+- Sidecar `children:` are checked the same way against every page entry type the mapping compiles
+  that has the field; a field none of them has is an error on each. (Sidecar `map:` is not
+  target-checked.)
 - `readiness` credits the field to the lane that writes it (`children`, `page-parts`, `sidecars`).
 
 ## Field expressions

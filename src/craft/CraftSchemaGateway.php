@@ -8,7 +8,9 @@ use Craft;
 
 use craft\fieldlayoutelements\CustomField;
 use craft\fields\Matrix;
+use craft\fields\Table;
 use Lameco\Kunstmaanmigrator\Payload\SchemaGateway;
+use Lameco\Kunstmaanmigrator\Target\Slot;
 
 /**
  * Production `SchemaGateway` — thin read-only wrapper over
@@ -101,6 +103,9 @@ final class CraftSchemaGateway implements SchemaGateway
                     'required' => (bool) $element->required,
                     'nested' => $nested,
                     'propagationMethod' => self::propagationOf($field),
+                    // A Table row is read by colId or column handle only; a `children:` key that
+                    // is neither is dropped from every row, so `mapping check` needs the handles.
+                    'columns' => $field instanceof Table ? Slot::columnHandlesOf($field->columns) : null,
                 ];
             }
         }

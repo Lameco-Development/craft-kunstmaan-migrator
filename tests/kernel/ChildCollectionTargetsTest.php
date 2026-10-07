@@ -14,6 +14,7 @@ use Lameco\Kunstmaanmigrator\Target\Slot;
 use Lameco\Kunstmaanmigrator\Target\TargetCheck;
 use Lameco\Kunstmaanmigrator\Target\TargetSchema;
 use PDO;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -220,10 +221,10 @@ final class ChildCollectionTargetsTest extends TestCase
     }
 
     /** @return array{0: array<string, mixed>, 1: Compiler} node 17's NL field values */
-    private function compile(string $yaml = self::MAPPING): array
+    private function compile(string $yaml = self::MAPPING, ?TargetSchema $schema = null): array
     {
         $out = [];
-        $compiler = new Compiler(Mapping::fromFile(self::mappingFile($yaml)), new Transforms(), self::schema());
+        $compiler = new Compiler(Mapping::fromFile(self::mappingFile($yaml)), new Transforms(), $schema ?? self::schema());
         $compiler->compile(self::db(), 'NL', static function(array $p) use (&$out): void {
             $out[] = $p;
         });
@@ -247,6 +248,49 @@ final class ChildCollectionTargetsTest extends TestCase
                     ],
                 ]],
             ],
+            $fields['pageBuilder'],
+        );
+    }
+
+    /** @return list<array{type: string, fields: array<string, mixed>}> the gallery's four items, in `weight` order */
+    private static function galleryBlocks(string $type): array
+    {
+        return [
+            ['type' => $type, 'fields' => ['image' => ['_asset' => '/uploads/media/een.jpg'], '_sourcePartRef' => 'NL:gallery_items:12']],
+            // media 99 is not in kuma_media: the block stays, its image does not.
+            ['type' => $type, 'fields' => ['_sourcePartRef' => 'NL:gallery_items:13']],
+            ['type' => $type, 'fields' => ['image' => ['_asset' => '/uploads/media/twee.jpg'], '_sourcePartRef' => 'NL:gallery_items:14']],
+            ['type' => $type, 'fields' => ['image' => ['_asset' => '/uploads/media/drie.jpg'], '_sourcePartRef' => 'NL:gallery_items:11']],
+        ];
+    }
+
+    #[Test]
+    public function a_matrix_collection_still_compiles_to_blocks_of_its_nested_type(): void
+    {
+        [$fields] = $this->compile(schema: self::schema([
+            'imageGalleryBlock' => ['images' => new Slot('images', 'Matrix', false, ['galleryItem'])],
+            'galleryItem' => ['image' => new Slot('image', 'Assets', false)],
+        ]));
+
+        self::assertSame(
+            [['type' => 'imageGalleryBlock', 'fields' => [
+                '_sourcePartRef' => 'NL:image_gallery_page_parts:5',
+                'images' => self::galleryBlocks('galleryItem'),
+            ]]],
+            $fields['pageBuilder'],
+        );
+    }
+
+    #[Test]
+    public function a_collection_the_schema_does_not_know_keeps_the_matrix_shape(): void
+    {
+        [$fields] = $this->compile(str_replace("      images:\n", "      items:\n", self::MAPPING));
+
+        self::assertSame(
+            [['type' => 'imageGalleryBlock', 'fields' => [
+                '_sourcePartRef' => 'NL:image_gallery_page_parts:5',
+                'items' => self::galleryBlocks('items'),
+            ]]],
             $fields['pageBuilder'],
         );
     }
@@ -336,6 +380,46 @@ final class ChildCollectionTargetsTest extends TestCase
         );
     }
 
+    /** @return array<string, array{0: string}> */
+    public static function expressionsThatYieldNoAsset(): array
+    {
+        return [
+            // A raw legacy id: Craft relates whatever asset happens to carry that id.
+            'a bare column' => ['media_id'],
+            // A list of entry refs, nested inside the asset list the loader flattens.
+            'an entry ref' => ['media_id | ref(Media)'],
+            'another transform' => ['media_id | url'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('expressionsThatYieldNoAsset')]
+    public function the_target_check_wants_an_asset_rows_value_to_be_an_asset(string $expression): void
+    {
+        $yaml = str_replace(
+            "fk: image_gallery_page_part_id\n        map: { image: media_id | asset }",
+            "fk: image_gallery_page_part_id\n        map: { image: " . $expression . " }",
+            self::MAPPING,
+        );
+
+        self::assertSame(
+            [sprintf('part `ImageGallery`: `imageGalleryBlock.images` is an Assets field, so `image: %s` must end in an asset transform (`| asset`)', $expression)],
+            (new TargetCheck(self::schema()))->check(Mapping::fromFile(self::mappingFile($yaml))),
+        );
+    }
+
+    #[Test]
+    public function the_target_check_accepts_a_coalesce_of_assets(): void
+    {
+        $yaml = str_replace(
+            "fk: image_gallery_page_part_id\n        map: { image: media_id | asset }",
+            "fk: image_gallery_page_part_id\n        map: { image: 'coalesce(media_id | asset, weight | asset)' }",
+            self::MAPPING,
+        );
+
+        self::assertSame([], (new TargetCheck(self::schema()))->check(Mapping::fromFile(self::mappingFile($yaml))));
+    }
+
     #[Test]
     public function the_target_check_rejects_a_column_the_table_lacks(): void
     {
@@ -359,6 +443,44 @@ final class ChildCollectionTargetsTest extends TestCase
 
         self::assertSame(
             ['part `ImageSlider`: `projectPage.heroTitle` is PlainText — a `children:` collection fills a Matrix, Assets or Table field'],
+            (new TargetCheck($schema))->check(Mapping::fromFile(self::mappingFile($yaml))),
+        );
+    }
+
+    #[Test]
+    public function the_target_check_rejects_a_sidecar_column_the_table_lacks(): void
+    {
+        $yaml = str_replace('map: { day: day, opening: opening, closing: closing }', 'map: { day: day, opens: opening }', self::MAPPING);
+
+        self::assertSame(
+            ['sidecar `structuredData`: Table `projectPage.openingHours` has no column `opens`'],
+            (new TargetCheck(self::schema()))->check(Mapping::fromFile(self::mappingFile($yaml))),
+        );
+    }
+
+    #[Test]
+    public function the_target_check_rejects_a_sidecar_collection_no_page_entry_type_has(): void
+    {
+        $yaml = str_replace("      openingHours:\n        table: structureddata_openinghour", "      openingHour:\n        table: structureddata_openinghour", self::MAPPING);
+
+        self::assertSame(
+            ['sidecar `structuredData`: `projectPage` has no field `openingHour`'],
+            (new TargetCheck(self::schema()))->check(Mapping::fromFile(self::mappingFile($yaml))),
+        );
+    }
+
+    #[Test]
+    public function the_target_check_wants_exactly_one_value_per_sidecar_asset_row(): void
+    {
+        $yaml = str_replace(
+            'map: { day: day, opening: opening, closing: closing }',
+            'map: { day: day, opening: opening, closing: closing }' . "\n      heroImages:\n        table: header_tabs\n        fk: structured_data_id\n        map: { image: media_id | asset, alt: title }",
+            self::MAPPING,
+        );
+        $schema = self::schema(['projectPage' => ['heroImages' => new Slot('heroImages', 'Assets', false)]]);
+
+        self::assertSame(
+            ['sidecar `structuredData`: `projectPage.heroImages` is an Assets field, so its `map:` holds exactly one value — it holds 2'],
             (new TargetCheck($schema))->check(Mapping::fromFile(self::mappingFile($yaml))),
         );
     }

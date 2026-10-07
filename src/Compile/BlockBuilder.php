@@ -160,25 +160,28 @@ final class BlockBuilder
      */
     private function collectedValue(string $owner, string $field, array $child, array $rows, string $context): ?array
     {
-        $type = $this->schema?->slot($owner, $field)?->type;
+        $slot = $this->schema?->slot($owner, $field);
 
-        if ($type !== 'Assets' && $type !== 'Table') {
+        if ($slot === null || (!$slot->isAssets() && !$slot->isTable())) {
             return null;
         }
 
         $map = is_array($child['map'] ?? null) ? $child['map'] : [];
         $out = [];
 
+        // A Table's columns and an asset row's key are no fields of the owner's, so nothing is
+        // asked of the schema about them while the rows are evaluated: no entry type is current.
+        $previous = $this->block;
+        $this->block = null;
+
         foreach ($rows as $childRow) {
-            // A Table's columns are no fields of the owner's, so nothing is asked of the schema
-            // about them: '' names no entry type.
-            $values = $this->fieldsFrom($map, $childRow, $context . '.' . $field, '');
+            $values = $this->fieldsFrom($map, $childRow, $context . '.' . $field);
 
             if ($values === []) {
                 continue;
             }
 
-            if ($type === 'Table') {
+            if ($slot->isTable()) {
                 $out[] = $values;
 
                 continue;
@@ -189,7 +192,29 @@ final class BlockBuilder
             }
         }
 
+        $this->block = $previous;
+
         return $out;
+    }
+
+    /**
+     * Whether a map expression evaluates to an asset: it ends in a transform that emits one, or
+     * it is a `coalesce()` whose every alternative does. The grammar is `evaluate()`'s, so this
+     * reads it the same way.
+     */
+    public static function yieldsAsset(string $expression): bool
+    {
+        $expression = trim($expression);
+
+        if (preg_match('/^coalesce\((.*)\)$/s', $expression, $m) === 1) {
+            $alternatives = self::splitArguments($m[1]);
+
+            return $alternatives !== [] && array_filter($alternatives, static fn(string $a): bool => !self::yieldsAsset($a)) === [];
+        }
+
+        $parts = array_map(trim(...), explode('|', $expression));
+
+        return count($parts) > 1 && Transforms::emitsAsset((string) end($parts));
     }
 
     /**
@@ -243,7 +268,7 @@ final class BlockBuilder
         // One target, two legacy columns that may each hold it. A case page's brand is in
         // `brand_id` on 122 rows and only in `brand_url`'s internal-link form on 53 more.
         if (preg_match('/^coalesce\((.*)\)$/s', $expression, $m) === 1) {
-            foreach ($this->splitArguments($m[1]) as $alternative) {
+            foreach (self::splitArguments($m[1]) as $alternative) {
                 $value = $this->evaluate($alternative, $row, $context);
 
                 if ($value !== null && $value !== '' && $value !== []) {
@@ -260,7 +285,7 @@ final class BlockBuilder
         if (preg_match('/^concat\((.*)\)$/s', $expression, $m) === 1) {
             $values = [];
 
-            foreach ($this->splitArguments($m[1]) as $piece) {
+            foreach (self::splitArguments($m[1]) as $piece) {
                 $value = $this->evaluate($piece, $row, $context);
 
                 if (is_scalar($value) && trim((string) $value) !== '') {
@@ -362,7 +387,7 @@ final class BlockBuilder
     {
         $parts = [];
 
-        foreach ($this->splitArguments($arguments) as $argument) {
+        foreach (self::splitArguments($arguments) as $argument) {
             if (!str_contains($argument, '=')) {
                 continue;
             }
@@ -385,7 +410,7 @@ final class BlockBuilder
      *
      * @return list<string>
      */
-    private function splitArguments(string $arguments): array
+    private static function splitArguments(string $arguments): array
     {
         $out = [];
         $depth = 0;
@@ -534,7 +559,7 @@ final class BlockBuilder
 
         $blocks = [];
 
-        foreach ($this->splitArguments($arguments) as $argument) {
+        foreach (self::splitArguments($arguments) as $argument) {
             // A nested `link(...)` argument is one four-column group — how a table holding
             // several whole links (primary/secondary/tertiary) becomes several buttons.
             if (preg_match('/^link\((.*)\)$/', $argument, $lm) === 1) {
