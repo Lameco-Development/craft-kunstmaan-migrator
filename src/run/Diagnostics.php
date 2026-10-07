@@ -7,8 +7,11 @@ namespace Lameco\Kunstmaanmigrator\run;
 use Craft;
 use craft\helpers\App;
 use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
+use Lameco\Kunstmaanmigrator\adapters\AdapterSetting;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\craft\NavigationGateway;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
+use Lameco\Kunstmaanmigrator\craft\VerbbNavigationGateway;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Plugin;
@@ -42,6 +45,7 @@ final class Diagnostics
             $this->checkStorageWritable(),
             $this->checkNotProduction(),
             ...$this->checkAdapterPlugins(),
+            ...$this->checkMenuHandles(),
             $this->checkEmbeddedAssets(),
             $this->checkLegacyMediaRoot(),
             $this->checkLegacyDb(),
@@ -184,6 +188,94 @@ final class Diagnostics
         }
 
         return $checks;
+    }
+
+    /**
+     * The navigation adapter's `menuHandles` map, against the navs that exist.
+     * Silent when the adapter is off or verbb is missing — the plugin row above
+     * already says so, and the pass will not run to need the navs.
+     *
+     * @return list<Check>
+     */
+    private function checkMenuHandles(): array
+    {
+        $settings = Plugin::getInstance()?->getSettings();
+        $adapter = (new AdapterRegistry())->byHandle('navigation');
+
+        if ($settings === null || $adapter === null || !$settings->isAdapterEnabled($adapter)) {
+            return [];
+        }
+
+        try {
+            $navigation = new VerbbNavigationGateway();
+
+            if (!$navigation->isAvailable()) {
+                return [];
+            }
+
+            // As typed, not cast: the cast drops a malformed pair silently,
+            // which is exactly what this row is here to say.
+            $map = $settings->adapters['navigation']['menuHandles']
+                ?? $settings->forAdapter($adapter)['menuHandles']
+                ?? [];
+
+            return self::menuHandleChecks($map, $navigation);
+        } catch (Throwable $e) {
+            return [$this->result('navigation_menu_handles', false, "menu handle check failed: {$e->getMessage()}")];
+        }
+    }
+
+    /**
+     * One row for the whole map: green when every entry is a `menu=handle`
+     * pair whose nav exists, red naming each malformed entry and each
+     * `menu → handle` whose nav does not. No row without a map.
+     *
+     * Public and static so it is testable with nothing but a gateway.
+     *
+     * @param mixed $menuHandles the setting as configured: a `menu=handle, …`
+     *              string from the settings screen or an array from the config file
+     * @return list<Check>
+     */
+    public static function menuHandleChecks(mixed $menuHandles, NavigationGateway $navigation): array
+    {
+        $malformed = AdapterSetting::malformedMapEntries($menuHandles);
+        $map = (new AdapterSetting('menuHandles', 'Menu to navigation', AdapterSetting::TYPE_MAP))->cast($menuHandles);
+
+        if ($map === [] && $malformed === []) {
+            return [];
+        }
+
+        $missing = [];
+
+        foreach ($map as $menu => $handle) {
+            if ($navigation->navIdByHandle($handle) === null) {
+                $missing[] = sprintf('%s → %s', $menu, $handle);
+            }
+        }
+
+        $problems = [];
+
+        if ($malformed !== []) {
+            $problems[] = sprintf(
+                'Not a `menu=navHandle` pair, so it is ignored: %s.',
+                implode(', ', array_map(static fn(string $entry): string => sprintf('"%s"', $entry), $malformed)),
+            );
+        }
+
+        if ($missing !== []) {
+            $problems[] = sprintf(
+                'Mapped to a nav that does not exist, so the menu will be skipped: %s. Create the nav or fix menuHandles.',
+                implode(', ', $missing),
+            );
+        }
+
+        return [[
+            'check' => 'navigation_menu_handles',
+            'ok' => $problems === [],
+            'detail' => $problems === []
+                ? sprintf('Every mapped legacy menu has its nav (%d).', count($map))
+                : implode(' ', $problems),
+        ]];
     }
 
     /**

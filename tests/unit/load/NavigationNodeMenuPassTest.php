@@ -74,6 +74,8 @@ final class NavigationNodeMenuPassTest extends TestCase
         NavigationMigrationService $svc,
         MigrationReport $report,
         bool $dryRun = false,
+        string $environment = 'COM',
+        bool $adoptLegacyKeys = false,
     ): void {
         (new ReflectionMethod($svc, 'migrateNodeMenu'))->invoke(
             $svc,
@@ -81,9 +83,10 @@ final class NavigationNodeMenuPassTest extends TestCase
             $this->sites(),
             self::PRIMARY_SITE_ID,
             'default',
-            'COM',
+            $environment,
             new MigrationOptions(dryRun: $dryRun),
             $report,
+            $adoptLegacyKeys,
         );
     }
 
@@ -173,8 +176,70 @@ final class NavigationNodeMenuPassTest extends TestCase
         $this->runPass($svc, new MigrationReport());
 
         self::assertCount(1, $state->recorded);
-        self::assertSame('kuma_node:2', $state->recorded[0]['key']);
+        self::assertSame('COM:kuma_node:2', $state->recorded[0]['key']);
         self::assertSame('navigation_node', $state->recorded[0]['targetType']);
+    }
+
+    /**
+     * `kuma_node_id` only restarts at 1 within one legacy environment's own
+     * database, so COM's and LV's node 2 shared one state row and one saved
+     * NavNode, and whichever ran second re-pointed the first's node at its own
+     * entry. Ported from release/1.2.0-beta (e0622c1).
+     */
+    public function testTwoEnvironmentsWithTheSameNumericKumaNodeIdDoNotShareASavedNode(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('COM:kuma_nodes', '2', 500);
+        $state->willResolve('LV:kuma_nodes', '2', 999);
+        $svc = $this->service(
+            new FakeLegacyDb([[$this->row(2, 1)], [$this->row(2, 1)]]),
+            $w = new InMemoryElementWriter(),
+            new InMemoryNavigationGateway(['mainNav' => self::NAV_ID]),
+            $state,
+        );
+
+        $this->runPass($svc, new MigrationReport(), environment: 'COM');
+        $this->runPass($svc, new MigrationReport(), environment: 'LV');
+
+        self::assertCount(2, $w->saved, 'each environment\'s own node 2 gets its own saved NavNode');
+        $elementIds = array_map(static fn(array $s): int => $s['element']->elementId, $w->saved);
+        self::assertSame([500, 999], $elementIds, 'COM\'s node keeps pointing at COM\'s entry after LV\'s run');
+    }
+
+    public function testALegacyUnscopedNodeRowInTheSameNavIsAdoptedAndRewrittenScoped(): void
+    {
+        $existing = (new \ReflectionClass(NavNode::class))->newInstanceWithoutConstructor();
+        $existing->id = 4242;
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'kuma_node:2', 4242, ['navId' => self::NAV_ID, 'kind' => 'nodeMenu']);
+        $this->entryExistsFor($state, 2, 500);
+        $writer = new InMemoryElementWriter();
+        $writer->willFind(4242, $existing);
+        $svc = $this->service(new FakeLegacyDb([[$this->row(2, 1)]]), $writer, new InMemoryNavigationGateway(['mainNav' => self::NAV_ID]), $state);
+        $report = new MigrationReport();
+
+        $this->runPass($svc, $report, adoptLegacyKeys: true);
+
+        self::assertSame(1, $report->counts['updated'] ?? 0);
+        self::assertSame($existing, $writer->saved[0]['element']);
+        self::assertSame(4242, $state->getTargetId('navigation', 'COM:kuma_node:2'));
+        self::assertNull($state->get('navigation', 'kuma_node:2'));
+    }
+
+    public function testALegacyUnscopedNodeRowInAnotherNavIsNotAdopted(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'kuma_node:2', 4242, ['navId' => 99, 'kind' => 'nodeMenu']);
+        $this->entryExistsFor($state, 2, 500);
+        $writer = new InMemoryElementWriter();
+        $writer->willFind(4242, (new \ReflectionClass(NavNode::class))->newInstanceWithoutConstructor());
+        $svc = $this->service(new FakeLegacyDb([[$this->row(2, 1)]]), $writer, new InMemoryNavigationGateway(['mainNav' => self::NAV_ID]), $state);
+        $report = new MigrationReport();
+
+        $this->runPass($svc, $report, adoptLegacyKeys: true);
+
+        self::assertSame(1, $report->counts['created'] ?? 0);
+        self::assertSame(4242, $state->getTargetId('navigation', 'kuma_node:2'));
     }
 
     public function testANodeWhoseEntryHasNotMigratedYetIsSkippedWithAWarningRatherThanKillingThePass(): void

@@ -133,6 +133,15 @@ final class AdapterRegistry extends Component
                         . 'Every Lameco site filters `settings`; some also filter a legacy overview page.',
                         legacyProperty: 'nodeMenuExcludedInternalNames',
                     ),
+                    new AdapterSetting(
+                        'menuHandles',
+                        'Menu to navigation',
+                        AdapterSetting::TYPE_MAP,
+                        [],
+                        'Which nav each legacy `kuma_menu` is written into, as `menu=navHandle` pairs '
+                        . '(e.g. `top=headerTop, main=headerMain`). A menu with no entry goes into the nav '
+                        . 'whose handle equals its legacy name.',
+                    ),
                 ],
             ),
 

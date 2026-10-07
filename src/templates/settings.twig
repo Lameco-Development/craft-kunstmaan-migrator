@@ -87,8 +87,12 @@
         name: name,
         value: setting.type == 'list'
           ? (values[setting.handle] ?? [])|join(', ')
-          : values[setting.handle],
-        placeholder: setting.type == 'list' ? (setting.default ?? [])|join(', ') : setting.default,
+          : (setting.type == 'map'
+            ? (values[setting.handle] ?? [])|map((v, k) => k ~ '=' ~ v)|join(', ')
+            : values[setting.handle]),
+        placeholder: setting.type == 'list'
+          ? (setting.default ?? [])|join(', ')
+          : (setting.type == 'map' ? 'legacyName=navHandle, …' : setting.default),
       }) }}
     {% endif %}
   {% endfor %}

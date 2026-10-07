@@ -33,6 +33,12 @@ final class AdapterSetting
     public const TYPE_LIST = 'list';
 
     /**
+     * Keyed strings — `legacy name => target handle`. From the config file an
+     * array; from the settings screen one text field of `key=value` pairs.
+     */
+    public const TYPE_MAP = 'map';
+
+    /**
      * @param string $handle key within the adapter's own settings bag
      * @param string $label  what an operator calls it
      * @param string $type   one of the TYPE_* constants
@@ -60,7 +66,81 @@ final class AdapterSetting
             self::TYPE_LIST => is_array($value)
                 ? array_values(array_filter(array_map(trim(...), array_map(strval(...), $value)), static fn(string $v): bool => $v !== ''))
                 : array_values(array_filter(array_map(trim(...), explode(',', (string) $value)), static fn(string $v): bool => $v !== '')),
+            self::TYPE_MAP => self::castMap($value),
             default => (string) $value,
         };
+    }
+
+    /** @return array<string, string> */
+    private static function castMap(mixed $value): array
+    {
+        $out = [];
+
+        foreach (self::mapEntries($value) as [$key, $val]) {
+            if ($key !== '' && $val !== '') {
+                $out[$key] = $val;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * The entries of a `TYPE_MAP` value that are not `key=value`, as the
+     * operator wrote them — a pair with no `=`, an empty side, or a config
+     * list with no keys at all. cast() drops these, which is right for the run
+     * and wrong for the operator: `top:berkvensNlTop` cast to an empty map and
+     * nothing said so.
+     *
+     * @return list<string>
+     */
+    public static function malformedMapEntries(mixed $value): array
+    {
+        $bad = [];
+
+        foreach (self::mapEntries($value) as [$key, $val, $typed]) {
+            if ($key === '' || $val === '') {
+                $bad[] = $typed;
+            }
+        }
+
+        return $bad;
+    }
+
+    /**
+     * Every entry of a map value as `[key, value, as typed]`, trimmed. A form
+     * string's blank pieces (a trailing comma) are not entries; a config list
+     * has no keys.
+     *
+     * @return list<array{string, string, string}>
+     */
+    private static function mapEntries(mixed $value): array
+    {
+        $entries = [];
+
+        if (!is_array($value)) {
+            foreach (explode(',', is_scalar($value) ? (string) $value : '') as $pair) {
+                $pair = trim($pair);
+
+                if ($pair === '') {
+                    continue;
+                }
+
+                [$key, $val] = str_contains($pair, '=') ? explode('=', $pair, 2) : ['', $pair];
+                $entries[] = [trim($key), str_contains($pair, '=') ? trim($val) : '', $pair];
+            }
+
+            return $entries;
+        }
+
+        $isList = array_is_list($value);
+
+        foreach ($value as $key => $val) {
+            $val = is_scalar($val) ? trim((string) $val) : '';
+            $key = $isList ? '' : trim((string) $key);
+            $entries[] = [$key, $val, $isList ? $val : sprintf('%s=%s', $key, $val)];
+        }
+
+        return $entries;
     }
 }

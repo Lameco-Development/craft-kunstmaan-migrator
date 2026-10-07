@@ -78,6 +78,18 @@ final class SettingsSurfaceTest extends TestCase
     }
 
     /**
+     * A map setting is one text field of `key=value` pairs — the same syntax
+     * AdapterSetting::cast() parses back — not an array cast to "Array".
+     */
+    public function testAMapSettingRoundTripsThroughItsTextField(): void
+    {
+        $template = $this->template();
+
+        self::assertStringContainsString("setting.type == 'map'", $template);
+        self::assertStringContainsString("k ~ '=' ~ v", $template);
+    }
+
+    /**
      * 2026-08-23 — the connection, the mapping path and asset placement moved
      * out of the form entirely: machine-local values and one-time operator
      * decisions live in config/kunstmaan-migrator.php + .env, and the screen

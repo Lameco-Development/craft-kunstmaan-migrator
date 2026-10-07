@@ -56,6 +56,9 @@ use yii\base\Component;
  *   - `type='url_link'` (and any non-page_link) → verbb type null, url copied
  *     verbatim, title copied from override or url.
  *
+ * Target nav: `menuHandles` (legacy `kuma_menu.name` → nav handle) when it
+ * names the menu, otherwise the nav whose handle is the legacy name itself.
+ *
  * Optional-plugin gate: if verbb/navigation is not installed the entire
  * pass is skipped with a WARN — never a hard error. Same shape as the
  * Retour adapter (D-56).
@@ -64,7 +67,17 @@ use yii\base\Component;
  * When false, the pass is skipped with a distinct warn line so REPORT.md
  * can distinguish operator-opted-out from plugin-not-installed.
  *
- * State key: `('navigation', "kuma_menu_item:{$id}")`.
+ * State key: `('navigation', "{$env}:kuma_menu_item:{$id}")` and
+ * `('navigation', "{$env}:kuma_node:{$id}")` — scoped by environment, because
+ * two legacy databases migrated into one Craft install number their menu items
+ * and nodes from 1 alike (same format as release/1.2.0-beta's e0622c1). A row
+ * under the old unscoped key is adopted (and rewritten scoped) only when the
+ * mapping has exactly one environment and the row was written into the same
+ * nav and site — see existingNodeId().
+ *
+ * Not handled: a node whose nav changes between runs (a re-mapped
+ * `menuHandles` entry, a new `navHandle`) is re-saved into the new nav, moving
+ * it; the old nav keeps no copy.
  *
  * Two-pass save: first pass creates every node with parentId=null and
  * builds a `kumaItemId → nodeId` map; second pass walks rows with
@@ -128,6 +141,19 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      */
     public array $nodeMenuExcludedInternalNames = ['settings'];
 
+    /**
+     * Legacy `kuma_menu.name` → verbb nav handle. Null reads the adapter's
+     * `menuHandles` setting; a test or caller can set it directly. A menu the
+     * map does not name is written into the nav whose handle is its legacy name.
+     *
+     * Legacy menus are called `top` and `main` on every Kunstmaan site, while a
+     * multisite Craft names its navs per site group (`berkvensNlTop`) — without
+     * the map every menu was skipped as having no matching nav.
+     *
+     * @var array<string, string>|null
+     */
+    public ?array $menuHandles = null;
+
     private const STATE_SOURCE = 'navigation';
 
     /**
@@ -180,6 +206,9 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             return $report;
         }
 
+        // Only a corpus of one environment can tell whose an unscoped row is.
+        $adoptLegacyKeys = count($context->mapping?->environments() ?? []) === 1;
+
         $localeToSiteId = $sites->localeToSiteId();
         if ($localeToSiteId === []) {
             $report->warn('No Craft sites mapped; nav migration aborted.');
@@ -207,39 +236,48 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             // NodeMenu pass below still runs — that's the right path for
             // dewert and any site that drives its menu off the page tree.
             [$primarySiteId, $primarySiteHandle] = $this->primarySiteFacts();
-            $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $context->name, $opts, $report);
+            $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $context->name, $opts, $report, $adoptLegacyKeys);
             return $report;
         }
 
-        // Resolve verbb nav id per source handle once. Missing navs are
-        // reported and the menu's items are skipped — operator should
-        // re-run scaffolder generate-schema or apply project-config to
-        // create the matching nav.
-        $navIdByHandle = [];
+        // Resolve verbb nav id per legacy menu name once, through the
+        // menuHandles map. Missing navs are reported and the menu's items are
+        // skipped — operator should create the nav or fix the map.
+        $menuHandles = $this->menuHandles();
+        $navIdByName = [];
         foreach ($menus as $menu) {
-            $handle = (string) ($menu['name'] ?? '');
-            if ($handle === '' || isset($navIdByHandle[$handle])) {
+            $name = (string) ($menu['name'] ?? '');
+            if ($name === '' || array_key_exists($name, $navIdByName)) {
                 continue;
             }
-            $navIdByHandle[$handle] = $this->navigation()->navIdByHandle($handle);
+            $navIdByName[$name] = $this->navigation()->navIdByHandle(self::targetHandle($menuHandles, $name));
         }
 
         // First pass: create every node with parentId=null. Build the
         // kumaItemId → nodeId map for the second pass.
         $itemToNodeId = [];
+        $menuNavTargets = [];
         foreach ($menus as $menu) {
             $menuId = (int) ($menu['id'] ?? 0);
-            $handle = (string) ($menu['name'] ?? '');
+            $name = (string) ($menu['name'] ?? '');
             $locale = (string) ($menu['locale'] ?? '');
-            $navId = $navIdByHandle[$handle] ?? null;
+            $navId = $navIdByName[$name] ?? null;
             $siteId = $localeToSiteId[$locale] ?? null;
 
             if ($navId === null) {
-                $report->warn(sprintf(
-                    'kuma_menu id=%d handle="%s" has no matching verbb nav; skipping menu.',
-                    $menuId,
-                    $handle,
-                ));
+                $handle = self::targetHandle($menuHandles, $name);
+                $report->warn($handle === $name
+                    ? sprintf(
+                        'kuma_menu id=%d handle="%s" has no matching verbb nav; skipping menu.',
+                        $menuId,
+                        $name,
+                    )
+                    : sprintf(
+                        'kuma_menu id=%d "%s" is mapped to nav "%s", which does not exist in verbb; skipping menu.',
+                        $menuId,
+                        $name,
+                        $handle,
+                    ));
                 continue;
             }
             if ($siteId === null) {
@@ -250,6 +288,8 @@ class NavigationMigrationService extends Component implements MigrationAdapter
                 ));
                 continue;
             }
+
+            $menuNavTargets[(int) $navId] ??= $name;
 
             try {
                 $items = $this->legacyDb->queryAll(
@@ -277,6 +317,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
                         navId: (int) $navId,
                         siteId: $siteId,
                         environment: $context->name,
+                        adoptLegacyKeys: $adoptLegacyKeys,
                         opts: $opts,
                         report: $report,
                     );
@@ -302,12 +343,12 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             $this->applyParentLinkage($itemToNodeId, $report);
         }
 
-        // Slice 2: NodeMenu pass. Runs after MenuBundle so a single
-        // verbb nav can host both kinds (rare in practice — Lameco sites
-        // typically use one or the other — but allowed). Internally
-        // skipped when kuma_nodes is empty.
+        // Slice 2: NodeMenu pass. Runs after MenuBundle, so a site with a
+        // legacy menu can still have its page-tree nav generated — but never
+        // into a nav a menu was just written into (it skips itself, warning).
+        // Internally skipped when kuma_nodes is empty.
         [$primarySiteId, $primarySiteHandle] = $this->primarySiteFacts();
-        $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $context->name, $opts, $report);
+        $this->migrateNodeMenu($localeToSiteId, $sites, $primarySiteId, $primarySiteHandle, $context->name, $opts, $report, $adoptLegacyKeys, $menuNavTargets);
 
         return $report;
     }
@@ -328,6 +369,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         int $navId,
         int $siteId,
         string $environment,
+        bool $adoptLegacyKeys,
         MigrationOptions $opts,
         MigrationReport $report,
     ): ?int {
@@ -337,8 +379,12 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             return null;
         }
 
-        $stateKey = 'kuma_menu_item:' . $kumaItemId;
-        $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
+        // Environment-scoped: `kuma_menu_item_id` only restarts at 1 within one
+        // legacy environment's own database, so NL's and FR's item 10 would
+        // otherwise share one saved node and the second run would take it over.
+        $legacyKey = 'kuma_menu_item:' . $kumaItemId;
+        $stateKey = $environment . ':' . $legacyKey;
+        [$existingNodeId, $adopted] = $this->existingNodeId($stateKey, $legacyKey, $adoptLegacyKeys, $navId, $siteId);
 
         $type = (string) ($item['type'] ?? '');
         $titleOverride = $item['title'] !== null && $item['title'] !== ''
@@ -471,6 +517,9 @@ class NavigationMigrationService extends Component implements MigrationAdapter
                 'kumaParentId' => $item['parent_id'] !== null ? (int) $item['parent_id'] : null,
             ],
         );
+        if ($adopted) {
+            $this->stateService->forget(self::STATE_SOURCE, $legacyKey);
+        }
         $report->incr($existingNodeId !== null ? 'updated' : 'created');
         return $newNodeId;
     }
@@ -605,6 +654,50 @@ class NavigationMigrationService extends Component implements MigrationAdapter
     }
 
     /**
+     * The node a state row says this item already became, and whether that row
+     * is a legacy unscoped one the caller should rewrite under its scoped key.
+     *
+     * An unscoped row cannot say which environment wrote it, so it is adopted
+     * only when both hold:
+     *   - the mapping has exactly one environment, so no second one in this
+     *     corpus can have written it;
+     *   - its meta says it was written into the nav (and, for a menu item, the
+     *     site) this item is about to be written into. Projects that run one
+     *     mapping per site still share one Craft database, each with a single
+     *     environment; their navs differ, so one mapping cannot take over
+     *     another's node. Two environments writing the same nav and site were
+     *     already overwriting each other before the key was scoped.
+     *
+     * @return array{?int, bool}
+     */
+    private function existingNodeId(string $stateKey, string $legacyKey, bool $adoptLegacyKeys, int $navId, ?int $siteId): array
+    {
+        $scoped = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
+
+        if ($scoped !== null || !$adoptLegacyKeys) {
+            return [$scoped, false];
+        }
+
+        $row = $this->stateService->get(self::STATE_SOURCE, $legacyKey);
+        $meta = $row['meta'] ?? null;
+        $meta = is_string($meta) ? json_decode($meta, true) : $meta;
+
+        if (!is_array($row) || ($row['targetId'] ?? null) === null || !is_array($meta)) {
+            return [null, false];
+        }
+
+        if ((int) ($meta['navId'] ?? 0) !== $navId) {
+            return [null, false];
+        }
+
+        if ($siteId !== null && (int) ($meta['siteId'] ?? 0) !== $siteId) {
+            return [null, false];
+        }
+
+        return [(int) $row['targetId'], true];
+    }
+
+    /**
      * A blank nav node.
      *
      * Its own method because constructing a Craft element boots the whole
@@ -635,16 +728,30 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         string $environment,
         MigrationOptions $opts,
         MigrationReport $report,
+        bool $adoptLegacyKeys = false,
+        array $menuNavTargets = [],
     ): void {
         if ($localeToSiteId === []) {
             return;
         }
 
-        $navId = $this->navigation()->navIdByHandle($this->navHandle());
+        $navHandle = $this->navHandle();
+        $navId = $this->navigation()->navIdByHandle($navHandle);
         if ($navId === null) {
             $report->warn(sprintf(
                 'NodeMenu target nav handle "%s" not found in verbb; NodeMenu pass skipped (re-run scaffolder + project-config/apply, or override Settings::nodeMenuNavHandle).',
-                $this->nodeMenuNavHandle,
+                $navHandle,
+            ));
+            return;
+        }
+
+        // `navHandle` equal to a `menuHandles` target would mix the page tree
+        // into a nav a legacy menu was mapped into on purpose.
+        if (isset($menuNavTargets[$navId])) {
+            $report->warn(sprintf(
+                'NodeMenu pass skipped: nav "%s" is already the target of legacy menu "%s". Point navHandle at another nav, or drop the menu from menuHandles.',
+                $navHandle,
+                $menuNavTargets[$navId],
             ));
             return;
         }
@@ -774,6 +881,7 @@ class NavigationMigrationService extends Component implements MigrationAdapter
                     navId: $navId,
                     primarySiteId: $primarySiteId,
                     environment: $environment,
+                    adoptLegacyKeys: $adoptLegacyKeys,
                     opts: $opts,
                     report: $report,
                 );
@@ -844,11 +952,15 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         int $navId,
         int $primarySiteId,
         string $environment,
+        bool $adoptLegacyKeys,
         MigrationOptions $opts,
         MigrationReport $report,
     ): ?int {
-        $stateKey = 'kuma_node:' . $kumaNodeId;
-        $existingNodeId = $this->stateService->getTargetId(self::STATE_SOURCE, $stateKey);
+        // Environment-scoped for the same reason, and the same way
+        // resolveEntryIdForNode() scopes its entry lookup to `<ENV>:kuma_nodes`.
+        $legacyKey = 'kuma_node:' . $kumaNodeId;
+        $stateKey = $environment . ':' . $legacyKey;
+        [$existingNodeId, $adopted] = $this->existingNodeId($stateKey, $legacyKey, $adoptLegacyKeys, $navId, null);
 
         $entryId = $this->resolveEntryIdForNode($kumaNodeId, $refId, $fqcn, $environment);
         if ($entryId === null) {
@@ -925,6 +1037,9 @@ class NavigationMigrationService extends Component implements MigrationAdapter
                 'kind' => 'nodeMenu',
             ],
         );
+        if ($adopted) {
+            $this->stateService->forget(self::STATE_SOURCE, $legacyKey);
+        }
         $report->incr($existingNodeId !== null ? 'updated' : 'created');
         return $newNodeId;
     }
@@ -1051,6 +1166,29 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         $configured = (string) ($this->config()['navHandle'] ?? '');
 
         return $configured !== '' ? $configured : $this->nodeMenuNavHandle;
+    }
+
+    /**
+     * The nav handle a legacy menu is written into: its `menuHandles` entry,
+     * or its own name.
+     *
+     * @param array<string, string> $menuHandles
+     */
+    private static function targetHandle(array $menuHandles, string $name): string
+    {
+        return $menuHandles[$name] ?? $name;
+    }
+
+    /** @return array<string, string> legacy menu name → nav handle */
+    private function menuHandles(): array
+    {
+        if ($this->menuHandles !== null) {
+            return $this->menuHandles;
+        }
+
+        $configured = $this->config()['menuHandles'] ?? [];
+
+        return is_array($configured) ? $configured : [];
     }
 
     /** @return list<string> */

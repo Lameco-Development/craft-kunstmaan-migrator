@@ -94,6 +94,42 @@ final class AdapterConfigurationTest extends TestCase
     }
 
     /**
+     * A map keeps its keys. From config/kunstmaan-migrator.php it arrives as an
+     * array; blank keys or values are dropped rather than becoming a lookup for
+     * the empty string.
+     */
+    public function testAMapFromTheConfigFileKeepsItsKeys(): void
+    {
+        $adapter = $this->adapter(
+            new AdapterSetting('menuHandles', 'Menus', AdapterSetting::TYPE_MAP, []),
+        );
+
+        $settings = SettingsFactory::make();
+        $settings->adapters = ['acme' => ['menuHandles' => [' top ' => ' berkvensNlTop ', 'main' => 'berkvensNlMain', '' => 'x', 'fr' => '']]];
+
+        self::assertSame(
+            ['top' => 'berkvensNlTop', 'main' => 'berkvensNlMain'],
+            $settings->forAdapter($adapter)['menuHandles'],
+        );
+    }
+
+    /** The settings screen posts a map as one text field: `name=handle, name=handle`. */
+    public function testAMapAcceptsKeyValuePairsFromAFormField(): void
+    {
+        $adapter = $this->adapter(
+            new AdapterSetting('menuHandles', 'Menus', AdapterSetting::TYPE_MAP, []),
+        );
+
+        $settings = SettingsFactory::make();
+        $settings->adapters = ['acme' => ['menuHandles' => 'top=berkvensNlTop, main = berkvensNlMain , broken, =x, ']];
+
+        self::assertSame(
+            ['top' => 'berkvensNlTop', 'main' => 'berkvensNlMain'],
+            $settings->forAdapter($adapter)['menuHandles'],
+        );
+    }
+
+    /**
      * The values that used to be hard-coded on Settings, now declared by the
      * adapters that use them — and therefore reachable from the settings screen.
      */
@@ -104,7 +140,7 @@ final class AdapterConfigurationTest extends TestCase
         $navigation = $registry->byHandle('navigation');
         self::assertNotNull($navigation);
         self::assertSame(
-            ['navHandle', 'excludedInternalNames'],
+            ['navHandle', 'excludedInternalNames', 'menuHandles'],
             array_map(static fn(AdapterSetting $s): string => $s->handle, $navigation->settings),
         );
 
