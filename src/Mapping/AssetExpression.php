@@ -16,13 +16,14 @@ namespace Lameco\Kunstmaanmigrator\Mapping;
 final class AssetExpression
 {
     /**
-     * The transforms whose result is an `{_asset}` node, by name. A transform that takes
-     * arguments — `name | file(uploads/x)` — is matched on its name, so registering one is
-     * adding its name here.
+     * The transforms whose result is an `{_asset}` node, by name: `asset` from a `kuma_media` id,
+     * `file` from a file name under an uploads directory. A transform that takes arguments —
+     * `name | file(uploads/x)` — is matched on its name, so registering one is adding its name
+     * here.
      *
      * @var list<string>
      */
-    public const TRANSFORMS = ['asset'];
+    public const TRANSFORMS = ['asset', 'file'];
 
     /**
      * It ends in an asset transform, or it is a `coalesce()` whose every alternative does — read

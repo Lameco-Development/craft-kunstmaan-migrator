@@ -431,8 +431,9 @@ sidecars:
 - Neither carries a `_sourcePartRef` — there is no nested element to thread on a re-run.
 - `validate --craft` and `mapping check` accept a `children:` target that is a Matrix, Assets or
   Table field and error on any other. An Assets target's `map:` holds exactly one value, and that
-  value must end in a transform that emits an asset (`| asset`, or a `coalesce()` of such) — a
-  bare `media_id` would hand Craft raw legacy ids, related to whichever asset carries them. A Table
+  value must end in a transform that emits an asset (`| asset`, `| file(uploads/<dir>)`, or a
+  `coalesce()` of such) — a bare `media_id` would hand Craft raw legacy ids, related to whichever
+  asset carries them. A Table
   column the field does not have is an error too: Craft reads a row by column id or handle only,
   so any other key is dropped from every row. Both schema readers know the columns — project config
   and the live site.
