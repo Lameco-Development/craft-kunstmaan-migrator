@@ -234,10 +234,16 @@ class AssetMigrationService extends Component
     }
 
     /**
-     * JIT fallback for raw CKEditor `/uploads/media/...` URLs that exist on
-     * disk but no longer have a matching `kuma_media` row. This preserves live
-     * editor content as the source of truth while keeping the state key distinct
-     * from real `kuma_media:{id}` rows.
+     * JIT resolution of an `_asset` path, and fallback for raw CKEditor `/uploads/media/...`
+     * URLs that exist on disk but no longer have a matching `kuma_media` row. This preserves
+     * live editor content as the source of truth while keeping the state key distinct from
+     * real `kuma_media:{id}` rows.
+     *
+     * Any `/uploads/…` path resolves, not only `/uploads/media/…`: catalogue tables store a
+     * file name under `/uploads/models_import/` or `/uploads/documents/` with no `kuma_media`
+     * row at all, and a `file(<dir>)` transform hands those over as the same `_asset` node.
+     * They are found beside the media root (see `AssetPathResolver::resolveUpload()`) and keyed
+     * the same way, `legacy_url:<sha1(path)>`, so one file named by many rows is one asset.
      */
     public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
@@ -246,7 +252,7 @@ class AssetMigrationService extends Component
             $path = preg_replace('/[?#].*$/', '', $legacyUrl) ?? $legacyUrl;
         }
         $path = '/' . ltrim($path, '/');
-        if ($path === '/' || !str_starts_with($path, '/uploads/media/')) {
+        if (!str_starts_with($path, '/uploads/')) {
             return 0;
         }
 
@@ -260,7 +266,7 @@ class AssetMigrationService extends Component
         $rootDir = '';
 
         foreach ($this->mediaRoots($env) as $rootDir) {
-            $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
+            $sourcePath = AssetPathResolver::resolveUpload($path, $rootDir);
 
             if ($sourcePath !== null) {
                 break;
@@ -287,7 +293,9 @@ class AssetMigrationService extends Component
             // chain and degrades to a year bucket. On a corpus whose rich text references
             // media by path rather than by id, this path ingests every asset, so the
             // strategy never applied to anything at all.
-            'folder_id' => $this->legacyFolderIdForPath($path),
+            // A path outside `/uploads/media/` has no kuma_media row to read a folder from;
+            // `targetFolderPath()` places it under its own uploads directory instead.
+            'folder_id' => str_starts_with($path, '/uploads/media/') ? $this->legacyFolderIdForPath($path) : 0,
         ], $rootDir, $opts, $counts, $stateKey, $env);
 
         if ($asset instanceof Asset) {
@@ -638,7 +646,7 @@ class AssetMigrationService extends Component
         }
 
         // Local file path resolution with traversal guard.
-        $sourcePath = AssetPathResolver::resolveLocal((string) ($row['url'] ?? ''), $rootDir);
+        $sourcePath = AssetPathResolver::resolveUpload((string) ($row['url'] ?? ''), $rootDir);
         if ($sourcePath === null) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
@@ -1067,6 +1075,17 @@ class AssetMigrationService extends Component
         if ($this->folderStrategy === AssetFolderPath::STRATEGY_LEGACY_TREE) {
             $folderId = isset($row['folder_id']) ? (int) $row['folder_id'] : 0;
             $chain = $folderId > 0 ? $this->legacyFolderChain($folderId, $env?->name) : null;
+
+            // A file outside kuma_media has no kuma_folders chain; the uploads directory it was
+            // served from is the only organisation it ever had — `migrated/models_import/`.
+            if ($chain === null) {
+                $dir = AssetPathResolver::uploadDir((string) ($row['url'] ?? ''));
+                $segments = array_filter(
+                    array_map(AssetFolderPath::sanitizeSegment(...), explode('/', (string) $dir)),
+                    static fn(string $segment): bool => $segment !== '',
+                );
+                $chain = $segments === [] ? null : implode('/', $segments);
+            }
         }
 
         return AssetFolderPath::compose(

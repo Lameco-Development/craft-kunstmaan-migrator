@@ -41,6 +41,7 @@ final class Transforms
             'colorScheme' => 'Colour — maps the old palette onto the one Craft offers',
             'variant' => 'Variant — maps the old style name onto Craft’s',
             'asset' => 'File — turns a legacy media id into the migrated asset',
+            'file' => 'File — turns a file name under an uploads directory into the migrated asset: file(uploads/<dir>)',
             'ref' => 'Relation — turns a legacy id into the entry it became',
             'url' => 'Web address — adds https:// to a bare domain',
             'mailto' => 'Email link',
@@ -53,6 +54,10 @@ final class Transforms
 
     public function apply(string $name, mixed $value, ?string $context = null): mixed
     {
+        if (preg_match('~^file(?:\((.*)\))?$~', $name, $m) === 1) {
+            return $this->file($value, $m[1] ?? '');
+        }
+
         return match ($name) {
             'titleLevel' => $this->titleLevel($value, $context),
             'colorScheme' => $this->colorScheme($value, $context),
@@ -326,6 +331,35 @@ final class Transforms
         }
 
         return str_starts_with($text, $scheme) ? $text : $scheme . $text;
+    }
+
+    /**
+     * A file the legacy site served from an uploads directory, by name rather than by
+     * `kuma_media` id.
+     *
+     * Catalogue tables keep `backend_image.name = "A12.jpg"` and the site served it from
+     * `/uploads/models_import/`; the directory was a fact of the template, so the mapping
+     * states it. The result is the same `_asset` node `asset` emits — the loader cannot tell
+     * them apart, and does not need to. Bare `file` takes a value that already carries its
+     * path from the web root (`uploads/model_photos/7.jpg`).
+     *
+     * @return array{_asset: string}|null
+     */
+    private function file(mixed $value, string $dir): ?array
+    {
+        $name = ltrim(trim((string) ($value ?? '')), '/');
+
+        if ($name === '') {
+            return null;
+        }
+
+        $dir = trim(trim($dir), '/');
+
+        if ($dir !== '' && !str_starts_with($name, $dir . '/')) {
+            $name = $dir . '/' . $name;
+        }
+
+        return ['_asset' => '/' . $name];
     }
 
     /** Legacy HTML, with media references parked for the loader to rewrite. */

@@ -341,6 +341,53 @@ final class AssetResolutionTest extends TestCase
         ]], $result->unresolvedAssets);
     }
 
+    public function testAFilePathOutsideKumaMediaResolvesOnceAndAMissingOneIsReported(): void
+    {
+        // The real resolver, not the fake: `file(uploads/models_import)` emits these paths,
+        // and the media root the mapping states is `…/uploads/media`.
+        mkdir($this->tempMediaRoot . '/uploads/media', 0755, true);
+        $state = new AssetResolutionInMemoryMigrationStateService();
+        $state->record('media', 'legacy_url:' . sha1('/uploads/models_import/A12.jpg'), 'asset', 701);
+        $entryService = new AssetResolutionFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new AssetMigrationService();
+        $assetService->migrationState = $state;
+        $saver = $this->makeSaver($entryService, $state, $assetService);
+
+        $env = EnvironmentFactory::make('NL', ['en' => 'en'], ['en' => [1, 'en-GB', true]], [$this->tempMediaRoot . '/uploads/media']);
+        $save = fn(int $id, string $path): SaveResult => $saver->save(
+            Payload::fromArray($this->payloadArray('kuma:NL:backend_model:' . $id, [
+                'sites' => ['en' => ['fieldValues' => ['media' => ['_asset' => $path]]]],
+            ])),
+            $env,
+            new RunTally(),
+        );
+
+        try {
+            $first = $save(12, '/uploads/models_import/A12.jpg');
+            $firstMedia = $entryService->lastPerSite['en']['fieldValues']['media'];
+            $save(13, '/uploads/models_import/A12.jpg');
+            $secondMedia = $entryService->lastPerSite['en']['fieldValues']['media'];
+            $missing = $save(14, '/uploads/models_import/gone.jpg');
+        } finally {
+            @rmdir($this->tempMediaRoot . '/uploads/media');
+            @rmdir($this->tempMediaRoot . '/uploads');
+        }
+
+        self::assertSame([701], $firstMedia);
+        self::assertSame([701], $secondMedia, 'the same path twice is the same asset');
+        self::assertSame([], $first->unresolvedAssets);
+
+        self::assertSame(1002, $missing->entryId, 'a missing file does not fail the entry');
+        self::assertArrayNotHasKey('media', $entryService->lastPerSite['en']['fieldValues']);
+        self::assertSame([[
+            'field' => 'media',
+            'site' => 'en',
+            'path' => [],
+            'asset' => '/uploads/models_import/gone.jpg',
+        ]], $missing->unresolvedAssets);
+    }
+
     public function testUnresolvedAssetNestedInsideAMatrixBlockRecordsTheContainerPath(): void
     {
         $state = new AssetResolutionInMemoryMigrationStateService();

@@ -353,4 +353,38 @@ final class SchemaTest extends TestCase
             $this->validate(self::SOUND . "\n  Header: { consumedBy: page, map: { heroTitle: title }, requires: heroSlides }\n"),
         );
     }
+
+    private const FILE_PART = <<<'YAML'
+        version: 1
+        environments:
+          NL: { database: legacy, locales: { nl: berkvensNl } }
+        parts:
+          Image:
+            table: backend_image
+            block: imageBlock
+            map:
+              image: %s
+        YAML;
+
+    #[Test]
+    public function a_file_transform_under_an_uploads_directory_is_accepted(): void
+    {
+        self::assertSame([], $this->validate(sprintf(self::FILE_PART, 'name | file(uploads/models_import)')));
+        self::assertSame([], $this->validate(sprintf(self::FILE_PART, 'path | file')));
+    }
+
+    #[Test]
+    public function a_file_transform_outside_the_uploads_tree_is_rejected(): void
+    {
+        foreach (['file()', 'file(public/models_import)', 'file(uploads/../config)', 'file(uploads)'] as $transform) {
+            self::assertSame(
+                [sprintf(
+                    'parts.Image.map.image: `%s` must name a directory under `uploads/`, as `file(uploads/models_import)` — the loader resolves nothing else',
+                    $transform,
+                )],
+                $this->validate(sprintf(self::FILE_PART, 'name | ' . $transform)),
+                $transform,
+            );
+        }
+    }
 }

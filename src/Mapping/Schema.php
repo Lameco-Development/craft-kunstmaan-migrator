@@ -80,6 +80,7 @@ final class Schema
         $this->checkSidecars($mapping, $errors);
         $this->checkUnreviewed($mapping, $errors);
         $this->checkRefs($mapping, $errors);
+        $this->checkFiles($mapping, $errors);
         $this->checkSequence($mapping, $errors);
         $this->checkLaneCollisions($mapping, $errors);
 
@@ -339,7 +340,7 @@ final class Schema
     {
         $index = new EntityIndex($mapping->entities());
 
-        foreach (self::refsIn($mapping->all(), '') as $path => $names) {
+        foreach (self::callsIn($mapping->all(), '', 'ref') as $path => $names) {
             foreach ($names as $name) {
                 if (!$index->has($name)) {
                     $errors[] = sprintf(
@@ -354,10 +355,51 @@ final class Schema
     }
 
     /**
-     * @param array<array-key, mixed> $node
-     * @return array<string, list<string>> path => entity names referenced there
+     * Every `file(<dir>)` has to name a directory under `uploads/`.
+     *
+     * The loader resolves `/uploads/…` paths against the environment's media roots and
+     * nothing else, so a directory outside that tree compiles clean and then reports every
+     * file unresolved at load time — two hours into a run rather than here.
+     *
+     * @param list<string> $errors
      */
-    private static function refsIn(array $node, string $path): array
+    private function checkFiles(Mapping $mapping, array &$errors): void
+    {
+        foreach (self::callsIn($mapping->all(), '', 'file') as $path => $dirs) {
+            foreach ($dirs as $dir) {
+                if (!self::isUploadsDir($dir)) {
+                    $errors[] = sprintf(
+                        '%s: `file(%s)` must name a directory under `uploads/`, as `file(uploads/models_import)` — the loader resolves nothing else',
+                        $path,
+                        $dir,
+                    );
+                }
+            }
+        }
+    }
+
+    private static function isUploadsDir(string $dir): bool
+    {
+        $segments = explode('/', trim($dir, '/'));
+
+        if (count($segments) < 2 || $segments[0] !== 'uploads') {
+            return false;
+        }
+
+        foreach ($segments as $segment) {
+            if ($segment === '' || $segment === '.' || $segment === '..') {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * @param array<array-key, mixed> $node
+     * @return array<string, list<string>> path => arguments of every `<name>(…)` call there
+     */
+    private static function callsIn(array $node, string $path, string $name): array
     {
         $found = [];
 
@@ -365,12 +407,12 @@ final class Schema
             $here = $path === '' ? (string) $key : $path . '.' . (string) $key;
 
             if (is_array($value)) {
-                $found = [...$found, ...self::refsIn($value, $here)];
+                $found = [...$found, ...self::callsIn($value, $here, $name)];
 
                 continue;
             }
 
-            if (is_string($value) && preg_match_all('/\bref\(([^)]*)\)/', $value, $m) > 0) {
+            if (is_string($value) && preg_match_all('/\b' . preg_quote($name, '/') . '\(([^)]*)\)/', $value, $m) > 0) {
                 $found[$here] = array_map(trim(...), $m[1]);
             }
         }

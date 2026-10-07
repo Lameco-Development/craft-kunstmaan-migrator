@@ -461,6 +461,14 @@ Beyond `column | transform`, a `map:` value can be:
   that holds either a link or a URL, and counts what it dropped, because a Craft Link field rejects
   `[NT115]` outright and takes the whole entry down with it.
 
+- `<column> | file(uploads/<dir>)` — a column holding a file name or a relative path rather than a
+  `kuma_media` id: `name | file(uploads/models_import)` turns `A12.jpg` into
+  `{_asset: "/uploads/models_import/A12.jpg"}`, the same node `asset` emits. Catalogue tables store
+  files that way; the directory was a fact of the legacy template, so the mapping states it. A
+  value that already starts with the directory is not prefixed twice, and bare `file` takes a value
+  that carries its own path from the web root (`uploads/model_photos/7.jpg`). Validation rejects a
+  directory outside `uploads/`, because the loader resolves nothing else.
+
 ## Determinism
 
 `tests/CompileDeterminismTest.php` compiles the same mapping against the same database twice and

@@ -75,7 +75,10 @@ installs each ship a folder called `Media/Afbeeldingen` and merging them
 interleaves three sites' files under one name.
 
 Folder names travel as the client wrote them; a file whose folder cannot be
-resolved falls back to the year bucket rather than the volume root.
+resolved falls back to the year bucket rather than the volume root. A file from
+outside `kuma_media` — a catalogue image a `file(uploads/<dir>)` transform names
+by path — has no Kunstmaan folder, and lands under its uploads directory instead:
+`migrated/models_import/`.
 
 ## Configuration
 
