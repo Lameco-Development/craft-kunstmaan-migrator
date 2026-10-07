@@ -315,22 +315,24 @@ final class LegacyDatabase
     }
 
     /**
-     * Live placements grouped by the page type they sit on and the pagepart class they are.
+     * Live placements grouped by the page type they sit on, the context they sit in, and the
+     * pagepart class they are.
      *
      * Whether a part's block is *permitted* on a page's Matrix is a schema question, and which
      * parts actually land on which page types is a data question. Neither half alone can say
      * whether an allow-list rejection costs anything, which is why the pairing has to be read
-     * from the corpus rather than guessed from the mapping.
+     * from the corpus rather than guessed from the mapping. The context is part of the pairing
+     * because each context writes to its own Matrix, with its own allow-list.
      *
-     * @return array<string, array<string, int>> short page entity => short pagepart class => live placements
+     * @return array<string, array<string, array<string, int>>> short page entity => context => short pagepart class => live placements
      */
     public function livePlacementsByPageType(): array
     {
         $sql = sprintf(
-            'SELECT l.pageEntityname AS entity, r.page_part_entityname AS part, COUNT(*) AS n
+            'SELECT l.pageEntityname AS entity, r.context AS context, r.page_part_entityname AS part, COUNT(*) AS n
              FROM kuma_page_part_refs r
              JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
-             GROUP BY l.pageEntityname, r.page_part_entityname',
+             GROUP BY l.pageEntityname, r.context, r.page_part_entityname',
             self::LIVE_PAGES,
         );
 
@@ -339,7 +341,8 @@ final class LegacyDatabase
         foreach ($this->pdo->query($sql) as $row) {
             $page = self::shortName((string) $row['entity']);
             $part = self::shortName((string) $row['part'], 'PagePart');
-            $out[$page][$part] = ($out[$page][$part] ?? 0) + (int) $row['n'];
+            $context = (string) $row['context'];
+            $out[$page][$context][$part] = ($out[$page][$context][$part] ?? 0) + (int) $row['n'];
         }
 
         return $out;

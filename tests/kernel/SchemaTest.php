@@ -241,6 +241,17 @@ final class SchemaTest extends TestCase
     }
 
     #[Test]
+    public function a_forms_field_must_name_a_field(): void
+    {
+        // `forms.field` sits next to `forms.fields` and `forms.emit.field`: a value that is not
+        // a handle would silently send the form block back to the main builder.
+        $errors = $this->validate(self::SOUND . "\nforms:\n  field: [berkvensNlSidebar]\n");
+
+        self::assertSame(['forms: `field:` must be a Matrix field handle'], $errors);
+        self::assertSame([], $this->validate(self::SOUND . "\nforms:\n  field: berkvensNlSidebar\n"));
+    }
+
+    #[Test]
     public function an_unreviewed_column_blocks_the_mapping(): void
     {
         // The generator lists what it could not place. A file that still carries those entries is

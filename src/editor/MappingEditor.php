@@ -163,29 +163,25 @@ final class MappingEditor
      */
     public function availableBlocks(): array
     {
-        $document = $this->document();
-        $contexts = (array) ($document->all()['defaults']['contexts'] ?? []);
-        $entryTypes = [];
-
-        foreach ($document->lane('pages') as $page) {
-            $entryType = is_array($page) ? ($page['entryType'] ?? null) : null;
-
-            if (is_string($entryType) && $entryType !== '') {
-                $entryTypes[$entryType] = true;
-            }
-        }
-
+        $mapping = $this->document()->mapping();
+        $forms = $mapping->forms();
         $blocks = [];
 
-        foreach (array_keys($entryTypes) as $entryType) {
-            foreach ($contexts as $context) {
-                $field = is_array($context) ? ($context['field'] ?? null) : null;
+        // Resolved as the compiler resolves them: a page's own `contexts:` else the defaults,
+        // a context with no `field:` on the default builder, and the form block in `forms.field`.
+        foreach ($mapping->pageRows() as $page) {
+            if (!$page->compiles()) {
+                continue;
+            }
 
-                if (!is_string($field) || $field === '') {
-                    continue;
-                }
+            $fields = $page->contextFields();
 
-                foreach ($this->schema->blockTypesFor($entryType, $field) as $block) {
+            if ($forms->declared && $forms->field !== null) {
+                $fields[] = $forms->field;
+            }
+
+            foreach (array_unique($fields) as $field) {
+                foreach ($this->schema->blockTypesFor((string) $page->entryType(), $field) as $block) {
                     $blocks[$block] = true;
                 }
             }

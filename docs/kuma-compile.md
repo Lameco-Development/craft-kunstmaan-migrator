@@ -253,6 +253,50 @@ assumed and got wrong.
 `--markdown` emits a table to commit next to the mapping, `--json` is for CI, and `--strict` exits
 non-zero while anything is unsatisfied.
 
+## Contexts and target fields
+
+A Kunstmaan page holds its pageparts in named *contexts* — `main`, `top`, `right_column`,
+`footer_content`. `contexts:` says which of them the blocks lane streams, and into which Craft
+Matrix each one lands:
+
+```yaml
+defaults:
+  contexts:
+    top:          { field: pageBuilderBerkvensNl, prepend: true }
+    content:      { field: pageBuilderBerkvensNl }
+    right_column: { field: berkvensNlSidebar }
+pages:
+  CataloguePage:
+    entryType: cataloguePage
+    contexts:                       # replaces defaults.contexts for this page type
+      content:        { field: pageBuilderBerkvensNl }
+      footer_content: { field: berkvensNlBelowListing }
+forms:
+  context: form
+  field: pageBuilderBerkvensNl      # optional; defaults to the page's first context field
+```
+
+- **Each context writes to its own field.** Blocks are grouped by their context's `field:`, and
+  each group becomes that field's Matrix value. Within a field the legacy order holds: contexts
+  in the order they are declared, parts in their sequence order. A context with no `field:`
+  streams into `pageBuilder`; a mapping with no `contexts:` anywhere streams `main` into
+  `commonPageBuilder`.
+- **A page's own `contexts:` replaces the defaults** — wholesale, not merged. `compile`,
+  `validate`, `readiness` and `doctor` all read the same resolution. (`state/explain` still
+  treats only `defaults.contexts` as streamed: a part in a page-level-only context that was
+  written reconciles fine, one that was not is listed as "not streamed" rather than as a defect.)
+- **`prepend: true` prepends within the field it names.** A `top` context on the builder puts
+  its blocks above the builder's other contexts; it does not move anything in another field.
+- **A field's allow-list is checked per context.** A block another field on the page would
+  accept is still dropped, and counted, when its own context's field rejects it — and
+  `migrate`'s placement warning reports it by context.
+- **The form block** goes at the foot of `forms.field` when set, else of the page's main
+  builder: the first context's field. `validate --craft` fails a `forms.field` no page entry
+  type has as a Matrix, and warns per page type that lacks it.
+- **Blocks own their field.** A field that both a context (or `forms.field`) and the page's
+  `map:`/`children:` write is a `validate` error; when a sidecar collides at compile, the blocks
+  win and the replaced value is counted in the run report.
+
 ## Non-node tables
 
 Not every target is a page. A Kunstmaan corpus keeps its taxonomies in ordinary tables outside the

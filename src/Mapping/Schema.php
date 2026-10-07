@@ -71,6 +71,7 @@ final class Schema
         $this->checkPages($mapping, $errors);
         $this->checkEntities($mapping, $errors);
         $this->checkRedirects($mapping, $errors);
+        $this->checkForms($mapping, $errors);
         $this->checkParts($mapping, $errors);
         $this->checkSidecars($mapping, $errors);
         $this->checkUnreviewed($mapping, $errors);
@@ -220,6 +221,25 @@ final class Schema
                     $name,
                 );
             }
+        }
+    }
+
+    /**
+     * `forms.field` moves the form block off the main builder. A value that is not a handle
+     * would be read as absent and the block would land on the builder without a word.
+     *
+     * @param list<string> $errors
+     */
+    private function checkForms(Mapping $mapping, array &$errors): void
+    {
+        $forms = $mapping->all()['forms'] ?? null;
+
+        if (!is_array($forms) || !array_key_exists('field', $forms)) {
+            return;
+        }
+
+        if (!is_string($forms['field']) || $forms['field'] === '') {
+            $errors[] = 'forms: `field:` must be a Matrix field handle';
         }
     }
 

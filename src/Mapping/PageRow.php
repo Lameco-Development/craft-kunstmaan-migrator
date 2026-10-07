@@ -114,8 +114,9 @@ final class PageRow
 
     /**
      * The Kunstmaan contexts this page's block stream is read from, each with the
-     * Craft field it lands in. Every context has a `field`; the rest of the
-     * target (`prepend:`) is passed through.
+     * Craft field its blocks land in — per context, so `right_column` can fill a
+     * sidebar Matrix beside the Page Builder. Every context has a `field`; the
+     * rest of the target (`prepend:`, which prepends within that field) is passed through.
      *
      * @return array<string, array<string, mixed>> context => target
      */
@@ -135,7 +136,11 @@ final class PageRow
         )));
     }
 
-    /** The field a page-level block — a form block, the builder as a whole — is written to: the first context's. */
+    /**
+     * The page's main builder: the first context's field. Each context's blocks land in that
+     * context's own field; this is only where a page-level block with no context of its own —
+     * the form block, when `forms.field` names none — is written.
+     */
     public function builderField(): string
     {
         return $this->contextFields()[0] ?? self::DEFAULT_FIELD;
