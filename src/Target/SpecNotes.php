@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Target;
 
+use Lameco\Kunstmaanmigrator\Source\PartClass;
+
 /**
  * Field-level migration notes read from the target content model's markdown specs.
  *
@@ -97,7 +99,8 @@ final class SpecNotes
      */
     public function blocksForPart(string $part): array
     {
-        return $this->byPart[str_ends_with($part, 'PagePart') ? substr($part, 0, -8) : $part] ?? [];
+        // A spec names the short class; a row whose short name collides is keyed by the qualified one.
+        return $this->byPart[PartClass::shortName($part)] ?? [];
     }
 
     /** @return list<Note> */

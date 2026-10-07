@@ -69,6 +69,15 @@ final class CoverageReport
             $holes[] = sprintf('pagepart  %-32s %s live placements', (string) $class, number_format($n));
         }
 
+        foreach ($this->coverage->unresolvedCollisions() as $collision) {
+            $holes[] = sprintf(
+                'pagepart  `%s` reads %s for %d live classes — key a row by each class\'s fully qualified name',
+                $collision['key'],
+                $collision['table'] !== null ? '`' . $collision['table'] . '`' : 'one table',
+                count($collision['classes']),
+            );
+        }
+
         foreach ($this->coverage->unclaimedPageTypes() as $entity => $n) {
             $holes[] = sprintf('page      %-32s %s live pages', (string) $entity, number_format($n));
         }

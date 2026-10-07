@@ -107,7 +107,9 @@ final class BlockPlacement
     /** @return list<string> */
     private function blocksOf(string $part): array
     {
-        $row = $this->mapping->partRow($part);
+        // The corpus names a class by its qualified name where its short name is shared.
+        $key = $this->mapping->claimingKey($part);
+        $row = $key !== null ? $this->mapping->partRow($key) : null;
 
         return $row !== null && $row->compilesToBlocks() ? $row->blocks() : [];
     }

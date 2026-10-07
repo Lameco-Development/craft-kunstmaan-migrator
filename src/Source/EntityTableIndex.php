@@ -18,10 +18,15 @@ final class EntityTableIndex
     /**
      * @param array<string, string> $tables short entity name (no PagePart suffix) => table
      * @param array<string, list<array{table: string, fk: string}>> $children owner short name => collections
+     * @param array<string, string> $qualifiedTables fully qualified entity => table; what tells two
+     *        namespaces sharing a short name apart (the app's `TextPagePart` and Kunstmaan's)
+     * @param array<string, list<array{table: string, fk: string}>> $qualifiedChildren fully qualified owner => collections
      */
     private function __construct(
         private readonly array $tables,
         private readonly array $children = [],
+        private readonly array $qualifiedTables = [],
+        private readonly array $qualifiedChildren = [],
     ) {
     }
 
@@ -43,6 +48,8 @@ final class EntityTableIndex
     {
         $tables = [];
         $children = [];
+        $qualifiedTables = [];
+        $qualifiedChildren = [];
 
         foreach ($introspection->entities as $class => $spec) {
             if (!is_array($spec) || ($spec['mappedSuperclass'] ?? false) || !isset($spec['table'])) {
@@ -52,6 +59,7 @@ final class EntityTableIndex
             $parts = explode('\\', (string) $class);
             $basename = (string) end($parts);
             $tables[self::shortName($basename)] = (string) $spec['table'];
+            $qualifiedTables[PartClass::normalize((string) $class)] = (string) $spec['table'];
 
             foreach ((array) ($spec['associations'] ?? []) as $assoc) {
                 $target = (string) ($assoc['target'] ?? '');
@@ -62,18 +70,27 @@ final class EntityTableIndex
                 }
 
                 $targetParts = explode('\\', $target);
-                $children[self::shortName((string) end($targetParts))][] = [
-                    'table' => (string) $spec['table'],
-                    'fk' => (string) $joinColumns[0],
-                ];
+                $collection = ['table' => (string) $spec['table'], 'fk' => (string) $joinColumns[0]];
+                $children[self::shortName((string) end($targetParts))][] = $collection;
+                $qualifiedChildren[PartClass::normalize($target)][] = $collection;
             }
         }
 
+        $byTable = static fn(array $a, array $b): int => $a['table'] <=> $b['table'];
+
         foreach ($children as &$collections) {
-            usort($collections, static fn(array $a, array $b): int => $a['table'] <=> $b['table']);
+            usort($collections, $byTable);
         }
 
-        return new self($tables, $children);
+        unset($collections);
+
+        foreach ($qualifiedChildren as &$collections) {
+            usort($collections, $byTable);
+        }
+
+        unset($collections);
+
+        return new self($tables, $children, $qualifiedTables, $qualifiedChildren);
     }
 
     /** Scans `<source>/src/Entity` for `#[ORM\Table(name: '...')]` and its annotation form. */
@@ -87,6 +104,7 @@ final class EntityTableIndex
 
         $tables = [];
         $children = [];
+        $qualifiedTables = [];
         $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($entityDir));
 
         foreach ($files as $file) {
@@ -105,6 +123,11 @@ final class EntityTableIndex
 
             $class = $file->getBasename('.php');
             $tables[self::shortName($class)] = $m[1];
+
+            if (preg_match('/^namespace\s+([^;\s]+)\s*;/m', $source, $ns) === 1) {
+                $qualifiedTables[PartClass::normalize($ns[1] . '\\' . $class)] = $m[1];
+            }
+
             $owner = self::ownerOf($source);
 
             if ($owner !== null) {
@@ -116,7 +139,31 @@ final class EntityTableIndex
             usort($collections, static fn(array $a, array $b): int => $a['table'] <=> $b['table']);
         }
 
-        return new self($tables, $children);
+        unset($collections);
+
+        // A scan reads the app's own entities, and its relations are written against the short
+        // name in that namespace, so a scanned class's collections are the short name's.
+        return new self($tables, $children, $qualifiedTables, self::scannedChildren($qualifiedTables, $children));
+    }
+
+    /**
+     * @param array<string, string> $qualifiedTables
+     * @param array<string, list<array{table: string, fk: string}>> $children
+     * @return array<string, list<array{table: string, fk: string}>>
+     */
+    private static function scannedChildren(array $qualifiedTables, array $children): array
+    {
+        $out = [];
+
+        foreach (array_keys($qualifiedTables) as $class) {
+            $collections = $children[PartClass::shortName((string) $class)] ?? [];
+
+            if ($collections !== []) {
+                $out[(string) $class] = $collections;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -154,18 +201,31 @@ final class EntityTableIndex
      *
      * @return list<array{table: string, fk: string}>|null
      */
-    public function childrenOf(string $shortClass): ?array
+    public function childrenOf(string $class): ?array
     {
         if ($this->children === []) {
             return null;
         }
 
-        return $this->children[$shortClass] ?? [];
+        if (PartClass::isQualified($class)) {
+            return $this->qualifiedChildren[PartClass::normalize($class)] ?? [];
+        }
+
+        return $this->children[$class] ?? [];
     }
 
-    public function tableFor(string $shortClass): ?string
+    /**
+     * The table backing a class, by its short name or — where two namespaces share one — its
+     * fully qualified name. A qualified name the index does not know has no table: falling back
+     * to the short name would hand it the other namespace's.
+     */
+    public function tableFor(string $class): ?string
     {
-        return $this->tables[$shortClass] ?? null;
+        if (PartClass::isQualified($class)) {
+            return $this->qualifiedTables[PartClass::normalize($class)] ?? null;
+        }
+
+        return $this->tables[$class] ?? null;
     }
 
     public function isEmpty(): bool

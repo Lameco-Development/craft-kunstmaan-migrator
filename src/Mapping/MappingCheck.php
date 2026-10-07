@@ -27,8 +27,14 @@ use Lameco\Kunstmaanmigrator\Target\TargetSchema;
  */
 final class MappingCheck
 {
-    public function __construct(private readonly ?TargetSchema $target = null)
-    {
+    /**
+     * @param array<string, int>|null $liveParts fully qualified pagepart class => live placements,
+     *        when the legacy databases were read; null leaves the collision check out
+     */
+    public function __construct(
+        private readonly ?TargetSchema $target = null,
+        private readonly ?array $liveParts = null,
+    ) {
     }
 
     /** @return array{0: string, 1: list<string>}|null headline and errors; null means it may run */
@@ -40,6 +46,10 @@ final class MappingCheck
 
         if ($errors = (new Schema())->validate($mapping)) {
             return ['Mapping is not well-formed', $errors];
+        }
+
+        if ($this->liveParts !== null && ($errors = self::collisionErrors($mapping, $this->liveParts))) {
+            return ['Short-name rows that read one table for several live classes', $errors];
         }
 
         if ($this->target !== null) {
@@ -95,5 +105,32 @@ final class MappingCheck
         }
 
         return $warnings;
+    }
+
+    /**
+     * @param array<string, int> $liveParts
+     * @return list<string>
+     */
+    private static function collisionErrors(Mapping $mapping, array $liveParts): array
+    {
+        $errors = [];
+
+        foreach ($mapping->unresolvedPartCollisions($liveParts) as $collision) {
+            $classes = [];
+
+            foreach ($collision['classes'] as $class => $n) {
+                $classes[] = sprintf('%s (%d)', $class, $n);
+            }
+
+            $errors[] = sprintf(
+                '`%s` reads %s for %d live classes — %s. Key a row by each class\'s fully qualified name, so each reads its own table',
+                $collision['key'],
+                $collision['table'] !== null ? '`' . $collision['table'] . '`' : 'one table',
+                count($classes),
+                implode(', ', $classes),
+            );
+        }
+
+        return $errors;
     }
 }

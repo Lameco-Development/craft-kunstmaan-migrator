@@ -6,6 +6,7 @@ namespace Lameco\Kunstmaanmigrator\Report;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 
 /**
  * Fills in the half of a requirement that only the legacy database can answer: of the live rows
@@ -104,7 +105,7 @@ final class FillMeasurer
         }
 
         $part = $this->mapping->partRow($requirement->subject);
-        $entities = $this->entities[$requirement->subject] ?? [];
+        $entities = $this->entitiesOf($requirement->subject);
         $table = $part?->table();
 
         if ($entities === [] || $table === null) {
@@ -178,6 +179,20 @@ final class FillMeasurer
         }
 
         return null;
+    }
+
+    /**
+     * The entity names, as the refs table spells them, whose placements a row reads: a short-name
+     * row reads every class of that name except those a row keyed by the qualified name claims.
+     *
+     * @return list<string>
+     */
+    private function entitiesOf(string $subject): array
+    {
+        return array_values(array_filter(
+            $this->entities[PartClass::shortName($subject)] ?? [],
+            fn(string $entity): bool => $this->mapping->partKey($entity) === $subject,
+        ));
     }
 
     /** @return list<string> */

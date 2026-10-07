@@ -223,4 +223,26 @@ final class BlockPlacementTest extends TestCase
 
         self::assertSame(3, $rejections[0]['placements']);
     }
+
+    #[Test]
+    public function a_class_reported_by_its_qualified_name_is_judged_by_the_row_that_claims_it(): void
+    {
+        // Where two live classes share a short name the corpus reports each by its qualified
+        // name; the app's falls back to the short-name row, Kunstmaan's has its own.
+        $yaml = self::MAPPING . "\n" . <<<'YAML'
+              Kunstmaan\PagePartBundle\Entity\CalloutPagePart:
+                table: kuma_callout_page_parts
+                block: contentColumn
+            YAML;
+
+        $rejections = $this->rejections(['ContentPage' => ['main' => [
+            'App\\Entity\\PageParts\\CalloutPagePart' => 40,
+            'Kunstmaan\\PagePartBundle\\Entity\\CalloutPagePart' => 12,
+        ]]], $yaml);
+
+        self::assertCount(1, $rejections);
+        self::assertSame('App\\Entity\\PageParts\\CalloutPagePart', $rejections[0]['part']);
+        self::assertSame('calloutBlock', $rejections[0]['block']);
+        self::assertSame(40, $rejections[0]['placements']);
+    }
 }
