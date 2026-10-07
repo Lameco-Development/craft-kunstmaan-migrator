@@ -64,6 +64,19 @@ final class StructuralAncestorTest extends TestCase
             RedirectPage: "handled by the redirects lane"
         YAML;
 
+    /**
+     * The same tree, with the pages living in a structure that is not called `pages` — a
+     * target that gives each site group its own page tree.
+     */
+    private static function mappingInSection(string $section): string
+    {
+        return str_replace(
+            ['structuralEntryType: contentPage', 'section: pages'],
+            ["structuralEntryType: contentPage\n  structuralSection: {$section}", "section: {$section}"],
+            self::MAPPING,
+        );
+    }
+
     private function db(): LegacyDatabase
     {
         $pdo = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
@@ -281,6 +294,43 @@ final class StructuralAncestorTest extends TestCase
 
         // …and the children that lose their segment are counted too, so a run that cannot
         // place its ancestors still says how many pages it re-rooted.
+        self::assertArrayHasKey('parent:COM:CasePage', $compiler->skipped());
+    }
+
+    #[Test]
+    public function a_configured_structural_section_receives_the_placeholders(): void
+    {
+        $payloads = $this->bySourceUid($this->compile(self::mappingInSection('berkvensNlPages')));
+
+        self::assertSame('berkvensNlPages', $payloads['kuma:COM:kuma_nodes:28']['section']);
+        self::assertSame('berkvensNlPages', $payloads['kuma:COM:kuma_nodes:3']['section']);
+    }
+
+    #[Test]
+    public function in_a_configured_structural_section_every_child_keeps_its_full_legacy_path(): void
+    {
+        $payloads = $this->bySourceUid($this->compile(self::mappingInSection('berkvensNlPages')));
+
+        // 17 under the RedirectPage placeholder; 18 under placeholder 3, itself under page 9.
+        self::assertSame('kuma:COM:kuma_nodes:28', $payloads['kuma:COM:kuma_nodes:17']['sites']['comNlNl']['parentRef']);
+        self::assertSame('kuma:COM:kuma_nodes:3', $payloads['kuma:COM:kuma_nodes:18']['sites']['comEnUs']['parentRef']);
+        self::assertSame('kuma:COM:kuma_nodes:9', $payloads['kuma:COM:kuma_nodes:3']['sites']['comEnUs']['parentRef']);
+    }
+
+    #[Test]
+    public function a_structural_section_the_pages_do_not_live_in_places_no_placeholder(): void
+    {
+        // The pages are in `berkvensNlPages`; placeholders configured into another structure
+        // could not parent them anyway, so none is built and the re-rooting is counted.
+        $mapping = str_replace('structuralSection: berkvensNlPages', 'structuralSection: xidoorPages', self::mappingInSection('berkvensNlPages'));
+        $path = tempnam(sys_get_temp_dir(), 'kuma') . '.yaml';
+        file_put_contents($path, $mapping);
+
+        $compiler = new Compiler(Mapping::fromFile($path), new Transforms());
+        $compiler->compile($this->db(), 'COM', static function(array $p): void {
+        });
+
+        self::assertSame(0, $compiler->structuralCount());
         self::assertArrayHasKey('parent:COM:CasePage', $compiler->skipped());
     }
 }

@@ -25,7 +25,7 @@ final class CraftSchema implements TargetSchema
 {
     /**
      * @param array<string, array<string, Slot>> $entryTypes handle => field handle => slot
-     * @param list<string> $sections
+     * @param array<string, array{type:?string, entryTypes:?list<string>}> $sections handle => what project config says of it
      */
     private function __construct(
         private readonly array $entryTypes,
@@ -44,6 +44,7 @@ final class CraftSchema implements TargetSchema
 
         $fields = self::readFields($dir);
         $layouts = [];
+        $entryTypeByUid = [];
 
         foreach (glob($dir . '/entryTypes/*.yaml') ?: [] as $file) {
             $data = self::deassoc(Yaml::parseFile($file));
@@ -54,6 +55,7 @@ final class CraftSchema implements TargetSchema
             }
 
             $layouts[$handle] = self::slotsOf($data, $fields);
+            $entryTypeByUid[self::uidOf($file)] = $handle;
         }
 
         $sections = [];
@@ -62,7 +64,10 @@ final class CraftSchema implements TargetSchema
             $data = self::deassoc(Yaml::parseFile($file));
 
             if (isset($data['handle'])) {
-                $sections[] = (string) $data['handle'];
+                $sections[(string) $data['handle']] = [
+                    'type' => isset($data['type']) ? (string) $data['type'] : null,
+                    'entryTypes' => self::entryTypesOf($data, $entryTypeByUid),
+                ];
             }
         }
 
@@ -193,7 +198,18 @@ final class CraftSchema implements TargetSchema
 
     public function hasSection(string $handle): bool
     {
-        return in_array($handle, $this->sections, true);
+        return isset($this->sections[$handle]);
+    }
+
+    public function sectionType(string $handle): ?string
+    {
+        return $this->sections[$handle]['type'] ?? null;
+    }
+
+    /** @return list<string>|null */
+    public function sectionEntryTypes(string $handle): ?array
+    {
+        return $this->sections[$handle]['entryTypes'] ?? null;
     }
 
     /** @return array<string, Slot> */
@@ -254,6 +270,34 @@ final class CraftSchema implements TargetSchema
         $slot = $this->slot($entryType, $field);
 
         return $slot !== null && count($slot->nested) === 1 ? $slot->nested[0] : null;
+    }
+
+    /**
+     * A section's entry types by handle. Craft 5.0 lists them as bare uids, later versions as
+     * `{uid, name, …}` overrides; a uid with no entry-type file is not an entry type this
+     * target has, so it is left out rather than guessed at.
+     *
+     * @param array<string, mixed> $section
+     * @param array<string, string> $entryTypeByUid
+     * @return list<string>|null null when the section lists none
+     */
+    private static function entryTypesOf(array $section, array $entryTypeByUid): ?array
+    {
+        if (!isset($section['entryTypes']) || !is_array($section['entryTypes'])) {
+            return null;
+        }
+
+        $handles = [];
+
+        foreach ($section['entryTypes'] as $entry) {
+            $uid = is_array($entry) ? (string) ($entry['uid'] ?? '') : (string) $entry;
+
+            if (isset($entryTypeByUid[$uid])) {
+                $handles[] = $entryTypeByUid[$uid];
+            }
+        }
+
+        return $handles;
     }
 
     private static function uidOf(string $file): string

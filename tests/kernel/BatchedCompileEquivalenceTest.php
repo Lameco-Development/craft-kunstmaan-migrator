@@ -22,6 +22,8 @@ use PHPUnit\Framework\TestCase;
  */
 final class BatchedCompileEquivalenceTest extends TestCase
 {
+    private string $yaml = self::MAPPING;
+
     private const MAPPING = <<<'YAML'
         version: 1
         environments:
@@ -99,7 +101,7 @@ final class BatchedCompileEquivalenceTest extends TestCase
     private function mapping(): Mapping
     {
         $path = tempnam(sys_get_temp_dir(), 'kuma') . '.yaml';
-        file_put_contents($path, self::MAPPING);
+        file_put_contents($path, $this->yaml);
 
         return Mapping::fromFile($path);
     }
@@ -180,5 +182,24 @@ final class BatchedCompileEquivalenceTest extends TestCase
     public function chunked_entity_slices_change_nothing(): void
     {
         self::assertSame($this->full(), $this->batched(entityChunk: 2));
+    }
+
+    #[Test]
+    public function a_configured_structural_section_batches_like_the_monolithic_walk(): void
+    {
+        // The placeholders' section feeds the parent check, so a resumed batch's catch-up
+        // must register them under the same section the monolithic walk does.
+        $this->yaml = str_replace(
+            ['structuralEntryType: contentPage', 'section: pages'],
+            ["structuralEntryType: contentPage\n  structuralSection: berkvensNlPages", 'section: berkvensNlPages'],
+            self::MAPPING,
+        );
+        $full = $this->full();
+
+        self::assertContains('berkvensNlPages', array_column(
+            array_filter($full, static fn(array $p): bool => (bool) ($p['structural'] ?? false)),
+            'section',
+        ));
+        self::assertSame($full, $this->batched(entityChunk: 1));
     }
 }

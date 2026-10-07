@@ -12,7 +12,7 @@ use Symfony\Component\Yaml\Yaml;
  *
  * Two views of the same tree. The typed one — `partRows()`, `pageRows()`,
  * `entityRows()`, `sidecarRows()`, and the lane-wide facts `defaultContexts()`,
- * `forms()`, `structuralEntryType()`, `transforms()` — is what the kernel reads:
+ * `forms()`, `structuralEntryType()`, `structuralSection()`, `transforms()` — is what the kernel reads:
  * a row knows its own disposition, target and fallbacks, so no consumer parses
  * the row grammar again. The raw lane accessors (`pages()`, `parts()`, ...)
  * return the YAML shape unchanged and stay for the Craft side and the schema;
@@ -25,6 +25,9 @@ final class Mapping
      * fallback, so the checks that predict what the compiler does share it.
      */
     public const DEFAULT_CONTEXTS = ['main' => ['field' => 'commonPageBuilder']];
+
+    /** Where structural placeholders go when `defaults.structuralSection` does not say. */
+    public const DEFAULT_STRUCTURAL_SECTION = 'pages';
 
     private const LANES = ['parts', 'forms', 'globals', 'redirects'];
 
@@ -97,7 +100,7 @@ final class Mapping
     /**
      * The raw parsed tree; for schema checks and the document editor only. A
      * kernel consumer wanting a lane-wide fact reads `defaultContexts()`,
-     * `forms()`, `structuralEntryType()` or `transforms()` instead.
+     * `forms()`, `structuralEntryType()`, `structuralSection()` or `transforms()` instead.
      *
      * @return array<string, mixed>
      */
@@ -198,6 +201,18 @@ final class Mapping
         $entryType = $this->data['defaults']['structuralEntryType'] ?? null;
 
         return is_string($entryType) && $entryType !== '' ? $entryType : null;
+    }
+
+    /**
+     * The structure a path-segment placeholder is emitted into; `pages` when `defaults:` does
+     * not say. Placeholders only parent pages in this same section, since a Craft structure
+     * cannot parent across sections — a target with one page tree per site group names its own.
+     */
+    public function structuralSection(): string
+    {
+        $section = $this->data['defaults']['structuralSection'] ?? null;
+
+        return is_string($section) && $section !== '' ? $section : self::DEFAULT_STRUCTURAL_SECTION;
     }
 
     /**

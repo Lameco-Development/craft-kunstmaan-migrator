@@ -48,6 +48,16 @@ final class SuggesterPrefillTest extends TestCase
                 return true;
             }
 
+            public function sectionType(string $handle): ?string
+            {
+                return null;
+            }
+
+            public function sectionEntryTypes(string $handle): ?array
+            {
+                return null;
+            }
+
             public function slots(string $entryType): array
             {
                 return $this->types[$entryType] ?? [];

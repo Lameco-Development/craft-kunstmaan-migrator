@@ -24,7 +24,15 @@ final class CraftSchemaGateway implements SchemaGateway
             return null;
         }
 
-        return ['id' => (int) $section->id, 'handle' => (string) $section->handle];
+        return [
+            'id' => (int) $section->id,
+            'handle' => (string) $section->handle,
+            'type' => (string) $section->type,
+            'entryTypes' => array_values(array_map(
+                static fn($entryType): string => (string) $entryType->handle,
+                $section->getEntryTypes(),
+            )),
+        ];
     }
 
     public function entryTypeByHandle(string $handle): ?array

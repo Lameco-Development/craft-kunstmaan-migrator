@@ -27,12 +27,26 @@ final class TargetCheckTest extends TestCase
 
             public function hasEntryType(string $handle): bool
             {
-                return $handle === 'partnerPage';
+                return in_array($handle, ['partnerPage', 'redirectPage'], true);
             }
 
             public function hasSection(string $handle): bool
             {
-                return $handle === 'partners';
+                return in_array($handle, ['partners', 'berkvensNlPages', 'newsChannel'], true);
+            }
+
+            public function sectionType(string $handle): ?string
+            {
+                return ['partners' => 'structure', 'berkvensNlPages' => 'structure', 'newsChannel' => 'channel'][$handle] ?? null;
+            }
+
+            public function sectionEntryTypes(string $handle): ?array
+            {
+                return [
+                    'partners' => ['partnerPage'],
+                    'berkvensNlPages' => ['partnerPage', 'redirectPage'],
+                    'newsChannel' => ['partnerPage'],
+                ][$handle] ?? null;
             }
 
             public function slots(string $entryType): array
@@ -139,5 +153,97 @@ final class TargetCheckTest extends TestCase
                     map: { intro: intro, body: body }
                 YAML),
         );
+    }
+
+    /** A mapping whose pages live in `berkvensNlPages`, with the given `defaults:` lines. */
+    private function checkStructural(string $defaults): array
+    {
+        return $this->check(<<<YAML
+            version: 1
+            environments:
+              COM: { database: legacy, locales: { en: comEnUs } }
+            defaults:
+            {$defaults}
+            pages:
+              PartnerPage:
+                section: berkvensNlPages
+                entryType: partnerPage
+                map: { partnerAddress: street }
+            YAML);
+    }
+
+    #[Test]
+    public function a_structural_section_that_accepts_the_structural_entry_type_passes(): void
+    {
+        self::assertSame([], $this->checkStructural(<<<'YAML'
+              structuralSection: berkvensNlPages
+              structuralEntryType: redirectPage
+            YAML));
+    }
+
+    #[Test]
+    public function a_missing_structural_section_is_rejected(): void
+    {
+        self::assertSame(
+            ['defaults.structuralSection: no section `xidoorPages` in Craft'],
+            $this->checkStructural(<<<'YAML'
+                  structuralSection: xidoorPages
+                  structuralEntryType: redirectPage
+                YAML),
+        );
+    }
+
+    #[Test]
+    public function the_default_structural_section_is_checked_when_placeholders_are_configured(): void
+    {
+        // No `structuralSection:` means `pages`, the section the compiler will write into.
+        self::assertSame(
+            ['defaults.structuralSection: no section `pages` in Craft'],
+            $this->checkStructural('  structuralEntryType: redirectPage'),
+        );
+    }
+
+    #[Test]
+    public function a_structural_section_that_is_not_a_structure_is_rejected(): void
+    {
+        self::assertSame(
+            ['defaults.structuralSection: section `newsChannel` is a channel, not a structure — a placeholder there cannot parent anything'],
+            $this->checkStructural(<<<'YAML'
+                  structuralSection: newsChannel
+                  structuralEntryType: partnerPage
+                YAML),
+        );
+    }
+
+    #[Test]
+    public function a_structural_section_that_does_not_allow_the_entry_type_is_rejected(): void
+    {
+        self::assertSame(
+            ['defaults.structuralEntryType: section `partners` does not allow entry type `redirectPage`'],
+            $this->checkStructural(<<<'YAML'
+                  structuralSection: partners
+                  structuralEntryType: redirectPage
+                YAML),
+        );
+    }
+
+    #[Test]
+    public function an_unknown_structural_entry_type_is_rejected(): void
+    {
+        self::assertSame(
+            ['defaults.structuralEntryType: no entry type `folderPage` in Craft'],
+            $this->checkStructural(<<<'YAML'
+                  structuralSection: berkvensNlPages
+                  structuralEntryType: folderPage
+                YAML),
+        );
+    }
+
+    #[Test]
+    public function without_a_structural_entry_type_the_structural_section_is_not_checked(): void
+    {
+        // No entry type, no placeholders: the compiler never writes to the section, so an
+        // existing mapping whose target has no `pages` must not start failing here.
+        self::assertSame([], $this->checkStructural('  structuralSection: xidoorPages'));
     }
 }

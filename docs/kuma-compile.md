@@ -108,8 +108,11 @@ key, sequence rules whose `else:` names no rule, and a class claimed by two lane
 
 **Target** — with `--craft=<project root>`, every handle the mapping names is checked to exist:
 block entry types, field handles (including nested Matrix paths), sections, promote
-destinations and relation fields. Required fields the mapping never supplies are reported as
-warnings rather than errors, since a field may have a default.
+destinations and relation fields. When `defaults.structuralEntryType` is set, the section
+structural placeholders go into (`defaults.structuralSection`, `pages` when omitted) must exist,
+be a structure, and allow that entry type — see "Structural placeholders" in
+[`loader-contract.md`](loader-contract.md). Required fields the mapping never supplies are
+reported as warnings rather than errors, since a field may have a default.
 
 This check exists because the alternative is finding out at load time. On the first real
 mapping it caught eight wrong handles — `embed` for a field called `embedCode`, `logos` for
