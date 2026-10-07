@@ -128,7 +128,8 @@ final class Readiness
                 subject: $page,
                 entryType: (string) $entryType,
                 map: $row->map(),
-                extra: $this->contextFields($row) + $this->pagePartFields($row) + $this->sidecarFields(),
+                extra: $this->contextFields($row) + self::childFields($row->children()) + $this->pagePartFields($row)
+                    + $this->sidecarFields(),
                 live: $row->live(),
             )];
         }
@@ -420,6 +421,17 @@ final class Readiness
         }
 
         return $fields;
+    }
+
+    /**
+     * The fields a row's own `children:` fill — a Matrix, an Assets or a Table field alike.
+     *
+     * @param array<string, array<string, mixed>> $children
+     * @return array<string, string> target field => 'children'
+     */
+    private static function childFields(array $children): array
+    {
+        return array_fill_keys(array_map(strval(...), array_keys($children)), 'children');
     }
 
     /**

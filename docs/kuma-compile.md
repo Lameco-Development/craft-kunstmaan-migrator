@@ -397,6 +397,50 @@ contributor saved first, and the compiled payload omits the title key entirely s
 leaves it untouched. `children:` works on an entity the same way it does on a page or a pagepart:
 a table hanging off the row by foreign key becomes nested Matrix blocks in the named field.
 
+### `children:` into an Assets or Table field
+
+The named field's type, read from the target schema, decides what the child rows become — on a
+part, a page, a sidecar or a `consumedBy: page` part alike:
+
+```yaml
+parts:
+  ImageSlider:
+    table: image_slider_page_parts
+    consumedBy: page                    # in a `slider: { target: page }` context
+    children:
+      sliderImages:                     # an Assets field: one asset per row, in `order:` order
+        table: image_slides
+        fk: image_slider_page_part_id
+        map: { image: media_id | asset }
+sidecars:
+  structuredData:
+    table: structured_data
+    children:
+      openingHours:                     # a Table field: one row per child row
+        table: structureddata_openinghour
+        fk: structured_data_id
+        map: { day: day, opening: opening, closing: closing }
+```
+
+- **Matrix** (or a field the schema does not know): nested blocks, as above.
+- **Assets:** each row's mapped value is collected into one list — `[{_asset}, {_asset}, …]` — and a
+  row whose media does not resolve is left out and counted. The map's key is a label only; the
+  map holds exactly one value.
+- **Table:** each row becomes a map keyed by the `map:` targets, which are the Table's column
+  handles; an empty row is left out.
+- Neither carries a `_sourcePartRef` — there is no nested element to thread on a re-run.
+- `validate --craft` and `mapping check` accept a `children:` target that is a Matrix, Assets or
+  Table field and error on any other. An Assets target's `map:` holds exactly one value, and that
+  value must end in a transform that emits an asset (`| asset`, or a `coalesce()` of such) — a
+  bare `media_id` would hand Craft raw legacy ids, related to whichever asset carries them. A Table
+  column the field does not have is an error too: Craft reads a row by column id or handle only,
+  so any other key is dropped from every row. Both schema readers know the columns — project config
+  and the live site.
+- Sidecar `children:` are checked the same way against every page entry type the mapping compiles
+  that has the field; a field none of them has is an error on each. (Sidecar `map:` is not
+  target-checked.)
+- `readiness` credits the field to the lane that writes it (`children`, `page-parts`, `sidecars`).
+
 ## Field expressions
 
 Beyond `column | transform`, a `map:` value can be:

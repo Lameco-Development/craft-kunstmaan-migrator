@@ -12,6 +12,8 @@ final readonly class Slot
      * @param ?string $default          the value Craft writes when a fresh element omits this field
      * @param ?string $propagationMethod how a Matrix shares its blocks across sites — `all` means
      *                                   one set for every site, which two locales cannot both own
+     * @param list<string>|null $columns a Table field's column handles; null when the field is no
+     *                                   Table or the source does not say
      */
     public function __construct(
         public string $handle,
@@ -20,11 +22,50 @@ final readonly class Slot
         public array $nested = [],
         public ?string $default = null,
         public ?string $propagationMethod = null,
+        public ?array $columns = null,
     ) {
+    }
+
+    /**
+     * A Table field's column handles, which is what a `children:` map into it keys its rows by.
+     *
+     * Craft holds the columns under `colN` ids with the handle as a setting — in project config
+     * and on a live `Table` field alike, so both schema readers parse them here. A column with no
+     * handle cannot be addressed by one, so it is left out.
+     *
+     * @return list<string>|null null when the field has no columns setting — no Table
+     */
+    public static function columnHandlesOf(mixed $columns): ?array
+    {
+        if (!is_array($columns)) {
+            return null;
+        }
+
+        $handles = [];
+
+        foreach ($columns as $column) {
+            $handle = is_array($column) ? (string) ($column['handle'] ?? '') : '';
+
+            if ($handle !== '') {
+                $handles[] = $handle;
+            }
+        }
+
+        return $handles;
     }
 
     public function isMatrix(): bool
     {
         return $this->type === 'Matrix';
+    }
+
+    public function isAssets(): bool
+    {
+        return $this->type === 'Assets';
+    }
+
+    public function isTable(): bool
+    {
+        return $this->type === 'Table';
     }
 }

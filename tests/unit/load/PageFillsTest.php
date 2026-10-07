@@ -9,6 +9,7 @@ use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\load\ExplainContext;
 use Lameco\Kunstmaanmigrator\load\PageFills;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\tests\kernel\ChildCollectionTargetsTest;
 use Lameco\Kunstmaanmigrator\tests\kernel\PageFieldsLaneTest;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -57,5 +58,32 @@ final class PageFillsTest extends TestCase
 
         self::assertNull($fills->pageOf(999));
         self::assertNull($fills->of(999));
+    }
+
+    #[Test]
+    public function explain_does_not_flag_parts_whose_child_rows_became_assets(): void
+    {
+        $mapping = Mapping::fromArray(Yaml::parse(ChildCollectionTargetsTest::MAPPING));
+        $compiler = new Compiler($mapping, new Transforms(), ChildCollectionTargetsTest::schema());
+        $fills = new PageFills($compiler, $compiler->begin(ChildCollectionTargetsTest::db(), 'NL'));
+
+        // The gallery block is the one element written; its slides went into `images` as assets
+        // and leave no block id of their own. The slider filled the page's `sliderImages`.
+        $result = ExplainContext::fromMapping('NL', $mapping)->reconcile(
+            ['berkvensNl' => ['NL:image_gallery_page_parts:5' => '900']],
+            [
+                ['lang' => 'nl', 'context' => 'main', 'part' => 'ImageGallery', 'entity' => 'App\\Entity\\PageParts\\ImageGalleryPagePart', 'id' => 5, 'sequence' => 1],
+                ['lang' => 'nl', 'context' => 'slider', 'part' => 'ImageSlider', 'entity' => 'App\\Entity\\PageParts\\ImageSliderPagePart', 'id' => 6, 'sequence' => 1],
+            ],
+            $fills->pageOf(17),
+            $fills->of(17),
+        );
+
+        self::assertSame([], $result['unexplained']);
+        self::assertSame(1, $result['written']);
+        self::assertSame(
+            [['ImageSlider', 6, 'written to the page\'s own fields from the `slider` page context, not as a block']],
+            array_map(static fn(array $r): array => [$r['part'], $r['id'], $r['why']], $result['accountedFor']),
+        );
     }
 }

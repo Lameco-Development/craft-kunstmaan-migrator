@@ -72,7 +72,10 @@ interface SchemaGateway
      * Keyed by the *placement's* handle, which a layout may override — `commonPageBuilder`
      * placed as `pageBuilder`. The mapping names the placement, so this must too.
      *
-     * @return array<string, array{type: string, required: bool, nested: list<string>, propagationMethod?: ?string}> field handle => placement
+     * A Table placement may report its column handles — what a `children:` map into it keys
+     * its rows by; a gateway that omits them leaves the columns unknown rather than empty.
+     *
+     * @return array<string, array{type: string, required: bool, nested: list<string>, propagationMethod?: ?string, columns?: ?list<string>}> field handle => placement
      */
     public function fieldSlotsFor(string $entryTypeHandle): array;
 }

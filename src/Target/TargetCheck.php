@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Target;
 
+use Lameco\Kunstmaanmigrator\Mapping\AssetExpression;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\PageRow;
 use Lameco\Kunstmaanmigrator\Mapping\PartRow;
@@ -108,7 +109,7 @@ final class TargetCheck
             }
         }
 
-        $errors = [...$errors, ...$this->checkPageParts($mapping)];
+        $errors = [...$errors, ...$this->checkPageParts($mapping), ...$this->checkSidecars($mapping)];
 
         foreach ($mapping->partRows() as $name => $part) {
             $block = $part->block();
@@ -233,6 +234,47 @@ final class TargetCheck
         }
 
         return array_map(strval(...), array_keys($hosts));
+    }
+
+    /**
+     * A sidecar decorates every page it is joined to, so its `children:` address the fields of
+     * any page entry type the mapping compiles. Each type that has the field must hold it in a
+     * shape the collection can fill — a misspelt Table column is dropped from every row, an
+     * Assets map of two values writes neither. A field no such type has is a typo: each one says
+     * so. A type that merely lacks it is the compiler's to drop and count, as for a page part.
+     *
+     * @return list<string>
+     */
+    private function checkSidecars(Mapping $mapping): array
+    {
+        $hosts = [];
+
+        foreach ($mapping->pageRows() as $page) {
+            $entryType = (string) $page->entryType();
+
+            if ($page->compiles() && $this->schema->hasEntryType($entryType)) {
+                $hosts[$entryType] = true;
+            }
+        }
+
+        $hosts = array_map(strval(...), array_keys($hosts));
+        $errors = [];
+
+        foreach ($mapping->sidecarRows() as $name => $sidecar) {
+            if (!$sidecar->isMigrated()) {
+                continue;
+            }
+
+            foreach ($sidecar->children() as $field => $child) {
+                $holding = $this->hostsWith($hosts, (string) $field);
+
+                foreach ($holding !== [] ? $holding : $hosts as $entryType) {
+                    $this->checkChildren(sprintf('sidecar `%s`', $name), $entryType, [$field => $child], $errors);
+                }
+            }
+        }
+
+        return $errors;
     }
 
     /**
@@ -581,7 +623,9 @@ final class TargetCheck
 
     /**
      * A child collection has to land in a Matrix, and its columns in fields the nested entry
-     * type actually has — whether the owner is a Page Builder block or a page entry type.
+     * type actually has — whether the owner is a Page Builder block or a page entry type. An
+     * Assets field takes one asset per row, so its map holds the one expression that yields it;
+     * a Table field takes the map's targets as column handles, checked when the schema lists them.
      *
      * @param array<string, array<string, mixed>> $children the row's `children:`
      * @param list<string> $errors
@@ -597,8 +641,50 @@ final class TargetCheck
                 continue;
             }
 
+            $map = is_array($child['map'] ?? null) ? $child['map'] : [];
+
+            if ($slot->isAssets()) {
+                if (count($map) !== 1) {
+                    $errors[] = sprintf(
+                        '%s: `%s.%s` is an Assets field, so its `map:` holds exactly one value — it holds %d',
+                        $subject,
+                        $owner,
+                        $field,
+                        count($map),
+                    );
+                } elseif (!AssetExpression::yieldsAsset((string) reset($map))) {
+                    $errors[] = sprintf(
+                        '%s: `%s.%s` is an Assets field, so `%s: %s` must end in an asset transform (%s)',
+                        $subject,
+                        $owner,
+                        $field,
+                        (string) array_key_first($map),
+                        (string) reset($map),
+                        implode(', ', array_map(static fn(string $t): string => '`| ' . $t . '`', AssetExpression::TRANSFORMS)),
+                    );
+                }
+
+                continue;
+            }
+
+            if ($slot->isTable()) {
+                foreach (array_keys($map) as $column) {
+                    if ($slot->columns !== null && !in_array((string) $column, $slot->columns, true)) {
+                        $errors[] = sprintf('%s: Table `%s.%s` has no column `%s`', $subject, $owner, $field, $column);
+                    }
+                }
+
+                continue;
+            }
+
             if (!$slot->isMatrix()) {
-                $errors[] = sprintf('%s: `%s.%s` is %s, not a Matrix', $subject, $owner, $field, $slot->type);
+                $errors[] = sprintf(
+                    '%s: `%s.%s` is %s — a `children:` collection fills a Matrix, Assets or Table field',
+                    $subject,
+                    $owner,
+                    $field,
+                    $slot->type,
+                );
 
                 continue;
             }

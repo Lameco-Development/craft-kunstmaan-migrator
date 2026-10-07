@@ -415,4 +415,41 @@ final class AssetResolutionTest extends TestCase
             $entryService->lastPerSite['en']['fieldValues']['pageBuilder'][0]['fields']['media'],
         );
     }
+
+    /**
+     * A `children:` collection into an Assets field emits one `{_asset}` per child row. Each
+     * resolves to a one-id list, so the field has to be flattened back into one id list — in the
+     * collection's order, with an unresolved row dropped — or Craft is handed `[[501], [502]]`.
+     */
+    public function testAListOfAssetNodesResolvesToOneFlatIdListInOrder(): void
+    {
+        file_put_contents($this->tempMediaRoot . '/a.jpg', 'fake-bytes');
+        file_put_contents($this->tempMediaRoot . '/b.jpg', 'fake-bytes');
+
+        $state = new AssetResolutionInMemoryMigrationStateService();
+        $entryService = new AssetResolutionFakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $assetService = new FakeAssetMigrationService();
+        $assetService->mediaRoot = $this->tempMediaRoot;
+        $assetService->resolvedUrlIds = ['/uploads/media/a.jpg' => 502, '/uploads/media/b.jpg' => 501];
+        $saver = $this->makeSaver($entryService, $state, $assetService);
+
+        $payload = Payload::fromArray($this->payloadArray('kuma:COM:nt_page:404', [
+            'sites' => ['en' => ['fieldValues' => ['sliderImages' => [
+                ['_asset' => '/uploads/media/a.jpg'],
+                ['_asset' => '/uploads/media/gone.jpg'],
+                ['_asset' => '/uploads/media/b.jpg'],
+            ]]]],
+        ]));
+
+        $result = $this->save($saver, $payload);
+
+        self::assertSame([502, 501], $entryService->lastPerSite['en']['fieldValues']['sliderImages']);
+        self::assertSame([[
+            'field' => 'sliderImages',
+            'site' => 'en',
+            'path' => ['sliderImages'],
+            'asset' => '/uploads/media/gone.jpg',
+        ]], $result->unresolvedAssets);
+    }
 }

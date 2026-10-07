@@ -128,6 +128,10 @@ served.
 - **Asset relation** — `{"_asset": "<legacy asset path>"}`, anywhere in the
   fieldValues tree. Resolved at save time — see "Legacy-media resolution"
   below — not by `PayloadValidator`.
+  A list of them (`[{"_asset": …}, {"_asset": …}]`, what a `children:` collection into an
+  Assets field emits) resolves to one flat id list in the same order, an unresolved one dropped.
+- **Table field** — a list of row maps keyed by column handle:
+  `[{"day": "Monday", "opening": "09:00"}, …]`. Craft reads a handle in place of the `colN` id.
 - **Link field** — one map, not a list: `{"value": "<url>", "label": "…", "target": "_blank"}`.
   `label` and `target` are optional. Craft reads `value`; a list, or a `url` key, is discarded
   without an error.

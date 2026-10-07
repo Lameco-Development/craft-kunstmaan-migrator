@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Compile;
 
+use Lameco\Kunstmaanmigrator\Mapping\FieldExpression;
 use Lameco\Kunstmaanmigrator\Source\MediaIndex;
 use Lameco\Kunstmaanmigrator\Source\PartReader;
 use Lameco\Kunstmaanmigrator\Target\Slot;
@@ -60,7 +61,7 @@ final class BlockBuilder
     }
 
     /**
-     * Child collections of one owner row, as Matrix blocks.
+     * Child collections of one owner row, as Matrix blocks — or as assets or Table rows.
      *
      * `$owner` is the entry type the Matrix lives on — a block for a pagepart's children, a
      * page entry type for a page entity's own collections. Both ask the same question of the
@@ -71,8 +72,11 @@ final class BlockBuilder
      * stability follows from the parent block's own ref. Without it a re-run appends instead
      * of replacing: three legacy branches became six, then nine.
      *
+     * A field the schema knows as an Assets or Table field takes the rows in its own shape
+     * instead — see `collectedValue()`.
+     *
      * @param array<string, array<string, mixed>> $children
-     * @return array<string, list<array{type:string, fields:array<string,mixed>}>>
+     * @return array<string, list<mixed>>
      */
     public function childrenOf(
         array $children,
@@ -96,6 +100,16 @@ final class BlockBuilder
                 $ownerId,
                 (string) ($child['order'] ?? 'weight'),
             );
+
+            $collected = $this->collectedValue($owner, (string) $field, $child, $rows, $context);
+
+            if ($collected !== null) {
+                if ($collected !== []) {
+                    $out[(string) $field] = $collected;
+                }
+
+                continue;
+            }
 
             $blocks = [];
 
@@ -123,6 +137,59 @@ final class BlockBuilder
 
             if ($blocks !== []) {
                 $out[(string) $field] = $blocks;
+            }
+        }
+
+        $this->block = $previous;
+
+        return $out;
+    }
+
+    /**
+     * Child rows bound for a field that is not a Matrix, or null when the field is one — or when
+     * the schema cannot say, which keeps the Matrix shape every mapping before this assumed.
+     *
+     * An Assets field takes one `{_asset}` per row, in the collection's order: the row's mapped
+     * value is the asset, so the map holds one expression. A Table field takes one row per child
+     * row, keyed by the map's targets — the Table's column handles, which Craft reads in place of
+     * its `colN` ids. Neither carries a `_sourcePartRef`: an asset is a relation and a Table row
+     * is a value, so there is no element whose identity a re-run would need to thread.
+     *
+     * @param array<string, mixed> $child
+     * @param list<array<string, mixed>> $rows
+     * @return list<mixed>|null
+     */
+    private function collectedValue(string $owner, string $field, array $child, array $rows, string $context): ?array
+    {
+        $slot = $this->schema?->slot($owner, $field);
+
+        if ($slot === null || (!$slot->isAssets() && !$slot->isTable())) {
+            return null;
+        }
+
+        $map = is_array($child['map'] ?? null) ? $child['map'] : [];
+        $out = [];
+
+        // A Table's columns and an asset row's key are no fields of the owner's, so nothing is
+        // asked of the schema about them while the rows are evaluated: no entry type is current.
+        $previous = $this->block;
+        $this->block = null;
+
+        foreach ($rows as $childRow) {
+            $values = $this->fieldsFrom($map, $childRow, $context . '.' . $field);
+
+            if ($values === []) {
+                continue;
+            }
+
+            if ($slot->isTable()) {
+                $out[] = $values;
+
+                continue;
+            }
+
+            foreach ($values as $value) {
+                $out[] = $value;
             }
         }
 
@@ -182,7 +249,7 @@ final class BlockBuilder
         // One target, two legacy columns that may each hold it. A case page's brand is in
         // `brand_id` on 122 rows and only in `brand_url`'s internal-link form on 53 more.
         if (preg_match('/^coalesce\((.*)\)$/s', $expression, $m) === 1) {
-            foreach ($this->splitArguments($m[1]) as $alternative) {
+            foreach (FieldExpression::splitArguments($m[1]) as $alternative) {
                 $value = $this->evaluate($alternative, $row, $context);
 
                 if ($value !== null && $value !== '' && $value !== []) {
@@ -199,7 +266,7 @@ final class BlockBuilder
         if (preg_match('/^concat\((.*)\)$/s', $expression, $m) === 1) {
             $values = [];
 
-            foreach ($this->splitArguments($m[1]) as $piece) {
+            foreach (FieldExpression::splitArguments($m[1]) as $piece) {
                 $value = $this->evaluate($piece, $row, $context);
 
                 if (is_scalar($value) && trim((string) $value) !== '') {
@@ -301,7 +368,7 @@ final class BlockBuilder
     {
         $parts = [];
 
-        foreach ($this->splitArguments($arguments) as $argument) {
+        foreach (FieldExpression::splitArguments($arguments) as $argument) {
             if (!str_contains($argument, '=')) {
                 continue;
             }
@@ -316,40 +383,6 @@ final class BlockBuilder
 
         // A street and nothing else is still an address; no parts at all is not one.
         return $parts === [] ? null : ['_address' => $parts];
-    }
-
-    /**
-     * Split `a=b, c=d | lookup(E.f)` on the commas that separate arguments, not the ones
-     * inside a nested call.
-     *
-     * @return list<string>
-     */
-    private function splitArguments(string $arguments): array
-    {
-        $out = [];
-        $depth = 0;
-        $current = '';
-
-        foreach (str_split($arguments) as $char) {
-            if ($char === '(') {
-                $depth++;
-            } elseif ($char === ')') {
-                $depth--;
-            } elseif ($char === ',' && $depth === 0) {
-                $out[] = trim($current);
-                $current = '';
-
-                continue;
-            }
-
-            $current .= $char;
-        }
-
-        if (trim($current) !== '') {
-            $out[] = trim($current);
-        }
-
-        return $out;
     }
 
     /** One column of the entity row a foreign key points at. */
@@ -473,7 +506,7 @@ final class BlockBuilder
 
         $blocks = [];
 
-        foreach ($this->splitArguments($arguments) as $argument) {
+        foreach (FieldExpression::splitArguments($arguments) as $argument) {
             // A nested `link(...)` argument is one four-column group — how a table holding
             // several whole links (primary/secondary/tertiary) becomes several buttons.
             if (preg_match('/^link\((.*)\)$/', $argument, $lm) === 1) {

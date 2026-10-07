@@ -68,4 +68,38 @@ final class FieldExpression
     {
         return $this->advanced !== '';
     }
+
+    /**
+     * Split `a=b, c=d | lookup(E.f)` on the commas that separate arguments, not the ones
+     * inside a nested call.
+     *
+     * @return list<string>
+     */
+    public static function splitArguments(string $arguments): array
+    {
+        $out = [];
+        $depth = 0;
+        $current = '';
+
+        foreach (str_split($arguments) as $char) {
+            if ($char === '(') {
+                $depth++;
+            } elseif ($char === ')') {
+                $depth--;
+            } elseif ($char === ',' && $depth === 0) {
+                $out[] = trim($current);
+                $current = '';
+
+                continue;
+            }
+
+            $current .= $char;
+        }
+
+        if (trim($current) !== '') {
+            $out[] = trim($current);
+        }
+
+        return $out;
+    }
 }

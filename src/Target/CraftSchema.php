@@ -74,7 +74,7 @@ final class CraftSchema implements TargetSchema
         return new self($layouts, $sections);
     }
 
-    /** @return array<string, array{handle:?string, type:string, nested:list<string>, default:?string, propagationMethod:?string}> uid => field */
+    /** @return array<string, array{handle:?string, type:string, nested:list<string>, default:?string, propagationMethod:?string, columns:?list<string>}> uid => field */
     private static function readFields(string $dir): array
     {
         $fields = [];
@@ -98,6 +98,7 @@ final class CraftSchema implements TargetSchema
                 'propagationMethod' => isset($data['settings']['propagationMethod'])
                     ? (string) $data['settings']['propagationMethod']
                     : null,
+                'columns' => Slot::columnHandlesOf($data['settings']['columns'] ?? null),
             ];
         }
 
@@ -150,7 +151,7 @@ final class CraftSchema implements TargetSchema
 
     /**
      * @param array<string, mixed> $entryType
-     * @param array<string, array{handle:?string, type:string, nested:list<string>, default:?string, propagationMethod:?string}> $fields
+     * @param array<string, array{handle:?string, type:string, nested:list<string>, default:?string, propagationMethod:?string, columns:?list<string>}> $fields
      * @return array<string, Slot>
      */
     private static function slotsOf(array $entryType, array $fields): array
@@ -176,6 +177,7 @@ final class CraftSchema implements TargetSchema
                             nested: $field['nested'],
                             default: $field['default'],
                             propagationMethod: $field['propagationMethod'],
+                            columns: $field['columns'],
                         );
                     }
                 }
