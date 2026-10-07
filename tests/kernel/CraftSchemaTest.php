@@ -73,4 +73,13 @@ final class CraftSchemaTest extends TestCase
         self::assertNull($this->schema()->sectionType('nope'));
         self::assertNull($this->schema()->sectionEntryTypes('nope'));
     }
+
+    #[Test]
+    public function a_section_listing_an_entry_type_with_no_file_answers_unknown_rather_than_wrong(): void
+    {
+        // `archive` lists `calloutBlock` and a uid with no entry-type file — a partial or
+        // out-of-date checkout. The list it can read is not the list the section has.
+        self::assertSame('structure', $this->schema()->sectionType('archive'));
+        self::assertNull($this->schema()->sectionEntryTypes('archive'));
+    }
 }

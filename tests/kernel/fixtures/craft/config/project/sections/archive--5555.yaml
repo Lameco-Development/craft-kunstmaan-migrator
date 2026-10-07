@@ -1,0 +1,7 @@
+entryTypes:
+  -
+    uid: aaaa9999
+  - ffff0000
+handle: archive
+name: Archive
+type: structure

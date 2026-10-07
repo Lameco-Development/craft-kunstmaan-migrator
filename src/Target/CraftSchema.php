@@ -274,12 +274,13 @@ final class CraftSchema implements TargetSchema
 
     /**
      * A section's entry types by handle. Craft 5.0 lists them as bare uids, later versions as
-     * `{uid, name, …}` overrides; a uid with no entry-type file is not an entry type this
-     * target has, so it is left out rather than guessed at.
+     * `{uid, name, …}` overrides. A listed uid with no entry-type file makes the whole answer
+     * unknown: the handles that do resolve are not the section's list, and reporting them as
+     * if they were would reject an entry type the section may well allow.
      *
      * @param array<string, mixed> $section
      * @param array<string, string> $entryTypeByUid
-     * @return list<string>|null null when the section lists none
+     * @return list<string>|null null when the section lists none, or lists one this target lacks
      */
     private static function entryTypesOf(array $section, array $entryTypeByUid): ?array
     {
@@ -292,9 +293,11 @@ final class CraftSchema implements TargetSchema
         foreach ($section['entryTypes'] as $entry) {
             $uid = is_array($entry) ? (string) ($entry['uid'] ?? '') : (string) $entry;
 
-            if (isset($entryTypeByUid[$uid])) {
-                $handles[] = $entryTypeByUid[$uid];
+            if (!isset($entryTypeByUid[$uid])) {
+                return null;
             }
+
+            $handles[] = $entryTypeByUid[$uid];
         }
 
         return $handles;
