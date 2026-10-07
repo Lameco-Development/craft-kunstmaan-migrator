@@ -22,6 +22,9 @@ final class Coverage
     /** @var array<string, int> */
     private array $partPlacements = [];
 
+    /** @var array<string, int> fully qualified pagepart class => live placements, across every snapshot */
+    private array $partClasses = [];
+
     /** @var array<string, int> */
     private array $pageTypes = [];
 
@@ -64,6 +67,8 @@ final class Coverage
         foreach ($this->byClaimingKey($snapshot) as $class => $n) {
             $this->partPlacements[$class] = ($this->partPlacements[$class] ?? 0) + $n;
         }
+
+        $this->partClasses = PartClass::tally($this->partClasses, $snapshot->partClasses);
 
         foreach ($snapshot->pageTypes as $entity => $n) {
             $this->pageTypes[$entity] = ($this->pageTypes[$entity] ?? 0) + $n;
@@ -206,7 +211,9 @@ final class Coverage
      */
     public function unresolvedCollisions(): array
     {
-        return $this->mapping->unresolvedPartCollisions($this->partPlacements);
+        // Summed across databases: one database may hold only the app's class and another only
+        // Kunstmaan's, and the one short-name row still reads one table for both.
+        return $this->mapping->unresolvedPartCollisions($this->partClasses + $this->partPlacements);
     }
 
     /** @return array<string, int> page entity => live pages, unclaimed by any lane */
@@ -271,6 +278,10 @@ final class Coverage
                 foreach (array_keys($collision['classes']) as $member) {
                     $this->ambiguous[(string) $member] = true;
                 }
+
+                // A database where one class of the name was live alone reports it by the short
+                // name; those placements fall through to the same ambiguous row.
+                $this->ambiguous[$collision['key']] = true;
             }
         }
 

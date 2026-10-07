@@ -9,6 +9,7 @@ use Lameco\Kunstmaanmigrator\Mapping\MappingCheck;
 use Lameco\Kunstmaanmigrator\Report\Coverage;
 use Lameco\Kunstmaanmigrator\Report\CoverageReport;
 use Lameco\Kunstmaanmigrator\Source\LiveSnapshot;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -216,5 +217,41 @@ final class PartCollisionCheckTest extends TestCase
 
         self::assertSame(['dropped' => 36], $coverage->placementsByLane());
         self::assertSame(['Text'], $coverage->staleParts());
+    }
+    #[Test]
+    public function a_collision_split_across_two_databases_is_a_hole_to_coverage_and_validate_alike(): void
+    {
+        // The app's Text is live only in COM, Kunstmaan's only in DE: neither database sees two
+        // classes of the name, but the one `Text` row still reads one table for both.
+        $mapping = $this->mapping(<<<'YAML'
+            parts:
+              Text: { table: app_text_parts, block: textBlock, map: { body: text } }
+            YAML);
+        $environments = [
+            'COM' => [self::APP_TEXT => 133],
+            'DE' => [self::KM_TEXT => 405],
+        ];
+
+        $coverage = new Coverage($mapping);
+        $live = [];
+
+        foreach ($environments as $environment => $classes) {
+            $coverage->ingest(new LiveSnapshot(
+                environment: $environment,
+                partPlacements: ['Text' => array_sum($classes)],
+                pageTypes: ['ContentPage' => 5],
+                pagesByLocale: ['en' => 5],
+                allPartRefs: 1_000,
+                partClasses: $classes,
+            ));
+            $live = PartClass::tally($live, $classes);
+        }
+
+        self::assertTrue($coverage->hasHoles());
+        self::assertSame(
+            [['key' => 'Text', 'table' => 'app_text_parts', 'classes' => [self::APP_TEXT => 133, self::KM_TEXT => 405]]],
+            $coverage->unresolvedCollisions(),
+        );
+        self::assertNotNull((new MappingCheck(null, $live))->verdict($mapping));
     }
 }

@@ -38,4 +38,27 @@ final class PartClass
 
         return str_ends_with($short, 'PagePart') ? substr($short, 0, -8) : $short;
     }
+    /**
+     * Live placements by fully qualified class, summed over databases. A collision is a corpus
+     * fact, not a database's: the app's class live in one environment and Kunstmaan's in another
+     * still meet in the one short-name row that reads them both.
+     *
+     * @param array<string, int> ...$counts fully qualified class => live placements, per database
+     * @return array<string, int>
+     */
+    public static function tally(array ...$counts): array
+    {
+        $out = [];
+
+        foreach ($counts as $classes) {
+            foreach ($classes as $class => $n) {
+                $class = self::normalize((string) $class);
+                $out[$class] = ($out[$class] ?? 0) + $n;
+            }
+        }
+
+        arsort($out);
+
+        return $out;
+    }
 }

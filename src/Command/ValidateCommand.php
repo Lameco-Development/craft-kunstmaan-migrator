@@ -9,6 +9,7 @@ use Lameco\Kunstmaanmigrator\Mapping\MappingCheck;
 use Lameco\Kunstmaanmigrator\Source\Dsn;
 use Lameco\Kunstmaanmigrator\Source\Introspection;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 use Lameco\Kunstmaanmigrator\Target\CraftSchema;
 use Lameco\Kunstmaanmigrator\Target\SpecNotes;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -72,9 +73,7 @@ final class ValidateCommand extends Command
             $liveParts = [];
 
             foreach (LegacyDatabase::connectAll($mapping->databases(), Dsn::fromEnvironment()) as $db) {
-                foreach ($db->livePartClasses() as $class => $n) {
-                    $liveParts[$class] = ($liveParts[$class] ?? 0) + $n;
-                }
+                $liveParts = PartClass::tally($liveParts, $db->livePartClasses());
             }
         }
 
