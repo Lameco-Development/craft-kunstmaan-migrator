@@ -37,6 +37,17 @@ final class TargetModel implements TargetSchema
         return $this->gateway->sectionByHandle($handle) !== null;
     }
 
+    public function sectionType(string $handle): ?string
+    {
+        return $this->gateway->sectionByHandle($handle)['type'] ?? null;
+    }
+
+    /** @return list<string>|null */
+    public function sectionEntryTypes(string $handle): ?array
+    {
+        return $this->gateway->sectionByHandle($handle)['entryTypes'] ?? null;
+    }
+
     public function slot(string $entryType, string $field): ?Slot
     {
         return $this->slots($entryType)[$field] ?? null;

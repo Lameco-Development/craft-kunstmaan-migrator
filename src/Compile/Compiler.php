@@ -278,7 +278,7 @@ final class Compiler
             // no configured entry type, no mapped locale — must not become a `parentRef`
             // target, or its children point at an entry no payload ever writes.
             if ($this->emitStructural($nodeId, $run->ancestry, $run->parentable, $run->locales, $run->environment, $emit)) {
-                $run->parentable[$nodeId] = 'pages';
+                $run->parentable[$nodeId] = $this->mapping->structuralSection();
             }
         }
     }
@@ -516,7 +516,7 @@ final class Compiler
 
         // Kunstmaan hangs every page off the home node, but in Craft the home page is its
         // own single section and a structure cannot parent across sections. Those pages are
-        // roots of the `pages` structure instead.
+        // roots of their own structure instead.
         $parentId = $node['parentId'];
 
         if ($parentId !== null) {
@@ -886,7 +886,8 @@ final class Compiler
     }
 
     /**
-     * Ancestors of the `pages` tree that no entry covers, shallowest first.
+     * Ancestors in the structural section (`defaults.structuralSection`, `pages` unless the
+     * mapping says otherwise) that no entry covers, shallowest first.
      *
      * A Kunstmaan URL is the slug chain of a node's ancestors, and an ancestor earns its
      * segment whether or not it is published and whether or not it becomes an entry. Three
@@ -894,7 +895,7 @@ final class Compiler
      * `unmapped:`, and — the common one — a `RedirectPage`, which is how Kunstmaan gives a
      * section its landing URL. Dropping any of them re-roots the whole subtree beneath it.
      *
-     * The walk stops at a node that already parents into `pages`, and at one whose entry
+     * The walk stops at a node that already parents into that section, and at one whose entry
      * lands in another section: the Kunstmaan home node is the whole tree's parent, and a
      * Craft structure cannot parent across sections.
      *
@@ -906,9 +907,10 @@ final class Compiler
     private function structuralNodes(array $ancestry, array $parentable): array
     {
         $needed = [];
+        $structural = $this->mapping->structuralSection();
 
         foreach ($parentable as $nodeId => $section) {
-            if ($section !== 'pages') {
+            if ($section !== $structural) {
                 continue;
             }
 
@@ -931,7 +933,7 @@ final class Compiler
                 // becoming a placeholder for a section it does not belong to.
                 $ancestorSection = $this->sectionOfEntity($row['entity']);
 
-                if ($ancestorSection !== null && $ancestorSection !== 'pages') {
+                if ($ancestorSection !== null && $ancestorSection !== $structural) {
                     break;
                 }
 
@@ -997,6 +999,7 @@ final class Compiler
             return false;
         }
 
+        $section = $this->mapping->structuralSection();
         $row = $ancestry[$nodeId];
         $sites = [];
 
@@ -1015,7 +1018,7 @@ final class Compiler
 
             $parentId = $row['parentId'];
 
-            if ($parentId !== null && ($parentable[$parentId] ?? null) === 'pages') {
+            if ($parentId !== null && ($parentable[$parentId] ?? null) === $section) {
                 $sites[$site]['parentRef'] = $this->uid($environment, $parentId);
             }
         }
@@ -1028,7 +1031,7 @@ final class Compiler
 
         $emit([
             'sourceUid' => $this->uid($environment, $nodeId),
-            'section' => 'pages',
+            'section' => $section,
             'entryType' => $entryType,
             // Tells the loader this entry is a path segment, not content: it is legal for
             // it to be enabled nowhere, which no other payload is.

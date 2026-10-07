@@ -1,0 +1,6 @@
+entryTypes:
+  -
+    uid: aaaa9999
+handle: news
+name: News
+type: channel

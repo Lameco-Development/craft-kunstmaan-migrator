@@ -18,7 +18,11 @@ namespace Lameco\Kunstmaanmigrator\Payload;
 interface SchemaGateway
 {
     /**
-     * @return array{id: int, handle: string}|null null when the section handle doesn't exist
+     * `type` (`single`, `channel`, `structure`) and `entryTypes` (the allowed entry-type
+     * handles) are optional: the loader needs only the id, and `validate` treats an absent
+     * key as "not known" rather than "wrong".
+     *
+     * @return array{id: int, handle: string, type?: string, entryTypes?: list<string>}|null null when the section handle doesn't exist
      */
     public function sectionByHandle(string $handle): ?array;
 

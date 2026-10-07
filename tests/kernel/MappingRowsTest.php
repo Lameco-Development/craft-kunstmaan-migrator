@@ -297,6 +297,17 @@ final class MappingRowsTest extends TestCase
     }
 
     #[Test]
+    public function the_structural_section_defaults_to_pages(): void
+    {
+        self::assertSame('pages', $this->mapping("version: 1\n")->structuralSection());
+        self::assertSame('pages', $this->mapping("version: 1\ndefaults:\n  structuralSection: ''\n")->structuralSection());
+        self::assertSame(
+            'berkvensNlPages',
+            $this->mapping("version: 1\ndefaults:\n  structuralSection: berkvensNlPages\n")->structuralSection(),
+        );
+    }
+
+    #[Test]
     public function accounted_parts_read_the_same_truth_table(): void
     {
         $mapping = $this->mapping(<<<'YAML'

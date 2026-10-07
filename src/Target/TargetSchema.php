@@ -22,6 +22,17 @@ interface TargetSchema
 
     public function hasSection(string $handle): bool;
 
+    /** `single`, `channel` or `structure`; null when there is no such section or the source does not say. */
+    public function sectionType(string $handle): ?string;
+
+    /**
+     * The entry types a section allows, by handle; null when there is no such section or the
+     * source does not say.
+     *
+     * @return list<string>|null
+     */
+    public function sectionEntryTypes(string $handle): ?array;
+
     /** @return array<string, Slot> field handle => slot */
     public function slots(string $entryType): array;
 

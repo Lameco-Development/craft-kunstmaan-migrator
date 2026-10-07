@@ -52,4 +52,34 @@ final class CraftSchemaTest extends TestCase
         self::assertFalse($this->schema()->hasEntryType('nope'));
         self::assertTrue($this->schema()->hasSection('pages'));
     }
+
+    #[Test]
+    public function a_section_reports_its_type_and_the_entry_types_it_allows_by_handle(): void
+    {
+        // Project config lists a section's entry types by uid — Craft 5.0 as bare strings,
+        // later versions as `{uid, name}` overrides — and the uid is the file's suffix.
+        self::assertSame('structure', $this->schema()->sectionType('folders'));
+        self::assertSame(['contentBlock', 'contentColumn'], $this->schema()->sectionEntryTypes('folders'));
+        self::assertSame('channel', $this->schema()->sectionType('news'));
+        self::assertSame(['calloutBlock'], $this->schema()->sectionEntryTypes('news'));
+    }
+
+    #[Test]
+    public function a_section_that_does_not_say_answers_unknown_rather_than_wrong(): void
+    {
+        // The `pages` fixture records neither its type nor its entry types.
+        self::assertNull($this->schema()->sectionType('pages'));
+        self::assertNull($this->schema()->sectionEntryTypes('pages'));
+        self::assertNull($this->schema()->sectionType('nope'));
+        self::assertNull($this->schema()->sectionEntryTypes('nope'));
+    }
+
+    #[Test]
+    public function a_section_listing_an_entry_type_with_no_file_answers_unknown_rather_than_wrong(): void
+    {
+        // `archive` lists `calloutBlock` and a uid with no entry-type file — a partial or
+        // out-of-date checkout. The list it can read is not the list the section has.
+        self::assertSame('structure', $this->schema()->sectionType('archive'));
+        self::assertNull($this->schema()->sectionEntryTypes('archive'));
+    }
 }

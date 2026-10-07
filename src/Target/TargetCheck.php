@@ -22,7 +22,7 @@ final class TargetCheck
     /** @return list<string> */
     public function check(Mapping $mapping): array
     {
-        $errors = [];
+        $errors = $this->checkStructural($mapping);
 
         foreach ($mapping->pageRows() as $name => $page) {
             if (!$page->isMigrated()) {
@@ -214,6 +214,57 @@ final class TargetCheck
         }
 
         return $warnings;
+    }
+
+    /**
+     * Where structural placeholders land: a structure that exists and allows their entry type.
+     *
+     * Checked only when an entry type is configured — without one the compiler emits no
+     * placeholder, so the section is never written to. A missing section, a channel or a type
+     * the section refuses all surface at load time otherwise, after every subtree under a
+     * placeholder has already been re-rooted.
+     *
+     * @return list<string>
+     */
+    private function checkStructural(Mapping $mapping): array
+    {
+        $entryType = $mapping->structuralEntryType();
+
+        if ($entryType === null) {
+            return [];
+        }
+
+        $errors = [];
+        $section = $mapping->structuralSection();
+
+        if (!$this->schema->hasEntryType($entryType)) {
+            $errors[] = sprintf('defaults.structuralEntryType: no entry type `%s` in Craft', $entryType);
+        }
+
+        if (!$this->schema->hasSection($section)) {
+            $errors[] = sprintf('defaults.structuralSection: no section `%s` in Craft', $section);
+
+            return $errors;
+        }
+
+        $type = $this->schema->sectionType($section);
+
+        // An unknown type is not a wrong one: a source that does not record it is no evidence.
+        if ($type !== null && $type !== 'structure') {
+            $errors[] = sprintf(
+                'defaults.structuralSection: section `%s` is a %s, not a structure — a placeholder there cannot parent anything',
+                $section,
+                $type,
+            );
+        }
+
+        $allowed = $this->schema->sectionEntryTypes($section);
+
+        if ($allowed !== null && $errors === [] && !in_array($entryType, $allowed, true)) {
+            $errors[] = sprintf('defaults.structuralEntryType: section `%s` does not allow entry type `%s`', $section, $entryType);
+        }
+
+        return $errors;
     }
 
     /**

@@ -1,0 +1,8 @@
+entryTypes:
+  -
+    name: 'Folder'
+    uid: dddd4444
+  - bbbb2222
+handle: folders
+name: Folders
+type: structure

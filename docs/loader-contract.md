@@ -91,6 +91,21 @@ its descendants — while the entry's own URL returns 404 (`Entry::route()` serv
 `STATUS_LIVE`) and falls through to Retour. For a `RedirectPage` ancestor that is exactly the
 wanted behaviour: the segment survives, and the redirect still fires.
 
+The compiler takes both handles from the mapping's `defaults:`:
+
+```yaml
+defaults:
+  structuralEntryType: redirectPage   # required for any placeholder; none is emitted without it
+  structuralSection: berkvensNlPages  # optional, `pages` when omitted
+```
+
+`structuralSection` is the structure the placeholders are written into, and the only one they
+parent into: a placeholder is built only above a page that itself lands in that section, and
+parents only onto a page or placeholder in it, because a Craft structure cannot parent across
+sections. A target that gives each site group its own page tree names that tree here. With
+`--craft`, `validate` checks that the section exists, is a structure, and allows
+`structuralEntryType`.
+
 Because it is enabled nowhere, `structural` is the one payload exempt from the
 `NO_ENABLED_SITE` violation. Every other rule still applies, so a site listed with a slug
 still needs a title unless the entry type has a `titleFormat`. List a site only where the
