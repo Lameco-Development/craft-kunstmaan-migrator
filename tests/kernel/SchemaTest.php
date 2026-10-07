@@ -286,4 +286,71 @@ final class SchemaTest extends TestCase
                   background_color: "design-driven, no Craft equivalent"
             YAML));
     }
+
+    #[Test]
+    public function the_page_fields_lane_validates_clean(): void
+    {
+        self::assertSame([], $this->validate(PageFieldsLaneTest::MAPPING));
+    }
+
+    #[Test]
+    public function a_context_target_can_only_be_page(): void
+    {
+        $errors = $this->validate(self::SOUND . "\ndefaults:\n  contexts:\n    header: { target: pages }\n");
+
+        self::assertSame(['defaults.contexts.header: `target:` can only be `page`'], $errors);
+    }
+
+    #[Test]
+    public function a_page_context_names_no_field_and_prepends_nothing(): void
+    {
+        $errors = $this->validate(self::SOUND . <<<'YAML'
+
+            pages:
+              TextPage:
+                entryType: contentPage
+                contexts:
+                  header: { target: page, field: heroFields, prepend: true }
+            YAML);
+
+        self::assertSame(
+            [
+                'page `TextPage`, contexts.header: a `target: page` context writes the page\'s own fields — `field:` has nothing to name',
+                'page `TextPage`, contexts.header: a `target: page` context writes the page\'s own fields — `prepend:` has nothing to name',
+            ],
+            $errors,
+        );
+    }
+
+    #[Test]
+    public function consumed_by_names_a_known_lane(): void
+    {
+        $errors = $this->validate(self::SOUND . "\n  Header: { consumedBy: pages, map: { heroTitle: title } }\n");
+
+        self::assertSame(['part `Header`: `consumedBy:` must be `sequence` or `page`, got `pages`'], $errors);
+    }
+
+    #[Test]
+    public function a_page_part_has_to_write_something(): void
+    {
+        $errors = $this->validate(self::SOUND . "\n  Header: { consumedBy: page }\n");
+
+        self::assertSame(
+            ['part `Header`: `consumedBy: page` with no `map:` and no `children:` writes nothing — say it with drop: or manual:'],
+            $errors,
+        );
+    }
+
+    #[Test]
+    public function requires_belongs_to_a_page_part_and_lists_fields(): void
+    {
+        self::assertSame(
+            ['part `Body`: `requires:` only applies to a `consumedBy: page` part'],
+            $this->validate(self::SOUND . "\n  Body: { block: contentBlock, requires: [content] }\n"),
+        );
+        self::assertSame(
+            ['part `Header`: `requires:` must be a list of page field handles'],
+            $this->validate(self::SOUND . "\n  Header: { consumedBy: page, map: { heroTitle: title }, requires: heroSlides }\n"),
+        );
+    }
 }

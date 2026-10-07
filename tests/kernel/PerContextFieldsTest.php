@@ -558,12 +558,12 @@ final class PerContextFieldsTest extends TestCase
     public function blocks_replacing_a_mapped_value_on_the_same_field_are_reported(): void
     {
         // The block stream has always won the builder; now any context field — or `forms.field` —
-        // can collide with what `map:`, `children:` or a sidecar put there. The stream still wins,
+        // can collide with what `map:`, `children:`, a sidecar or a page part put there. The stream still wins,
         // but the value it replaces is counted, not lost in silence.
         [$entries, $compiler] = $this->compile(self::HEAD . self::mapsTheSidebar() . self::PARTS);
 
         self::assertSame([self::text(2, 'openingstijden'), self::text(3, 'adres')], self::fieldsOf($entries[0])['berkvensNlSidebar']);
-        self::assertSame(1, $compiler->skipped()['contentPage.berkvensNlSidebar: blocks replace a value from map/children/sidecars'] ?? null);
+        self::assertSame(1, $compiler->skipped()['contentPage.berkvensNlSidebar: blocks replace a value from map/children/sidecars/page parts'] ?? null);
     }
 
     #[Test]

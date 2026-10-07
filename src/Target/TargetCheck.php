@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Target;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\PageRow;
+use Lameco\Kunstmaanmigrator\Mapping\PartRow;
 
 /**
  * Checks a mapping against the target Craft content model.
@@ -65,16 +67,9 @@ final class TargetCheck
 
             // A field the page writes itself and the block stream also fills: the blocks win at
             // compile, so the mapped value is dropped on every page that has any blocks there.
-            $blockFields = $page->contextFields();
-            $formsField = $this->formsField($mapping);
-
-            if ($formsField !== null) {
-                $blockFields[] = $formsField;
-            }
-
             $written = array_map(strval(...), [...array_keys($page->map()), ...array_keys($page->children())]);
 
-            foreach (array_values(array_unique(array_intersect($written, $blockFields))) as $field) {
+            foreach (array_values(array_intersect($written, $this->blockFields($mapping, $page))) as $field) {
                 $errors[] = sprintf(
                     'page `%s`: `%s` is both mapped and a block field — the blocks replace the mapped value',
                     $name,
@@ -112,6 +107,8 @@ final class TargetCheck
                 }
             }
         }
+
+        $errors = [...$errors, ...$this->checkPageParts($mapping)];
 
         foreach ($mapping->partRows() as $name => $part) {
             $block = $part->block();
@@ -154,6 +151,151 @@ final class TargetCheck
         }
 
         return $errors;
+    }
+
+    /**
+     * A `consumedBy: page` part's `map:` and `children:` address the fields of the page it sits
+     * on, so they are checked against the page entry types that have a `target: page` context —
+     * the types it can reach. A field no such type has is a typo, and every value is dropped: an
+     * error. A type that merely lacks one is `pagesWithNoBlockField()`'s warning instead — the
+     * `forms.field` precedent: compile drops the value there and counts it.
+     *
+     * @return list<string>
+     */
+    private function checkPageParts(Mapping $mapping): array
+    {
+        $hosts = $this->pagePartHosts($mapping);
+        $errors = [];
+
+        foreach ($mapping->partRows() as $name => $part) {
+            if ($part->disposition() !== PartRow::PAGE) {
+                continue;
+            }
+
+            foreach (array_keys($part->map()) as $target) {
+                if ($this->hostsWith($hosts, (string) $target) !== []) {
+                    continue;
+                }
+
+                foreach ($hosts as $entryType) {
+                    $errors[] = sprintf('part `%s`: page entry type `%s` has no field `%s`', $name, $entryType, $target);
+                }
+            }
+
+            // A host with the field still has to hold it as a Matrix of the right shape; with no
+            // host holding it at all, each one says so.
+            foreach ($part->children() as $field => $child) {
+                $holding = $this->hostsWith($hosts, (string) $field);
+
+                foreach ($holding !== [] ? $holding : $hosts as $entryType) {
+                    $this->checkChildren(sprintf('part `%s`', $name), $entryType, [$field => $child], $errors);
+                }
+            }
+
+            // The block stream wins a field it fills, so a page part writing one is lost on every
+            // page that has blocks there.
+            $written = array_map(strval(...), [...array_keys($part->map()), ...array_keys($part->children())]);
+
+            foreach ($mapping->pageRows() as $pageName => $page) {
+                if (!$page->compiles() || $page->pageContexts() === []) {
+                    continue;
+                }
+
+                foreach (array_values(array_intersect($written, $this->blockFields($mapping, $page))) as $field) {
+                    $errors[] = sprintf(
+                        "part `%s`: `%s` is a block field on page `%s` — the blocks replace the page part's value",
+                        $name,
+                        $field,
+                        $pageName,
+                    );
+                }
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * The page entry types a `consumedBy: page` part can land on: those with a `target: page` context.
+     *
+     * @return list<string>
+     */
+    private function pagePartHosts(Mapping $mapping): array
+    {
+        $hosts = [];
+
+        foreach ($mapping->pageRows() as $page) {
+            $entryType = (string) $page->entryType();
+
+            if ($page->compiles() && $page->pageContexts() !== [] && $this->schema->hasEntryType($entryType)) {
+                $hosts[$entryType] = true;
+            }
+        }
+
+        return array_map(strval(...), array_keys($hosts));
+    }
+
+    /**
+     * @param list<string> $hosts
+     * @return list<string> the hosts that carry the field
+     */
+    private function hostsWith(array $hosts, string $field): array
+    {
+        return array_values(array_filter($hosts, fn(string $host): bool => $this->schema->slot($host, $field) !== null));
+    }
+
+    /**
+     * A page entry type lacking a field a page part writes, where another type it can land on
+     * has it: compile drops the value on those pages and counts it.
+     *
+     * @return list<string>
+     */
+    private function pagePartGaps(Mapping $mapping): array
+    {
+        $hosts = $this->pagePartHosts($mapping);
+        $warnings = [];
+
+        foreach ($mapping->partRows() as $name => $part) {
+            if ($part->disposition() !== PartRow::PAGE) {
+                continue;
+            }
+
+            foreach ([...array_keys($part->map()), ...array_keys($part->children())] as $field) {
+                $holding = $this->hostsWith($hosts, (string) $field);
+
+                if ($holding === []) {
+                    continue;
+                }
+
+                foreach (array_diff($hosts, $holding) as $entryType) {
+                    $warnings[] = sprintf(
+                        'part `%s` writes `%s`, which page entry type `%s` does not have — dropped on those pages',
+                        $name,
+                        $field,
+                        $entryType,
+                    );
+                }
+            }
+        }
+
+        return $warnings;
+    }
+
+    /**
+     * The fields a page's block stream fills: each context's, and `forms.field` when declared.
+     *
+     * @return list<string>
+     */
+    private function blockFields(Mapping $mapping, PageRow $page): array
+    {
+        $fields = $page->contextFields();
+        $formsField = $this->formsField($mapping);
+
+        if ($formsField !== null) {
+            $fields[] = $formsField;
+        }
+
+        return array_values(array_unique($fields));
     }
 
     /**
@@ -244,7 +386,7 @@ final class TargetCheck
             }
         }
 
-        return $warnings;
+        return [...$warnings, ...$this->pagePartGaps($mapping)];
     }
 
     /**

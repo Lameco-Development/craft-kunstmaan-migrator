@@ -71,7 +71,7 @@ final class CoverageReportTest extends TestCase
         $view = (new CoverageReport($coverage))->toArray();
 
         self::assertSame(
-            ['placements', 'pages', 'liveShare', 'byLane', 'unclaimedParts', 'unclaimedPageTypes', 'staleParts', 'strandedLocales', 'omissions', 'holes'],
+            ['placements', 'pages', 'liveShare', 'byLane', 'unclaimedParts', 'unclaimedPageTypes', 'staleParts', 'strandedLocales', 'omissions', 'pageContextLosses', 'holes'],
             array_keys($view),
         );
         self::assertSame(120, $view['placements']);

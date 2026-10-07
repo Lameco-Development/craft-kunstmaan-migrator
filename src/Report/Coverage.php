@@ -29,6 +29,9 @@ final class Coverage
 
     private int $allPartRefs = 0;
 
+    /** @var array<string, array<string, array<string, array{stacks: int, placements: int}>>> */
+    private array $pageContextStacks = [];
+
     public function __construct(private readonly Mapping $mapping)
     {
     }
@@ -62,6 +65,88 @@ final class Coverage
 
         $this->localesByEnvironment[$snapshot->environment] = $snapshot->pagesByLocale;
         $this->allPartRefs += $snapshot->allPartRefs;
+
+        // Only the locales that land somewhere: a page on a locale with no Craft site is not
+        // compiled at all, and `strandedLocales()` already counts it whole.
+        $sites = (array) (($this->mapping->environments()[$snapshot->environment] ?? [])['locales'] ?? []);
+
+        foreach ($snapshot->pageContextStacks as $page => $contexts) {
+            foreach ($contexts as $context => $langs) {
+                foreach ($langs as $lang => $mixes) {
+                    $site = $sites[$lang] ?? null;
+
+                    if (!is_string($site) || $site === '') {
+                        continue;
+                    }
+
+                    foreach ($mixes as $mix => $totals) {
+                        $known = $this->pageContextStacks[$page][$context][$mix] ?? ['stacks' => 0, 'placements' => 0];
+                        $this->pageContextStacks[$page][$context][$mix] = [
+                            'stacks' => $known['stacks'] + $totals['stacks'],
+                            'placements' => $known['placements'] + $totals['placements'],
+                        ];
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Parts lost to a single-valued page context: what compile drops from a `target: page`
+     * context, which fills the page's own fields once. A stack holding a `consumedBy: page` part
+     * keeps one placement and loses the rest; a stack holding none — a body text alone in the
+     * header — loses all of it, being neither a hero nor a block. Losses, not holes: the mapping
+     * decided the context holds one part. A number rather than a silent drop.
+     *
+     * A lower bound, as far as the legacy refs show it: a page part that fails its `requires:`,
+     * maps nothing the entry type carries or has no row is assumed here to fill the page, so a
+     * stack whose every page part fails loses one placement more than this counts. Judging that
+     * needs the part's own row and the target schema — what `state/explain` asks compile for,
+     * per node, and what the run report counts. Pages on a locale with no Craft site are left
+     * out (`strandedLocales()` has them). `placementsByLane()` is per class, so a body text alone
+     * in a page context is filed there under `blocks` and counted here as lost.
+     *
+     * @return list<array{page: string, context: string, placements: int}>
+     */
+    public function pageContextLosses(): array
+    {
+        $out = [];
+
+        foreach ($this->pageContextStacks as $page => $contexts) {
+            $row = $this->mapping->pageRow((string) $page);
+
+            if ($row === null || !$row->compiles()) {
+                continue;
+            }
+
+            foreach ($row->pageContexts() as $context) {
+                $lost = 0;
+
+                foreach ($contexts[$context] ?? [] as $mix => $totals) {
+                    $lost += $totals['placements'] - ($this->fillsAPage((string) $mix) ? $totals['stacks'] : 0);
+                }
+
+                if ($lost > 0) {
+                    $out[] = ['page' => (string) $page, 'context' => $context, 'placements' => $lost];
+                }
+            }
+        }
+
+        usort($out, static fn(array $a, array $b): int => $b['placements'] <=> $a['placements']);
+
+        return $out;
+    }
+
+    /** Whether a mix of part classes holds one that can fill a page: a `consumedBy: page` part. */
+    private function fillsAPage(string $mix): bool
+    {
+        foreach (explode(',', $mix) as $class) {
+            if ($this->mapping->partRow($class)?->disposition() === PartRow::PAGE) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return array<string, int> pagepart class => live placements, unclaimed by any lane */

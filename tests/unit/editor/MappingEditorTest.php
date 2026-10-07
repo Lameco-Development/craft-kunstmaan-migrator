@@ -498,7 +498,8 @@ final class MappingEditorTest extends TestCase
     /**
      * The fallbacks the compiler applies apply here too: a context with no `field:` streams into
      * `pageBuilder`, a mapping with no `defaults.contexts` into `commonPageBuilder`, and the form
-     * block into `forms.field` — each of which used to contribute nothing to the list.
+     * block into `forms.field` — each of which used to contribute nothing to the list. A
+     * `target: page` context contributes nothing: it writes the page's own fields (#90).
      */
     public function testAvailableBlocksResolveContextsAndTheFormsFieldAsTheCompilerDoes(): void
     {
@@ -516,6 +517,10 @@ final class MappingEditorTest extends TestCase
                 entryType: cataloguePage
                 contexts:
                   main: {}
+              HeroPage:
+                entryType: heroPage
+                contexts:
+                  header: { target: page }
               Dropped: { entryType: droppedPage, drop: 'not migrated' }
             forms:
               context: form
@@ -528,6 +533,8 @@ final class MappingEditorTest extends TestCase
             static fn(string $entryType, string $field): array => match ("$entryType.$field") {
                 'contentPage.commonPageBuilder' => ['textBlock'],
                 'cataloguePage.pageBuilder' => ['uspBlock'],
+                // A `target: page` context fills the page's own fields and offers no blocks.
+                'heroPage.pageBuilder', 'heroPage.commonPageBuilder' => ['neverOffered'],
                 'contentPage.formsMatrix' => ['formBlock'],
                 'droppedPage.commonPageBuilder' => ['neverOffered'],
                 default => [],

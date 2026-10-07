@@ -10,8 +10,13 @@ use craft\console\Controller;
 use craft\elements\Entry;
 use craft\helpers\App;
 use craft\helpers\Console;
+use Lameco\Kunstmaanmigrator\Compile\Compiler;
+use Lameco\Kunstmaanmigrator\Compile\Transforms;
+use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\load\ExplainContext;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
+use Lameco\Kunstmaanmigrator\load\PageFills;
 use Lameco\Kunstmaanmigrator\load\RefResolver;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Payload\SourceUid;
@@ -122,21 +127,31 @@ class StateController extends Controller
             EnvironmentPipeline::dsnFromSettings(),
         );
 
-        $context = new ExplainContext(
-            environment: $environment,
-            lanes: $mapping->accountedParts(),
-            tables: self::partTablesOf($mapping),
-            contexts: array_map('strval', array_keys((array) ($mapping->all()['defaults']['contexts'] ?? []))),
-            locales: self::migratedLocalesOf($spec),
+        $context = ExplainContext::fromMapping($environment, $mapping);
+
+        // A page part leaves no block id in the state row, so which one filled a page context is
+        // asked of compile itself — the selection depends on the part's data (`requires:`, the
+        // fields the entry type carries), and re-deriving it here is how the two would drift.
+        // The run report of this throwaway compiler is never read.
+        $compiler = new Compiler(
+            $mapping,
+            new Transforms($mapping->all()['transforms'] ?? []),
+            new TargetModel(new CraftSchemaGateway()),
         );
+        $fills = new PageFills($compiler, $compiler->begin($legacy, $environment));
 
         return $single
-            ? $this->explainOne((string) $this->node, $environment, $legacy, $context)
-            : $this->sweep($environment, $legacy, $context);
+            ? $this->explainOne((string) $this->node, $environment, $legacy, $context, $fills)
+            : $this->sweep($environment, $legacy, $context, $fills);
     }
 
-    private function explainOne(string $node, string $environment, LegacyDatabase $legacy, ExplainContext $context): int
-    {
+    private function explainOne(
+        string $node,
+        string $environment,
+        LegacyDatabase $legacy,
+        ExplainContext $context,
+        PageFills $fills,
+    ): int {
         $nodeId = explode(':', $node, 2)[1];
         $row = Plugin::getInstance()->migrationStateService->get($environment . ':kuma_nodes', $nodeId);
 
@@ -147,7 +162,12 @@ class StateController extends Controller
         }
 
         $meta = self::decodeMeta($row['meta'] ?? null);
-        $reconciled = $context->reconcile((array) ($meta['blockIds'] ?? []), $legacy->livePartsOfNode((int) $nodeId));
+        $reconciled = $context->reconcile(
+            (array) ($meta['blockIds'] ?? []),
+            $legacy->livePartsOfNode((int) $nodeId),
+            $fills->pageOf((int) $nodeId),
+            $fills->of((int) $nodeId),
+        );
 
         $this->stdout(json_encode([
             'node' => $node,
@@ -173,7 +193,7 @@ class StateController extends Controller
      * breakdown grouped by target entry type — because a loss that concentrates in one entry
      * type is a mapping or content-model problem, and a loss spread evenly is a loader problem.
      */
-    private function sweep(string $environment, LegacyDatabase $legacy, ExplainContext $context): int
+    private function sweep(string $environment, LegacyDatabase $legacy, ExplainContext $context, PageFills $fills): int
     {
         $partsByNode = $legacy->livePartsByNode();
         $entryTypes = self::entryTypesByEntryId();
@@ -193,7 +213,12 @@ class StateController extends Controller
 
             $nodeId = (int) ($row['sourceKey'] ?? 0);
             $meta = self::decodeMeta($row['meta'] ?? null);
-            $result = $context->reconcile((array) ($meta['blockIds'] ?? []), $partsByNode[$nodeId] ?? []);
+            $result = $context->reconcile(
+                (array) ($meta['blockIds'] ?? []),
+                $partsByNode[$nodeId] ?? [],
+                $fills->pageOf($nodeId),
+                $fills->of($nodeId),
+            );
 
             ++$nodes;
             $written += $result['written'];
@@ -292,45 +317,6 @@ class StateController extends Controller
 
         foreach ($rows as $row) {
             $out[(int) $row['id']] = (string) $row['handle'];
-        }
-
-        return $out;
-    }
-
-    /**
-     * @return array<string, string> pagepart class => the legacy table the mapping names
-     */
-    private static function partTablesOf(Mapping $mapping): array
-    {
-        $tables = [];
-
-        foreach ($mapping->parts() as $class => $part) {
-            if (is_array($part) && isset($part['table'])) {
-                $tables[(string) $class] = (string) $part['table'];
-            }
-        }
-
-        return $tables;
-    }
-
-    /**
-     * The legacy langs that have a Craft site to land in.
-     *
-     * `!unmapped "<reason>"` resolves to null when the mapping is parsed, so a locale is
-     * migrated exactly when its value is a non-empty handle. Everything else was declared as
-     * having nowhere to go, and its content is missing by decision rather than by defect.
-     *
-     * @param array<string, mixed> $spec
-     * @return list<string>
-     */
-    private static function migratedLocalesOf(array $spec): array
-    {
-        $out = [];
-
-        foreach ((array) ($spec['locales'] ?? []) as $lang => $handle) {
-            if (is_string($handle) && $handle !== '') {
-                $out[] = (string) $lang;
-            }
         }
 
         return $out;

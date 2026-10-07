@@ -29,6 +29,10 @@ final readonly class EntryExplanation
      * @param array<string, string>                $tables    pagepart class => the legacy table the mapping names
      * @param list<string>                         $contexts  Kunstmaan contexts the mapping streams into blocks
      * @param list<string>                         $locales   legacy langs that have a Craft site to land in
+     * @param list<string>                         $pageContexts Kunstmaan contexts declared `target: page`
+     * @param array<string, array<string, array{part: string, id: int}|null>>|null $pageFills
+     *        legacy lang => page context => the part compile writes there, or null when none can be
+     *        (`Compiler::pageContextFills()`); null when unknown, and the rule is inferred instead
      * @return array{written: int, accountedFor: list<array<string, mixed>>, unexplained: list<array<string, mixed>>}
      */
     public static function reconcile(
@@ -39,6 +43,8 @@ final readonly class EntryExplanation
         array $tables,
         array $contexts = [],
         array $locales = [],
+        array $pageContexts = [],
+        ?array $pageFills = null,
     ): array {
         $written = [];
 
@@ -63,6 +69,25 @@ final readonly class EntryExplanation
             $key = $part['part'] . ':' . $part['id'];
             $grouped[$key] ??= $part + ['langs' => []];
             $grouped[$key]['langs'][(string) $part['lang']] = true;
+        }
+
+        // A page part leaves no block id behind. What it wrote is asked of compile itself when
+        // the caller can (`$pageFills`) — the first part that *can* be written fills the page, and
+        // whether it can depends on its data. Without that, the rule is inferred from the sequence
+        // alone, and the verdict says it is an inference.
+        $firstOnPage = [];
+
+        foreach ($legacyParts as $part) {
+            if (($lanes[$part['part']] ?? null) !== 'page') {
+                continue;
+            }
+
+            $slot = $part['lang'] . "\0" . $part['context'];
+            $current = $firstOnPage[$slot] ?? null;
+
+            if ($current === null || $part['sequence'] < $current['sequence']) {
+                $firstOnPage[$slot] = $part;
+            }
         }
 
         foreach ($grouped as $part) {
@@ -102,6 +127,15 @@ final readonly class EntryExplanation
                 continue;
             }
 
+            if ($lane === 'page') {
+                $row['why'] = $pageFills !== null
+                    ? self::filledVerdict($part, $pageFills, $pageContexts)
+                    : self::pageVerdict($part, $firstOnPage, $pageContexts);
+                $accountedFor[] = $row;
+
+                continue;
+            }
+
             // A part the mapping deliberately does not turn into a block is not a hole, and
             // listing it as one buries the ones that are.
             if ($lane !== null && $lane !== 'blocks') {
@@ -134,5 +168,72 @@ final readonly class EntryExplanation
             'accountedFor' => $accountedFor,
             'unexplained' => $unexplained,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $part grouped, with its `langs`
+     * @param array<string, array<string, mixed>> $firstOnPage "lang\0context" => the first page part there
+     * @param list<string> $pageContexts
+     */
+    private static function pageVerdict(array $part, array $firstOnPage, array $pageContexts): string
+    {
+        $context = (string) $part['context'];
+
+        if (!in_array($context, $pageContexts, true)) {
+            return sprintf('not written: `%s` is not a `target: page` context, and a `consumedBy: page` part becomes no block', $context);
+        }
+
+        foreach (array_keys($part['langs']) as $lang) {
+            $first = $firstOnPage[$lang . "\0" . $context] ?? null;
+
+            if ($first !== null && $first['part'] === $part['part'] && $first['id'] === $part['id']) {
+                return sprintf(
+                    'first in the `%s` page context: written to the page\'s own fields unless its `requires:` came'
+                    . ' out empty or nothing it maps is on the entry type',
+                    $context,
+                );
+            }
+        }
+
+        return sprintf(
+            'not first in the `%s` page context: not written unless every part before it could not be',
+            $context,
+        );
+    }
+
+    /**
+     * The verdict from what compile chose — `Compiler::pageContextFills()` — rather than inferred.
+     *
+     * @param array<string, mixed> $part grouped, with its `langs`
+     * @param array<string, array<string, array{part: string, id: int}|null>> $pageFills
+     * @param list<string> $pageContexts
+     */
+    private static function filledVerdict(array $part, array $pageFills, array $pageContexts): string
+    {
+        $context = (string) $part['context'];
+
+        if (!in_array($context, $pageContexts, true)) {
+            return sprintf('not written: `%s` is not a `target: page` context, and a `consumedBy: page` part becomes no block', $context);
+        }
+
+        $winner = null;
+
+        foreach (array_keys($part['langs']) as $lang) {
+            $fill = $pageFills[$lang][$context] ?? null;
+
+            if ($fill !== null && $fill['part'] === $part['part'] && $fill['id'] === $part['id']) {
+                return sprintf('written to the page\'s own fields from the `%s` page context, not as a block', $context);
+            }
+
+            $winner ??= $fill;
+        }
+
+        return $winner !== null
+            ? sprintf('not written: `%s` #%d filled the page from the `%s` page context', $winner['part'], $winner['id'], $context)
+            : sprintf(
+                'not written: no part in the `%s` page context could be written — a `requires:` field came out'
+                . ' empty, nothing it maps is on the entry type, or its row is missing',
+                $context,
+            );
     }
 }

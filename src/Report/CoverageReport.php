@@ -25,6 +25,7 @@ final class CoverageReport
     public const LANE_NAMES = [
         'blocks' => 'page content',
         'sequence' => 'page content (merged into the block above it)',
+        'page' => 'page fields (the page\'s own hero)',
         'forms' => 'forms',
         'globals' => 'site-wide (footer, navigation)',
         'manual' => 'rebuilt by hand after migration',
@@ -50,6 +51,7 @@ final class CoverageReport
             'staleParts' => $this->coverage->staleParts(),
             'strandedLocales' => $this->coverage->strandedLocales(),
             'omissions' => $this->coverage->declaredOmissions(),
+            'pageContextLosses' => $this->coverage->pageContextLosses(),
             'holes' => $this->coverage->hasHoles(),
         ];
     }
@@ -136,6 +138,23 @@ final class CoverageReport
                     number_format($omission['placements']),
                     str_replace('|', '\\|', $omission['reason']),
                 );
+            }
+        }
+
+        if ($losses = $coverage->pageContextLosses()) {
+            $lines[] = '';
+            $lines[] = '## Extra parts a page field cannot hold';
+            $lines[] = '';
+            $lines[] = 'These contexts fill fields on the page itself — the hero — from one part. A page that stacks';
+            $lines[] = 'several parts there keeps the first that can fill it; the rest, and any part that is no page';
+            $lines[] = 'part at all, do not migrate. A lower bound: a part whose `requires:` comes out empty is';
+            $lines[] = 'counted here as kept — the run report has the exact number.';
+            $lines[] = '';
+            $lines[] = '| page type | context | parts lost |';
+            $lines[] = '|---|---|---:|';
+
+            foreach ($losses as $loss) {
+                $lines[] = sprintf('| `%s` | `%s` | %s |', $loss['page'], $loss['context'], number_format($loss['placements']));
             }
         }
 
