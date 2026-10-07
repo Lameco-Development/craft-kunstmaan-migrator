@@ -308,4 +308,28 @@ final class PartCollisionCheckTest extends TestCase
             self::MASTER_MAPS => 'google_maps_page_parts',
         ])))->verdict($mapping));
     }
+    #[Test]
+    public function a_run_narrowed_to_one_database_still_sees_a_collision_across_the_corpus(): void
+    {
+        // `migrate --env=DE` measures DE alone, where only Kunstmaan's Text is live; the app's,
+        // live in COM, is what the one `Text` row reads.
+        $coverage = new Coverage($this->mapping(<<<'YAML'
+            parts:
+              Text: { table: app_text_parts, block: textBlock, map: { body: text } }
+            YAML));
+        $coverage->ingest(new LiveSnapshot(
+            environment: 'DE',
+            partPlacements: [self::KM_TEXT => 405],
+            pageTypes: ['ContentPage' => 5],
+            pagesByLocale: ['en' => 5],
+            allPartRefs: 1_000,
+        ));
+
+        self::assertFalse($coverage->hasHoles(), 'one database alone shows no collision');
+
+        $coverage->seeCorpus([self::APP_TEXT => 133, self::KM_TEXT => 405]);
+
+        self::assertTrue($coverage->hasHoles());
+        self::assertSame([self::KM_TEXT => 405], $coverage->unclaimedParts());
+    }
 }

@@ -23,6 +23,9 @@ final class Coverage
     /** @var array<string, int> fully qualified pagepart class => live placements, across every snapshot */
     private array $partPlacements = [];
 
+    /** @var array<string, int>|null fully qualified pagepart class => live placements, corpus-wide */
+    private ?array $corpus = null;
+
     /** @var array<string, int> */
     private array $pageTypes = [];
 
@@ -103,6 +106,20 @@ final class Coverage
     }
 
     /**
+     * The whole corpus's live classes, for a measurement that ingests only some of its databases
+     * (`migrate --env`). A collision is a corpus fact: the class this database holds can share its
+     * short-name row with one live only in another, and it compiles from that one's table.
+     *
+     * @param array<string, int> $classes fully qualified class => live placements, summed over
+     *        every database (`PartClass::tally()`)
+     */
+    public function seeCorpus(array $classes): void
+    {
+        $this->corpus = PartClass::tally($classes);
+        $this->ambiguous = null;
+    }
+
+    /**
      * Parts lost to a single-valued page context: what compile drops from a `target: page`
      * context, which fills the page's own fields once. A stack holding a `consumedBy: page` part
      * keeps one placement and loses the rest; a stack holding none — a body text alone in the
@@ -170,7 +187,7 @@ final class Coverage
      */
     public function unclaimedParts(): array
     {
-        $names = PartClass::reportNames(array_keys($this->partPlacements));
+        $names = PartClass::reportNames(array_keys($this->partPlacements + ($this->corpus ?? [])));
         $out = [];
 
         foreach ($this->partPlacements as $class => $n) {
@@ -194,7 +211,7 @@ final class Coverage
     {
         // Summed across databases: one database may hold only the app's class and another only
         // Kunstmaan's, and the one short-name row still reads one table for both.
-        return $this->mapping->unresolvedPartCollisions($this->partPlacements, $this->tables);
+        return $this->mapping->unresolvedPartCollisions($this->corpus ?? $this->partPlacements, $this->tables);
     }
 
     /** @return array<string, int> page entity => live pages, unclaimed by any lane */
