@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Mapping;
 
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
 use Lameco\Kunstmaanmigrator\Source\PartClass;
 use Symfony\Component\Yaml\Tag\TaggedValue;
 use Symfony\Component\Yaml\Yaml;
@@ -196,12 +197,15 @@ final class Mapping
      * Two namespaces sharing a short name each have their own table, with overlapping ids, so
      * a row reading one of them compiles the other's placements from the wrong rows — wrong
      * content, and no loss counted. A row that reads no table (`drop:`, `manual:`, `unmapped:`)
-     * may cover both; so may a short name whose other classes have no live placements.
+     * may cover both; so may a short name whose other classes have no live placements, and so
+     * may classes the entity index shows reading one table (a subclass keeping its parent's).
+     * Without an index, or with a class it does not know, the tables are unknown and it counts.
      *
-     * @param array<string, int> $liveClasses fully qualified class => live placements
+     * @param array<string, int> $liveClasses fully qualified class => live placements, summed over
+     *        every database (`PartClass::tally()`)
      * @return list<array{key: string, table: ?string, classes: array<string, int>}>
      */
-    public function unresolvedPartCollisions(array $liveClasses): array
+    public function unresolvedPartCollisions(array $liveClasses, ?EntityTableIndex $tables = null): array
     {
         $fallingThrough = [];
 
@@ -216,7 +220,7 @@ final class Mapping
         $out = [];
 
         foreach ($fallingThrough as $key => $classes) {
-            if (count($classes) < 2 || !$this->readsATable((string) $key)) {
+            if (count($classes) < 2 || !$this->readsATable((string) $key) || self::shareOneTable($classes, $tables)) {
                 continue;
             }
 
@@ -225,6 +229,32 @@ final class Mapping
         }
 
         return $out;
+    }
+
+    /**
+     * Whether the index knows every class's table and it is the same one.
+     *
+     * @param array<string, int> $classes
+     */
+    private static function shareOneTable(array $classes, ?EntityTableIndex $tables): bool
+    {
+        if ($tables === null) {
+            return false;
+        }
+
+        $seen = [];
+
+        foreach (array_keys($classes) as $class) {
+            $table = $tables->tableFor((string) $class);
+
+            if ($table === null) {
+                return false;
+            }
+
+            $seen[$table] = true;
+        }
+
+        return count($seen) === 1;
     }
 
     /** Whether the lane claiming a short name reads a table by placement id. */

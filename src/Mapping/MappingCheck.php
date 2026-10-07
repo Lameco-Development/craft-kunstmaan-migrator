@@ -6,6 +6,7 @@ namespace Lameco\Kunstmaanmigrator\Mapping;
 
 use Lameco\Kunstmaanmigrator\Report\IntrospectionCheck;
 use Lameco\Kunstmaanmigrator\Report\SpecDivergence;
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
 use Lameco\Kunstmaanmigrator\Source\Introspection;
 use Lameco\Kunstmaanmigrator\Target\SpecNotes;
 use Lameco\Kunstmaanmigrator\Target\TargetCheck;
@@ -30,10 +31,13 @@ final class MappingCheck
     /**
      * @param array<string, int>|null $liveParts fully qualified pagepart class => live placements,
      *        when the legacy databases were read; null leaves the collision check out
+     * @param ?EntityTableIndex $tables the legacy entities' tables, where known: classes that
+     *        share a short name and read one table are no collision
      */
     public function __construct(
         private readonly ?TargetSchema $target = null,
         private readonly ?array $liveParts = null,
+        private readonly ?EntityTableIndex $tables = null,
     ) {
     }
 
@@ -48,7 +52,7 @@ final class MappingCheck
             return ['Mapping is not well-formed', $errors];
         }
 
-        if ($this->liveParts !== null && ($errors = self::collisionErrors($mapping, $this->liveParts))) {
+        if ($this->liveParts !== null && ($errors = $this->collisionErrors($mapping, $this->liveParts))) {
             return ['Short-name rows that read one table for several live classes', $errors];
         }
 
@@ -111,11 +115,11 @@ final class MappingCheck
      * @param array<string, int> $liveParts
      * @return list<string>
      */
-    private static function collisionErrors(Mapping $mapping, array $liveParts): array
+    private function collisionErrors(Mapping $mapping, array $liveParts): array
     {
         $errors = [];
 
-        foreach ($mapping->unresolvedPartCollisions($liveParts) as $collision) {
+        foreach ($mapping->unresolvedPartCollisions($liveParts, $this->tables) as $collision) {
             $classes = [];
 
             foreach ($collision['classes'] as $class => $n) {

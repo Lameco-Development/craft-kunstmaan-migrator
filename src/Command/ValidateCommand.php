@@ -7,6 +7,7 @@ namespace Lameco\Kunstmaanmigrator\Command;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\MappingCheck;
 use Lameco\Kunstmaanmigrator\Source\Dsn;
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
 use Lameco\Kunstmaanmigrator\Source\Introspection;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Lameco\Kunstmaanmigrator\Source\PartClass;
@@ -46,7 +47,8 @@ final class ValidateCommand extends Command
                 . 'give a source for that the mapping does not fill (repeatable)')
             ->addOption('live', null, InputOption::VALUE_NONE,
                 'Read the mapping\'s legacy databases (KUMA_DB_* credentials) — fails on a short-name row '
-                . 'that reads one table for several live classes sharing that short name')
+                . 'that reads one table for several live classes sharing that short name (with --introspection, '
+                . 'classes the artifact shows reading the same table are no collision)')
             ->addOption('introspection', null, InputOption::VALUE_REQUIRED,
                 'Introspection artifact from `introspect` — checks the mapping against the legacy '
                 . 'app\'s own wiring: unclaimed ManyToMany joins, editor-facing columns ignored '
@@ -67,6 +69,8 @@ final class ValidateCommand extends Command
             return Command::INVALID;
         }
 
+        $artifact = $input->getOption('introspection');
+        $introspection = $artifact !== null ? Introspection::fromFile((string) $artifact) : null;
         $liveParts = null;
 
         if ($input->getOption('live')) {
@@ -80,11 +84,10 @@ final class ValidateCommand extends Command
         $check = new MappingCheck(
             $craftRoot !== null ? CraftSchema::fromProjectConfig((string) $craftRoot) : null,
             $liveParts,
+            // Two classes the artifact shows reading one table are no collision.
+            $introspection !== null ? EntityTableIndex::fromIntrospection($introspection) : null,
         );
         $specNotes = array_map(static fn($dir): SpecNotes => SpecNotes::fromDirectory((string) $dir), $specDirs);
-
-        $artifact = $input->getOption('introspection');
-        $introspection = $artifact !== null ? Introspection::fromFile((string) $artifact) : null;
 
         $verdict = $check->verdict($mapping, ...$specNotes);
         $warnings = $check->warnings($mapping, $introspection);

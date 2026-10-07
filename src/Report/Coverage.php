@@ -6,6 +6,7 @@ namespace Lameco\Kunstmaanmigrator\Report;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\PartRow;
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Lameco\Kunstmaanmigrator\Source\LiveSnapshot;
 use Lameco\Kunstmaanmigrator\Source\PartClass;
@@ -39,8 +40,14 @@ final class Coverage
     /** @var array<string, array<string, array<string, array{stacks: int, placements: int}>>> */
     private array $pageContextStacks = [];
 
-    public function __construct(private readonly Mapping $mapping)
-    {
+    /**
+     * @param ?EntityTableIndex $tables the legacy entities' tables, where known: classes that
+     *        share a short name and read one table are no collision
+     */
+    public function __construct(
+        private readonly Mapping $mapping,
+        private readonly ?EntityTableIndex $tables = null,
+    ) {
     }
 
     /**
@@ -49,9 +56,9 @@ final class Coverage
      *
      * @param iterable<LegacyDatabase> $connections
      */
-    public static function measure(Mapping $mapping, iterable $connections): self
+    public static function measure(Mapping $mapping, iterable $connections, ?EntityTableIndex $tables = null): self
     {
-        $coverage = new self($mapping);
+        $coverage = new self($mapping, $tables);
 
         foreach ($connections as $db) {
             $coverage->ingest($db->snapshot());
@@ -213,7 +220,7 @@ final class Coverage
     {
         // Summed across databases: one database may hold only the app's class and another only
         // Kunstmaan's, and the one short-name row still reads one table for both.
-        return $this->mapping->unresolvedPartCollisions($this->partClasses + $this->partPlacements);
+        return $this->mapping->unresolvedPartCollisions($this->partClasses + $this->partPlacements, $this->tables);
     }
 
     /** @return array<string, int> page entity => live pages, unclaimed by any lane */

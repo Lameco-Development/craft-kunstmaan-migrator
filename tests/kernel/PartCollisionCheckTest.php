@@ -8,6 +8,8 @@ use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\MappingCheck;
 use Lameco\Kunstmaanmigrator\Report\Coverage;
 use Lameco\Kunstmaanmigrator\Report\CoverageReport;
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
+use Lameco\Kunstmaanmigrator\Source\Introspection;
 use Lameco\Kunstmaanmigrator\Source\LiveSnapshot;
 use Lameco\Kunstmaanmigrator\Source\PartClass;
 use PHPUnit\Framework\Attributes\Test;
@@ -253,5 +255,58 @@ final class PartCollisionCheckTest extends TestCase
             $coverage->unresolvedCollisions(),
         );
         self::assertNotNull((new MappingCheck(null, $live))->verdict($mapping));
+    }
+    private const APP_MAPS = 'App\Entity\PageParts\GoogleMapsPagePart';
+    private const MASTER_MAPS = 'Lameco\MasterBundle\Entity\PageParts\GoogleMapsPagePart';
+
+    /** @param array<string, string> $tables fully qualified class => table */
+    private static function tables(array $tables): EntityTableIndex
+    {
+        return EntityTableIndex::fromIntrospection(Introspection::fromArray([
+            'entities' => array_map(static fn(string $table): array => ['table' => $table], $tables),
+        ]));
+    }
+
+    #[Test]
+    public function two_classes_reading_the_same_table_are_no_collision(): void
+    {
+        // The app's GoogleMaps extends the bundle's and keeps its table: one row reads both right.
+        $mapping = $this->mapping(<<<'YAML'
+            parts:
+              GoogleMaps: { table: google_maps_page_parts, block: mapBlock, map: { address: address } }
+            YAML);
+        $live = [self::APP_MAPS => 12, self::MASTER_MAPS => 30];
+        $tables = self::tables([self::APP_MAPS => 'google_maps_page_parts', self::MASTER_MAPS => 'google_maps_page_parts']);
+
+        self::assertNull((new MappingCheck(null, $live, $tables))->verdict($mapping));
+
+        $coverage = new Coverage($mapping, $tables);
+        $coverage->ingest(new LiveSnapshot(
+            environment: 'COM',
+            partPlacements: $live,
+            pageTypes: ['ContentPage' => 5],
+            pagesByLocale: ['en' => 5],
+            allPartRefs: 1_000,
+            partClasses: $live,
+        ));
+
+        self::assertFalse($coverage->hasHoles());
+        self::assertSame(['blocks' => 42], $coverage->placementsByLane());
+    }
+
+    #[Test]
+    public function a_class_whose_table_the_index_does_not_know_still_collides(): void
+    {
+        $mapping = $this->mapping(<<<'YAML'
+            parts:
+              GoogleMaps: { table: google_maps_page_parts, block: mapBlock, map: { address: address } }
+            YAML);
+        $live = [self::APP_MAPS => 12, self::MASTER_MAPS => 30];
+
+        self::assertNotNull((new MappingCheck(null, $live, self::tables([self::APP_MAPS => 'google_maps_page_parts'])))->verdict($mapping));
+        self::assertNotNull((new MappingCheck(null, $live, self::tables([
+            self::APP_MAPS => 'app_google_maps_page_parts',
+            self::MASTER_MAPS => 'google_maps_page_parts',
+        ])))->verdict($mapping));
     }
 }

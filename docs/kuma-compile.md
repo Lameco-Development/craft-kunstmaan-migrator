@@ -411,8 +411,14 @@ parts:
   the table the introspection artifact or the source checkout gives it.
 - **An unresolved collision is a hole.** While one short-name row reads a table for two live classes,
   `coverage` reports both classes as unclaimed (so `migrate` refuses a full run, as it does for any
-  hole) and `validate --live` fails. A short-name row that reads no table — `drop:`, `manual:`, or the
-  name under `unmapped.parts:` — may cover every class of that name.
+  hole) and `validate --live` fails. Classes are counted across every database: the app's class live
+  in one environment and Kunstmaan's in another still collide. A short-name row that reads no table —
+  `drop:`, `manual:`, or the name under `unmapped.parts:` — may cover every class of that name.
+- **Classes that read one table do not collide** — a subclass keeping its parent's table, as the
+  app's `GoogleMapsPagePart` does under `Lameco\MasterBundle`'s. That takes the entity tables, so
+  pass the introspection artifact (`coverage --introspection`, `validate --live --introspection`);
+  without it the tables are unknown and the classes count as a collision. `migrate` has no artifact
+  to read, so a mapping relying on this still needs a qualified row per class for a full run.
 
 ## Non-node tables
 
