@@ -333,6 +333,15 @@ The benchmark slice that found each step is in
   positions, which is what lets a single-tile part (Product: title + link, no
   child table) compile as a cardsBlock holding one card.
 
+## 1.2.0-beta.12 — 2026-10-07
+
+### Changed
+
+- **Allows Navigation 4** — `verbb/navigation` is now `^3.0 || ^4.0`. The
+  navigation lane still calls the 3.x API (`getNavs()`, `getNavByHandle()`,
+  `Node::$navId`); 4.x keeps all three as deprecation shims, so nothing else
+  changed. Expect deprecation warnings for them on a 4.x install.
+
 ## 1.2.0-beta.11 — 2026-09-17
 
 The forms lane read a legacy form field's label, its options and its type from

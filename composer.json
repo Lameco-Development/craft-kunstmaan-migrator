@@ -30,7 +30,7 @@
         "phpunit/phpunit": "^11.0",
         "spicyweb/craft-embedded-assets": "^5.4",
         "verbb/formie": "^3.1",
-        "verbb/navigation": "^3.0"
+        "verbb/navigation": "^3.0 || ^4.0"
     },
     "autoload": {
         "psr-4": {
