@@ -76,6 +76,55 @@ class AssetPathResolver
     }
 
     /**
+     * Whether a legacy path is under Kunstmaan's media directory, `/uploads/media/…` — a file
+     * `kuma_media` knows — rather than another uploads directory or a loose name.
+     */
+    public static function isMediaPath(string $url): bool
+    {
+        return str_starts_with('/' . ltrim($url, '/'), '/uploads/media/');
+    }
+
+    /**
+     * Resolves any legacy `/uploads/…` path against one configured media root.
+     *
+     * `/uploads/media/…` and bare names go through `resolveLocal()` unchanged. Anything else
+     * under `/uploads/` — a catalogue file at `/uploads/models_import/A12.jpg`, which has no
+     * `kuma_media` row — is a sibling of the media directory: a root named `…/uploads/media`
+     * (the Kunstmaan convention every mapping states) is read from its parent, and a root
+     * named anywhere else is taken to be the uploads directory itself. The traversal guard is
+     * `resolveLocal()`'s, against whichever directory that is.
+     *
+     * @param string $mediaRoot one entry of the environment's `mediaRoot` chain
+     */
+    public static function resolveUpload(?string $url, string $mediaRoot): ?string
+    {
+        if ($url !== null && !self::isMediaPath($url) && preg_match('#^/?uploads/(.+)$#', $url, $m) === 1) {
+            $root = rtrim($mediaRoot, '/' . DIRECTORY_SEPARATOR);
+            $uploads = basename($root) === 'media' ? dirname($root) : $root;
+
+            return self::resolveLocal($m[1], $uploads);
+        }
+
+        return self::resolveLocal($url, $mediaRoot);
+    }
+
+    /**
+     * The uploads-relative directory of a path outside `kuma_media` — `models_import` for
+     * `/uploads/models_import/A12.jpg` — or null for a media path or a loose file.
+     *
+     * It is the only organisation such a file ever had, so `legacy-tree` mirrors it where a
+     * `kuma_media` row would have named a `kuma_folders` chain.
+     */
+    public static function uploadDir(string $url): ?string
+    {
+        if (self::isMediaPath($url) || preg_match('#^/?uploads/(.+)/[^/]+$#', $url, $m) !== 1) {
+            return null;
+        }
+
+        return $m[1];
+    }
+
+    /**
      * Returns a 4-digit year subfolder name from kuma_media.created_at,
      * or 'unknown' if the date is missing/malformed.
      */

@@ -29,6 +29,11 @@ final class AssetExpressionTest extends TestCase
             'an entry ref' => ['media_id | ref(Media)', false],
             'asset then another transform' => ['media_id | asset | url', false],
             'a transform whose name merely starts with asset' => ['media_id | assets', false],
+            'a file under an uploads directory' => ['name | file(uploads/models_import)', true],
+            'a file carrying its own path' => ['path | file', true],
+            'a coalesce of a media asset and a file' => ['coalesce(media_id | asset, name | file(uploads/x))', true],
+            'file then another transform' => ['name | file(uploads/x) | url', false],
+            'a transform whose name merely starts with file' => ['name | files', false],
         ];
     }
 
@@ -42,6 +47,6 @@ final class AssetExpressionTest extends TestCase
     #[Test]
     public function the_registered_asset_transforms_are_named(): void
     {
-        self::assertSame(['asset'], AssetExpression::TRANSFORMS);
+        self::assertSame(['asset', 'file'], AssetExpression::TRANSFORMS);
     }
 }

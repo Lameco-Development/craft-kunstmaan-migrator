@@ -403,7 +403,7 @@ final class ChildCollectionTargetsTest extends TestCase
         );
 
         self::assertSame(
-            [sprintf('part `ImageGallery`: `imageGalleryBlock.images` is an Assets field, so `image: %s` must end in an asset transform (`| asset`)', $expression)],
+            [sprintf('part `ImageGallery`: `imageGalleryBlock.images` is an Assets field, so `image: %s` must end in an asset transform (`| asset`, `| file`)', $expression)],
             (new TargetCheck(self::schema()))->check(Mapping::fromFile(self::mappingFile($yaml))),
         );
     }
@@ -418,6 +418,35 @@ final class ChildCollectionTargetsTest extends TestCase
         );
 
         self::assertSame([], (new TargetCheck(self::schema()))->check(Mapping::fromFile(self::mappingFile($yaml))));
+    }
+
+    #[Test]
+    public function the_target_check_accepts_a_file_under_an_uploads_directory(): void
+    {
+        $yaml = str_replace(
+            "fk: image_gallery_page_part_id\n        map: { image: media_id | asset }",
+            "fk: image_gallery_page_part_id\n        map: { image: name | file(uploads/models_import) }",
+            self::MAPPING,
+        );
+
+        self::assertSame([], (new TargetCheck(self::schema()))->check(Mapping::fromFile(self::mappingFile($yaml))));
+    }
+
+    #[Test]
+    public function a_pages_child_rows_fill_its_assets_field_from_file_names(): void
+    {
+        // Catalogue rows name a file rather than a `kuma_media` id; `file(dir)` states where the
+        // legacy site served it from, and each row becomes the same `{_asset}` node `asset` emits.
+        [$fields] = $this->compile(str_replace(
+            "fk: project_page_id\n        map: { image: media_id | asset }",
+            "fk: project_page_id\n        map: { image: media_id | file(uploads/models_import) }",
+            self::MAPPING,
+        ));
+
+        self::assertSame(
+            [['_asset' => '/uploads/models_import/1'], ['_asset' => '/uploads/models_import/2']],
+            $fields['galleryImages'],
+        );
     }
 
     #[Test]

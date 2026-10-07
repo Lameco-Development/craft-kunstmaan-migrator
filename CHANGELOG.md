@@ -114,6 +114,37 @@ The benchmark slice that found each step is in
 
 ### Fixed
 
+- **Media state keys are scoped to the environment that read them.**
+  `kuma_media.id` restarts at 1 in every legacy database, so a bare
+  `kuma_media:{id}` state key made COM's media 42 and DE's media 42 one
+  identity — the same cross-environment collision the saved-node keys were
+  scoped for in beta.8. On the Enreach corpus 1,862 ids exist in both COM and
+  DE against different files; 104 had been claimed by whichever environment
+  migrated first, and 23 DE pages resolved their SEOmatic `og:image` to a COM
+  asset through the collided key. The key is now `{ENV}:kuma_media:{id}` at
+  every read and write — `resolveFromLegacyId()`, `ingestRow()` and
+  `SeomaticPayloadBuilder`, which takes the environment as a `build()`
+  argument rather than reading it off a property something else wrote last.
+  `CkeditorRewriterService`'s warm cache is keyed by the bare legacy id, which
+  is only unique within one environment, so it now warms from its own
+  resolver's environment alone and stays cold when it has none.
+
+  `legacy_url:{sha1(path)}` keys stay global on purpose: they are keyed by file
+  path, and the `mediaRoots` fallback chain (DE → [DE root, COM root]) means a
+  DE page resolving to a file under COM's root is the intended sharing. Unlike
+  the `legacy-tree` folder prefix the scoping is not conditional on the mapping
+  holding more than one environment — a folder prefix is cosmetic, but a key
+  format that changed shape when a second environment was added would silently
+  orphan every row already written.
+
+  **Upgrading:** `kuma_media:`-keyed rows written by an earlier version no
+  longer match and are inert; each environment re-ingests its own media under
+  the scoped key on the next run, so that environment's media root has to be
+  mounted for it. An id an environment has not migrated now resolves to
+  nothing rather than to another environment's asset — a miss the asset
+  scanner already warns about, and a recoverable one, which the wrong image
+  was not. `legacy_url:` rows are unaffected (2,646 of the Enreach corpus's
+  2,894 media rows).
 - **The fixup and finalize passes run under the maintenance hold too.** The
   hold on Craft's per-save maintenance — entry-URI jobs vetoed, search
   indexing deferred — covered the entry loop and the adapters and stopped

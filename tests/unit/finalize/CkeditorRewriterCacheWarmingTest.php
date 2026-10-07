@@ -32,21 +32,51 @@ final class CkeditorRewriterCacheWarmingTest extends TestCase
     public function testKumaMediaCacheWarmsFromStateRows(): void
     {
         $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('COM');
         $svc->migrationState = new FakeStateStream(media: [
-            ['sourceKey' => 'kuma_media:123', 'targetType' => 'asset', 'targetId' => 55],
-            ['sourceKey' => 'kuma_media:124', 'targetType' => 'asset', 'targetId' => 56],
+            ['sourceKey' => 'COM:kuma_media:123', 'targetType' => 'asset', 'targetId' => 55],
+            ['sourceKey' => 'COM:kuma_media:124', 'targetType' => 'asset', 'targetId' => 56],
         ]);
 
         self::assertSame(55, $this->callPrivate($svc, 'resolveKumaMediaId', 123));
         self::assertSame(56, $this->callPrivate($svc, 'resolveKumaMediaId', 124));
     }
 
+    public function testKumaMediaWarmIgnoresAnotherEnvironmentsRows(): void
+    {
+        // This cache is keyed by the bare legacy id, which is only unique within
+        // one environment. Warming it from every row let DE's media 123 answer a
+        // COM lookup — the same collision the scoped state key exists to stop.
+        $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('COM');
+        $svc->migrationState = new FakeStateStream(media: [
+            ['sourceKey' => 'DE:kuma_media:123', 'targetType' => 'asset', 'targetId' => 55],
+            ['sourceKey' => 'kuma_media:124', 'targetType' => 'asset', 'targetId' => 56],
+        ]);
+
+        self::assertNull($this->callPrivate($svc, 'resolveKumaMediaId', 123), 'DE row must not answer for COM');
+        self::assertNull($this->callPrivate($svc, 'resolveKumaMediaId', 124), 'a pre-scoping bare row is nobodys');
+    }
+
+    public function testKumaMediaWarmStaysColdWithoutAnEnvironment(): void
+    {
+        // No resolver means no environment to scope against. Adopting every row
+        // would be the pre-fix behaviour, so the cache stays empty instead.
+        $svc = new CkeditorRewriterService();
+        $svc->migrationState = new FakeStateStream(media: [
+            ['sourceKey' => 'COM:kuma_media:123', 'targetType' => 'asset', 'targetId' => 55],
+        ]);
+
+        self::assertNull($this->callPrivate($svc, 'resolveKumaMediaId', 123));
+    }
+
     public function testKumaMediaWarmSkipsRowsThatAreNotResolvedAssets(): void
     {
         $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('COM');
         $svc->migrationState = new FakeStateStream(media: [
-            ['sourceKey' => 'kuma_media:1', 'targetType' => 'entry', 'targetId' => 9],
-            ['sourceKey' => 'kuma_media:2', 'targetType' => 'asset', 'targetId' => null],
+            ['sourceKey' => 'COM:kuma_media:1', 'targetType' => 'entry', 'targetId' => 9],
+            ['sourceKey' => 'COM:kuma_media:2', 'targetType' => 'asset', 'targetId' => null],
             ['sourceKey' => 'something_else:3', 'targetType' => 'asset', 'targetId' => 7],
         ]);
 
@@ -58,9 +88,10 @@ final class CkeditorRewriterCacheWarmingTest extends TestCase
     public function testKumaMediaCacheIsWarmedOnce(): void
     {
         $stream = new FakeStateStream(media: [
-            ['sourceKey' => 'kuma_media:5', 'targetType' => 'asset', 'targetId' => 42],
+            ['sourceKey' => 'COM:kuma_media:5', 'targetType' => 'asset', 'targetId' => 42],
         ]);
         $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('COM');
         $svc->migrationState = $stream;
 
         $this->callPrivate($svc, 'resolveKumaMediaId', 5);
@@ -190,5 +221,28 @@ final class FakeStateStream implements MigrationStateStream
     public function targetIds(string $targetType): Generator
     {
         yield from [];
+    }
+}
+
+/**
+ * Stands in for the AssetResolver the pipeline binds per environment. The
+ * rewriter has no environment of its own; the resolver is where it comes from.
+ *
+ * @internal
+ */
+final class FakeEnvResolver
+{
+    public function __construct(private readonly string $environment = 'COM')
+    {
+    }
+
+    public function environmentName(): string
+    {
+        return $this->environment;
+    }
+
+    public function resolveFromLegacyId(int $kumaMediaId): int
+    {
+        return 0;
     }
 }

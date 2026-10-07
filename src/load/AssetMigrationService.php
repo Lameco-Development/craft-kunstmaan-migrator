@@ -34,7 +34,7 @@ use yii\base\Component;
  *    currently wired to a console flag (no caller sets it up yet).
  *
  * Each successful ingest writes a state row via MigrationStateService:
- *   source='media', sourceKey='kuma_media:{id}',
+ *   source='media', sourceKey='{ENV}:kuma_media:{id}',
  *   targetType='asset' (local file) or 'video' (remote),
  *   targetId=<craft asset id | 0>, targetUid=<asset uid | null>,
  *   meta={ originalUrl, location, contentType, videoId? }
@@ -186,7 +186,7 @@ class AssetMigrationService extends Component
     public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
         // Fast path: state already has this media id → return its target id.
-        $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, 'kuma_media:' . $legacyId, null);
+        $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, self::mediaStateKey($legacyId, $env), null);
         if ($existing !== null) {
             return (int) $existing;
         }
@@ -198,8 +198,35 @@ class AssetMigrationService extends Component
 
         // ingestOne returned null — could be remote video (state row written,
         // no Asset element) or an unresolvable miss. Re-check state.
-        $resolved = $this->migrationState?->getTargetId(self::STATE_SOURCE, 'kuma_media:' . $legacyId, null);
+        $resolved = $this->migrationState?->getTargetId(self::STATE_SOURCE, self::mediaStateKey($legacyId, $env), null);
         return $resolved !== null ? (int) $resolved : 0;
+    }
+
+    /**
+     * The state key for one kuma_media row, scoped to the environment that read it.
+     *
+     * `kuma_media.id` restarts at 1 in every legacy database, so a bare key made
+     * COM's media 5 and DE's media 5 one identity — the same cross-environment
+     * collision `resolveEntryIdForNode()` guards against for nodes. On the Enreach
+     * corpus 1,862 ids exist in both COM and DE against different files; 104 had
+     * been claimed by whichever environment ran first, and 23 DE pages resolved
+     * og:image to a COM asset through the collided key.
+     *
+     * Unlike the `legacy-tree` folder prefix this is deliberately not conditional
+     * on the mapping holding more than one environment. A folder prefix is
+     * cosmetic, but a key format that changed shape when a second environment was
+     * added would silently orphan every row already written.
+     *
+     * `legacy_url:` keys stay global on purpose: they are keyed by file path, and
+     * the mediaRoots fallback chain (DE → [DE root, COM root]) means a DE page
+     * resolving to a file under COM's root is the intended sharing. Scoping those
+     * would fetch a second copy of the same file for every environment.
+     */
+    private static function mediaStateKey(int $mediaId, ?EnvironmentContext $env): string
+    {
+        $name = $env?->name ?? '';
+
+        return $name !== '' ? $name . ':kuma_media:' . $mediaId : 'kuma_media:' . $mediaId;
     }
 
     private static function jitOptions(?MigrationOptions $opts): MigrationOptions
@@ -234,33 +261,50 @@ class AssetMigrationService extends Component
     }
 
     /**
-     * JIT fallback for raw CKEditor `/uploads/media/...` URLs that exist on
-     * disk but no longer have a matching `kuma_media` row. This preserves live
-     * editor content as the source of truth while keeping the state key distinct
-     * from real `kuma_media:{id}` rows.
+     * JIT resolution of an `_asset` path, and fallback for raw CKEditor `/uploads/media/...`
+     * URLs that exist on disk but no longer have a matching `kuma_media` row. This preserves
+     * live editor content as the source of truth while keeping the state key distinct from
+     * real `kuma_media:{id}` rows.
+     *
+     * Any `/uploads/…` path resolves, not only `/uploads/media/…`: catalogue tables store a
+     * file name under `/uploads/models_import/` or `/uploads/documents/` with no `kuma_media`
+     * row at all, and a `file(<dir>)` transform hands those over as the same `_asset` node.
+     * They are found beside the media root (see `AssetPathResolver::resolveUpload()`) and keyed
+     * by the file found, `legacy_file:<sha1(realpath)>`: one file named by many rows is one
+     * asset, and the same relative path in two environments' checkouts is two.
      */
     public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
-        $path = parse_url($legacyUrl, PHP_URL_PATH);
-        if (!is_string($path) || $path === '') {
-            $path = preg_replace('/[?#].*$/', '', $legacyUrl) ?? $legacyUrl;
+        $path = '/' . ltrim($legacyUrl, '/');
+
+        // A rich-text `/uploads/media/…` URL may carry a query or fragment; a path outside it is
+        // what `file()` emitted, a file name and not a URL, so `a#1.pdf` stays `a#1.pdf`.
+        if (!str_starts_with($path, '/uploads/') || AssetPathResolver::isMediaPath($path)) {
+            $path = parse_url($legacyUrl, PHP_URL_PATH);
+            if (!is_string($path) || $path === '') {
+                $path = preg_replace('/[?#].*$/', '', $legacyUrl) ?? $legacyUrl;
+            }
+            $path = '/' . ltrim($path, '/');
         }
-        $path = '/' . ltrim($path, '/');
-        if ($path === '/' || !str_starts_with($path, '/uploads/media/')) {
+        if (!str_starts_with($path, '/uploads/')) {
             return 0;
         }
 
-        $stateKey = 'legacy_url:' . sha1($path);
-        $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
-        if ($existing !== null) {
-            return (int) $existing;
+        $isMedia = AssetPathResolver::isMediaPath($path);
+
+        if ($isMedia) {
+            $stateKey = 'legacy_url:' . sha1($path);
+            $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
+            if ($existing !== null) {
+                return (int) $existing;
+            }
         }
 
         $sourcePath = null;
         $rootDir = '';
 
         foreach ($this->mediaRoots($env) as $rootDir) {
-            $sourcePath = AssetPathResolver::resolveLocal($path, $rootDir);
+            $sourcePath = AssetPathResolver::resolveUpload($path, $rootDir);
 
             if ($sourcePath !== null) {
                 break;
@@ -269,6 +313,18 @@ class AssetMigrationService extends Component
 
         if ($sourcePath === null) {
             return 0;
+        }
+
+        if (!$isMedia) {
+            // Keyed by the file it found, not the path it was asked for: NL and FR are separate
+            // checkouts that both hold `/uploads/documents/montage.pdf`, and a path key handed FR
+            // NL's asset. The real path still keeps one asset per file where an environment's
+            // fallback root is another environment's — that sharing is the point of the chain.
+            $stateKey = 'legacy_file:' . sha1($sourcePath);
+            $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
+            if ($existing !== null) {
+                return (int) $existing;
+            }
         }
 
         $contentType = function_exists('mime_content_type') ? (string) @mime_content_type($sourcePath) : '';
@@ -287,7 +343,9 @@ class AssetMigrationService extends Component
             // chain and degrades to a year bucket. On a corpus whose rich text references
             // media by path rather than by id, this path ingests every asset, so the
             // strategy never applied to anything at all.
-            'folder_id' => $this->legacyFolderIdForPath($path),
+            // A path outside `/uploads/media/` has no kuma_media row to read a folder from;
+            // `targetFolderPath()` places it under its own uploads directory instead.
+            'folder_id' => $isMedia ? $this->legacyFolderIdForPath($path) : 0,
         ], $rootDir, $opts, $counts, $stateKey, $env);
 
         if ($asset instanceof Asset) {
@@ -501,7 +559,7 @@ class AssetMigrationService extends Component
         ?EnvironmentContext $env = null,
     ): ?Asset {
         $mediaId = (int) $row['id'];
-        $key = $stateKey ?? 'kuma_media:' . $mediaId;
+        $key = $stateKey ?? self::mediaStateKey($mediaId, $env);
 
         // D-08-20 fast-path: `--skip-assets` (CLI: options['skipAssets']=true)
         // short-circuits BEFORE any kuma_media payload read, FS stat, or
@@ -638,7 +696,7 @@ class AssetMigrationService extends Component
         }
 
         // Local file path resolution with traversal guard.
-        $sourcePath = AssetPathResolver::resolveLocal((string) ($row['url'] ?? ''), $rootDir);
+        $sourcePath = AssetPathResolver::resolveUpload((string) ($row['url'] ?? ''), $rootDir);
         if ($sourcePath === null) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
@@ -1067,6 +1125,17 @@ class AssetMigrationService extends Component
         if ($this->folderStrategy === AssetFolderPath::STRATEGY_LEGACY_TREE) {
             $folderId = isset($row['folder_id']) ? (int) $row['folder_id'] : 0;
             $chain = $folderId > 0 ? $this->legacyFolderChain($folderId, $env?->name) : null;
+
+            // A file outside kuma_media has no kuma_folders chain; the uploads directory it was
+            // served from is the only organisation it ever had — `migrated/models_import/`.
+            if ($chain === null) {
+                $dir = AssetPathResolver::uploadDir((string) ($row['url'] ?? ''));
+                $segments = array_filter(
+                    array_map(AssetFolderPath::sanitizeSegment(...), explode('/', (string) $dir)),
+                    static fn(string $segment): bool => $segment !== '',
+                );
+                $chain = $segments === [] ? null : implode('/', $segments);
+            }
         }
 
         return AssetFolderPath::compose(

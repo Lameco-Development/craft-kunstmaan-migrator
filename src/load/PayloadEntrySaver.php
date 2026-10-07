@@ -501,8 +501,9 @@ final class PayloadEntrySaver
                 continue;
             }
             // An `_asset` resolves to a one-id list, which is right for a field holding one asset.
-            // A list of them — a `children:` collection into an Assets field — is one relation
-            // field, so the ids are spliced into it rather than nested `[[501], [502]]`.
+            // A list of them — a `children:` collection into an Assets field, or what
+            // `m2m(...) | file(...)` emits — is one relation field, so the ids are spliced into it
+            // rather than nested `[[501], [502]]`.
             if ($isList && is_array($childValue) && array_key_exists('_asset', $childValue) && is_array($child['value'])) {
                 array_push($out, ...$child['value']);
             } elseif ($isList) {
