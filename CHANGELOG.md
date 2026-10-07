@@ -60,6 +60,19 @@ The benchmark slice that found each step is in
 
 ### Changed
 
+- **A short-name part row reading one table for two live classes is now a
+  hole.** Two namespaces sharing a short name (the app's `TextPagePart` and
+  Kunstmaan's) each have their own table with overlapping ids, so the one
+  row compiled the second class from the first one's rows. `coverage`
+  reports both classes unclaimed — so `migrate` refuses a full run — and
+  `validate --live` fails, counting classes across every database. A mapping
+  that passed before can fail here: key a row by each class's fully
+  qualified name (`parts:` accepts it), or pass `--introspection` to
+  `coverage`/`validate` so classes it shows reading the same table (a
+  subclass keeping its parent's, such as `GoogleMapsPagePart` under
+  `App\` and `Lameco\MasterBundle\`) are not counted. Without the artifact
+  their tables are unknown, and they are.
+
 - **No search indexing during the run; the index is rebuilt once at the
   end.** Craft extracted search keywords inline on every save — every owner
   save, every block save, and the owner again for each block whose field is

@@ -8,6 +8,7 @@ use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
 
 use Lameco\Kunstmaanmigrator\Source\Introspection;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 
 /**
  * Generates a mapping skeleton from a live Kunstmaan database.
@@ -43,9 +44,7 @@ final class Skeleton
         $locales = [];
 
         foreach ($databases as $env => $db) {
-            foreach ($db->livePartPlacements() as $class => $n) {
-                $parts[$class] = ($parts[$class] ?? 0) + $n;
-            }
+            $parts = PartClass::tally($parts, $db->livePartPlacements());
 
             foreach ($db->livePageTypes() as $entity => $n) {
                 $pages[$entity] = ($pages[$entity] ?? 0) + $n;
@@ -54,7 +53,9 @@ final class Skeleton
             $locales[$env] = $db->livePagesByLocale();
         }
 
-        arsort($parts);
+        // Collisions are judged over the corpus: two classes of a name live in different
+        // databases still need a row each.
+        $parts = PartClass::reported($parts);
         arsort($pages);
 
         $probe = reset($databases);
@@ -362,6 +363,13 @@ final class Skeleton
 
         foreach ($parts as $class => $live) {
             $table = $this->entities->tableFor($class);
+
+            if (PartClass::isQualified((string) $class)) {
+                $out .= sprintf(
+                    "  # Shares the short name `%s` with another live class: a row per class, each reading its own table.\n",
+                    PartClass::shortName((string) $class),
+                );
+            }
 
             $out .= sprintf("  %s:\n", $class);
             $out .= sprintf("    live: %d\n", $live);

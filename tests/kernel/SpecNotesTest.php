@@ -103,4 +103,15 @@ final class SpecNotesTest extends TestCase
         self::assertSame([], $notes[0]->targets);
         self::assertFalse($notes[0]->isMapped());
     }
+
+    #[Test]
+    public function a_part_keyed_by_its_qualified_name_finds_the_specs_naming_its_short_one(): void
+    {
+        // A spec names `DemoPagePart`; a mapping row whose short name collides is keyed
+        // `App\Entity\PageParts\DemoPagePart`, and it is still that spec's part.
+        self::assertSame(
+            ['demoBlock'],
+            SpecNotes::fromDirectory(__DIR__ . '/fixtures/specs')->blocksForPart('App\\Entity\\PageParts\\DemoPagePart'),
+        );
+    }
 }

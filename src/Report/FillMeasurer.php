@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Report;
 
+use Lameco\Kunstmaanmigrator\Compile\SequenceEngine;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 
@@ -19,7 +20,7 @@ final class FillMeasurer
     /** @var array<string, array{live:int, preceded:int}> */
     private array $preceded = [];
 
-    /** @var array<string, list<string>> */
+    /** @var list<string> every pagepart entity name, as the refs table spells it */
     private array $entities = [];
 
     /** @var list<string> */
@@ -51,7 +52,7 @@ final class FillMeasurer
     {
         $this->entities = $db->partEntities();
         $this->columns = [];
-        $this->preceded = $this->headPart() !== null ? $db->precededBy($this->headEntities()) : [];
+        $this->preceded = $this->headPart() !== null ? $this->byRow($db->precededBy($this->headEntities())) : [];
 
         foreach ($requirements as $requirement) {
             $measured = $this->measure($requirement, $db);
@@ -104,7 +105,7 @@ final class FillMeasurer
         }
 
         $part = $this->mapping->partRow($requirement->subject);
-        $entities = $this->entities[$requirement->subject] ?? [];
+        $entities = $this->entitiesOf($requirement->subject);
         $table = $part?->table();
 
         if ($entities === [] || $table === null) {
@@ -168,16 +169,56 @@ final class FillMeasurer
             : null;
     }
 
-    /** The pagepart the absorb rules consume, read off the sequence lane rather than assumed. */
+    /**
+     * The row the absorb rules consume, read off the sequence lane rather than assumed — its
+     * `match:` head, by short or qualified name as compile reads it.
+     */
     private function headPart(): ?string
     {
         foreach ($this->mapping->sequence() as $rule) {
-            if (($rule['action'] ?? '') === 'absorb' && preg_match('/^(\w+)\s*>/', (string) ($rule['match'] ?? ''), $m) === 1) {
-                return $m[1];
+            if (($rule['action'] ?? '') === 'absorb' && str_contains((string) ($rule['match'] ?? ''), '>')) {
+                $head = SequenceEngine::headOf((string) $rule['match']);
+
+                if ($head !== '') {
+                    return $head;
+                }
             }
         }
 
         return null;
+    }
+
+    /**
+     * Preceded counts folded onto the row each class compiles from.
+     *
+     * @param array<string, array{live:int, preceded:int}> $counts fully qualified class => counts
+     * @return array<string, array{live:int, preceded:int}> row key => counts
+     */
+    private function byRow(array $counts): array
+    {
+        $out = [];
+
+        foreach ($counts as $class => $n) {
+            $key = $this->mapping->partKey((string) $class);
+            $known = $out[$key] ?? ['live' => 0, 'preceded' => 0];
+            $out[$key] = ['live' => $known['live'] + $n['live'], 'preceded' => $known['preceded'] + $n['preceded']];
+        }
+
+        return $out;
+    }
+
+    /**
+     * The entity names, as the refs table spells them, whose placements a row reads — those
+     * `Mapping::partKey()` resolves to it, as compile does.
+     *
+     * @return list<string>
+     */
+    private function entitiesOf(string $key): array
+    {
+        return array_values(array_filter(
+            $this->entities,
+            fn(string $entity): bool => $this->mapping->partKey($entity) === $key,
+        ));
     }
 
     /** @return list<string> */
@@ -185,6 +226,6 @@ final class FillMeasurer
     {
         $part = (string) $this->headPart();
 
-        return $this->entities[$part] ?? [$part];
+        return $this->entitiesOf($part) ?: [$part];
     }
 }

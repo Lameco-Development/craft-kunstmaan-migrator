@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Report;
 
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 
 /**
  * What one legacy environment costs to migrate, before a Craft project exists.
@@ -52,7 +53,7 @@ final readonly class Survey
         return new self(
             environment: $db->environment,
             database: $db->database,
-            partClasses: $snapshot->partPlacements,
+            partClasses: PartClass::reported($snapshot->partPlacements),
             pageTypes: $snapshot->pageTypes,
             locales: $snapshot->pagesByLocale,
             contexts: $db->livePlacementsByContext(),

@@ -49,7 +49,7 @@ final class PageReader
             $nodes[$id] ??= [
                 'nodeId' => $id,
                 'parentId' => $row['parentId'] !== null ? (int) $row['parentId'] : null,
-                'entity' => self::shortName((string) $row['entity']),
+                'entity' => PartClass::basename((string) $row['entity']),
                 'translations' => [],
             ];
 
@@ -58,7 +58,7 @@ final class PageReader
                 'title' => (string) $row['title'],
                 'slug' => $row['slug'] !== null ? (string) $row['slug'] : null,
                 'url' => $row['url'] !== null ? (string) $row['url'] : null,
-                'entity' => self::shortName((string) $row['entity']),
+                'entity' => PartClass::basename((string) $row['entity']),
                 // The fully qualified name as Kunstmaan stores it. `kuma_seo` keys its rows
                 // on exactly this string, so the short name cannot stand in for it.
                 'entityClass' => (string) $row['entity'],
@@ -129,7 +129,7 @@ final class PageReader
 
             $tree[$id] ??= [
                 'parentId' => $row['parentId'] !== null ? (int) $row['parentId'] : null,
-                'entity' => self::shortName((string) $row['entity']),
+                'entity' => PartClass::basename((string) $row['entity']),
                 'lft' => (int) $row['lft'],
                 'slugs' => [],
                 'titles' => [],
@@ -177,10 +177,5 @@ final class PageReader
         }
 
         return $ids;
-    }
-
-    private static function shortName(string $entity): string
-    {
-        return substr((string) strrchr($entity, '\\'), 1) ?: $entity;
     }
 }

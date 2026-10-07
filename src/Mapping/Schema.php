@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Mapping;
 
 use Lameco\Kunstmaanmigrator\Compile\EntityIndex;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 
 /**
  * Shape check for a mapping file, with no database involved.
@@ -806,6 +807,15 @@ final class Schema
 
         foreach ($lanes as $lane => $classes) {
             foreach ($classes as $class) {
+                // Only the blocks/page path and coverage resolve a class by its qualified name.
+                if (in_array($lane, ['forms', 'globals'], true) && PartClass::isQualified((string) $class)) {
+                    $errors[] = sprintf(
+                        '`%s` in `%s`: a fully qualified class key is read in `parts:` and `unmapped.parts:` only',
+                        $class,
+                        $lane,
+                    );
+                }
+
                 if (isset($seen[$class])) {
                     $errors[] = sprintf('`%s` is claimed by both `%s` and `%s`', $class, $seen[$class], $lane);
 

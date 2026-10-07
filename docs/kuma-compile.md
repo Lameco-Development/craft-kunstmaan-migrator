@@ -99,7 +99,7 @@ Generates a mapping skeleton from the live database. Refuses to overwrite an exi
 
 ### `validate`
 
-Two checks, the second optional.
+Two checks, the second optional — and a third with `--live`.
 
 **Shape** — no database, no Craft checkout needed. Unknown keys are errors, not warnings — a mistyped key
 fails silently otherwise, meaning a rule never fires and content quietly does not migrate.
@@ -113,6 +113,10 @@ structural placeholders go into (`defaults.structuralSection`, `pages` when omit
 be a structure, and allow that entry type — see "Structural placeholders" in
 [`loader-contract.md`](loader-contract.md). Required fields the mapping never supplies are
 reported as warnings rather than errors, since a field may have a default.
+
+**Live** — with `--live`, the mapping's legacy databases are read (the `KUMA_DB_*` credentials) and
+a short-name part row that reads a table for two or more live classes sharing that short name is
+an error. See "Parts sharing a short name".
 
 This check exists because the alternative is finding out at load time. On the first real
 mapping it caught eight wrong handles — `embed` for a field called `embedCode`, `logos` for
@@ -370,6 +374,51 @@ parts:
   is why it asks rather than reads. Contexts are resolved per page: a page's own `contexts:`
   replaces the defaults here as at compile.
 - `readiness` and the editor's field provenance credit the fields to the `page-parts` lane.
+
+## Parts sharing a short name
+
+A part row is normally keyed by the short class name — `Text` for `App\Entity\PageParts\TextPagePart`.
+Two namespaces can define the same short name: an app's `TextPagePart` next to Kunstmaan's own, each
+with its own table and overlapping ids. One short-name row reads one table, so it would compile the
+second class's placements from the first class's rows by id — wrong content, and no loss counted.
+
+Key a row by the fully qualified class name to give that class its own row:
+
+```yaml
+parts:
+  Text:                                          # the app's TextPagePart
+    table: lameco_websitebundle_text_page_parts
+    block: textBlock
+    map: { text: text | ckeditor }
+  Kunstmaan\PagePartBundle\Entity\TextPagePart:  # Kunstmaan's, with its own table
+    table: kuma_text_page_parts
+    block: textBlock
+    map: { text: content | ckeditor }
+```
+
+- **A qualified row wins; the short-name row is the fallback.** A placement compiles from the row
+  keyed by its class's qualified name when there is one, and from the short-name row otherwise. A
+  mapping with no qualified keys compiles exactly as before.
+- **A qualified row is a whole row** — its own disposition, block, `map:` and `children:`. That is
+  why this is a key and not a per-class `table:` on the short-name row: the app's `Header` can be
+  `consumedBy: page` while Kunstmaan's becomes a heading block.
+- **Where they are read:** `parts:` and `unmapped.parts:`. The `forms:` and `globals:` lanes read
+  their placements by short name, so `validate` refuses a qualified key there. A `sequence:` rule's
+  `match:` names a row key, qualified or not.
+- **`survey`, `coverage` and `init` report each class of a shared short name by its qualified name**,
+  with its own count, but only when more than one of those classes has live placements; a short
+  name only one live class answers to is reported as before. `init` writes a row per class, with
+  the table the introspection artifact or the source checkout gives it.
+- **An unresolved collision is a hole.** While one short-name row reads a table for two live classes,
+  `coverage` reports both classes as unclaimed (so `migrate` refuses a full run, as it does for any
+  hole) and `validate --live` fails. Classes are counted across every database: the app's class live
+  in one environment and Kunstmaan's in another still collide. A short-name row that reads no table —
+  `drop:`, `manual:`, or the name under `unmapped.parts:` — may cover every class of that name.
+- **Classes that read one table do not collide** — a subclass keeping its parent's table, as the
+  app's `GoogleMapsPagePart` does under `Lameco\MasterBundle`'s. That takes the entity tables, so
+  pass the introspection artifact (`coverage --introspection`, `validate --live --introspection`);
+  without it the tables are unknown and the classes count as a collision. `migrate` has no artifact
+  to read, so a mapping relying on this still needs a qualified row per class for a full run.
 
 ## Non-node tables
 

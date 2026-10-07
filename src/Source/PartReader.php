@@ -26,7 +26,10 @@ final class PartReader
     /**
      * The ordered part list for one page entity and context.
      *
-     * @return list<array{part:string, id:int, sequence:int}>
+     * `part` is the short class name; `entity` the fully qualified one, for a mapping that has
+     * to tell two namespaces sharing a short name apart (`Mapping::partKey()`).
+     *
+     * @return list<array{part:string, entity:string, id:int, sequence:int}>
      */
     public function sequence(string $pageEntity, int $pageId, string $context): array
     {
@@ -45,7 +48,8 @@ final class PartReader
 
         foreach ($this->statements[$key]->fetchAll(PDO::FETCH_ASSOC) as $row) {
             $out[] = [
-                'part' => self::shortName((string) $row['part']),
+                'part' => PartClass::shortName((string) $row['part']),
+                'entity' => PartClass::normalize((string) $row['part']),
                 'id' => (int) $row['id'],
                 'sequence' => (int) $row['seq'],
             ];
@@ -119,12 +123,5 @@ final class PartReader
         $this->statements[$key]->execute([$parentId]);
 
         return $this->statements[$key]->fetchAll(PDO::FETCH_ASSOC);
-    }
-
-    private static function shortName(string $entity): string
-    {
-        $short = substr((string) strrchr($entity, '\\'), 1) ?: $entity;
-
-        return str_ends_with($short, 'PagePart') ? substr($short, 0, -8) : $short;
     }
 }

@@ -26,6 +26,8 @@ final readonly class ExplainContext
      * @param array<string, array{blocks: list<string>, page: list<string>}> $contextsByPage
      *        short page entity => its own split, where a page's `contexts:` replaces the defaults;
      *        a page not named here is judged by `$contexts` / `$pageContexts`
+     * @param ?\Closure(string): string $partKey a placement's entity => the row key claiming it
+     *        (`Mapping::partKey()`); null keys every placement by its short name
      */
     public function __construct(
         public string $environment,
@@ -35,6 +37,7 @@ final readonly class ExplainContext
         public array $locales,
         public array $pageContexts = [],
         public array $contextsByPage = [],
+        public ?\Closure $partKey = null,
     ) {
     }
 
@@ -82,6 +85,7 @@ final readonly class ExplainContext
             $locales,
             $defaults['page'],
             $byPage,
+            $mapping->partKey(...),
         );
     }
 
@@ -100,7 +104,11 @@ final readonly class ExplainContext
         return EntryExplanation::reconcile(
             $this->environment,
             $blockIds,
-            $legacyParts,
+            $this->partKey === null ? $legacyParts : array_map(
+                // Keyed as compile keys them, so the lane, the table and a page fill all match.
+                fn(array $part): array => ['part' => ($this->partKey)($part['entity'])] + $part,
+                $legacyParts,
+            ),
             $this->lanes,
             $this->tables,
             $own['blocks'] ?? $this->contexts,

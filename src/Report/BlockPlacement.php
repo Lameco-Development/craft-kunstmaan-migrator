@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Report;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 use Lameco\Kunstmaanmigrator\Target\TargetSchema;
 
 /**
@@ -33,12 +34,16 @@ final class BlockPlacement
     }
 
     /**
-     * @param array<string, array<string, array<string, int>>> $livePairs page entity => context => pagepart class => placements
+     * @param array<string, array<string, array<string, int>>> $livePairs page entity => context =>
+     *        fully qualified pagepart class => placements (`livePlacementsByPageType()`); each is
+     *        judged by the row that claims it (`Mapping::partKey()`) and reported by its short name,
+     *        or its qualified one where another live class shares that (`PartClass::reportNames()`)
      * @return list<array{page: string, entryType: string, context: string, field: string, part: string, block: string, placements: int}>
      */
     public function rejections(array $livePairs): array
     {
         $out = [];
+        $names = $this->reportNames($livePairs);
 
         foreach ($livePairs as $page => $contexts) {
             $row = $this->mapping->pageRow((string) $page);
@@ -65,8 +70,8 @@ final class BlockPlacement
                 // that decides, however many other fields on the page would take the block.
                 $field = (string) $streamed[$context]['field'];
 
-                foreach ($parts as $part => $placements) {
-                    foreach ($this->blocksOf((string) $part) as $block) {
+                foreach ($parts as $class => $placements) {
+                    foreach ($this->blocksOf($this->mapping->partKey((string) $class)) as $block) {
                         if (!$this->rejects($entryType, $field, $block)) {
                             continue;
                         }
@@ -76,7 +81,7 @@ final class BlockPlacement
                             'entryType' => $entryType,
                             'context' => (string) $context,
                             'field' => $field,
-                            'part' => (string) $part,
+                            'part' => $names[(string) $class],
                             'block' => $block,
                             'placements' => (int) $placements,
                         ];
@@ -104,10 +109,27 @@ final class BlockPlacement
         return $slot->nested !== [] && !in_array($block, $slot->nested, true);
     }
 
-    /** @return list<string> */
-    private function blocksOf(string $part): array
+    /**
+     * @param array<string, array<string, array<string, int>>> $livePairs
+     * @return array<string, string> fully qualified class => the name a report gives it
+     */
+    private function reportNames(array $livePairs): array
     {
-        $row = $this->mapping->partRow($part);
+        $classes = [];
+
+        foreach ($livePairs as $contexts) {
+            foreach ($contexts as $parts) {
+                $classes += array_fill_keys(array_map(strval(...), array_keys($parts)), true);
+            }
+        }
+
+        return PartClass::reportNames(array_keys($classes));
+    }
+
+    /** @return list<string> */
+    private function blocksOf(string $key): array
+    {
+        $row = $this->mapping->partRow($key);
 
         return $row !== null && $row->compilesToBlocks() ? $row->blocks() : [];
     }

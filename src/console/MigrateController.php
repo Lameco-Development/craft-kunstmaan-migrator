@@ -33,6 +33,7 @@ use Lameco\Kunstmaanmigrator\run\RunSettings;
 use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\safety\NeverProductionTrait;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 use Lameco\Kunstmaanmigrator\Target\TargetSchema;
 use yii\console\ExitCode;
 
@@ -698,19 +699,30 @@ final class MigrateController extends Controller
         $placement = new BlockPlacement($mapping, $target);
         $dsn = EnvironmentPipeline::dsnFromSettings();
         $rejections = [];
+        $corpus = [];
 
         foreach ($mapping->environments() as $env => $spec) {
-            if (!isset($spec['database']) || ($this->legacyEnv !== null && $env !== $this->legacyEnv)) {
+            if (!isset($spec['database'])) {
                 continue;
             }
 
             $db = LegacyDatabase::connect((string) $env, (string) $spec['database'], $dsn);
+            // A part collision is judged over every database, even on a run narrowed to one: the
+            // class this one holds can share its short-name row with a class live only elsewhere.
+            $corpus = PartClass::tally($corpus, $db->livePartPlacements());
+
+            if ($this->legacyEnv !== null && $env !== $this->legacyEnv) {
+                continue;
+            }
+
             $coverage->ingest($db->snapshot());
 
             foreach ($placement->rejections($db->livePlacementsByPageType()) as $rejection) {
                 $rejections[] = ['env' => (string) $env] + $rejection;
             }
         }
+
+        $coverage->seeCorpus($corpus);
 
         // Warned about before the coverage verdict, because a mapping with no holes can still
         // be dropping content — and a clean coverage result is exactly when nobody looks further.

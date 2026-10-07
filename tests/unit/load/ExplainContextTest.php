@@ -98,6 +98,7 @@ final class ExplainContextTest extends TestCase
     {
         $text = self::header('banner');
         $text[0]['part'] = 'Text';
+        $text[0]['entity'] = 'App\\Entity\\PageParts\\TextPagePart';
 
         $result = self::context()->reconcile([], $text, 'HeroPage', ['nl' => ['banner' => null]]);
 
@@ -115,5 +116,41 @@ final class ExplainContextTest extends TestCase
         self::assertSame(['main'], $context->contexts);
         self::assertSame(['header'], $context->pageContexts);
         self::assertSame(['nl'], $context->locales);
+    }
+
+    #[Test]
+    public function a_placement_its_qualified_row_wrote_is_matched_on_that_rows_table(): void
+    {
+        // Kunstmaan's TextPagePart shares `Text` with the app's; its row reads its own table, so
+        // its block's ref names that table — judged by the short name, it looked unwritten.
+        $context = ExplainContext::fromMapping('NL', Mapping::fromArray([
+            'version' => 1,
+            'environments' => ['NL' => ['database' => 'nl', 'locales' => ['nl' => 'berkvensNl']]],
+            'defaults' => ['contexts' => ['main' => ['field' => 'pageBuilder']]],
+            'parts' => [
+                'Text' => ['table' => 'text_parts', 'block' => 'textBlock', 'map' => ['content' => 'text']],
+                'Kunstmaan\\PagePartBundle\\Entity\\TextPagePart' => [
+                    'table' => 'kuma_text_page_parts',
+                    'block' => 'textBlock',
+                    'map' => ['content' => 'content'],
+                ],
+            ],
+        ]));
+
+        $result = $context->reconcile(
+            ['berkvensNl' => ['NL:kuma_text_page_parts:5' => '901']],
+            [[
+                'lang' => 'nl',
+                'context' => 'main',
+                'part' => 'Text',
+                'entity' => 'Kunstmaan\\PagePartBundle\\Entity\\TextPagePart',
+                'id' => 5,
+                'sequence' => 1,
+            ]],
+        );
+
+        self::assertSame(1, $result['written']);
+        self::assertSame([], $result['unexplained']);
+        self::assertSame([], $result['accountedFor']);
     }
 }

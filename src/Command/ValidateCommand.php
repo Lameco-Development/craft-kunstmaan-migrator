@@ -6,7 +6,11 @@ namespace Lameco\Kunstmaanmigrator\Command;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\MappingCheck;
+use Lameco\Kunstmaanmigrator\Source\Dsn;
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
 use Lameco\Kunstmaanmigrator\Source\Introspection;
+use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 use Lameco\Kunstmaanmigrator\Target\CraftSchema;
 use Lameco\Kunstmaanmigrator\Target\SpecNotes;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -19,7 +23,7 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 #[AsCommand(
     name: 'validate',
-    description: 'Check a mapping is well-formed, without touching a database',
+    description: 'Check a mapping is well-formed — without touching a database unless --live',
 )]
 /**
  * Thin renderer over `Mapping\MappingCheck` — the same engine
@@ -27,7 +31,8 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  * CP Check button ask. This one answers from `config/project/**` on disk
  * (`--craft`) instead of the live schema gateway, so it runs before a Craft
  * install exists; without `--craft` the verdict covers what is checkable —
- * shape and conflicts.
+ * shape and conflicts. `--live` adds the one check that needs the corpus: a
+ * short-name row reading one table for two live classes that share the name.
  */
 final class ValidateCommand extends Command
 {
@@ -40,6 +45,10 @@ final class ValidateCommand extends Command
             ->addOption('specs', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY,
                 'Directory of content-model specs — fails on any field their migration notes '
                 . 'give a source for that the mapping does not fill (repeatable)')
+            ->addOption('live', null, InputOption::VALUE_NONE,
+                'Read the mapping\'s legacy databases (KUMA_DB_* credentials) — fails on a short-name row '
+                . 'that reads one table for several live classes sharing that short name (with --introspection, '
+                . 'classes the artifact shows reading the same table are no collision)')
             ->addOption('introspection', null, InputOption::VALUE_REQUIRED,
                 'Introspection artifact from `introspect` — checks the mapping against the legacy '
                 . 'app\'s own wiring: unclaimed ManyToMany joins, editor-facing columns ignored '
@@ -60,11 +69,25 @@ final class ValidateCommand extends Command
             return Command::INVALID;
         }
 
-        $check = new MappingCheck($craftRoot !== null ? CraftSchema::fromProjectConfig((string) $craftRoot) : null);
-        $specNotes = array_map(static fn($dir): SpecNotes => SpecNotes::fromDirectory((string) $dir), $specDirs);
-
         $artifact = $input->getOption('introspection');
         $introspection = $artifact !== null ? Introspection::fromFile((string) $artifact) : null;
+        $liveParts = null;
+
+        if ($input->getOption('live')) {
+            $liveParts = [];
+
+            foreach (LegacyDatabase::connectAll($mapping->databases(), Dsn::fromEnvironment()) as $db) {
+                $liveParts = PartClass::tally($liveParts, $db->livePartPlacements());
+            }
+        }
+
+        $check = new MappingCheck(
+            $craftRoot !== null ? CraftSchema::fromProjectConfig((string) $craftRoot) : null,
+            $liveParts,
+            // Two classes the artifact shows reading one table are no collision.
+            $introspection !== null ? EntityTableIndex::fromIntrospection($introspection) : null,
+        );
+        $specNotes = array_map(static fn($dir): SpecNotes => SpecNotes::fromDirectory((string) $dir), $specDirs);
 
         $verdict = $check->verdict($mapping, ...$specNotes);
         $warnings = $check->warnings($mapping, $introspection);

@@ -590,7 +590,7 @@ final class Compiler
         $byField = [];
 
         foreach ($page->contexts() as $context => $target) {
-            $sequence = $parts->sequence($translation['entity'], $translation['entityId'], $context);
+            $sequence = $this->keyed($parts->sequence($translation['entity'], $translation['entityId'], $context));
 
             $field = (string) $target['field'];
 
@@ -1224,7 +1224,7 @@ final class Compiler
             $written = null;
             $fields = [];
 
-            foreach ($parts->sequence((string) $translation['entity'], (int) $translation['entityId'], $context) as $ref) {
+            foreach ($this->keyed($parts->sequence((string) $translation['entity'], (int) $translation['entityId'], $context)) as $ref) {
                 $name = (string) $ref['part'];
                 $part = $this->mapping->partRow($name);
 
@@ -1254,6 +1254,23 @@ final class Compiler
         }
 
         return $out;
+    }
+
+    /**
+     * A part sequence with each `part` rewritten to the row key that claims it: the fully
+     * qualified class name where the mapping has a row for it, the short name otherwise
+     * (`Mapping::partKey()`). Every lookup downstream — the row, the sequence rules, the skip
+     * counts — then reads the right row without knowing a collision exists.
+     *
+     * @param list<array{part:string, entity:string, id:int, sequence:int}> $sequence
+     * @return list<array{part:string, entity:string, id:int, sequence:int}>
+     */
+    private function keyed(array $sequence): array
+    {
+        return array_map(
+            fn(array $ref): array => ['part' => $this->mapping->partKey($ref['entity'])] + $ref,
+            $sequence,
+        );
     }
 
     /**

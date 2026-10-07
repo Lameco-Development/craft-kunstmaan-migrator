@@ -444,8 +444,8 @@ final class PerContextFieldsTest extends TestCase
         // Two live translations of one page: each placement counts once per live translation.
         self::assertSame(
             ['ContentPage' => [
-                'content' => ['Text' => 2],
-                'right_column' => ['Cta' => 2, 'Text' => 2],
+                'content' => ['App\\Entity\\PageParts\\TextPagePart' => 2],
+                'right_column' => ['App\\Entity\\PageParts\\CtaPagePart' => 2, 'App\\Entity\\PageParts\\TextPagePart' => 2],
             ]],
             $this->sorted((new LegacyDatabase($pdo, 'COM', 'com'))->livePlacementsByPageType()),
         );

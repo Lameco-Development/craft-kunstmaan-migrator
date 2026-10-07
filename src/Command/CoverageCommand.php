@@ -8,6 +8,8 @@ use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Report\Coverage;
 use Lameco\Kunstmaanmigrator\Report\CoverageReport;
 use Lameco\Kunstmaanmigrator\Source\Dsn;
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
+use Lameco\Kunstmaanmigrator\Source\Introspection;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -33,6 +35,9 @@ final class CoverageCommand extends Command
     {
         $this
             ->addArgument('mapping', InputArgument::REQUIRED, 'Path to the mapping YAML')
+            ->addOption('introspection', null, InputOption::VALUE_REQUIRED,
+                'Introspection artifact from `introspect` — classes sharing a short name that it shows '
+                . 'reading the same table are no collision')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Emit machine-readable JSON instead of a table')
             ->addOption('markdown', null, InputOption::VALUE_NONE,
                 'Emit the client-facing version: what moves, what does not, and the reason each omission was declared under');
@@ -42,7 +47,12 @@ final class CoverageCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
         $mapping = Mapping::fromFile((string) $input->getArgument('mapping'));
-        $coverage = Coverage::measure($mapping, LegacyDatabase::connectAll($mapping->databases(), Dsn::fromEnvironment()));
+        $artifact = $input->getOption('introspection');
+        $coverage = Coverage::measure(
+            $mapping,
+            LegacyDatabase::connectAll($mapping->databases(), Dsn::fromEnvironment()),
+            $artifact !== null ? EntityTableIndex::fromIntrospection(Introspection::fromFile((string) $artifact)) : null,
+        );
         $report = new CoverageReport($coverage);
         $exit = $coverage->hasHoles() ? Command::FAILURE : Command::SUCCESS;
 

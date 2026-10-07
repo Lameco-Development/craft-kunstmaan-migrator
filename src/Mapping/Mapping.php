@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Mapping;
 
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 use Symfony\Component\Yaml\Tag\TaggedValue;
 use Symfony\Component\Yaml\Yaml;
 
@@ -33,6 +35,12 @@ final class Mapping
 
     /** @var array<string, PartRow>|null */
     private ?array $partRows = null;
+
+    /** @var array<string, string>|null */
+    private ?array $accountedParts = null;
+
+    /** @var array<string, string>|null normalised fully qualified class => the key as the mapping spells it */
+    private ?array $qualifiedParts = null;
 
     /** @var array<string, PageRow>|null */
     private ?array $pageRows = null;
@@ -126,6 +134,122 @@ final class Mapping
     public function partRow(string $class): ?PartRow
     {
         return $this->partRows()[$class] ?? null;
+    }
+
+    /**
+     * The key a placement of `$entity` answers to: the fully qualified class name when the
+     * mapping claims that class by it in any lane, the short name otherwise.
+     *
+     * Two namespaces can share a short name — the app's `TextPagePart` and Kunstmaan's — with
+     * their own tables and overlapping ids, so one short-name row reading one table compiles
+     * the other class's placements from the wrong rows. A row keyed by the qualified name takes
+     * its class out from under the short-name row, which keeps the rest. A mapping with no
+     * qualified keys answers the short name every time, exactly as before.
+     */
+    public function partKey(string $entity): string
+    {
+        if ($this->qualifiedParts === null) {
+            $this->qualifiedParts = [];
+
+            foreach (array_keys($this->accountedParts()) as $key) {
+                if (PartClass::isQualified((string) $key)) {
+                    $this->qualifiedParts[PartClass::normalize((string) $key)] = (string) $key;
+                }
+            }
+        }
+
+        return $this->qualifiedParts[PartClass::normalize($entity)] ?? PartClass::shortName($entity);
+    }
+
+    /**
+     * The key that claims a live class in some lane, or null when none does: the row
+     * `partKey()` resolves it to — its qualified row, else its short-name row — when that row
+     * is accounted for. The corpus names every class by its qualified name, so this is the
+     * same resolution compile makes.
+     */
+    public function claimingKey(string $class): ?string
+    {
+        $key = $this->partKey($class);
+
+        return isset($this->accountedParts()[$key]) ? $key : null;
+    }
+
+    /**
+     * Short-name rows that read one table for more than one live class.
+     *
+     * Two namespaces sharing a short name each have their own table, with overlapping ids, so
+     * a row reading one of them compiles the other's placements from the wrong rows — wrong
+     * content, and no loss counted. A row that reads no table (`drop:`, `manual:`, `unmapped:`)
+     * may cover both; so may a short name whose other classes have no live placements, and so
+     * may classes the entity index shows reading one table (a subclass keeping its parent's).
+     * Without an index, or with a class it does not know, the tables are unknown and it counts.
+     *
+     * @param array<string, int> $liveClasses fully qualified class => live placements, summed over
+     *        every database (`PartClass::tally()`)
+     * @return list<array{key: string, table: ?string, classes: array<string, int>}>
+     */
+    public function unresolvedPartCollisions(array $liveClasses, ?EntityTableIndex $tables = null): array
+    {
+        $fallingThrough = [];
+
+        foreach ($liveClasses as $class => $n) {
+            $class = PartClass::normalize((string) $class);
+
+            if ($n > 0 && PartClass::isQualified($class) && !PartClass::isQualified($key = $this->partKey($class))) {
+                $fallingThrough[$key][$class] = ($fallingThrough[$key][$class] ?? 0) + $n;
+            }
+        }
+
+        $out = [];
+
+        foreach ($fallingThrough as $key => $classes) {
+            if (count($classes) < 2 || !$this->readsATable((string) $key) || self::shareOneTable($classes, $tables)) {
+                continue;
+            }
+
+            ksort($classes);
+            $out[] = ['key' => (string) $key, 'table' => $this->partRow((string) $key)?->table(), 'classes' => $classes];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Whether the index knows every class's table and it is the same one.
+     *
+     * @param array<string, int> $classes
+     */
+    private static function shareOneTable(array $classes, ?EntityTableIndex $tables): bool
+    {
+        if ($tables === null) {
+            return false;
+        }
+
+        $seen = [];
+
+        foreach (array_keys($classes) as $class) {
+            $table = $tables->tableFor((string) $class);
+
+            if ($table === null) {
+                return false;
+            }
+
+            $seen[$table] = true;
+        }
+
+        return count($seen) === 1;
+    }
+
+    /** Whether the lane claiming a short name reads a table by placement id. */
+    private function readsATable(string $key): bool
+    {
+        $row = $this->partRow($key);
+
+        if ($row !== null) {
+            return $row->isMigrated();
+        }
+
+        return isset($this->formFields()[$key]) || isset($this->globalParts()[$key]);
     }
 
     /** @return array<string, PageRow> page entity => row */
@@ -387,6 +511,10 @@ final class Mapping
      */
     public function accountedParts(): array
     {
+        if ($this->accountedParts !== null) {
+            return $this->accountedParts;
+        }
+
         $accounted = [];
 
         foreach ($this->partRows() as $class => $row) {
@@ -405,7 +533,7 @@ final class Mapping
             $accounted[$class] ??= 'unmapped';
         }
 
-        return $accounted;
+        return $this->accountedParts = $accounted;
     }
 
     /**

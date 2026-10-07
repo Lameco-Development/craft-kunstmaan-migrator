@@ -514,8 +514,8 @@ final class PageFieldsLaneTest extends TestCase
         ]));
     }
 
-    #[Test]
-    public function live_context_stacks_are_read_per_page_type_and_part_mix(): void
+    /** Three live TextPages: two Headers and a HeaderSlider, a lone Header, a lone Text in the header. */
+    private static function stacksDb(): PDO
     {
         // Single backslashes: this query joins on equality, as MySQL holds the names.
         $pdo = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
@@ -537,16 +537,38 @@ final class PageFieldsLaneTest extends TestCase
                     (101, 'App\\Entity\\Pages\\TextPage', 'main', 'App\\Entity\\PageParts\\TextPagePart'),
                     (102, 'App\\Entity\\Pages\\TextPage', 'header', 'App\\Entity\\PageParts\\TextPagePart')");
 
+        return $pdo;
+    }
+
+    #[Test]
+    public function a_page_context_stack_read_from_the_corpus_is_judged_by_the_short_name_rows(): void
+    {
+        // The corpus names every class by its qualified name; `Header` and `Text` are short-name
+        // rows, and the mix is resolved through them as compile resolves each placement.
+        $coverage = new Coverage(Mapping::fromFile(self::mappingFile(self::MAPPING)));
+        $coverage->ingest((new LegacyDatabase(self::stacksDb(), 'NL', 'nl'))->snapshot());
+
+        self::assertSame(
+            [['page' => 'TextPage', 'context' => 'header', 'placements' => 3]],
+            $coverage->pageContextLosses(),
+        );
+    }
+
+    #[Test]
+    public function live_context_stacks_are_read_per_page_type_and_part_mix(): void
+    {
+        $pdo = self::stacksDb();
+
         // One entry per mix of classes a context holds on a page: how many such stacks, and how
         // many placements in them. Whether a stack loses anything is the mapping's call.
         self::assertSame(
             ['TextPage' => [
                 'header' => ['nl' => [
-                    'Header,HeaderSlider' => ['stacks' => 1, 'placements' => 3],
-                    'Header' => ['stacks' => 1, 'placements' => 1],
-                    'Text' => ['stacks' => 1, 'placements' => 1],
+                    'App\\Entity\\PageParts\\HeaderPagePart,App\\Entity\\PageParts\\HeaderSliderPagePart' => ['stacks' => 1, 'placements' => 3],
+                    'App\\Entity\\PageParts\\HeaderPagePart' => ['stacks' => 1, 'placements' => 1],
+                    'App\\Entity\\PageParts\\TextPagePart' => ['stacks' => 1, 'placements' => 1],
                 ]],
-                'main' => ['nl' => ['Text' => ['stacks' => 1, 'placements' => 2]]],
+                'main' => ['nl' => ['App\\Entity\\PageParts\\TextPagePart' => ['stacks' => 1, 'placements' => 2]]],
             ]],
             (new LegacyDatabase($pdo, 'NL', 'nl'))->livePageContextStacks(),
         );

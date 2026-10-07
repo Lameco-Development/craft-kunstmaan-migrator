@@ -6,8 +6,10 @@ namespace Lameco\Kunstmaanmigrator\Report;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\PartRow;
+use Lameco\Kunstmaanmigrator\Source\EntityTableIndex;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Lameco\Kunstmaanmigrator\Source\LiveSnapshot;
+use Lameco\Kunstmaanmigrator\Source\PartClass;
 
 /**
  * Measures a mapping against the live legacy content it claims to describe.
@@ -18,8 +20,11 @@ use Lameco\Kunstmaanmigrator\Source\LiveSnapshot;
  */
 final class Coverage
 {
-    /** @var array<string, int> */
+    /** @var array<string, int> fully qualified pagepart class => live placements, across every snapshot */
     private array $partPlacements = [];
+
+    /** @var array<string, int>|null fully qualified pagepart class => live placements, corpus-wide */
+    private ?array $corpus = null;
 
     /** @var array<string, int> */
     private array $pageTypes = [];
@@ -29,11 +34,20 @@ final class Coverage
 
     private int $allPartRefs = 0;
 
+    /** @var array<string, true>|null classes a short-name row reads one table for, among others */
+    private ?array $ambiguous = null;
+
     /** @var array<string, array<string, array<string, array{stacks: int, placements: int}>>> */
     private array $pageContextStacks = [];
 
-    public function __construct(private readonly Mapping $mapping)
-    {
+    /**
+     * @param ?EntityTableIndex $tables the legacy entities' tables, where known: classes that
+     *        share a short name and read one table are no collision
+     */
+    public function __construct(
+        private readonly Mapping $mapping,
+        private readonly ?EntityTableIndex $tables = null,
+    ) {
     }
 
     /**
@@ -42,9 +56,9 @@ final class Coverage
      *
      * @param iterable<LegacyDatabase> $connections
      */
-    public static function measure(Mapping $mapping, iterable $connections): self
+    public static function measure(Mapping $mapping, iterable $connections, ?EntityTableIndex $tables = null): self
     {
-        $coverage = new self($mapping);
+        $coverage = new self($mapping, $tables);
 
         foreach ($connections as $db) {
             $coverage->ingest($db->snapshot());
@@ -55,9 +69,9 @@ final class Coverage
 
     public function ingest(LiveSnapshot $snapshot): void
     {
-        foreach ($snapshot->partPlacements as $class => $n) {
-            $this->partPlacements[$class] = ($this->partPlacements[$class] ?? 0) + $n;
-        }
+        $this->ambiguous = null;
+
+        $this->partPlacements = PartClass::tally($this->partPlacements, $snapshot->partPlacements);
 
         foreach ($snapshot->pageTypes as $entity => $n) {
             $this->pageTypes[$entity] = ($this->pageTypes[$entity] ?? 0) + $n;
@@ -89,6 +103,20 @@ final class Coverage
                 }
             }
         }
+    }
+
+    /**
+     * The whole corpus's live classes, for a measurement that ingests only some of its databases
+     * (`migrate --env`). A collision is a corpus fact: the class this database holds can share its
+     * short-name row with one live only in another, and it compiles from that one's table.
+     *
+     * @param array<string, int> $classes fully qualified class => live placements, summed over
+     *        every database (`PartClass::tally()`)
+     */
+    public function seeCorpus(array $classes): void
+    {
+        $this->corpus = PartClass::tally($classes);
+        $this->ambiguous = null;
     }
 
     /**
@@ -141,7 +169,9 @@ final class Coverage
     private function fillsAPage(string $mix): bool
     {
         foreach (explode(',', $mix) as $class) {
-            if ($this->mapping->partRow($class)?->disposition() === PartRow::PAGE) {
+            $key = $this->claim($class);
+
+            if ($key !== null && $this->mapping->partRow($key)?->disposition() === PartRow::PAGE) {
                 return true;
             }
         }
@@ -149,12 +179,39 @@ final class Coverage
         return false;
     }
 
-    /** @return array<string, int> pagepart class => live placements, unclaimed by any lane */
+    /**
+     * Live placements no lane claims, by short name — or by the qualified one where more than one
+     * live class shares the short name (`PartClass::reported()`).
+     *
+     * @return array<string, int> pagepart class => live placements, unclaimed by any lane
+     */
     public function unclaimedParts(): array
     {
-        $accounted = $this->mapping->accountedParts();
+        $names = PartClass::reportNames(array_keys($this->partPlacements + ($this->corpus ?? [])));
+        $out = [];
 
-        return array_diff_key($this->partPlacements, $accounted);
+        foreach ($this->partPlacements as $class => $n) {
+            if ($this->claim((string) $class) === null) {
+                $name = $names[(string) $class];
+                $out[$name] = ($out[$name] ?? 0) + $n;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Short-name rows that read one table for more than one live class — each class's
+     * placements would compile from the first one's rows. Their classes are holes until each
+     * has a row of its own (`Mapping::unresolvedPartCollisions()`).
+     *
+     * @return list<array{key: string, table: ?string, classes: array<string, int>}>
+     */
+    public function unresolvedCollisions(): array
+    {
+        // Summed across databases: one database may hold only the app's class and another only
+        // Kunstmaan's, and the one short-name row still reads one table for both.
+        return $this->mapping->unresolvedPartCollisions($this->corpus ?? $this->partPlacements, $this->tables);
     }
 
     /** @return array<string, int> page entity => live pages, unclaimed by any lane */
@@ -168,7 +225,20 @@ final class Coverage
     /** Classes the mapping describes that no longer occur in live content. */
     public function staleParts(): array
     {
-        return array_diff(array_keys($this->mapping->accountedParts()), array_keys($this->partPlacements));
+        $reached = [];
+
+        foreach (array_keys($this->partPlacements) as $class) {
+            $key = $this->mapping->claimingKey((string) $class);
+
+            if ($key !== null) {
+                $reached[$key] = true;
+            }
+        }
+
+        return array_values(array_filter(
+            array_map('strval', array_keys($this->mapping->accountedParts())),
+            static fn(string $key): bool => !isset($reached[$key]),
+        ));
     }
 
     /**
@@ -182,13 +252,34 @@ final class Coverage
         $lanes = [];
 
         foreach ($this->partPlacements as $class => $n) {
-            $lane = $accounted[$class] ?? 'UNCLAIMED';
+            $key = $this->claim((string) $class);
+            $lane = $key !== null ? $accounted[$key] : 'UNCLAIMED';
             $lanes[$lane] = ($lanes[$lane] ?? 0) + $n;
         }
 
         arsort($lanes);
 
         return $lanes;
+    }
+
+    /**
+     * The key that claims a live class, or null when none does — including when the claim is a
+     * short-name row reading one table for several live classes, which compiles all but one of
+     * them from the wrong rows.
+     */
+    private function claim(string $class): ?string
+    {
+        if ($this->ambiguous === null) {
+            $this->ambiguous = [];
+
+            foreach ($this->unresolvedCollisions() as $collision) {
+                foreach (array_keys($collision['classes']) as $member) {
+                    $this->ambiguous[(string) $member] = true;
+                }
+            }
+        }
+
+        return isset($this->ambiguous[PartClass::normalize($class)]) ? null : $this->mapping->claimingKey($class);
     }
 
     /**
@@ -250,7 +341,7 @@ final class Coverage
                 'subject' => (string) $class,
                 'kind' => 'pagepart, not migrated',
                 'reason' => (string) $reason,
-                'placements' => $this->partPlacements[$class] ?? 0,
+                'placements' => $this->placementsClaimedBy((string) $class),
             ];
         }
 
@@ -273,7 +364,7 @@ final class Coverage
                     'subject' => $class,
                     'kind' => $kind,
                     'reason' => $row->reason() ?? 'no reason given',
-                    'placements' => $this->partPlacements[$class] ?? 0,
+                    'placements' => $this->placementsClaimedBy($class),
                 ];
             }
         }
@@ -281,6 +372,20 @@ final class Coverage
         usort($out, static fn(array $a, array $b): int => $b['placements'] <=> $a['placements']);
 
         return $out;
+    }
+
+    /** Live placements whose class the given key claims — its own, and any class that falls back to it. */
+    private function placementsClaimedBy(string $key): int
+    {
+        $n = 0;
+
+        foreach ($this->partPlacements as $class => $placements) {
+            if ($this->mapping->claimingKey((string) $class) === $key) {
+                $n += $placements;
+            }
+        }
+
+        return $n;
     }
 
     public function hasHoles(): bool
