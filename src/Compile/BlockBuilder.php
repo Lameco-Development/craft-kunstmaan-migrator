@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Compile;
 
+use Lameco\Kunstmaanmigrator\Mapping\FieldExpression;
 use Lameco\Kunstmaanmigrator\Source\MediaIndex;
 use Lameco\Kunstmaanmigrator\Source\PartReader;
 use Lameco\Kunstmaanmigrator\Target\Slot;
@@ -198,26 +199,6 @@ final class BlockBuilder
     }
 
     /**
-     * Whether a map expression evaluates to an asset: it ends in a transform that emits one, or
-     * it is a `coalesce()` whose every alternative does. The grammar is `evaluate()`'s, so this
-     * reads it the same way.
-     */
-    public static function yieldsAsset(string $expression): bool
-    {
-        $expression = trim($expression);
-
-        if (preg_match('/^coalesce\((.*)\)$/s', $expression, $m) === 1) {
-            $alternatives = self::splitArguments($m[1]);
-
-            return $alternatives !== [] && array_filter($alternatives, static fn(string $a): bool => !self::yieldsAsset($a)) === [];
-        }
-
-        $parts = array_map(trim(...), explode('|', $expression));
-
-        return count($parts) > 1 && Transforms::emitsAsset((string) end($parts));
-    }
-
-    /**
      * @param array<string, string> $map
      * @param array<string, mixed> $row
      * @param ?string $owner the entry type these targets name, when the caller knows it — a page
@@ -268,7 +249,7 @@ final class BlockBuilder
         // One target, two legacy columns that may each hold it. A case page's brand is in
         // `brand_id` on 122 rows and only in `brand_url`'s internal-link form on 53 more.
         if (preg_match('/^coalesce\((.*)\)$/s', $expression, $m) === 1) {
-            foreach (self::splitArguments($m[1]) as $alternative) {
+            foreach (FieldExpression::splitArguments($m[1]) as $alternative) {
                 $value = $this->evaluate($alternative, $row, $context);
 
                 if ($value !== null && $value !== '' && $value !== []) {
@@ -285,7 +266,7 @@ final class BlockBuilder
         if (preg_match('/^concat\((.*)\)$/s', $expression, $m) === 1) {
             $values = [];
 
-            foreach (self::splitArguments($m[1]) as $piece) {
+            foreach (FieldExpression::splitArguments($m[1]) as $piece) {
                 $value = $this->evaluate($piece, $row, $context);
 
                 if (is_scalar($value) && trim((string) $value) !== '') {
@@ -387,7 +368,7 @@ final class BlockBuilder
     {
         $parts = [];
 
-        foreach (self::splitArguments($arguments) as $argument) {
+        foreach (FieldExpression::splitArguments($arguments) as $argument) {
             if (!str_contains($argument, '=')) {
                 continue;
             }
@@ -402,40 +383,6 @@ final class BlockBuilder
 
         // A street and nothing else is still an address; no parts at all is not one.
         return $parts === [] ? null : ['_address' => $parts];
-    }
-
-    /**
-     * Split `a=b, c=d | lookup(E.f)` on the commas that separate arguments, not the ones
-     * inside a nested call.
-     *
-     * @return list<string>
-     */
-    private static function splitArguments(string $arguments): array
-    {
-        $out = [];
-        $depth = 0;
-        $current = '';
-
-        foreach (str_split($arguments) as $char) {
-            if ($char === '(') {
-                $depth++;
-            } elseif ($char === ')') {
-                $depth--;
-            } elseif ($char === ',' && $depth === 0) {
-                $out[] = trim($current);
-                $current = '';
-
-                continue;
-            }
-
-            $current .= $char;
-        }
-
-        if (trim($current) !== '') {
-            $out[] = trim($current);
-        }
-
-        return $out;
     }
 
     /** One column of the entity row a foreign key points at. */
@@ -559,7 +506,7 @@ final class BlockBuilder
 
         $blocks = [];
 
-        foreach (self::splitArguments($arguments) as $argument) {
+        foreach (FieldExpression::splitArguments($arguments) as $argument) {
             // A nested `link(...)` argument is one four-column group — how a table holding
             // several whole links (primary/secondary/tertiary) becomes several buttons.
             if (preg_match('/^link\((.*)\)$/', $argument, $lm) === 1) {

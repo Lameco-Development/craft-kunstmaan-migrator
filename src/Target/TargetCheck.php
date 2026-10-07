@@ -4,8 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Target;
 
-use Lameco\Kunstmaanmigrator\Compile\BlockBuilder;
-use Lameco\Kunstmaanmigrator\Compile\Transforms;
+use Lameco\Kunstmaanmigrator\Mapping\AssetExpression;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\PageRow;
 use Lameco\Kunstmaanmigrator\Mapping\PartRow;
@@ -653,7 +652,7 @@ final class TargetCheck
                         $field,
                         count($map),
                     );
-                } elseif (!BlockBuilder::yieldsAsset((string) reset($map))) {
+                } elseif (!AssetExpression::yieldsAsset((string) reset($map))) {
                     $errors[] = sprintf(
                         '%s: `%s.%s` is an Assets field, so `%s: %s` must end in an asset transform (%s)',
                         $subject,
@@ -661,7 +660,7 @@ final class TargetCheck
                         $field,
                         (string) array_key_first($map),
                         (string) reset($map),
-                        implode(', ', array_map(static fn(string $t): string => '`| ' . $t . '`', Transforms::ASSET_TRANSFORMS)),
+                        implode(', ', array_map(static fn(string $t): string => '`| ' . $t . '`', AssetExpression::TRANSFORMS)),
                     );
                 }
 

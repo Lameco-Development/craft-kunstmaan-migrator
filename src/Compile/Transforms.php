@@ -13,9 +13,6 @@ namespace Lameco\Kunstmaanmigrator\Compile;
  */
 final class Transforms
 {
-    /** @var list<string> the transforms whose result is an `{_asset}` node — see `apply()` */
-    public const ASSET_TRANSFORMS = ['asset'];
-
     /** @var list<array{transform:string, from:mixed, to:mixed, part:?string}> */
     private array $lossReport = [];
 
@@ -52,16 +49,6 @@ final class Transforms
             'beforeComma' => 'The part before the first comma',
             'afterComma' => 'The part after the first comma',
         ];
-    }
-
-    /**
-     * Whether a transform turns its value into an asset — an `{_asset}` node the loader resolves
-     * to the migrated file. An Assets field's `children:` row has to end in one: anything else
-     * hands Craft a raw legacy id (related to whichever asset carries it) or a nested list.
-     */
-    public static function emitsAsset(string $name): bool
-    {
-        return in_array($name, self::ASSET_TRANSFORMS, true);
     }
 
     public function apply(string $name, mixed $value, ?string $context = null): mixed
