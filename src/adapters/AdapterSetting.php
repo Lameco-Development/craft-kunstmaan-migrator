@@ -33,6 +33,12 @@ final class AdapterSetting
     public const TYPE_LIST = 'list';
 
     /**
+     * Keyed strings — `legacy name => target handle`. From the config file an
+     * array; from the settings screen one text field of `key=value` pairs.
+     */
+    public const TYPE_MAP = 'map';
+
+    /**
      * @param string $handle key within the adapter's own settings bag
      * @param string $label  what an operator calls it
      * @param string $type   one of the TYPE_* constants
@@ -60,7 +66,38 @@ final class AdapterSetting
             self::TYPE_LIST => is_array($value)
                 ? array_values(array_filter(array_map(trim(...), array_map(strval(...), $value)), static fn(string $v): bool => $v !== ''))
                 : array_values(array_filter(array_map(trim(...), explode(',', (string) $value)), static fn(string $v): bool => $v !== '')),
+            self::TYPE_MAP => self::castMap($value),
             default => (string) $value,
         };
+    }
+
+    /** @return array<string, string> */
+    private static function castMap(mixed $value): array
+    {
+        if (!is_array($value)) {
+            $pairs = [];
+
+            foreach (explode(',', (string) $value) as $pair) {
+                if (str_contains($pair, '=')) {
+                    [$key, $val] = explode('=', $pair, 2);
+                    $pairs[$key] = $val;
+                }
+            }
+
+            $value = $pairs;
+        }
+
+        $out = [];
+
+        foreach ($value as $key => $val) {
+            $key = trim((string) $key);
+            $val = is_scalar($val) ? trim((string) $val) : '';
+
+            if ($key !== '' && $val !== '') {
+                $out[$key] = $val;
+            }
+        }
+
+        return $out;
     }
 }

@@ -8,7 +8,9 @@ use Craft;
 use craft\helpers\App;
 use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
+use Lameco\Kunstmaanmigrator\craft\NavigationGateway;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
+use Lameco\Kunstmaanmigrator\craft\VerbbNavigationGateway;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Plugin;
@@ -42,6 +44,7 @@ final class Diagnostics
             $this->checkStorageWritable(),
             $this->checkNotProduction(),
             ...$this->checkAdapterPlugins(),
+            ...$this->checkMenuHandles(),
             $this->checkEmbeddedAssets(),
             $this->checkLegacyMediaRoot(),
             $this->checkLegacyDb(),
@@ -184,6 +187,72 @@ final class Diagnostics
         }
 
         return $checks;
+    }
+
+    /**
+     * The navigation adapter's `menuHandles` map, against the navs that exist.
+     * Silent when the adapter is off or verbb is missing — the plugin row above
+     * already says so, and the pass will not run to need the navs.
+     *
+     * @return list<Check>
+     */
+    private function checkMenuHandles(): array
+    {
+        $settings = Plugin::getInstance()?->getSettings();
+        $adapter = (new AdapterRegistry())->byHandle('navigation');
+
+        if ($settings === null || $adapter === null || !$settings->isAdapterEnabled($adapter)) {
+            return [];
+        }
+
+        try {
+            $navigation = new VerbbNavigationGateway();
+
+            if (!$navigation->isAvailable()) {
+                return [];
+            }
+
+            $map = $settings->forAdapter($adapter)['menuHandles'] ?? [];
+
+            return self::menuHandleChecks(is_array($map) ? $map : [], $navigation);
+        } catch (Throwable $e) {
+            return [$this->result('navigation_menu_handles', false, "menu handle check failed: {$e->getMessage()}")];
+        }
+    }
+
+    /**
+     * One row for the whole map: green when every mapped nav exists, red
+     * naming each `menu → handle` whose nav does not. No row without a map.
+     *
+     * Public and static so it is testable with nothing but a gateway.
+     *
+     * @param array<string, string> $menuHandles legacy menu name → nav handle
+     * @return list<Check>
+     */
+    public static function menuHandleChecks(array $menuHandles, NavigationGateway $navigation): array
+    {
+        if ($menuHandles === []) {
+            return [];
+        }
+
+        $missing = [];
+
+        foreach ($menuHandles as $menu => $handle) {
+            if ($navigation->navIdByHandle($handle) === null) {
+                $missing[] = sprintf('%s → %s', $menu, $handle);
+            }
+        }
+
+        return [[
+            'check' => 'navigation_menu_handles',
+            'ok' => $missing === [],
+            'detail' => $missing === []
+                ? sprintf('Every mapped legacy menu has its nav (%d).', count($menuHandles))
+                : sprintf(
+                    'Mapped to a nav that does not exist, so the menu will be skipped: %s. Create the nav or fix menuHandles.',
+                    implode(', ', $missing),
+                ),
+        ]];
     }
 
     /**

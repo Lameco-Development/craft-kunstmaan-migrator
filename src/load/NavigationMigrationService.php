@@ -56,6 +56,9 @@ use yii\base\Component;
  *   - `type='url_link'` (and any non-page_link) → verbb type null, url copied
  *     verbatim, title copied from override or url.
  *
+ * Target nav: `menuHandles` (legacy `kuma_menu.name` → nav handle) when it
+ * names the menu, otherwise the nav whose handle is the legacy name itself.
+ *
  * Optional-plugin gate: if verbb/navigation is not installed the entire
  * pass is skipped with a WARN — never a hard error. Same shape as the
  * Retour adapter (D-56).
@@ -127,6 +130,19 @@ class NavigationMigrationService extends Component implements MigrationAdapter
      * @var list<string>
      */
     public array $nodeMenuExcludedInternalNames = ['settings'];
+
+    /**
+     * Legacy `kuma_menu.name` → verbb nav handle. Null reads the adapter's
+     * `menuHandles` setting; a test or caller can set it directly. A menu the
+     * map does not name is written into the nav whose handle is its legacy name.
+     *
+     * Legacy menus are called `top` and `main` on every Kunstmaan site, while a
+     * multisite Craft names its navs per site group (`berkvensNlTop`) — without
+     * the map every menu was skipped as having no matching nav.
+     *
+     * @var array<string, string>|null
+     */
+    public ?array $menuHandles = null;
 
     private const STATE_SOURCE = 'navigation';
 
@@ -211,17 +227,17 @@ class NavigationMigrationService extends Component implements MigrationAdapter
             return $report;
         }
 
-        // Resolve verbb nav id per source handle once. Missing navs are
-        // reported and the menu's items are skipped — operator should
-        // re-run scaffolder generate-schema or apply project-config to
-        // create the matching nav.
-        $navIdByHandle = [];
+        // Resolve verbb nav id per legacy menu name once, through the
+        // menuHandles map. Missing navs are reported and the menu's items are
+        // skipped — operator should create the nav or fix the map.
+        $menuHandles = $this->menuHandles();
+        $navIdByName = [];
         foreach ($menus as $menu) {
-            $handle = (string) ($menu['name'] ?? '');
-            if ($handle === '' || isset($navIdByHandle[$handle])) {
+            $name = (string) ($menu['name'] ?? '');
+            if ($name === '' || array_key_exists($name, $navIdByName)) {
                 continue;
             }
-            $navIdByHandle[$handle] = $this->navigation()->navIdByHandle($handle);
+            $navIdByName[$name] = $this->navigation()->navIdByHandle($menuHandles[$name] ?? $name);
         }
 
         // First pass: create every node with parentId=null. Build the
@@ -229,17 +245,25 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         $itemToNodeId = [];
         foreach ($menus as $menu) {
             $menuId = (int) ($menu['id'] ?? 0);
-            $handle = (string) ($menu['name'] ?? '');
+            $name = (string) ($menu['name'] ?? '');
             $locale = (string) ($menu['locale'] ?? '');
-            $navId = $navIdByHandle[$handle] ?? null;
+            $navId = $navIdByName[$name] ?? null;
             $siteId = $localeToSiteId[$locale] ?? null;
 
             if ($navId === null) {
-                $report->warn(sprintf(
-                    'kuma_menu id=%d handle="%s" has no matching verbb nav; skipping menu.',
-                    $menuId,
-                    $handle,
-                ));
+                $handle = $menuHandles[$name] ?? $name;
+                $report->warn($handle === $name
+                    ? sprintf(
+                        'kuma_menu id=%d handle="%s" has no matching verbb nav; skipping menu.',
+                        $menuId,
+                        $name,
+                    )
+                    : sprintf(
+                        'kuma_menu id=%d "%s" is mapped to nav "%s", which does not exist in verbb; skipping menu.',
+                        $menuId,
+                        $name,
+                        $handle,
+                    ));
                 continue;
             }
             if ($siteId === null) {
@@ -1051,6 +1075,18 @@ class NavigationMigrationService extends Component implements MigrationAdapter
         $configured = (string) ($this->config()['navHandle'] ?? '');
 
         return $configured !== '' ? $configured : $this->nodeMenuNavHandle;
+    }
+
+    /** @return array<string, string> legacy menu name → nav handle */
+    private function menuHandles(): array
+    {
+        if ($this->menuHandles !== null) {
+            return $this->menuHandles;
+        }
+
+        $configured = $this->config()['menuHandles'] ?? [];
+
+        return is_array($configured) ? $configured : [];
     }
 
     /** @return list<string> */

@@ -94,6 +94,26 @@ passes run, and each adapter's own knobs (source-table overrides, translation
 domains, the target navigation handle, the redirects adapter's `sectionMoves`
 opt-in).
 
+The navigation adapter writes each legacy `kuma_menu` into the nav whose handle
+equals the menu's name, unless `menuHandles` maps it elsewhere. Legacy menus are
+called `top` and `main` on every Kunstmaan site, so a multisite target with navs
+per site group maps them per run:
+
+```php
+// config/kunstmaan-migrator.php
+'adapters' => [
+    'navigation' => [
+        'menuHandles' => ['top' => 'berkvensNlTop', 'main' => 'berkvensNlMain'],
+    ],
+],
+```
+
+Items nest as in `kuma_menu_item`: a `page_link` becomes an entry node, a
+`url_link` a url node (a `#` url stays a `#` url node). The page-tree (NodeMenu)
+pass runs after the menus either way and writes into `navHandle`, so a site with
+legacy menus can still have a page-tree nav generated — keep `navHandle` off any
+nav `menuHandles` targets, or both passes write into it.
+
 **The topology** — which databases exist, where each one's uploads live, which
 legacy locale writes to which Craft site — comes from the mapping file, which
 is version-controlled next to the field mappings it travels with. The Mapping
@@ -207,7 +227,7 @@ the console:
 `doctor` sweeps every plugin-backed adapter from the registry — SEOmatic,
 Retour, Navigation, Formie, and the Embedded Assets enhancement — reporting
 each installed/disabled/missing rather than naming one and staying silent
-about the rest, plus per-environment database reachability, upload-directory
+about the rest, every `menuHandles` target that has no nav, plus per-environment database reachability, upload-directory
 readability, and whether the target's page-builder fields can hold per-locale
 blocks. The read-only history of every run — console or control panel — is at
 **Utilities → Kunstmaan Migrator Logs**.

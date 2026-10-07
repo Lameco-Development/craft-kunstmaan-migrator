@@ -132,6 +132,7 @@ final class NavigationMenuBundlePassTest extends TestCase
         InMemoryNavigationGateway $navigation,
         InMemoryMigrationState $state,
         bool $enabled = true,
+        array $menuHandles = [],
     ): NavigationMigrationService {
         $svc = new class() extends NavigationMigrationService {
             // Craft's element constructor boots the application. The object
@@ -153,6 +154,8 @@ final class NavigationMenuBundlePassTest extends TestCase
         // from the properties instead of reaching for plugin settings.
         $svc->nodeMenuNavHandle = 'mainNav';
         $svc->nodeMenuExcludedInternalNames = ['settings', 'dienst'];
+        // Set (even when empty) so menuHandles() answers from the property.
+        $svc->menuHandles = $menuHandles;
 
         return $svc;
     }
@@ -340,6 +343,129 @@ final class NavigationMenuBundlePassTest extends TestCase
 
         self::assertSame([], $w->saved);
         self::assertStringContainsString('has no matching Craft site', implode("\n", $report->warnings));
+    }
+
+    /**
+     * Legacy menus are called `top` and `main` everywhere; Craft navs are named
+     * per site group. The map says which nav a legacy menu becomes — and the
+     * tree inside it arrives intact: a page_link becomes an entry node, a
+     * url_link a url node, and a `#` link a `#` url node, nested as in
+     * kuma_menu_item.
+     */
+    public function testAMappedMenuLandsInTheNavItIsMappedToWithItsTreeIntact(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('COM:kuma_nodes', '7', 500);
+        $w = new InMemoryElementWriter();
+        /** @var Entry $page */
+        $page = (new \ReflectionClass(Entry::class))->newInstanceWithoutConstructor();
+        $page->id = 500;
+        $page->title = 'Producten';
+        $w->willFind(500, $page, self::SITE_ID);
+        $svc = $this->service(
+            $this->legacyDb(
+                [
+                    [$this->menu(name: 'main')],
+                    [
+                        $this->item(10, ['title' => 'Over ons', 'url' => '#']),
+                        $this->item(11, ['parent_id' => 10, 'type' => 'page_link', 'node_translation_id' => 44, 'title' => null, 'url' => null, 'lvl' => 2]),
+                        $this->item(12, ['parent_id' => 10, 'title' => 'Webshop', 'url' => 'https://shop.test', 'lvl' => 2]),
+                    ],
+                    [['id' => 11, 'parent_id' => 10], ['id' => 12, 'parent_id' => 10]],
+                    [], // NodeMenu pass reads kuma_nodes
+                ],
+                [['node_id' => 7, 'ref_id' => 3, 'ref_entity_name' => 'App\\Entity\\Pages\\ContentPage']],
+            ),
+            $w,
+            $nav = new InMemoryNavigationGateway(['berkvensNlMain' => self::NAV_ID]),
+            $state,
+            menuHandles: ['main' => 'berkvensNlMain', 'top' => 'berkvensNlTop'],
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(), $this->context());
+
+        self::assertNotContains('main', $nav->handlesLookedUp, 'a mapped menu is not looked up by its legacy name');
+        self::assertSame(3, $report->counts['created'] ?? 0);
+
+        $byTitle = [];
+        foreach (array_column($w->saved, 'element') as $node) {
+            $byTitle[$node->title] = $node;
+            self::assertSame(self::NAV_ID, $node->navId);
+        }
+
+        self::assertSame('#', $byTitle['Over ons']->getRawUrl());
+        self::assertNull($byTitle['Over ons']->type);
+        self::assertSame(Entry::class, $byTitle['Producten']->type);
+        self::assertSame(500, $byTitle['Producten']->elementId);
+        self::assertSame('https://shop.test', $byTitle['Webshop']->getRawUrl());
+        self::assertSame($byTitle['Over ons']->id, $byTitle['Producten']->getParentId());
+        self::assertSame($byTitle['Over ons']->id, $byTitle['Webshop']->getParentId());
+    }
+
+    public function testAMappedHandleWithNoNavIsSkippedNamingBothTheMenuAndTheHandle(): void
+    {
+        $svc = $this->service(
+            $this->legacyDb([
+                [$this->menu(name: 'main')],
+                [], // NodeMenu pass reads kuma_nodes
+            ]),
+            $w = new InMemoryElementWriter(),
+            new InMemoryNavigationGateway(['main' => self::NAV_ID]),
+            new InMemoryMigrationState(),
+            menuHandles: ['main' => 'berkvensNlMain'],
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(), $this->context());
+
+        self::assertSame([], $w->saved, 'a mapped menu never falls back to its legacy name');
+        $all = implode("\n", $report->warnings);
+        self::assertStringContainsString('"main"', $all);
+        self::assertStringContainsString('"berkvensNlMain"', $all);
+    }
+
+    public function testAMenuTheMapDoesNotNameKeepsItsLegacyName(): void
+    {
+        $svc = $this->service(
+            $this->legacyDb([
+                [$this->menu(name: 'top')],
+                [$this->item(10)],
+                [],
+                [],
+            ]),
+            $w = new InMemoryElementWriter(),
+            new InMemoryNavigationGateway(['top' => self::NAV_ID]),
+            new InMemoryMigrationState(),
+            menuHandles: ['main' => 'berkvensNlMain'],
+        );
+
+        $svc->migrateAll(new MigrationOptions(), $this->context());
+
+        self::assertCount(1, $w->saved);
+        self::assertSame(self::NAV_ID, $w->saved[0]['element']->navId);
+    }
+
+    /**
+     * The NodeMenu pass is not reserved for sites without kuma_menu rows: it
+     * runs after the MenuBundle pass too, so a site with one legacy menu can
+     * still have its page-tree nav generated (pointing navHandle at it).
+     */
+    public function testTheNodeMenuPassStillRunsWhenTheSiteHasMenus(): void
+    {
+        $svc = $this->service(
+            $this->legacyDb([
+                [$this->menu(name: 'top')],
+                [$this->item(10)],
+                [],
+                [],
+            ]),
+            new InMemoryElementWriter(),
+            $nav = new InMemoryNavigationGateway(['top' => self::NAV_ID, 'mainNav' => 9]),
+            new InMemoryMigrationState(),
+        );
+
+        $svc->migrateAll(new MigrationOptions(), $this->context());
+
+        self::assertSame(['top', 'mainNav'], $nav->handlesLookedUp);
     }
 
     public function testAnUnreadableMenuItemTableSkipsThatMenuOnly(): void
