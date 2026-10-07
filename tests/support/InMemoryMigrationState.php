@@ -69,6 +69,11 @@ final class InMemoryMigrationState extends MigrationStateService
         $this->recorded[] = compact('source', 'key', 'targetType', 'targetId', 'meta');
     }
 
+    public function forget(string $source, string $key, ?int $siteId = null): void
+    {
+        unset($this->targets[$source . '|' . $key], $this->rows[$source . '|' . $key]);
+    }
+
     public function updateMeta(string $source, string $key, ?int $siteId, array $meta): void
     {
         if (!isset($this->rows[$source . '|' . $key])) {

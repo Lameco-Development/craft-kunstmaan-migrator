@@ -111,8 +111,15 @@ per site group maps them per run:
 Items nest as in `kuma_menu_item`: a `page_link` becomes an entry node, a
 `url_link` a url node (a `#` url stays a `#` url node). The page-tree (NodeMenu)
 pass runs after the menus either way and writes into `navHandle`, so a site with
-legacy menus can still have a page-tree nav generated — keep `navHandle` off any
-nav `menuHandles` targets, or both passes write into it.
+legacy menus can still have a page-tree nav generated. When `navHandle` is a nav
+a menu was just written into, the page-tree pass skips itself with a warning
+rather than mixing the page tree into that menu.
+
+Saved nodes are recorded per environment (`<ENV>:kuma_menu_item:<id>`,
+`<ENV>:kuma_node:<id>`), so two legacy databases with overlapping ids keep their
+own nodes. A row from before that scoping is adopted on a re-run only when the
+mapping has one environment and the row was written into the same nav (and site).
+A node whose target nav changes between runs is moved, not copied.
 
 **The topology** — which databases exist, where each one's uploads live, which
 legacy locale writes to which Craft site — comes from the mapping file, which
@@ -227,7 +234,7 @@ the console:
 `doctor` sweeps every plugin-backed adapter from the registry — SEOmatic,
 Retour, Navigation, Formie, and the Embedded Assets enhancement — reporting
 each installed/disabled/missing rather than naming one and staying silent
-about the rest, every `menuHandles` target that has no nav, plus per-environment database reachability, upload-directory
+about the rest, every `menuHandles` target that has no nav and every entry that is not a `menu=navHandle` pair, plus per-environment database reachability, upload-directory
 readability, and whether the target's page-builder fields can hold per-locale
 blocks. The read-only history of every run — console or control panel — is at
 **Utilities → Kunstmaan Migrator Logs**.

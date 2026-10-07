@@ -11,6 +11,7 @@ use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\NavigationMigrationService;
+use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use Lameco\Kunstmaanmigrator\tests\support\ConstructsNoElements;
@@ -198,7 +199,8 @@ final class NavigationMenuBundlePassTest extends TestCase
         };
     }
 
-    private function context(bool $emptySites = false): EnvironmentContext
+    /** @param list<string> $corpus every environment the mapping declares */
+    private function context(bool $emptySites = false, string $environment = 'COM', array $corpus = []): EnvironmentContext
     {
         $sites = $emptySites
             ? SiteMap::bind([], [])
@@ -206,8 +208,12 @@ final class NavigationMenuBundlePassTest extends TestCase
                 ['nl' => 'default'],
                 [(object) ['id' => self::SITE_ID, 'handle' => 'default', 'language' => 'nl-NL']],
             );
+        $mapping = $corpus === [] ? null : Mapping::fromArray([
+            'version' => 1,
+            'environments' => array_fill_keys($corpus, ['database' => 'legacy', 'locales' => ['nl' => 'default']]),
+        ]);
 
-        return new EnvironmentContext('COM', 'legacy_com', $sites);
+        return new EnvironmentContext($environment, 'legacy_' . strtolower($environment), $sites, mapping: $mapping);
     }
 
     /** @return array<string, mixed> */
@@ -468,6 +474,34 @@ final class NavigationMenuBundlePassTest extends TestCase
         self::assertSame(['top', 'mainNav'], $nav->handlesLookedUp);
     }
 
+    /**
+     * `navHandle` pointing at a nav a legacy menu is mapped into would have both
+     * passes write into it — the menu's items and the whole page tree, mixed.
+     * The menu was mapped there on purpose, so it keeps the nav.
+     */
+    public function testTheNodeMenuPassIsSkippedWhenItsNavIsAlreadyAMenuTarget(): void
+    {
+        $svc = $this->service(
+            $this->legacyDb([
+                [$this->menu(name: 'top')],
+                [$this->item(10)],
+                [],
+                new RuntimeException('kuma_nodes must never be read'),
+            ]),
+            $w = new InMemoryElementWriter(),
+            new InMemoryNavigationGateway(['mainNav' => self::NAV_ID]),
+            new InMemoryMigrationState(),
+            menuHandles: ['top' => 'mainNav'],
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(), $this->context());
+
+        $warnings = implode("\n", $report->warnings);
+        self::assertCount(1, $w->saved, 'the menu item still lands');
+        self::assertStringNotContainsString('kuma_nodes must never be read', $warnings);
+        self::assertStringContainsString('NodeMenu pass skipped: nav "mainNav" is already the target of legacy menu "top"', $warnings);
+    }
+
     public function testAnUnreadableMenuItemTableSkipsThatMenuOnly(): void
     {
         $svc = $this->service(
@@ -517,7 +551,7 @@ final class NavigationMenuBundlePassTest extends TestCase
 
         self::assertSame(1, $report->counts['created'] ?? 0);
         self::assertCount(1, $state->recorded);
-        self::assertSame('kuma_menu_item:10', $state->recorded[0]['key']);
+        self::assertSame('COM:kuma_menu_item:10', $state->recorded[0]['key'], 'state is scoped to the environment');
         self::assertSame(self::NAV_ID, $state->recorded[0]['meta']['navId'] ?? null);
 
         // Per-locale isolation: every site other than the source one is
@@ -740,7 +774,7 @@ final class NavigationMenuBundlePassTest extends TestCase
     public function testARerunUpdatesTheExistingNodeInsteadOfCreatingASecond(): void
     {
         $state = new InMemoryMigrationState();
-        $state->willResolve('navigation', 'kuma_menu_item:10', 900);
+        $state->willResolve('navigation', 'COM:kuma_menu_item:10', 900);
         $writer = new InMemoryElementWriter();
         $writer->willFind(900, $this->bareNode(900));
         $svc = $this->service(
@@ -848,5 +882,120 @@ final class NavigationMenuBundlePassTest extends TestCase
             'parent linkage failed for kuma_menu_item id=11: lookup exploded',
             implode("\n", $report->warnings),
         );
+    }
+
+    /**
+     * NL and FR are two legacy databases migrated into one Craft install, and
+     * both number their menu items from 1. Keyed without the environment, FR's
+     * item 10 found NL's node and re-saved it into the FR nav.
+     */
+    public function testTwoEnvironmentsWithTheSameItemIdLandInTheirOwnNavsWithoutInterference(): void
+    {
+        $state = new InMemoryMigrationState();
+        $writer = new InMemoryElementWriter();
+        $navigation = new InMemoryNavigationGateway(['nlTop' => 5, 'frTop' => 6]);
+
+        $nl = $this->service(
+            $this->legacyDb([[$this->menu()], [$this->item(10, ['title' => 'NL'])], []]),
+            $writer,
+            $navigation,
+            $state,
+            menuHandles: ['top' => 'nlTop'],
+        )->migrateAll(new MigrationOptions(), $this->context(environment: 'NL', corpus: ['NL', 'FR']));
+
+        $nlNode = $writer->saved[0]['element'];
+        $writer->willFind((int) $nlNode->id, $nlNode);
+
+        $fr = $this->service(
+            $this->legacyDb([[$this->menu()], [$this->item(10, ['title' => 'FR'])], []]),
+            $writer,
+            $navigation,
+            $state,
+            menuHandles: ['top' => 'frTop'],
+        )->migrateAll(new MigrationOptions(), $this->context(environment: 'FR', corpus: ['NL', 'FR']));
+
+        self::assertSame(1, $nl->counts['created'] ?? 0);
+        self::assertSame(1, $fr->counts['created'] ?? 0, 'FR item 10 is a node of its own');
+        self::assertSame(0, $fr->counts['updated'] ?? 0);
+        self::assertCount(2, $writer->saved);
+        $frNode = $writer->saved[1]['element'];
+        self::assertNotSame((int) $nlNode->id, (int) $frNode->id);
+        self::assertSame(5, $nlNode->navId, 'the NL node stays in the NL nav');
+        self::assertSame('NL', $nlNode->title);
+        self::assertSame(6, $frNode->navId);
+        self::assertSame(['NL:kuma_menu_item:10', 'FR:kuma_menu_item:10'], array_column($state->recorded, 'key'));
+    }
+
+    /**
+     * A database migrated before the state was scoped holds the unscoped key.
+     * Re-running the same single-environment corpus must find that node, not
+     * mint a second copy, and leaves the row scoped behind it.
+     */
+    public function testALegacyUnscopedRowIsAdoptedOnASingleEnvironmentRerunAndRewrittenScoped(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'kuma_menu_item:10', 900, ['navId' => self::NAV_ID, 'siteId' => self::SITE_ID]);
+        $writer = new InMemoryElementWriter();
+        $writer->willFind(900, $this->bareNode(900));
+        $svc = $this->service(
+            $this->legacyDb([[$this->menu()], [$this->item(10)], []]),
+            $writer,
+            new InMemoryNavigationGateway(['top' => self::NAV_ID]),
+            $state,
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(), $this->context(corpus: ['COM']));
+
+        self::assertSame(1, $report->counts['updated'] ?? 0);
+        self::assertSame(0, $report->counts['created'] ?? 0);
+        self::assertSame(900, (int) $writer->saved[0]['element']->id);
+        self::assertSame(900, $state->getTargetId('navigation', 'COM:kuma_menu_item:10'), 'rewritten under the scoped key');
+        self::assertNull($state->get('navigation', 'kuma_menu_item:10'), 'the unscoped row is gone');
+    }
+
+    public function testALegacyUnscopedRowIsNotAdoptedWhenTheCorpusHasMoreThanOneEnvironment(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'kuma_menu_item:10', 4242, ['navId' => self::NAV_ID, 'siteId' => self::SITE_ID]);
+        $writer = new InMemoryElementWriter();
+        $writer->willFind(4242, $this->bareNode(4242));
+        $svc = $this->service(
+            $this->legacyDb([[$this->menu()], [$this->item(10)], []]),
+            $writer,
+            new InMemoryNavigationGateway(['top' => self::NAV_ID]),
+            $state,
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(), $this->context(corpus: ['COM', 'LV']));
+
+        self::assertSame(1, $report->counts['created'] ?? 0, 'whose item 10 it was cannot be told');
+        self::assertNotSame(4242, (int) $writer->saved[0]['element']->id);
+        self::assertSame(4242, $state->getTargetId('navigation', 'kuma_menu_item:10'), 'and the old row is left alone');
+    }
+
+    /**
+     * One environment per mapping is how a project with per-site mappings
+     * runs, and those share one Craft database. A legacy row is only adopted
+     * into the nav and site it was written into, so another mapping's row
+     * with the same item id cannot be taken over.
+     */
+    public function testALegacyUnscopedRowWrittenIntoAnotherNavIsNotAdopted(): void
+    {
+        $state = new InMemoryMigrationState();
+        $state->willResolve('navigation', 'kuma_menu_item:10', 4242, ['navId' => 99, 'siteId' => self::SITE_ID]);
+        $writer = new InMemoryElementWriter();
+        $writer->willFind(4242, $this->bareNode(4242));
+        $svc = $this->service(
+            $this->legacyDb([[$this->menu()], [$this->item(10)], []]),
+            $writer,
+            new InMemoryNavigationGateway(['top' => self::NAV_ID]),
+            $state,
+        );
+
+        $report = $svc->migrateAll(new MigrationOptions(), $this->context(corpus: ['COM']));
+
+        self::assertSame(1, $report->counts['created'] ?? 0);
+        self::assertNotSame(4242, (int) $writer->saved[0]['element']->id);
+        self::assertSame(4242, $state->getTargetId('navigation', 'kuma_menu_item:10'));
     }
 }

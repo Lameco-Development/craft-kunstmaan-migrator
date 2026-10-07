@@ -43,4 +43,47 @@ final class DiagnosticsMenuHandlesTest extends TestCase
         self::assertStringContainsString('main → berkvensNlMain', $checks[0]['detail']);
         self::assertStringNotContainsString('berkvensNlTop', $checks[0]['detail']);
     }
+
+    /**
+     * `top:berkvensNlTop` has no `=`, so the cast map is empty and the old
+     * check said nothing at all — the run then skipped the menu as unmapped.
+     */
+    public function testAPairWithoutAnEqualsSignFailsAndIsNamed(): void
+    {
+        $checks = Diagnostics::menuHandleChecks('top:berkvensNlTop', new InMemoryNavigationGateway(['berkvensNlTop' => 1]));
+
+        self::assertCount(1, $checks);
+        self::assertFalse($checks[0]['ok']);
+        self::assertStringContainsString('"top:berkvensNlTop"', $checks[0]['detail']);
+    }
+
+    public function testAMalformedPairFailsTheRowEvenWhenTheRestResolve(): void
+    {
+        $checks = Diagnostics::menuHandleChecks(
+            'top=berkvensNlTop, main, =orphan, footer=',
+            new InMemoryNavigationGateway(['berkvensNlTop' => 1]),
+        );
+
+        self::assertCount(1, $checks);
+        self::assertFalse($checks[0]['ok']);
+        self::assertStringContainsString('"main"', $checks[0]['detail']);
+        self::assertStringContainsString('"=orphan"', $checks[0]['detail']);
+        self::assertStringContainsString('"footer="', $checks[0]['detail']);
+        self::assertStringNotContainsString('berkvensNlTop', $checks[0]['detail']);
+    }
+
+    public function testAConfigListWithoutKeysIsMalformed(): void
+    {
+        $checks = Diagnostics::menuHandleChecks(['top:berkvensNlTop'], new InMemoryNavigationGateway(['top:berkvensNlTop' => 1]));
+
+        self::assertFalse($checks[0]['ok']);
+        self::assertStringContainsString('"top:berkvensNlTop"', $checks[0]['detail']);
+    }
+
+    public function testATrailingCommaIsNotMalformed(): void
+    {
+        $checks = Diagnostics::menuHandleChecks('top=berkvensNlTop, ', new InMemoryNavigationGateway(['berkvensNlTop' => 1]));
+
+        self::assertTrue($checks[0]['ok']);
+    }
 }
