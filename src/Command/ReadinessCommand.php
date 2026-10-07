@@ -108,8 +108,9 @@ final class ReadinessCommand extends Command
             $rank = [
                 Requirement::MISSING => 0,
                 Requirement::PARTIAL => 1,
-                Requirement::DEFAULTED => 2,
-                Requirement::OK => 3,
+                Requirement::CONDITIONAL => 2,
+                Requirement::DEFAULTED => 3,
+                Requirement::OK => 4,
             ];
 
             return [$rank[$a->verdict()], -$a->affected()] <=> [$rank[$b->verdict()], -$b->affected()];
@@ -241,6 +242,7 @@ final class ReadinessCommand extends Command
                 match ($r->verdict()) {
                     Requirement::MISSING => '<error> missing </error>',
                     Requirement::PARTIAL => '<comment> partial </comment>',
+                    Requirement::CONDITIONAL => '<info> conditional </info>',
                     Requirement::DEFAULTED => sprintf('<info> default </info> %s', (string) $r->craftDefault),
                     default => 'ok',
                 },
@@ -257,6 +259,7 @@ final class ReadinessCommand extends Command
         $io->writeln('');
         $io->writeln('  <error>missing</error>  nothing supplies it, and the field has no default — set one in the mapping, or relax the field in Craft.');
         $io->writeln('  <comment>partial</comment>  supplied, but empty on some live rows, and no default catches them — add a fallback, or relax the field.');
+        $io->writeln('  <info>conditional</info>  required only where a field-layout condition shows it — not a blocker for entries it hides.');
         $io->writeln('  <info>default</info>  Craft fills it itself on a fresh element. Not a blocker; listed because the migration is choosing that value.');
     }
 
@@ -285,6 +288,9 @@ final class ReadinessCommand extends Command
         $output->writeln('`default` is neither: Craft applies the field\'s own default to a fresh element when the');
         $output->writeln('payload omits it, so nothing has to be decided before loading. It is listed because the');
         $output->writeln('migration is choosing that value for every affected row, and an editor sees the result.');
+        $output->writeln('');
+        $output->writeln('`conditional` is required only where a field-layout element condition shows the field, so an');
+        $output->writeln('entry the condition hides saves without it. Check the entries where the condition holds.');
         $output->writeln('');
         $output->writeln('## What a verdict costs');
         $output->writeln('');
@@ -332,7 +338,13 @@ final class ReadinessCommand extends Command
     /** @param list<Requirement> $all */
     private function headline(array $all): string
     {
-        $by = [Requirement::OK => 0, Requirement::DEFAULTED => 0, Requirement::PARTIAL => 0, Requirement::MISSING => 0];
+        $by = [
+            Requirement::OK => 0,
+            Requirement::DEFAULTED => 0,
+            Requirement::CONDITIONAL => 0,
+            Requirement::PARTIAL => 0,
+            Requirement::MISSING => 0,
+        ];
 
         foreach ($all as $r) {
             ++$by[$r->verdict()];
@@ -340,10 +352,11 @@ final class ReadinessCommand extends Command
 
         return sprintf(
             '%d required fields across every target the mapping writes to — %d filled by the mapping, %d left to a Craft'
-            . ' default, %d partial, %d with nothing to fill them.',
+            . ' default, %d required only under a layout condition, %d partial, %d with nothing to fill them.',
             count($all),
             $by[Requirement::OK],
             $by[Requirement::DEFAULTED],
+            $by[Requirement::CONDITIONAL],
             $by[Requirement::PARTIAL],
             $by[Requirement::MISSING],
         );

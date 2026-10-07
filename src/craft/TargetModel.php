@@ -108,7 +108,7 @@ final class TargetModel implements TargetSchema
      * field — that is a project-config reading, and `Readiness` is the only caller that wants
      * it. Loading never asks, so the slot's default stays null here.
      *
-     * @param array<string, array{type: string, required: bool, nested: list<string>, propagationMethod?: ?string, columns?: ?list<string>}> $slots
+     * @param array<string, array{type: string, required: bool, nested: list<string>, propagationMethod?: ?string, columns?: ?list<string>, conditional?: bool}> $slots
      * @return array<string, Slot>
      */
     private static function toSlots(array $slots): array
@@ -123,6 +123,7 @@ final class TargetModel implements TargetSchema
                 nested: $slot['nested'],
                 propagationMethod: $slot['propagationMethod'] ?? null,
                 columns: $slot['columns'] ?? null,
+                conditional: $slot['conditional'] ?? false,
             );
         }
 

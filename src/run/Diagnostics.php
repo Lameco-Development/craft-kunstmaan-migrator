@@ -448,11 +448,7 @@ final class Diagnostics
      */
     private function checkBlockPropagation(Mapping $mapping): array
     {
-        $localesPer = [];
-
-        foreach ($mapping->environments() as $env => $spec) {
-            $localesPer[(string) $env] = count((array) ($spec['locales'] ?? []));
-        }
+        $localesPer = BlockPropagation::mappedLocaleCounts($mapping->environments());
 
         $schema = new TargetModel(new CraftSchemaGateway());
         $contexts = $mapping->all()['defaults']['contexts'] ?? [];

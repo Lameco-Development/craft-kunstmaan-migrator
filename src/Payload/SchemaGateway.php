@@ -63,7 +63,8 @@ interface SchemaGateway
     /**
      * Every field placement on an entry type, with the detail the compile side needs to
      * turn a legacy row into a block: whether a field is a Matrix (and what it nests),
-     * and whether the layout marks it required.
+     * whether the layout marks it required, and whether an element condition (on the
+     * placement or its tab) shows it only on some entries — `required` then binds only there.
      *
      * Compiling against the live schema rather than a parse of `config/project/**` means
      * the answer cannot lag an unapplied project config, and there is one implementation
@@ -75,7 +76,7 @@ interface SchemaGateway
      * A Table placement may report its column handles — what a `children:` map into it keys
      * its rows by; a gateway that omits them leaves the columns unknown rather than empty.
      *
-     * @return array<string, array{type: string, required: bool, nested: list<string>, propagationMethod?: ?string, columns?: ?list<string>}> field handle => placement
+     * @return array<string, array{type: string, required: bool, nested: list<string>, propagationMethod?: ?string, columns?: ?list<string>, conditional?: bool}> field handle => placement
      */
     public function fieldSlotsFor(string $entryTypeHandle): array;
 }
