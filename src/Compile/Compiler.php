@@ -1116,13 +1116,7 @@ final class Compiler
                 $mapped += $builder->childrenOf($sidecar->children(), $entryType, (int) $row['id'], $context, true);
             }
 
-            foreach ($mapped as $target => $value) {
-                if ($this->schema !== null && $this->schema->slot($entryType, (string) $target) === null) {
-                    $this->skip(sprintf('sidecar %s: %s not on %s', $name, $target, $entryType));
-
-                    continue;
-                }
-
+            foreach ($this->onEntryType($mapped, $entryType, 'sidecar ' . $name) as $target => $value) {
                 $fields[(string) $target] ??= $value;
             }
         }
@@ -1131,13 +1125,60 @@ final class Compiler
     }
 
     /**
-     * What a page's `target: page` contexts write onto the page's own fields.
+     * The mapped values whose target the entry type carries; each one it lacks is dropped and
+     * counted under `<subject>: <target> not on <entry type>`. Without a schema, all of them.
      *
-     * A page context is single-valued: the first `consumedBy: page` part that can be written is,
-     * and every other part in the context is counted — a second header part, a part with no page
-     * mapping, a part whose `requires:` fields came out empty. A count, not a silent drop, so the
-     * run report says what the page lost. A target the entry type does not carry is dropped and
-     * counted the way a sidecar's is.
+     * @param array<string, mixed> $mapped
+     * @return array<string, mixed>
+     */
+    private function onEntryType(array $mapped, string $entryType, string $subject): array
+    {
+        if ($this->schema === null) {
+            return $mapped;
+        }
+
+        foreach (array_keys($mapped) as $target) {
+            if ($this->schema->slot($entryType, (string) $target) === null) {
+                $this->skip(sprintf('%s: %s not on %s', $subject, $target, $entryType));
+                unset($mapped[$target]);
+            }
+        }
+
+        return $mapped;
+    }
+
+    /**
+     * Which part each `target: page` context of one node fills, per legacy lang — the selection
+     * compile makes, asked rather than re-derived, so `state/explain` cannot drift from it.
+     * Null for a node this run does not compile. Counts its skips like a compile would; ask it of
+     * a compiler whose run report you are not keeping.
+     *
+     * @return array<string, array<string, array{part: string, id: int}|null>>|null lang => context => part
+     */
+    public function pageContextFills(CompilerRun $run, int $nodeId): ?array
+    {
+        $node = $run->nodesById[$nodeId] ?? null;
+        $page = $node !== null ? ($run->pageRows[$node['entity']] ?? null) : null;
+
+        if ($page === null || !$page->compiles()) {
+            return null;
+        }
+
+        $out = [];
+
+        foreach ($node['translations'] as $translation) {
+            $fills = $this->fillPageContexts($run->parts, $run->builder, $translation, $page, (string) $page->entryType());
+
+            foreach ($fills as $context => $fill) {
+                $out[(string) $translation['lang']][$context] = $fill['part'];
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * What a page's `target: page` contexts write onto the page's own fields.
      *
      * @param array<string, mixed> $translation
      * @return array<string, mixed>
@@ -1151,15 +1192,44 @@ final class Compiler
     ): array {
         $fields = [];
 
+        foreach ($this->fillPageContexts($parts, $builder, $translation, $page, $entryType) as $fill) {
+            $fields += $fill['fields'];
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Each `target: page` context of one page translation, and the part that fills it.
+     *
+     * A page context is single-valued: the first `consumedBy: page` part that can be written is,
+     * and every other part in the context is counted — a second header part, a part with no page
+     * mapping, a part whose `requires:` fields came out empty or that maps nothing the entry type
+     * carries. A count, not a silent drop, so the run report says what the page lost. A target
+     * the entry type does not carry is dropped and counted the way a sidecar's is.
+     *
+     * @param array<string, mixed> $translation
+     * @return array<string, array{part: array{part: string, id: int}|null, fields: array<string, mixed>}> context => fill
+     */
+    private function fillPageContexts(
+        PartReader $parts,
+        BlockBuilder $builder,
+        array $translation,
+        PageRow $page,
+        string $entryType,
+    ): array {
+        $out = [];
+
         foreach ($page->pageContexts() as $context) {
             $written = null;
+            $fields = [];
 
             foreach ($parts->sequence((string) $translation['entity'], (int) $translation['entityId'], $context) as $ref) {
                 $name = (string) $ref['part'];
                 $part = $this->mapping->partRow($name);
 
                 if ($written !== null) {
-                    $this->skip(sprintf('page context %s on %s: %s not written — %s already filled the page', $context, $entryType, $name, $written));
+                    $this->skip(sprintf('page context %s on %s: %s not written — %s already filled the page', $context, $entryType, $name, $written['part']));
 
                     continue;
                 }
@@ -1176,12 +1246,14 @@ final class Compiler
                     continue;
                 }
 
-                $written = $name;
-                $fields += $mapped;
+                $written = ['part' => $name, 'id' => (int) $ref['id']];
+                $fields = $mapped;
             }
+
+            $out[$context] = ['part' => $written, 'fields' => $fields];
         }
 
-        return $fields;
+        return $out;
     }
 
     /**
@@ -1205,6 +1277,10 @@ final class Compiler
         $mapped = $builder->fieldsFrom($part->map(), $row, $context, $entryType);
         $mapped += $builder->childrenOf($part->children(), $entryType, $id, $context, true);
 
+        // Off-type targets go first: a `requires:` field the entry type lacks is as empty as one
+        // the legacy row left blank, and a part that keeps nothing has filled nothing.
+        $mapped = $this->onEntryType($mapped, $entryType, 'page part ' . $part->name);
+
         foreach ($part->requires() as $required) {
             if (!isset($mapped[$required])) {
                 $this->skip(sprintf('page part %s on %s: %s is empty — not written', $part->name, $entryType, $required));
@@ -1213,11 +1289,10 @@ final class Compiler
             }
         }
 
-        foreach (array_keys($mapped) as $target) {
-            if ($this->schema !== null && $this->schema->slot($entryType, (string) $target) === null) {
-                $this->skip(sprintf('page part %s: %s not on %s', $part->name, $target, $entryType));
-                unset($mapped[$target]);
-            }
+        if ($mapped === []) {
+            $this->skip(sprintf('page part %s on %s: no field it maps is on the entry type — not written', $part->name, $entryType));
+
+            return null;
         }
 
         return $mapped;

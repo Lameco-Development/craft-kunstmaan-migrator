@@ -155,24 +155,16 @@ final class TargetCheck
 
     /**
      * A `consumedBy: page` part's `map:` and `children:` address the fields of the page it sits
-     * on, so they are checked against every page entry type that has a `target: page` context —
-     * the types it can reach. The compiler would drop a missing one and count it; this says so
-     * before the run.
+     * on, so they are checked against the page entry types that have a `target: page` context —
+     * the types it can reach. A field no such type has is a typo, and every value is dropped: an
+     * error. A type that merely lacks one is `pagesWithNoBlockField()`'s warning instead — the
+     * `forms.field` precedent: compile drops the value there and counts it.
      *
      * @return list<string>
      */
     private function checkPageParts(Mapping $mapping): array
     {
-        $hosts = [];
-
-        foreach ($mapping->pageRows() as $page) {
-            $entryType = (string) $page->entryType();
-
-            if ($page->compiles() && $page->pageContexts() !== [] && $this->schema->hasEntryType($entryType)) {
-                $hosts[$entryType] = true;
-            }
-        }
-
+        $hosts = $this->pagePartHosts($mapping);
         $errors = [];
 
         foreach ($mapping->partRows() as $name => $part) {
@@ -180,14 +172,24 @@ final class TargetCheck
                 continue;
             }
 
-            foreach (array_keys($hosts) as $entryType) {
-                foreach (array_keys($part->map()) as $target) {
-                    if ($this->schema->slot($entryType, (string) $target) === null) {
-                        $errors[] = sprintf('part `%s`: page entry type `%s` has no field `%s`', $name, $entryType, $target);
-                    }
+            foreach (array_keys($part->map()) as $target) {
+                if ($this->hostsWith($hosts, (string) $target) !== []) {
+                    continue;
                 }
 
-                $this->checkChildren(sprintf('part `%s`', $name), $entryType, $part->children(), $errors);
+                foreach ($hosts as $entryType) {
+                    $errors[] = sprintf('part `%s`: page entry type `%s` has no field `%s`', $name, $entryType, $target);
+                }
+            }
+
+            // A host with the field still has to hold it as a Matrix of the right shape; with no
+            // host holding it at all, each one says so.
+            foreach ($part->children() as $field => $child) {
+                $holding = $this->hostsWith($hosts, (string) $field);
+
+                foreach ($holding !== [] ? $holding : $hosts as $entryType) {
+                    $this->checkChildren(sprintf('part `%s`', $name), $entryType, [$field => $child], $errors);
+                }
             }
 
             // The block stream wins a field it fills, so a page part writing one is lost on every
@@ -211,6 +213,72 @@ final class TargetCheck
         }
 
         return $errors;
+    }
+
+    /**
+     * The page entry types a `consumedBy: page` part can land on: those with a `target: page` context.
+     *
+     * @return list<string>
+     */
+    private function pagePartHosts(Mapping $mapping): array
+    {
+        $hosts = [];
+
+        foreach ($mapping->pageRows() as $page) {
+            $entryType = (string) $page->entryType();
+
+            if ($page->compiles() && $page->pageContexts() !== [] && $this->schema->hasEntryType($entryType)) {
+                $hosts[$entryType] = true;
+            }
+        }
+
+        return array_map(strval(...), array_keys($hosts));
+    }
+
+    /**
+     * @param list<string> $hosts
+     * @return list<string> the hosts that carry the field
+     */
+    private function hostsWith(array $hosts, string $field): array
+    {
+        return array_values(array_filter($hosts, fn(string $host): bool => $this->schema->slot($host, $field) !== null));
+    }
+
+    /**
+     * A page entry type lacking a field a page part writes, where another type it can land on
+     * has it: compile drops the value on those pages and counts it.
+     *
+     * @return list<string>
+     */
+    private function pagePartGaps(Mapping $mapping): array
+    {
+        $hosts = $this->pagePartHosts($mapping);
+        $warnings = [];
+
+        foreach ($mapping->partRows() as $name => $part) {
+            if ($part->disposition() !== PartRow::PAGE) {
+                continue;
+            }
+
+            foreach ([...array_keys($part->map()), ...array_keys($part->children())] as $field) {
+                $holding = $this->hostsWith($hosts, (string) $field);
+
+                if ($holding === []) {
+                    continue;
+                }
+
+                foreach (array_diff($hosts, $holding) as $entryType) {
+                    $warnings[] = sprintf(
+                        'part `%s` writes `%s`, which page entry type `%s` does not have — dropped on those pages',
+                        $name,
+                        $field,
+                        $entryType,
+                    );
+                }
+            }
+        }
+
+        return $warnings;
     }
 
     /**
@@ -318,7 +386,7 @@ final class TargetCheck
             }
         }
 
-        return $warnings;
+        return [...$warnings, ...$this->pagePartGaps($mapping)];
     }
 
     /**

@@ -343,20 +343,32 @@ parts:
   quotes, so `heroType: 'image'` would read a column called `image`.
 - **`requires:`** guards a target invariant the field layout cannot express: `heroSlides` is
   required when `heroType` is `slider`, so a slider part with no slides writes nothing and is
-  counted, rather than saving a slider hero over nothing.
+  counted, rather than saving a slider hero over nothing. It is checked after fields the entry type
+  lacks are dropped, so a `requires:` field missing from the type fails it too; and a part left
+  with no field at all writes nothing, so neither blocks the next part from filling the page.
 - A field the page entry type lacks is dropped and counted, like a sidecar's. `validate --craft`
-  checks every page part's `map:`/`children:` against each page entry type with a page context.
+  checks every page part's `map:`/`children:` against the page entry types with a page context: a
+  field none of them has is an error, and a type that merely lacks one a sibling type has is a
+  warning (the `forms.field` precedent) — those pages lose that value.
 - `validate` refuses a `target:` other than `page`, `field:`/`prepend:` on a page context, a
   `consumedBy:` other than `sequence`/`page`, a page part that maps nothing, and `requires:` on
   anything else.
 - A page context is not a block context: `contextFields()`, the allow-list checks and the
   placement warning never see it.
-- **Coverage** puts these parts in a `page` lane and lists every live placement stacked behind the
-  first in a page context as a loss (`pageContextLosses`, and a table in `--markdown`). Losses do
-  not fail the run; they are the number of parts that will not be on the new site.
-- **`state/explain`** reports the first page part per locale and context as "written to the page's
-  own fields", and the rest as not written. That is inferred from the mapping: a page field leaves
-  no block id in the state row to read back.
+- **Coverage** puts these parts in a `page` lane and lists what a page context drops as a loss
+  (`pageContextLosses`, and a table in `--markdown`): in a stack holding a `consumedBy: page` part,
+  every placement but one; in a stack holding none — a body text alone in the header — all of it.
+  Losses do not fail the run; they are the number of parts that will not be on the new site. It is
+  a lower bound: coverage reads only the legacy refs, so a page part whose `requires:` comes out
+  empty (or that maps nothing the type carries) is assumed to fill the page. The run report has
+  the exact count. Locales with no Craft site are left out (they are stranded whole), and since the
+  lane split is per class, a body text alone in a page context still counts under `blocks` there.
+- **`state/explain`** asks compile which part fills each page context of the node, per locale
+  (`Compiler::pageContextFills()`), so it agrees with the run — including a part whose `requires:`
+  came out empty letting the next one write — and reports the others as not written, naming the
+  part that filled the page. A page field leaves no block id in the state row to read back, which
+  is why it asks rather than reads. Contexts are resolved per page: a page's own `contexts:`
+  replaces the defaults here as at compile.
 - `readiness` and the editor's field provenance credit the fields to the `page-parts` lane.
 
 ## Non-node tables

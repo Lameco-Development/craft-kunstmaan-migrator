@@ -88,7 +88,7 @@ final class LegacyDatabase
             pageTypes: $this->livePageTypes(),
             pagesByLocale: $this->livePagesByLocale(),
             allPartRefs: $this->countAllPartRefs(),
-            stackedPlacements: $this->liveStackedPlacements(),
+            pageContextStacks: $this->livePageContextStacks(),
         );
     }
 
@@ -350,36 +350,70 @@ final class LegacyDatabase
     }
 
     /**
-     * Live placements beyond the first in their context, per page type and context.
+     * Every live context stack, summarised by the mix of part classes it holds.
      *
-     * A `target: page` context is single-valued — its first part fills the page's own fields —
-     * so every part stacked behind that one is a loss. Which contexts are single-valued is the
-     * mapping's call; this counts every stack and lets coverage pick. Aggregates only, no window
-     * functions: it has to run on the MySQL 5.7 a legacy Kunstmaan install often still is.
+     * A `target: page` context is single-valued — the first part that can be written fills the
+     * page's own fields, and the rest are lost — so what a stack loses depends on *which* classes
+     * it holds, and which classes can fill a page is the mapping's call, not the database's. So
+     * this reports each distinct mix per page type, context and lang (how many stacks hold
+     * exactly those classes, and how many placements they hold between them) and lets coverage
+     * judge — the lang because a locale with no Craft site is not compiled at all.
+     * Ordered rows grouped in PHP rather than window functions: it has to run on the MySQL 5.7 a
+     * legacy Kunstmaan install often still is.
      *
-     * @return array<string, array<string, int>> short page entity => context => placements beyond the first
+     * @return array<string, array<string, array<string, array<string, array{stacks: int, placements: int}>>>>
+     *         short page entity => context => lang => sorted short part classes, comma-joined => totals
      */
-    public function liveStackedPlacements(): array
+    public function livePageContextStacks(): array
     {
         $sql = sprintf(
-            'SELECT s.entity AS entity, s.context AS context, SUM(s.n - 1) AS extra
-             FROM (
-                 SELECT l.pageEntityname AS entity, l.pageId AS pageId, l.lang AS lang, r.context AS context, COUNT(*) AS n
-                 FROM kuma_page_part_refs r
-                 JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
-                 GROUP BY l.pageEntityname, l.pageId, l.lang, r.context
-                 HAVING COUNT(*) > 1
-             ) s
-             GROUP BY s.entity, s.context',
+            'SELECT l.pageEntityname AS entity, l.pageId AS pageId, l.lang AS lang, r.context AS context,
+                    r.page_part_entityname AS part
+             FROM kuma_page_part_refs r
+             JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
+             ORDER BY l.pageEntityname, l.pageId, l.lang, r.context',
             self::LIVE_PAGES,
         );
 
         $out = [];
+        $key = null;
+        $stack = null;
+
+        $flush = static function(?array $stack) use (&$out): void {
+            if ($stack === null) {
+                return;
+            }
+
+            $classes = array_keys($stack['classes']);
+            sort($classes);
+            $mix = implode(',', $classes);
+            $totals = $out[$stack['page']][$stack['context']][$stack['lang']][$mix] ?? ['stacks' => 0, 'placements' => 0];
+            $out[$stack['page']][$stack['context']][$stack['lang']][$mix] = [
+                'stacks' => $totals['stacks'] + 1,
+                'placements' => $totals['placements'] + $stack['placements'],
+            ];
+        };
 
         foreach ($this->pdo->query($sql) as $row) {
-            $page = self::shortName((string) $row['entity']);
-            $out[$page][(string) $row['context']] = ($out[$page][(string) $row['context']] ?? 0) + (int) $row['extra'];
+            $rowKey = implode("\0", [$row['entity'], $row['pageId'], $row['lang'], $row['context']]);
+
+            if ($rowKey !== $key) {
+                $flush($stack);
+                $key = $rowKey;
+                $stack = [
+                    'page' => self::shortName((string) $row['entity']),
+                    'context' => (string) $row['context'],
+                    'lang' => (string) $row['lang'],
+                    'classes' => [],
+                    'placements' => 0,
+                ];
+            }
+
+            $stack['classes'][self::shortName((string) $row['part'], 'PagePart')] = true;
+            ++$stack['placements'];
         }
+
+        $flush($stack);
 
         return $out;
     }

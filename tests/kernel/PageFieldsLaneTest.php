@@ -83,13 +83,21 @@ final class PageFieldsLaneTest extends TestCase
 
         YAML;
 
-    public static function schema(): TargetSchema
+    /**
+     * @param list<string>                      $without `entryType.field` slots to leave out
+     * @param array<string, array<string, Slot>> $extra   further entry types
+     */
+    public static function schema(array $without = [], array $extra = []): TargetSchema
     {
-        return new class() implements TargetSchema {
+        return new class($without, $extra) implements TargetSchema {
             /** @var array<string, array<string, Slot>> */
             private array $types;
 
-            public function __construct()
+            /**
+             * @param list<string>                      $without
+             * @param array<string, array<string, Slot>> $extra
+             */
+            public function __construct(array $without, array $extra)
             {
                 $this->types = [
                     'berkvensNlContentPage' => [
@@ -104,7 +112,12 @@ final class PageFieldsLaneTest extends TestCase
                     ],
                     'heroSlide' => ['slideTitle' => new Slot('slideTitle', 'PlainText', false)],
                     'textBlock' => ['content' => new Slot('content', 'CKEditor', false)],
-                ];
+                ] + $extra;
+
+                foreach ($without as $slot) {
+                    [$type, $field] = explode('.', $slot, 2);
+                    unset($this->types[$type][$field]);
+                }
             }
 
             public function hasEntryType(string $handle): bool
@@ -238,10 +251,10 @@ final class PageFieldsLaneTest extends TestCase
     }
 
     /** @return array{0: array<int, array<string, mixed>>, 1: Compiler} entries keyed by node id */
-    private function compile(string $yaml = self::MAPPING): array
+    private function compile(string $yaml = self::MAPPING, ?TargetSchema $schema = null): array
     {
         $out = [];
-        $compiler = new Compiler(Mapping::fromFile(self::mappingFile($yaml)), new Transforms(), self::schema());
+        $compiler = new Compiler(Mapping::fromFile(self::mappingFile($yaml)), new Transforms(), $schema ?? self::schema());
         $compiler->compile(self::db(), 'NL', static function(array $p) use (&$out): void {
             $out[(int) substr((string) $p['sourceUid'], strrpos((string) $p['sourceUid'], ':') + 1)] = $p;
         });
@@ -367,6 +380,52 @@ final class PageFieldsLaneTest extends TestCase
     }
 
     #[Test]
+    public function a_required_field_the_entry_type_lacks_fails_the_requirement(): void
+    {
+        // `heroSlides` is dropped as off the type, so the slider has nothing to show: no
+        // `heroType: slider` over nothing, and the image hero behind the empty slider still wins.
+        [$entries, $compiler] = $this->compile(schema: self::schema(['berkvensNlContentPage.heroSlides']));
+
+        self::assertSame([], self::fieldsOf($entries[18]));
+        self::assertSame(['heroType' => 'image', 'heroTitle' => 'Terugvalkop', 'heroTitleTag' => 'h1'], self::fieldsOf($entries[22]));
+        // Nodes 18, 21 and 22: every slider, with or without slides in the legacy data.
+        self::assertSame(
+            3,
+            $compiler->skipped()['page part HeaderSlider on berkvensNlContentPage: heroSlides is empty — not written'] ?? null,
+        );
+    }
+
+    #[Test]
+    public function a_part_whose_every_target_is_dropped_lets_the_next_one_fill_the_page(): void
+    {
+        // The slider maps only a field the type lacks: it writes nothing, so it fills nothing.
+        $yaml = str_replace(
+            "    requires: [heroSlides]\n    map:\n      heroType: \"'slider'\"\n    children:\n      heroSlides:\n"
+            . "        table: header_slider_slides\n        fk: header_slider_page_part_id\n        map:\n          slideTitle: title\n",
+            "    map:\n      heroVideo: \"'slider'\"\n",
+            self::MAPPING,
+        );
+        self::assertStringContainsString('heroVideo', $yaml);
+        [$entries, $compiler] = $this->compile($yaml);
+
+        self::assertSame(['heroType' => 'image', 'heroTitle' => 'Terugvalkop', 'heroTitleTag' => 'h1'], self::fieldsOf($entries[22]));
+        self::assertSame(3, $compiler->skipped()['page part HeaderSlider on berkvensNlContentPage: no field it maps is on the entry type — not written'] ?? null);
+    }
+
+    #[Test]
+    public function compile_names_the_part_each_page_context_fills(): void
+    {
+        // What `state/explain` asks: the same selection compile makes, per legacy lang.
+        $compiler = new Compiler(Mapping::fromFile(self::mappingFile(self::MAPPING)), new Transforms(), self::schema());
+        $run = $compiler->begin(self::db(), 'NL');
+
+        self::assertSame(['nl' => ['header' => ['part' => 'Header', 'id' => 3]]], $compiler->pageContextFills($run, 20));
+        self::assertSame(['nl' => ['header' => null]], $compiler->pageContextFills($run, 21));
+        self::assertSame(['nl' => ['header' => ['part' => 'Header', 'id' => 5]]], $compiler->pageContextFills($run, 22));
+        self::assertNull($compiler->pageContextFills($run, 999));
+    }
+
+    #[Test]
     public function the_batched_unit_path_writes_the_same_page_fields(): void
     {
         [$entries, $whole] = $this->compile();
@@ -415,6 +474,37 @@ final class PageFieldsLaneTest extends TestCase
     }
 
     #[Test]
+    public function a_page_type_that_merely_lacks_a_page_part_field_is_a_warning(): void
+    {
+        // The landing page has its own type, with no `heroImage` and no `heroSlides`. TextPage's type
+        // carries both, so the mapping is not wrong — those pages just lose the image and the slides.
+        $yaml = str_replace(
+            "    entryType: berkvensNlContentPage\n    map:\n      heroTitle: heading",
+            "    entryType: berkvensNlLandingPage\n    map:\n      heroTitle: heading",
+            self::MAPPING,
+        );
+        $schema = self::schema(extra: ['berkvensNlLandingPage' => [
+            'pageBuilderBerkvensNl' => new Slot('pageBuilderBerkvensNl', 'Matrix', false, ['textBlock']),
+            'heroType' => new Slot('heroType', 'Dropdown', false),
+            'heroTitle' => new Slot('heroTitle', 'PlainText', false),
+            'heroTitleTag' => new Slot('heroTitleTag', 'Dropdown', false),
+            'heroSubtitle' => new Slot('heroSubtitle', 'PlainText', false),
+            'heroSubtitleLevel' => new Slot('heroSubtitleLevel', 'Dropdown', false),
+        ]]);
+        $check = new TargetCheck($schema);
+        $mapping = Mapping::fromFile(self::mappingFile($yaml));
+
+        self::assertSame([], $check->check($mapping));
+        self::assertSame(
+            [
+                'part `Header` writes `heroImage`, which page entry type `berkvensNlLandingPage` does not have — dropped on those pages',
+                'part `HeaderSlider` writes `heroSlides`, which page entry type `berkvensNlLandingPage` does not have — dropped on those pages',
+            ],
+            $check->pagesWithNoBlockField($mapping),
+        );
+    }
+
+    #[Test]
     public function header_placements_are_not_judged_against_a_matrix_allow_list(): void
     {
         $placement = new BlockPlacement(Mapping::fromFile(self::mappingFile(self::MAPPING)), self::schema());
@@ -425,7 +515,7 @@ final class PageFieldsLaneTest extends TestCase
     }
 
     #[Test]
-    public function live_parts_beyond_the_first_are_counted_per_page_context(): void
+    public function live_context_stacks_are_read_per_page_type_and_part_mix(): void
     {
         // Single backslashes: this query joins on equality, as MySQL holds the names.
         $pdo = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
@@ -433,27 +523,37 @@ final class PageFieldsLaneTest extends TestCase
         $pdo->exec('CREATE TABLE kuma_node_versions (id INTEGER, ref_entity_name TEXT, ref_id INTEGER)');
         $pdo->exec('CREATE TABLE kuma_node_translations (node_id INTEGER, lang TEXT, online INTEGER, public_node_version_id INTEGER)');
         $pdo->exec('CREATE TABLE kuma_page_part_refs (pageId INTEGER, pageEntityname TEXT, context TEXT, page_part_entityname TEXT)');
-        $pdo->exec('INSERT INTO kuma_nodes VALUES (17, 0), (18, 0)');
-        $pdo->exec("INSERT INTO kuma_node_versions VALUES (91, 'App\\Entity\\Pages\\TextPage', 100), (92, 'App\\Entity\\Pages\\TextPage', 101)");
-        $pdo->exec("INSERT INTO kuma_node_translations VALUES (17, 'nl', 1, 91), (18, 'nl', 1, 92)");
+        $pdo->exec('INSERT INTO kuma_nodes VALUES (17, 0), (18, 0), (19, 0)');
+        $pdo->exec("INSERT INTO kuma_node_versions VALUES
+                    (91, 'App\\Entity\\Pages\\TextPage', 100), (92, 'App\\Entity\\Pages\\TextPage', 101),
+                    (93, 'App\\Entity\\Pages\\TextPage', 102)");
+        $pdo->exec("INSERT INTO kuma_node_translations VALUES (17, 'nl', 1, 91), (18, 'nl', 1, 92), (19, 'nl', 1, 93)");
         $pdo->exec("INSERT INTO kuma_page_part_refs VALUES
                     (100, 'App\\Entity\\Pages\\TextPage', 'header', 'App\\Entity\\PageParts\\HeaderPagePart'),
                     (100, 'App\\Entity\\Pages\\TextPage', 'header', 'App\\Entity\\PageParts\\HeaderPagePart'),
                     (100, 'App\\Entity\\Pages\\TextPage', 'header', 'App\\Entity\\PageParts\\HeaderSliderPagePart'),
                     (101, 'App\\Entity\\Pages\\TextPage', 'header', 'App\\Entity\\PageParts\\HeaderPagePart'),
                     (101, 'App\\Entity\\Pages\\TextPage', 'main', 'App\\Entity\\PageParts\\TextPagePart'),
-                    (101, 'App\\Entity\\Pages\\TextPage', 'main', 'App\\Entity\\PageParts\\TextPagePart')");
+                    (101, 'App\\Entity\\Pages\\TextPage', 'main', 'App\\Entity\\PageParts\\TextPagePart'),
+                    (102, 'App\\Entity\\Pages\\TextPage', 'header', 'App\\Entity\\PageParts\\TextPagePart')");
 
-        // Page 100 holds three header parts (two beyond the first), page 101 one; `main` stacks too —
-        // whether a stack is a loss is the mapping's call, not the database's.
+        // One entry per mix of classes a context holds on a page: how many such stacks, and how
+        // many placements in them. Whether a stack loses anything is the mapping's call.
         self::assertSame(
-            ['TextPage' => ['header' => 2, 'main' => 1]],
-            (new LegacyDatabase($pdo, 'NL', 'nl'))->liveStackedPlacements(),
+            ['TextPage' => [
+                'header' => ['nl' => [
+                    'Header,HeaderSlider' => ['stacks' => 1, 'placements' => 3],
+                    'Header' => ['stacks' => 1, 'placements' => 1],
+                    'Text' => ['stacks' => 1, 'placements' => 1],
+                ]],
+                'main' => ['nl' => ['Text' => ['stacks' => 1, 'placements' => 2]]],
+            ]],
+            (new LegacyDatabase($pdo, 'NL', 'nl'))->livePageContextStacks(),
         );
     }
 
     #[Test]
-    public function coverage_reports_extra_parts_in_a_page_context_as_losses(): void
+    public function coverage_reports_what_a_page_context_drops_as_losses(): void
     {
         $coverage = new Coverage(Mapping::fromFile(self::mappingFile(self::MAPPING)));
         $coverage->ingest(new LiveSnapshot(
@@ -462,13 +562,32 @@ final class PageFieldsLaneTest extends TestCase
             ['TextPage' => 6, 'LandingPage' => 1],
             ['nl' => 7],
             51,
-            ['TextPage' => ['header' => 3, 'main' => 30], 'LandingPage' => ['header' => 1]],
+            [
+                'TextPage' => [
+                    // Three pages with a lone hero lose nothing; two pages stacking two lose one each.
+                    'header' => [
+                        'nl' => [
+                            'Header' => ['stacks' => 3, 'placements' => 3],
+                            'Header,HeaderSlider' => ['stacks' => 2, 'placements' => 4],
+                            // A body text ahead of a hero: the text is dropped, the hero still writes.
+                            'Header,Text' => ['stacks' => 1, 'placements' => 2],
+                            // A lone body text in the header is no hero and no block.
+                            'Text' => ['stacks' => 2, 'placements' => 2],
+                        ],
+                        // A locale with no Craft site is stranded whole — `strandedLocales()` says so —
+                        // so what its header stacks would drop is not counted a second time here.
+                        'es' => ['Header' => ['stacks' => 1, 'placements' => 3]],
+                    ],
+                    'main' => ['nl' => ['Text' => ['stacks' => 6, 'placements' => 30]]],
+                ],
+                'LandingPage' => ['header' => ['nl' => ['Header' => ['stacks' => 1, 'placements' => 2]]]],
+            ],
         ));
 
         // `main` streams into a Matrix, where a stack is just a page with several blocks.
         self::assertSame(
             [
-                ['page' => 'TextPage', 'context' => 'header', 'placements' => 3],
+                ['page' => 'TextPage', 'context' => 'header', 'placements' => 5],
                 ['page' => 'LandingPage', 'context' => 'header', 'placements' => 1],
             ],
             $coverage->pageContextLosses(),
@@ -478,7 +597,7 @@ final class PageFieldsLaneTest extends TestCase
 
         $report = new CoverageReport($coverage);
         self::assertSame($coverage->pageContextLosses(), $report->toArray()['pageContextLosses']);
-        self::assertStringContainsString('| `TextPage` | `header` | 3 |', $report->markdown('kuma-compile coverage', '2026-10-07'));
+        self::assertStringContainsString('| `TextPage` | `header` | 5 |', $report->markdown('kuma-compile coverage', '2026-10-07'));
     }
 
     #[Test]

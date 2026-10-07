@@ -165,7 +165,7 @@ final class EntryExplanationTest extends TestCase
     }
 
     #[Test]
-    public function a_page_part_is_reported_as_written_to_page_fields_and_a_second_one_as_a_loss(): void
+    public function without_compiles_answer_the_page_verdict_is_an_inference(): void
     {
         $parts = $this->parts(['Header', 3, 'header', 'nl'], ['Header', 4, 'header', 'nl']);
         $parts[1]['sequence'] = 2;
@@ -184,8 +184,8 @@ final class EntryExplanationTest extends TestCase
         self::assertSame([], $result['unexplained']);
         self::assertSame(
             [
-                ['Header', 3, 'written to the page\'s own fields from the `header` page context, not as a block'],
-                ['Header', 4, 'not written: the `header` page context fills the page\'s fields from its first part only'],
+                ['Header', 3, 'first in the `header` page context: written to the page\'s own fields unless its `requires:` came out empty or nothing it maps is on the entry type'],
+                ['Header', 4, 'not first in the `header` page context: not written unless every part before it could not be'],
             ],
             array_map(static fn(array $r): array => [$r['part'], $r['id'], $r['why']], $result['accountedFor']),
         );
@@ -207,6 +207,58 @@ final class EntryExplanationTest extends TestCase
 
         self::assertSame(
             'not written: `main` is not a `target: page` context, and a `consumedBy: page` part becomes no block',
+            $result['accountedFor'][0]['why'],
+        );
+    }
+
+    #[Test]
+    public function the_part_compile_wrote_is_credited_even_behind_an_empty_slider(): void
+    {
+        // An empty slider at sequence 1 fails `requires: [heroSlides]`, so compile writes the
+        // image hero behind it. The explanation follows what compile chose, not the sequence.
+        $parts = $this->parts(['HeaderSlider', 3, 'header', 'nl'], ['Header', 5, 'header', 'nl']);
+        $parts[1]['sequence'] = 2;
+
+        $result = EntryExplanation::reconcile(
+            'NL',
+            [],
+            $parts,
+            ['Header' => 'page', 'HeaderSlider' => 'page'],
+            ['Header' => 'header_page_parts', 'HeaderSlider' => 'header_slider_page_parts'],
+            ['main'],
+            ['nl'],
+            ['header'],
+            ['nl' => ['header' => ['part' => 'Header', 'id' => 5]]],
+        );
+
+        self::assertSame([], $result['unexplained']);
+        self::assertSame(
+            [
+                ['HeaderSlider', 3, 'not written: `Header` #5 filled the page from the `header` page context'],
+                ['Header', 5, 'written to the page\'s own fields from the `header` page context, not as a block'],
+            ],
+            array_map(static fn(array $r): array => [$r['part'], $r['id'], $r['why']], $result['accountedFor']),
+        );
+    }
+
+    #[Test]
+    public function a_page_context_compile_left_empty_says_why(): void
+    {
+        $result = EntryExplanation::reconcile(
+            'NL',
+            [],
+            $this->parts(['HeaderSlider', 3, 'header', 'nl']),
+            ['HeaderSlider' => 'page'],
+            ['HeaderSlider' => 'header_slider_page_parts'],
+            ['main'],
+            ['nl'],
+            ['header'],
+            ['nl' => ['header' => null]],
+        );
+
+        self::assertSame(
+            'not written: no part in the `header` page context could be written — a `requires:` field came out'
+            . ' empty, nothing it maps is on the entry type, or its row is missing',
             $result['accountedFor'][0]['why'],
         );
     }

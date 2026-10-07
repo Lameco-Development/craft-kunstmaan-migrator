@@ -145,8 +145,10 @@ final class CoverageReport
             $lines[] = '';
             $lines[] = '## Extra parts a page field cannot hold';
             $lines[] = '';
-            $lines[] = 'These contexts fill fields on the page itself — the hero — from their first part. A page';
-            $lines[] = 'that stacks more than one part there keeps the first; the rest do not migrate.';
+            $lines[] = 'These contexts fill fields on the page itself — the hero — from one part. A page that stacks';
+            $lines[] = 'several parts there keeps the first that can fill it; the rest, and any part that is no page';
+            $lines[] = 'part at all, do not migrate. A lower bound: a part whose `requires:` comes out empty is';
+            $lines[] = 'counted here as kept — the run report has the exact number.';
             $lines[] = '';
             $lines[] = '| page type | context | parts lost |';
             $lines[] = '|---|---|---:|';
