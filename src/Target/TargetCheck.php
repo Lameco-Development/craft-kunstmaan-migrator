@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Target;
 
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\PartRow;
 
 /**
  * Checks a mapping against the target Craft content model.
@@ -113,6 +114,8 @@ final class TargetCheck
             }
         }
 
+        $errors = [...$errors, ...$this->checkPageParts($mapping)];
+
         foreach ($mapping->partRows() as $name => $part) {
             $block = $part->block();
 
@@ -150,6 +153,47 @@ final class TargetCheck
                 if ($relation !== '' && $this->schema->slot($block, $relation) === null) {
                     $errors[] = sprintf('part `%s`: block `%s` has no relation field `%s`', $name, $block, $relation);
                 }
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * A `consumedBy: page` part's `map:` and `children:` address the fields of the page it sits
+     * on, so they are checked against every page entry type that has a `target: page` context —
+     * the types it can reach. The compiler would drop a missing one and count it; this says so
+     * before the run.
+     *
+     * @return list<string>
+     */
+    private function checkPageParts(Mapping $mapping): array
+    {
+        $hosts = [];
+
+        foreach ($mapping->pageRows() as $page) {
+            $entryType = (string) $page->entryType();
+
+            if ($page->compiles() && $page->pageContexts() !== [] && $this->schema->hasEntryType($entryType)) {
+                $hosts[$entryType] = true;
+            }
+        }
+
+        $errors = [];
+
+        foreach ($mapping->partRows() as $name => $part) {
+            if ($part->disposition() !== PartRow::PAGE) {
+                continue;
+            }
+
+            foreach (array_keys($hosts) as $entryType) {
+                foreach (array_keys($part->map()) as $target) {
+                    if ($this->schema->slot($entryType, (string) $target) === null) {
+                        $errors[] = sprintf('part `%s`: page entry type `%s` has no field `%s`', $name, $entryType, $target);
+                    }
+                }
+
+                $this->checkChildren(sprintf('part `%s`', $name), $entryType, $part->children(), $errors);
             }
         }
 

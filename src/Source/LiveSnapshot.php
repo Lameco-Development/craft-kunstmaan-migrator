@@ -16,6 +16,8 @@ final readonly class LiveSnapshot
      * @param array<string, int> $partPlacements short pagepart class => live placements
      * @param array<string, int> $pageTypes      short page entity    => live pages
      * @param array<string, int> $pagesByLocale  legacy lang          => live pages
+     * @param array<string, array<string, int>> $stackedPlacements short page entity => context => live
+     *        placements beyond the first in that context on their page translation
      */
     public function __construct(
         public string $environment,
@@ -23,6 +25,7 @@ final readonly class LiveSnapshot
         public array $pageTypes,
         public array $pagesByLocale,
         public int $allPartRefs,
+        public array $stackedPlacements = [],
     ) {
     }
 }

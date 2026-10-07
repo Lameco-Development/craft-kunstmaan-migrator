@@ -49,6 +49,7 @@ final class FieldProvenance
         $receives = [];
         $pageFeeders = [];
         $contextFields = [];
+        $pageContextTypes = [];
 
         foreach ($pages as $name => $row) {
             $entryType = $row->entryType();
@@ -68,6 +69,31 @@ final class FieldProvenance
             foreach ($row->map() as $field => $expression) {
                 $pageFeeders[$entryType][self::rootField((string) $field)][] =
                     ['lane' => 'pages', 'name' => $name, 'expression' => (string) $expression];
+            }
+
+            if ($row->pageContexts() !== []) {
+                $pageContextTypes[$entryType] = true;
+            }
+        }
+
+        // A `target: page` context feeds its page's own fields from `consumedBy: page` parts —
+        // once per entry type, however many page entities share it.
+        foreach (array_keys($pageContextTypes) as $entryType) {
+            foreach ($mapping->partRows() as $class => $part) {
+                if ($part->disposition() !== PartRow::PAGE) {
+                    continue;
+                }
+
+                foreach ($part->map() as $field => $expression) {
+                    $pageFeeders[$entryType][self::rootField((string) $field)][] =
+                        ['lane' => 'page-parts', 'name' => $class, 'expression' => (string) $expression];
+                }
+
+                foreach ($part->children() as $field => $child) {
+                    $table = (string) ($child['table'] ?? '');
+                    $pageFeeders[$entryType][self::rootField((string) $field)][] =
+                        ['lane' => 'page-parts', 'name' => $class, 'expression' => 'children of ' . ($table !== '' ? $table : $class)];
+                }
             }
         }
 

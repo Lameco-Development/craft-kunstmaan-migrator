@@ -31,6 +31,9 @@ final class PartRow
     /** `consumedBy: sequence` — a heading or separator the sequence rules absorb or re-emit. */
     public const SEQUENCE = 'sequence';
 
+    /** `consumedBy: page` — written onto the owning page's own fields from a `target: page` context. */
+    public const PAGE = 'page';
+
     /** @param array<string, mixed> $spec the row as the file holds it */
     private function __construct(
         public readonly string $name,
@@ -44,11 +47,12 @@ final class PartRow
         return new self($name, is_array($spec) ? $spec : []);
     }
 
-    /** One of BLOCKS, DROPPED, MANUAL, SEQUENCE. */
+    /** One of BLOCKS, DROPPED, MANUAL, SEQUENCE, PAGE. */
     public function disposition(): string
     {
         return match (true) {
             ($this->spec['consumedBy'] ?? null) === 'sequence' => self::SEQUENCE,
+            ($this->spec['consumedBy'] ?? null) === 'page' => self::PAGE,
             isset($this->spec['drop']) => self::DROPPED,
             isset($this->spec['manual']) => self::MANUAL,
             default => self::BLOCKS,
@@ -160,6 +164,20 @@ final class PartRow
     public function absorbInto(): ?string
     {
         return $this->string('absorbInto');
+    }
+
+    /**
+     * `requires: [heroSlides]` — page fields a `consumedBy: page` part must fill to be written at
+     * all. A slider hero with no slides is invalid in the target, so the part is counted as a loss
+     * rather than writing `heroType: slider` over nothing.
+     *
+     * @return list<string>
+     */
+    public function requires(): array
+    {
+        $value = $this->spec['requires'] ?? [];
+
+        return is_array($value) ? array_values(array_filter($value, is_string(...))) : [];
     }
 
     /** `absorbInto: false` — the target block carries no heading, so nothing may be absorbed into it. */

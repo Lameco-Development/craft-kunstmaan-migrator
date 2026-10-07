@@ -24,6 +24,9 @@ final class PageRow
     /** `manual:` — rebuilt by hand after the run, with a reason. */
     public const MANUAL = 'manual';
 
+    /** `target: page` — a context whose part fills the page's own fields, not a Matrix. */
+    public const PAGE_TARGET = 'page';
+
     private const DEFAULT_FIELD = 'pageBuilder';
 
     private const DEFAULT_SECTION = 'pages';
@@ -122,6 +125,30 @@ final class PageRow
      */
     public function contexts(): array
     {
+        return array_filter($this->allContexts(), static fn(array $target): bool => !self::isPageTarget($target));
+    }
+
+    /**
+     * The contexts declared `target: page`: their first `consumedBy: page` part is written onto
+     * this page's own fields rather than streamed into a Matrix. Never part of `contexts()`, so
+     * nothing that reasons about block fields — the allow-list checks, `contextFields()` — sees one.
+     *
+     * @return list<string>
+     */
+    public function pageContexts(): array
+    {
+        return array_keys(array_filter($this->allContexts(), self::isPageTarget(...)));
+    }
+
+    /** @param array<string, mixed> $target */
+    public static function isPageTarget(array $target): bool
+    {
+        return ($target['target'] ?? null) === self::PAGE_TARGET;
+    }
+
+    /** @return array<string, array<string, mixed>> */
+    private function allContexts(): array
+    {
         $own = $this->spec['contexts'] ?? null;
 
         return is_array($own) ? self::normaliseContexts($own) : $this->defaultContexts;
@@ -147,7 +174,7 @@ final class PageRow
     }
 
     /**
-     * Gives every context a `field`. The only place that default lives.
+     * Gives every block context a `field`. The only place that default lives.
      *
      * @param array<string, mixed> $contexts
      * @return array<string, array<string, mixed>>
@@ -158,6 +185,15 @@ final class PageRow
 
         foreach ($contexts as $context => $target) {
             $target = is_array($target) ? $target : [];
+
+            // A page context lands on no Matrix, so it gets no default `field:` — one would read
+            // as a builder the entry type lacks, and every check on block fields would trip on it.
+            if (self::isPageTarget($target)) {
+                $out[(string) $context] = $target;
+
+                continue;
+            }
+
             $field = $target['field'] ?? null;
             $target['field'] = is_string($field) && $field !== '' ? $field : self::DEFAULT_FIELD;
             $out[(string) $context] = $target;

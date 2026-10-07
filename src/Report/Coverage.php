@@ -29,6 +29,9 @@ final class Coverage
 
     private int $allPartRefs = 0;
 
+    /** @var array<string, array<string, int>> */
+    private array $stackedPlacements = [];
+
     public function __construct(private readonly Mapping $mapping)
     {
     }
@@ -62,6 +65,44 @@ final class Coverage
 
         $this->localesByEnvironment[$snapshot->environment] = $snapshot->pagesByLocale;
         $this->allPartRefs += $snapshot->allPartRefs;
+
+        foreach ($snapshot->stackedPlacements as $page => $contexts) {
+            foreach ($contexts as $context => $n) {
+                $this->stackedPlacements[$page][$context] = ($this->stackedPlacements[$page][$context] ?? 0) + $n;
+            }
+        }
+    }
+
+    /**
+     * Parts lost to a single-valued page context: every live placement stacked behind the first
+     * in a `target: page` context, which fills the page's own fields once. Losses, not holes —
+     * the mapping decided the context holds one part — but a number rather than a silent drop.
+     *
+     * @return list<array{page: string, context: string, placements: int}>
+     */
+    public function pageContextLosses(): array
+    {
+        $out = [];
+
+        foreach ($this->stackedPlacements as $page => $contexts) {
+            $row = $this->mapping->pageRow((string) $page);
+
+            if ($row === null || !$row->compiles()) {
+                continue;
+            }
+
+            foreach ($row->pageContexts() as $context) {
+                $n = $contexts[$context] ?? 0;
+
+                if ($n > 0) {
+                    $out[] = ['page' => (string) $page, 'context' => $context, 'placements' => $n];
+                }
+            }
+        }
+
+        usort($out, static fn(array $a, array $b): int => $b['placements'] <=> $a['placements']);
+
+        return $out;
     }
 
     /** @return array<string, int> pagepart class => live placements, unclaimed by any lane */

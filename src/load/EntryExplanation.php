@@ -29,6 +29,7 @@ final readonly class EntryExplanation
      * @param array<string, string>                $tables    pagepart class => the legacy table the mapping names
      * @param list<string>                         $contexts  Kunstmaan contexts the mapping streams into blocks
      * @param list<string>                         $locales   legacy langs that have a Craft site to land in
+     * @param list<string>                         $pageContexts Kunstmaan contexts declared `target: page`
      * @return array{written: int, accountedFor: list<array<string, mixed>>, unexplained: list<array<string, mixed>>}
      */
     public static function reconcile(
@@ -39,6 +40,7 @@ final readonly class EntryExplanation
         array $tables,
         array $contexts = [],
         array $locales = [],
+        array $pageContexts = [],
     ): array {
         $written = [];
 
@@ -63,6 +65,24 @@ final readonly class EntryExplanation
             $key = $part['part'] . ':' . $part['id'];
             $grouped[$key] ??= $part + ['langs' => []];
             $grouped[$key]['langs'][(string) $part['lang']] = true;
+        }
+
+        // A page part leaves no block id behind, so what it wrote is inferred from the mapping's
+        // rule rather than read from the state row: the first `consumedBy: page` part in a page
+        // context fills the page (unless its `requires:` came out empty), and the rest do not.
+        $firstOnPage = [];
+
+        foreach ($legacyParts as $part) {
+            if (($lanes[$part['part']] ?? null) !== 'page') {
+                continue;
+            }
+
+            $slot = $part['lang'] . "\0" . $part['context'];
+            $current = $firstOnPage[$slot] ?? null;
+
+            if ($current === null || $part['sequence'] < $current['sequence']) {
+                $firstOnPage[$slot] = $part;
+            }
         }
 
         foreach ($grouped as $part) {
@@ -102,6 +122,13 @@ final readonly class EntryExplanation
                 continue;
             }
 
+            if ($lane === 'page') {
+                $row['why'] = self::pageVerdict($part, $firstOnPage, $pageContexts);
+                $accountedFor[] = $row;
+
+                continue;
+            }
+
             // A part the mapping deliberately does not turn into a block is not a hole, and
             // listing it as one buries the ones that are.
             if ($lane !== null && $lane !== 'blocks') {
@@ -134,5 +161,29 @@ final readonly class EntryExplanation
             'accountedFor' => $accountedFor,
             'unexplained' => $unexplained,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $part grouped, with its `langs`
+     * @param array<string, array<string, mixed>> $firstOnPage "lang\0context" => the first page part there
+     * @param list<string> $pageContexts
+     */
+    private static function pageVerdict(array $part, array $firstOnPage, array $pageContexts): string
+    {
+        $context = (string) $part['context'];
+
+        if (!in_array($context, $pageContexts, true)) {
+            return sprintf('not written: `%s` is not a `target: page` context, and a `consumedBy: page` part becomes no block', $context);
+        }
+
+        foreach (array_keys($part['langs']) as $lang) {
+            $first = $firstOnPage[$lang . "\0" . $context] ?? null;
+
+            if ($first !== null && $first['part'] === $part['part'] && $first['id'] === $part['id']) {
+                return sprintf('written to the page\'s own fields from the `%s` page context, not as a block', $context);
+            }
+        }
+
+        return sprintf('not written: the `%s` page context fills the page\'s fields from its first part only', $context);
     }
 }

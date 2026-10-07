@@ -7,6 +7,7 @@ namespace Lameco\Kunstmaanmigrator\Compile;
 use Lameco\Kunstmaanmigrator\Mapping\EntityRow;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\PageRow;
+use Lameco\Kunstmaanmigrator\Mapping\PartRow;
 use Lameco\Kunstmaanmigrator\Payload\SourceUid;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Lameco\Kunstmaanmigrator\Source\MediaIndex;
@@ -555,6 +556,12 @@ final class Compiler
                 true,
             );
         }
+
+        // A `target: page` context — the Berkvens `header` — fills the page's own hero fields from
+        // its first `consumedBy: page` part instead of streaming blocks. Same collision rule as a
+        // sidecar: the page's own map wins, so `+=`. It runs before the sidecars, because the part
+        // sits in this page's own content tree and a sidecar only decorates it.
+        $pageFields += $this->pagePartFields($parts, $builder, $translation, $page, $entryType);
 
         // Sidecar entities — the header tab, structured data — decorate a page through the
         // polymorphic ref, outside both the page's own table and the pagepart tree. Which
@@ -1121,6 +1128,99 @@ final class Compiler
         }
 
         return $fields;
+    }
+
+    /**
+     * What a page's `target: page` contexts write onto the page's own fields.
+     *
+     * A page context is single-valued: the first `consumedBy: page` part that can be written is,
+     * and every other part in the context is counted — a second header part, a part with no page
+     * mapping, a part whose `requires:` fields came out empty. A count, not a silent drop, so the
+     * run report says what the page lost. A target the entry type does not carry is dropped and
+     * counted the way a sidecar's is.
+     *
+     * @param array<string, mixed> $translation
+     * @return array<string, mixed>
+     */
+    private function pagePartFields(
+        PartReader $parts,
+        BlockBuilder $builder,
+        array $translation,
+        PageRow $page,
+        string $entryType,
+    ): array {
+        $fields = [];
+
+        foreach ($page->pageContexts() as $context) {
+            $written = null;
+
+            foreach ($parts->sequence((string) $translation['entity'], (int) $translation['entityId'], $context) as $ref) {
+                $name = (string) $ref['part'];
+                $part = $this->mapping->partRow($name);
+
+                if ($written !== null) {
+                    $this->skip(sprintf('page context %s on %s: %s not written — %s already filled the page', $context, $entryType, $name, $written));
+
+                    continue;
+                }
+
+                if ($part === null || $part->disposition() !== PartRow::PAGE) {
+                    $this->skip(sprintf('page context %s on %s: %s is not a `consumedBy: page` part', $context, $entryType, $name));
+
+                    continue;
+                }
+
+                $mapped = $this->pagePartValues($part, (int) $ref['id'], $parts, $builder, $entryType);
+
+                if ($mapped === null) {
+                    continue;
+                }
+
+                $written = $name;
+                $fields += $mapped;
+            }
+        }
+
+        return $fields;
+    }
+
+    /**
+     * One page part's values, or null when it cannot be written — no row, or a `requires:` field
+     * left empty (a slider hero with no slides).
+     *
+     * @return array<string, mixed>|null
+     */
+    private function pagePartValues(PartRow $part, int $id, PartReader $parts, BlockBuilder $builder, string $entryType): ?array
+    {
+        $table = $part->table();
+        $row = $table !== null ? $parts->row($table, $id) : null;
+
+        if ($row === null) {
+            $this->skip(sprintf('page part %s: no row %d', $part->name, $id));
+
+            return null;
+        }
+
+        $context = 'page:' . $part->name;
+        $mapped = $builder->fieldsFrom($part->map(), $row, $context, $entryType);
+        $mapped += $builder->childrenOf($part->children(), $entryType, $id, $context, true);
+
+        foreach ($part->requires() as $required) {
+            if (!isset($mapped[$required])) {
+                $this->skip(sprintf('page part %s on %s: %s is empty — not written', $part->name, $entryType, $required));
+
+                return null;
+            }
+        }
+
+        foreach (array_keys($mapped) as $target) {
+            if ($this->schema !== null && $this->schema->slot($entryType, (string) $target) === null) {
+                $this->skip(sprintf('page part %s: %s not on %s', $part->name, $target, $entryType));
+                unset($mapped[$target]);
+            }
+        }
+
+        return $mapped;
     }
 
     /** The Craft section an entry of this page entity lands in, per the mapping. */

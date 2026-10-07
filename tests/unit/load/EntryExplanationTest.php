@@ -163,4 +163,51 @@ final class EntryExplanationTest extends TestCase
         self::assertCount(1, $result['unexplained']);
         self::assertSame([], $result['accountedFor']);
     }
+
+    #[Test]
+    public function a_page_part_is_reported_as_written_to_page_fields_and_a_second_one_as_a_loss(): void
+    {
+        $parts = $this->parts(['Header', 3, 'header', 'nl'], ['Header', 4, 'header', 'nl']);
+        $parts[1]['sequence'] = 2;
+
+        $result = EntryExplanation::reconcile(
+            'NL',
+            [],
+            $parts,
+            ['Header' => 'page'],
+            ['Header' => 'header_page_parts'],
+            ['main'],
+            ['nl'],
+            ['header'],
+        );
+
+        self::assertSame([], $result['unexplained']);
+        self::assertSame(
+            [
+                ['Header', 3, 'written to the page\'s own fields from the `header` page context, not as a block'],
+                ['Header', 4, 'not written: the `header` page context fills the page\'s fields from its first part only'],
+            ],
+            array_map(static fn(array $r): array => [$r['part'], $r['id'], $r['why']], $result['accountedFor']),
+        );
+    }
+
+    #[Test]
+    public function a_page_part_outside_a_page_context_is_said_to_be_unwritten(): void
+    {
+        $result = EntryExplanation::reconcile(
+            'NL',
+            [],
+            $this->parts(['Header', 3, 'main', 'nl']),
+            ['Header' => 'page'],
+            ['Header' => 'header_page_parts'],
+            ['main'],
+            ['nl'],
+            ['header'],
+        );
+
+        self::assertSame(
+            'not written: `main` is not a `target: page` context, and a `consumedBy: page` part becomes no block',
+            $result['accountedFor'][0]['why'],
+        );
+    }
 }

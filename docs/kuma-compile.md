@@ -204,7 +204,8 @@ Measures the mapping against the live content it claims to describe. Every live 
 page entity must be claimed by a lane — `blocks`, `sequence`, `forms`, `globals`, `redirects`, or
 the explicit `unmapped` lane. Anything unclaimed is a hole, and holes exit non-zero.
 
-Also reports legacy locales with no Craft site, and how many live pages each strands.
+Also reports legacy locales with no Craft site, and how many live pages each strands, and the parts
+lost to a single-valued `target: page` context (see "Page contexts").
 
 `--json` emits the same data machine-readably, for CI.
 
@@ -281,6 +282,7 @@ forms:
   in the order they are declared, parts in their sequence order. A context with no `field:`
   streams into `pageBuilder`; a mapping with no `contexts:` anywhere streams `main` into
   `commonPageBuilder`.
+- **`target: page`** makes a context fill the page's own fields instead — see "Page contexts" below.
 - **A page's own `contexts:` replaces the defaults** — wholesale, not merged. `compile`,
   `validate`, `readiness` and `doctor` all read the same resolution. (`state/explain` still
   treats only `defaults.contexts` as streamed: a part in a page-level-only context that was
@@ -296,6 +298,64 @@ forms:
 - **Blocks own their field.** A field that both a context (or `forms.field`) and the page's
   `map:`/`children:` write is a `validate` error; when a sidecar collides at compile, the blocks
   win and the replaced value is counted in the run report.
+
+## Page contexts: a part onto the page's own fields
+
+Some legacy contexts hold what the target keeps as fields on the page itself, not as blocks — a
+`header` context whose `HeaderPagePart` becomes the Hero tab. `target: page` on a context says so,
+and `consumedBy: page` on a part says its `map:` and `children:` address the owning page's fields:
+
+```yaml
+defaults:
+  contexts:
+    header: { target: page }              # no `field:` — it writes the page, not a Matrix
+    main:   { field: pageBuilderBerkvensNl }
+parts:
+  Header:
+    table: header_page_parts
+    consumedBy: page
+    map:
+      heroType: "'image'"                 # a literal: quote the quotes, or YAML reads a column name
+      heroTitle: title
+      heroTitleTag: title_type
+      heroSubtitle: subtitle
+      heroSubtitleLevel: subtitle_niv
+      heroImage: header_image_id | asset
+  HeaderSlider:
+    table: header_slider_page_parts
+    consumedBy: page
+    requires: [heroSlides]                # written only when these fields come out non-empty
+    map:
+      heroType: "'slider'"
+    children:
+      heroSlides: { table: header_slider_slides, fk: header_slider_page_part_id, map: { slideTitle: title } }
+```
+
+- **Single-valued.** The first `consumedBy: page` part in the context that can be written fills
+  the page. Every other part there is counted in the run report — a second header, a part with no
+  `consumedBy: page`, a part whose `requires:` fields came out empty (which lets the next part try).
+  A `consumedBy: page` part outside a `target: page` context becomes nothing, and is counted too.
+- **The page's own map wins** a collision, exactly as with sidecars; the page part in turn wins over
+  a sidecar, since it sits in the page's own content tree.
+- **A constant** is a quoted literal in the map: `heroType: "'image'"`. YAML strips one level of
+  quotes, so `heroType: 'image'` would read a column called `image`.
+- **`requires:`** guards a target invariant the field layout cannot express: `heroSlides` is
+  required when `heroType` is `slider`, so a slider part with no slides writes nothing and is
+  counted, rather than saving a slider hero over nothing.
+- A field the page entry type lacks is dropped and counted, like a sidecar's. `validate --craft`
+  checks every page part's `map:`/`children:` against each page entry type with a page context.
+- `validate` refuses a `target:` other than `page`, `field:`/`prepend:` on a page context, a
+  `consumedBy:` other than `sequence`/`page`, a page part that maps nothing, and `requires:` on
+  anything else.
+- A page context is not a block context: `contextFields()`, the allow-list checks and the
+  placement warning never see it.
+- **Coverage** puts these parts in a `page` lane and lists every live placement stacked behind the
+  first in a page context as a loss (`pageContextLosses`, and a table in `--markdown`). Losses do
+  not fail the run; they are the number of parts that will not be on the new site.
+- **`state/explain`** reports the first page part per locale and context as "written to the page's
+  own fields", and the rest as not written. That is inferred from the mapping: a page field leaves
+  no block id in the state row to read back.
+- `readiness` and the editor's field provenance credit the fields to the `page-parts` lane.
 
 ## Non-node tables
 

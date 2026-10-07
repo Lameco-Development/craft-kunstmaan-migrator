@@ -14,6 +14,7 @@ use Lameco\Kunstmaanmigrator\load\ExplainContext;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use Lameco\Kunstmaanmigrator\load\RefResolver;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
+use Lameco\Kunstmaanmigrator\Mapping\PageRow;
 use Lameco\Kunstmaanmigrator\Payload\SourceUid;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
@@ -126,8 +127,9 @@ class StateController extends Controller
             environment: $environment,
             lanes: $mapping->accountedParts(),
             tables: self::partTablesOf($mapping),
-            contexts: array_map('strval', array_keys((array) ($mapping->all()['defaults']['contexts'] ?? []))),
+            contexts: self::defaultContextsOf($mapping, page: false),
             locales: self::migratedLocalesOf($spec),
+            pageContexts: self::defaultContextsOf($mapping, page: true),
         );
 
         return $single
@@ -311,6 +313,25 @@ class StateController extends Controller
         }
 
         return $tables;
+    }
+
+    /**
+     * `defaults.contexts`, split: the ones streamed into blocks, or the `target: page` ones whose
+     * part fills the page's own fields. Explain treats only the first set as "streamed".
+     *
+     * @return list<string>
+     */
+    private static function defaultContextsOf(Mapping $mapping, bool $page): array
+    {
+        $out = [];
+
+        foreach ($mapping->defaultContexts() as $context => $target) {
+            if (PageRow::isPageTarget($target) === $page) {
+                $out[] = (string) $context;
+            }
+        }
+
+        return $out;
     }
 
     /**

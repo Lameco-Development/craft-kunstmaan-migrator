@@ -88,6 +88,7 @@ final class LegacyDatabase
             pageTypes: $this->livePageTypes(),
             pagesByLocale: $this->livePagesByLocale(),
             allPartRefs: $this->countAllPartRefs(),
+            stackedPlacements: $this->liveStackedPlacements(),
         );
     }
 
@@ -343,6 +344,41 @@ final class LegacyDatabase
             $part = self::shortName((string) $row['part'], 'PagePart');
             $context = (string) $row['context'];
             $out[$page][$context][$part] = ($out[$page][$context][$part] ?? 0) + (int) $row['n'];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Live placements beyond the first in their context, per page type and context.
+     *
+     * A `target: page` context is single-valued — its first part fills the page's own fields —
+     * so every part stacked behind that one is a loss. Which contexts are single-valued is the
+     * mapping's call; this counts every stack and lets coverage pick. Aggregates only, no window
+     * functions: it has to run on the MySQL 5.7 a legacy Kunstmaan install often still is.
+     *
+     * @return array<string, array<string, int>> short page entity => context => placements beyond the first
+     */
+    public function liveStackedPlacements(): array
+    {
+        $sql = sprintf(
+            'SELECT s.entity AS entity, s.context AS context, SUM(s.n - 1) AS extra
+             FROM (
+                 SELECT l.pageEntityname AS entity, l.pageId AS pageId, l.lang AS lang, r.context AS context, COUNT(*) AS n
+                 FROM kuma_page_part_refs r
+                 JOIN (%s) l ON l.pageEntityname = r.pageEntityname AND l.pageId = r.pageId
+                 GROUP BY l.pageEntityname, l.pageId, l.lang, r.context
+                 HAVING COUNT(*) > 1
+             ) s
+             GROUP BY s.entity, s.context',
+            self::LIVE_PAGES,
+        );
+
+        $out = [];
+
+        foreach ($this->pdo->query($sql) as $row) {
+            $page = self::shortName((string) $row['entity']);
+            $out[$page][(string) $row['context']] = ($out[$page][(string) $row['context']] ?? 0) + (int) $row['extra'];
         }
 
         return $out;

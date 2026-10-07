@@ -128,7 +128,7 @@ final class Readiness
                 subject: $page,
                 entryType: (string) $entryType,
                 map: $row->map(),
-                extra: $this->contextFields($row) + $this->sidecarFields(),
+                extra: $this->contextFields($row) + $this->pagePartFields($row) + $this->sidecarFields(),
                 live: $row->live(),
             )];
         }
@@ -389,6 +389,34 @@ final class Readiness
 
         if ($forms->declared && $forms->field !== null) {
             $fields[$forms->field] ??= 'forms';
+        }
+
+        return $fields;
+    }
+
+    /**
+     * Page fields a `target: page` context fills from its `consumedBy: page` parts — the hero set
+     * on a page whose header is a part. Credited like `contexts:`; nothing is credited to a page
+     * with no page context, which no page part can reach.
+     *
+     * @return array<string, string> target field => 'page-parts'
+     */
+    private function pagePartFields(PageRow $page): array
+    {
+        if ($page->pageContexts() === []) {
+            return [];
+        }
+
+        $fields = [];
+
+        foreach ($this->mapping->partRows() as $part) {
+            if ($part->disposition() !== PartRow::PAGE) {
+                continue;
+            }
+
+            foreach ([...array_keys($part->map()), ...array_keys($part->children())] as $key) {
+                $fields[(string) preg_split('/[\[.]/', (string) $key)[0]] = 'page-parts';
+            }
         }
 
         return $fields;

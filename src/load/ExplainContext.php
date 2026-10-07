@@ -19,6 +19,7 @@ final readonly class ExplainContext
      * @param array<string, string> $tables   pagepart class => the legacy table the mapping names
      * @param list<string>          $contexts Kunstmaan contexts the mapping streams into blocks
      * @param list<string>          $locales  legacy langs that have a Craft site to land in
+     * @param list<string>          $pageContexts Kunstmaan contexts declared `target: page`
      */
     public function __construct(
         public string $environment,
@@ -26,6 +27,7 @@ final readonly class ExplainContext
         public array $tables,
         public array $contexts,
         public array $locales,
+        public array $pageContexts = [],
     ) {
     }
 
@@ -44,6 +46,7 @@ final readonly class ExplainContext
             $this->tables,
             $this->contexts,
             $this->locales,
+            $this->pageContexts,
         );
     }
 }

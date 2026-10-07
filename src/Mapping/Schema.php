@@ -40,8 +40,11 @@ final class Schema
 
     private const PART_KEYS = [
         'live', 'table', 'block', 'switch', 'map', 'children', 'promote', 'ignore', 'unreviewed',
-        'absorbInto', 'source', 'conflict', 'consumedBy', 'drop', 'manual', 'todo', 'note',
+        'absorbInto', 'source', 'conflict', 'consumedBy', 'requires', 'drop', 'manual', 'todo', 'note',
     ];
+
+    /** What `consumedBy:` may name: the sequence rules, or the owning page's own fields. */
+    private const CONSUMERS = ['sequence', 'page'];
 
     private const CHILD_KEYS = ['table', 'fk', 'order', 'map', 'ignore', 'unreviewed', 'todo'];
 
@@ -72,6 +75,7 @@ final class Schema
         $this->checkEntities($mapping, $errors);
         $this->checkRedirects($mapping, $errors);
         $this->checkForms($mapping, $errors);
+        $this->checkContexts($mapping, $errors);
         $this->checkParts($mapping, $errors);
         $this->checkSidecars($mapping, $errors);
         $this->checkUnreviewed($mapping, $errors);
@@ -240,6 +244,58 @@ final class Schema
 
         if (!is_string($forms['field']) || $forms['field'] === '') {
             $errors[] = 'forms: `field:` must be a Matrix field handle';
+        }
+    }
+
+    /**
+     * `target: page` is the only other place a context's parts can land. A typo there would read
+     * as a block context streaming into `pageBuilder`, and a page context carrying `field:` or
+     * `prepend:` names a Matrix it will never write — both quiet, so both refused.
+     *
+     * @param list<string> $errors
+     */
+    private function checkContexts(Mapping $mapping, array &$errors): void
+    {
+        $declared = $mapping->all()['defaults']['contexts'] ?? null;
+
+        if (is_array($declared)) {
+            $this->checkContextSet('defaults.contexts', $declared, $errors);
+        }
+
+        foreach ($mapping->pages() as $name => $spec) {
+            if (is_array($spec) && is_array($spec['contexts'] ?? null)) {
+                $this->checkContextSet(sprintf('page `%s`, contexts', $name), $spec['contexts'], $errors);
+            }
+        }
+    }
+
+    /**
+     * @param array<array-key, mixed> $contexts
+     * @param list<string> $errors
+     */
+    private function checkContextSet(string $subject, array $contexts, array &$errors): void
+    {
+        foreach ($contexts as $context => $target) {
+            if (!is_array($target) || !array_key_exists('target', $target)) {
+                continue;
+            }
+
+            if ($target['target'] !== PageRow::PAGE_TARGET) {
+                $errors[] = sprintf('%s.%s: `target:` can only be `page`', $subject, $context);
+
+                continue;
+            }
+
+            foreach (['field', 'prepend'] as $key) {
+                if (array_key_exists($key, $target)) {
+                    $errors[] = sprintf(
+                        '%s.%s: a `target: page` context writes the page\'s own fields — `%s:` has nothing to name',
+                        $subject,
+                        $context,
+                        $key,
+                    );
+                }
+            }
         }
     }
 
@@ -510,6 +566,7 @@ final class Schema
         }
 
         $this->checkChildren(sprintf('part `%s`', $class), $spec, $errors);
+        $this->checkPagePart($class, $spec, $errors, $completeness);
 
         // A promoted collection becomes entries elsewhere plus a relation back, so it
         // needs a destination and the field that points at it.
@@ -552,6 +609,48 @@ final class Schema
 
         if ($status !== null && !in_array($status, ['open', 'decided'], true)) {
             $errors[] = sprintf('part `%s`: conflict.status must be `open` or `decided`, got `%s`', $class, $status);
+        }
+    }
+
+    /**
+     * `consumedBy:` and `requires:`. An unknown consumer used to fall through to the blocks lane
+     * and be skipped there as "no block"; a page part with nothing to write is a decision that
+     * belongs in `drop:` or `manual:`; `requires:` gates only what the page lane writes.
+     *
+     * @param array<string, mixed> $spec
+     * @param list<string> $errors
+     */
+    private function checkPagePart(string $class, array $spec, array &$errors, bool $completeness): void
+    {
+        $consumer = $spec['consumedBy'] ?? null;
+
+        if ($consumer !== null && !in_array($consumer, self::CONSUMERS, true)) {
+            $errors[] = sprintf(
+                'part `%s`: `consumedBy:` must be `sequence` or `page`, got `%s`',
+                $class,
+                is_scalar($consumer) ? (string) $consumer : get_debug_type($consumer),
+            );
+        }
+
+        $page = $consumer === PartRow::PAGE;
+
+        if ($page && $completeness && ($spec['map'] ?? []) === [] && ($spec['children'] ?? []) === []) {
+            $errors[] = sprintf(
+                'part `%s`: `consumedBy: page` with no `map:` and no `children:` writes nothing — say it with drop: or manual:',
+                $class,
+            );
+        }
+
+        if (!array_key_exists('requires', $spec)) {
+            return;
+        }
+
+        if (!$page) {
+            $errors[] = sprintf('part `%s`: `requires:` only applies to a `consumedBy: page` part', $class);
+        } elseif (!is_array($spec['requires']) || !array_is_list($spec['requires'])
+            || array_filter($spec['requires'], static fn(mixed $f): bool => !is_string($f) || $f === '') !== []
+        ) {
+            $errors[] = sprintf('part `%s`: `requires:` must be a list of page field handles', $class);
         }
     }
 
