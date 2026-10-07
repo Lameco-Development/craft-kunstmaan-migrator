@@ -6,6 +6,7 @@ namespace Lameco\Kunstmaanmigrator\console;
 
 use Craft;
 use craft\console\Controller;
+use craft\helpers\App;
 use craft\helpers\Console;
 use craft\helpers\Queue as QueueHelper;
 use Lameco\Kunstmaanmigrator\Compile\PayloadWriter;
@@ -62,7 +63,7 @@ final class MigrateController extends Controller
      */
     private ?int $neverProductionExitCode = null;
 
-    /** Path to the mapping YAML. */
+    /** Path to the mapping YAML. Defaults to the plugin's `mappingPath` setting. */
     public string $mapping = '';
 
     /**
@@ -192,10 +193,32 @@ final class MigrateController extends Controller
         );
     }
 
+    /**
+     * The mapping this run reads: `--mapping=` when given, else the plugin's `mappingPath` —
+     * the same file `doctor` checks, so the two cannot disagree about which mapping is in force.
+     *
+     * @param string $configured the `mappingPath` setting, already env-resolved
+     */
+    public static function mappingPathFor(string $option, string $configured): string
+    {
+        return $option !== '' ? $option : $configured;
+    }
+
     public function actionIndex(): int
     {
+        $this->mapping = self::mappingPathFor(
+            $this->mapping,
+            (string) App::parseEnv(Plugin::getInstance()->getSettings()->mappingPath),
+        );
+
         if ($this->mapping === '' || !is_file($this->mapping)) {
-            $this->stderr("Missing or unreadable --mapping=<file.yaml>\n", Console::FG_RED);
+            $this->stderr(
+                sprintf(
+                    "Missing or unreadable mapping%s — pass --mapping=<file.yaml> or set the plugin's mappingPath\n",
+                    $this->mapping !== '' ? ' ' . $this->mapping : '',
+                ),
+                Console::FG_RED,
+            );
 
             return ExitCode::USAGE;
         }
