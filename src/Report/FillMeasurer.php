@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\Report;
 
+use Lameco\Kunstmaanmigrator\Compile\SequenceEngine;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
-use Lameco\Kunstmaanmigrator\Source\PartClass;
 
 /**
  * Fills in the half of a requirement that only the legacy database can answer: of the live rows
@@ -52,7 +52,7 @@ final class FillMeasurer
     {
         $this->entities = $db->partEntities();
         $this->columns = [];
-        $this->preceded = $this->headPart() !== null ? $db->precededBy($this->headEntities()) : [];
+        $this->preceded = $this->headPart() !== null ? $this->byRow($db->precededBy($this->headEntities())) : [];
 
         foreach ($requirements as $requirement) {
             $measured = $this->measure($requirement, $db);
@@ -169,16 +169,42 @@ final class FillMeasurer
             : null;
     }
 
-    /** The pagepart the absorb rules consume, read off the sequence lane rather than assumed. */
+    /**
+     * The row the absorb rules consume, read off the sequence lane rather than assumed — its
+     * `match:` head, by short or qualified name as compile reads it.
+     */
     private function headPart(): ?string
     {
         foreach ($this->mapping->sequence() as $rule) {
-            if (($rule['action'] ?? '') === 'absorb' && preg_match('/^(\w+)\s*>/', (string) ($rule['match'] ?? ''), $m) === 1) {
-                return $m[1];
+            if (($rule['action'] ?? '') === 'absorb' && str_contains((string) ($rule['match'] ?? ''), '>')) {
+                $head = SequenceEngine::headOf((string) $rule['match']);
+
+                if ($head !== '') {
+                    return $head;
+                }
             }
         }
 
         return null;
+    }
+
+    /**
+     * Preceded counts folded onto the row each class compiles from.
+     *
+     * @param array<string, array{live:int, preceded:int}> $counts fully qualified class => counts
+     * @return array<string, array{live:int, preceded:int}> row key => counts
+     */
+    private function byRow(array $counts): array
+    {
+        $out = [];
+
+        foreach ($counts as $class => $n) {
+            $key = $this->mapping->partKey((string) $class);
+            $known = $out[$key] ?? ['live' => 0, 'preceded' => 0];
+            $out[$key] = ['live' => $known['live'] + $n['live'], 'preceded' => $known['preceded'] + $n['preceded']];
+        }
+
+        return $out;
     }
 
     /**
@@ -200,11 +226,6 @@ final class FillMeasurer
     {
         $part = (string) $this->headPart();
 
-        $entities = array_values(array_filter(
-            $this->entities,
-            static fn(string $entity): bool => PartClass::shortName($entity) === $part,
-        ));
-
-        return $entities ?: [$part];
+        return $this->entitiesOf($part) ?: [$part];
     }
 }

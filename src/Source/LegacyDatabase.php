@@ -593,7 +593,7 @@ final class LegacyDatabase
      * is required and the mapping never maps it, but the sequence lane fills it — for the
      * placements that actually have a Header in front of them, and no others.
      *
-     * @return array<string, array{live:int, preceded:int}> short pagepart class => counts
+     * @return array<string, array{live:int, preceded:int}> fully qualified pagepart class => counts
      */
     /** @param list<string> $head every entity name of the pagepart the absorb rule consumes */
     public function precededBy(array $head): array
@@ -620,10 +620,9 @@ final class LegacyDatabase
         $counts = [];
 
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
-            $counts[PartClass::shortName((string) $row['part'])] = [
-                'live' => (int) $row['n'],
-                'preceded' => (int) $row['p'],
-            ];
+            $class = PartClass::normalize((string) $row['part']);
+            $known = $counts[$class] ?? ['live' => 0, 'preceded' => 0];
+            $counts[$class] = ['live' => $known['live'] + (int) $row['n'], 'preceded' => $known['preceded'] + (int) $row['p']];
         }
 
         return $counts;

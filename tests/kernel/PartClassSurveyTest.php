@@ -128,4 +128,45 @@ final class PartClassSurveyTest extends TestCase
         self::assertSame([1, 0], [$app->rows, $app->empty]);
         self::assertSame([2, 1], [$kunstmaan->rows, $kunstmaan->empty]);
     }
+    #[Test]
+    public function an_absorbed_heading_is_measured_when_the_head_is_a_qualified_row(): void
+    {
+        $pdo = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $pdo->exec('CREATE TABLE kuma_nodes (id INTEGER, deleted INTEGER)');
+        $pdo->exec('CREATE TABLE kuma_node_versions (id INTEGER, ref_entity_name TEXT, ref_id INTEGER)');
+        $pdo->exec('CREATE TABLE kuma_node_translations
+                    (id INTEGER, node_id INTEGER, lang TEXT, title TEXT, online INTEGER, public_node_version_id INTEGER)');
+        $pdo->exec('CREATE TABLE kuma_page_part_refs
+                    (id INTEGER, pageEntityname TEXT, pageId INTEGER, context TEXT, page_part_entityname TEXT,
+                     page_part_id INTEGER, sequencenumber INTEGER)');
+        $pdo->exec('INSERT INTO kuma_nodes VALUES (1, 0)');
+        $pdo->exec("INSERT INTO kuma_node_versions VALUES (11, 'App\\Pages\\HomePage', 100)");
+        $pdo->exec("INSERT INTO kuma_node_translations VALUES (21, 1, 'en', 'Home', 1, 11)");
+        // Kunstmaan's Header heads the app's Text; the app's Header heads a second one, and
+        // Kunstmaan's Text follows that.
+        $pdo->exec("INSERT INTO kuma_page_part_refs VALUES
+                    (1, 'App\\Pages\\HomePage', 100, 'main', 'Kunstmaan\\PagePartBundle\\Entity\\HeaderPagePart', 1, 1),
+                    (2, 'App\\Pages\\HomePage', 100, 'main', 'App\\Entity\\PageParts\\TextPagePart', 1, 2),
+                    (3, 'App\\Pages\\HomePage', 100, 'main', 'App\\Entity\\PageParts\\HeaderPagePart', 1, 3),
+                    (4, 'App\\Pages\\HomePage', 100, 'main', 'App\\Entity\\PageParts\\TextPagePart', 2, 4),
+                    (5, 'App\\Pages\\HomePage', 100, 'main', 'Kunstmaan\\PagePartBundle\\Entity\\TextPagePart', 1, 5)");
+
+        $mapping = Mapping::fromArray([
+            'sequence' => [['id' => 'absorb', 'match' => 'Kunstmaan\\PagePartBundle\\Entity\\HeaderPagePart > *', 'action' => 'absorb']],
+            'parts' => [
+                'Text' => ['table' => 'app_text_parts', 'block' => 'textBlock'],
+                self::KM_TEXT => ['table' => 'kuma_text_page_parts', 'block' => 'textBlock'],
+                'Header' => ['table' => 'app_header_parts', 'block' => 'headingBlock'],
+                'Kunstmaan\\PagePartBundle\\Entity\\HeaderPagePart' => ['table' => 'kuma_header_page_parts', 'drop' => 'absorbed'],
+            ],
+        ]);
+        $app = new Requirement('parts', 'Text', 'textBlock', 'heading', null, 'sequence');
+        $kunstmaan = new Requirement('parts', self::KM_TEXT, 'textBlock', 'heading', null, 'sequence');
+
+        (new FillMeasurer($mapping))->ingest([$app, $kunstmaan], new LegacyDatabase($pdo, 'COM', 'legacy'));
+
+        // The app's two Texts, one behind Kunstmaan's Header; Kunstmaan's one Text, behind none.
+        self::assertSame([2, 1], [$app->rows, $app->empty]);
+        self::assertSame([1, 1], [$kunstmaan->rows, $kunstmaan->empty]);
+    }
 }

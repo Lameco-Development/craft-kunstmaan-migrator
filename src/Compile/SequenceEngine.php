@@ -202,6 +202,12 @@ final class SequenceEngine
 
     private function matchHead(string $match): string
     {
+        return self::headOf($match);
+    }
+
+    /** The row key a rule's `match:` opens with — `Header` in `Header > *`, qualified or not. */
+    public static function headOf(string $match): string
+    {
         return trim(explode('>', $match)[0]);
     }
 
