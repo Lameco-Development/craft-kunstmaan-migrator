@@ -101,6 +101,54 @@ final class EntityLaneTest extends TestCase
     }
 
     #[Test]
+    public function prose_naming_a_lookup_or_seomatic_is_not_an_expression(): void
+    {
+        // A note may quote what a map once said; only `map:` values are evaluated, so only they
+        // are checked — and only they are what `validate --live` reads tables for.
+        $yaml = <<<'YAML'
+            version: 1
+            environments:
+              COM: { database: legacy, locales: { en: comEnUs } }
+            pages:
+              CasePage:
+                entryType: casePage
+                note: was `seo_id | lookup(ModelSeo.meta_title)` before the SEO table moved
+                todo: 'seomatic(author=seo_id | lookup(modelseo.author))'
+                map:
+                  brochure: document_id | lookup(document.path) | file(uploads/documents)
+            YAML;
+
+        self::assertSame([], $this->validate($yaml));
+
+        $path = tempnam(sys_get_temp_dir(), 'kuma') . '.yaml';
+        file_put_contents($path, $yaml);
+        self::assertSame(['lookup(document.path)'], array_keys(Mapping::fromFile($path)->lookups()));
+    }
+
+    #[Test]
+    public function a_lookup_into_an_undeclared_entity_is_rejected_not_compiled_to_nothing(): void
+    {
+        // A lower-case name is a plain table (checked with `validate --live`); an undeclared
+        // CamelCase one can only be an entity somebody misspelled.
+        $errors = $this->validate(<<<'YAML'
+            version: 1
+            environments:
+              COM: { database: legacy, locales: { en: comEnUs } }
+            pages:
+              CasePage:
+                entryType: casePage
+                map:
+                  countryCode: country_id | lookup(Contry.code)
+                  brochure: document_id | lookup(document.path) | file(uploads/documents)
+            YAML);
+
+        self::assertSame(
+            ['pages.CasePage.map.countryCode: `lookup(Contry.code)` names no entity and cannot be a table — declare it under `entities:`, or name the table as the database does (lower case)'],
+            $errors,
+        );
+    }
+
+    #[Test]
     public function a_ref_to_an_undeclared_entity_is_rejected_by_the_mapping_not_silently_dropped(): void
     {
         $errors = $this->validate(<<<'YAML'

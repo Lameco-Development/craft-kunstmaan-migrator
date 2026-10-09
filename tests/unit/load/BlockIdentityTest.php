@@ -639,6 +639,11 @@ final class RefusingDeleteWriter implements ElementWriter
         return null;
     }
 
+    public function withCurrentSite(int $siteId, callable $work): mixed
+    {
+        return $work();
+    }
+
     public function invalidateCaches(): void
     {
     }

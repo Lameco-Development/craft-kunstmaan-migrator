@@ -701,6 +701,11 @@ final class NavigationMenuBundlePassTest extends TestCase
                 return null;
             }
 
+            public function withCurrentSite(int $siteId, callable $work): mixed
+            {
+                return $work();
+            }
+
             public function invalidateCaches(): void
             {
             }
@@ -849,6 +854,11 @@ final class NavigationMenuBundlePassTest extends TestCase
             public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
             {
                 throw new RuntimeException('lookup exploded');
+            }
+
+            public function withCurrentSite(int $siteId, callable $work): mixed
+            {
+                return $work();
             }
 
             public function invalidateCaches(): void

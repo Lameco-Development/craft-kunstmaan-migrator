@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Mapping;
 
 use Lameco\Kunstmaanmigrator\Compile\EntityIndex;
+use Lameco\Kunstmaanmigrator\Payload\SeomaticValue;
 use Lameco\Kunstmaanmigrator\Source\PartClass;
 
 /**
@@ -81,6 +82,8 @@ final class Schema
         $this->checkSidecars($mapping, $errors);
         $this->checkUnreviewed($mapping, $errors);
         $this->checkRefs($mapping, $errors);
+        $this->checkLookups($mapping, $errors);
+        $this->checkSeomatic($mapping, $errors);
         $this->checkFiles($mapping, $errors);
         $this->checkSequence($mapping, $errors);
         $this->checkLaneCollisions($mapping, $errors);
@@ -349,6 +352,60 @@ final class Schema
                         $path,
                         $name,
                         implode(', ', $index->names()),
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * Every `lookup()` has to name a declared entity or something that can be a table.
+     *
+     * A lookup into an undeclared entity read nothing and emitted nothing, and validated clean.
+     * A lower-case name is a plain table — whether the database has it is `validate --live`'s
+     * question (`Mapping::lookups()`); an undeclared CamelCase one is a misspelled entity.
+     *
+     * @param list<string> $errors
+     */
+    private function checkLookups(Mapping $mapping, array &$errors): void
+    {
+        $index = new EntityIndex($mapping->entities());
+
+        foreach ($mapping->expressions() as $path => $value) {
+            foreach (LookupExpression::allIn($value) as $lookup) {
+                if (!$index->has($lookup->source) && !$lookup->namesTable()) {
+                    $errors[] = sprintf(
+                        '%s: `%s` names no entity and cannot be a table — declare it under `entities:`, or name the table as the database does (lower case)',
+                        $path,
+                        $lookup,
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * A `seomatic()` argument it does not take would be dropped without a word — a mistyped
+     * `descripton=` leaving every entry's description empty.
+     *
+     * @param list<string> $errors
+     */
+    private function checkSeomatic(Mapping $mapping, array &$errors): void
+    {
+        foreach ($mapping->expressions() as $path => $value) {
+            if (preg_match('/^\s*seomatic\((.*)\)\s*$/s', $value, $m) !== 1) {
+                continue;
+            }
+
+            foreach (FieldExpression::splitArguments($m[1]) as $argument) {
+                $name = trim(explode('=', $argument, 2)[0]);
+
+                if (!str_contains($argument, '=') || !isset(SeomaticValue::ARGUMENTS[$name])) {
+                    $errors[] = sprintf(
+                        '%s: `seomatic()` takes no `%s=` — it takes %s',
+                        $path,
+                        $name,
+                        implode(', ', array_keys(SeomaticValue::ARGUMENTS)),
                     );
                 }
             }

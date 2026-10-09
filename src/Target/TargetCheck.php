@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Target;
 
 use Lameco\Kunstmaanmigrator\Mapping\AssetExpression;
+use Lameco\Kunstmaanmigrator\Mapping\EntityRow;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Mapping\PageRow;
 use Lameco\Kunstmaanmigrator\Mapping\PartRow;
@@ -98,6 +99,10 @@ final class TargetCheck
             }
 
             foreach (array_keys($entity->map()) as $target) {
+                if ((string) $target === EntityRow::SLUG) {
+                    continue;
+                }
+
                 if ($this->schema->slot($entryType, (string) $target) === null) {
                     $errors[] = sprintf(
                         'entity `%s`: entry type `%s` has no field `%s`',

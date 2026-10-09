@@ -191,6 +191,11 @@ final class NavigationNodeMenuEdgeTest extends TestCase
                 return null;
             }
 
+            public function withCurrentSite(int $siteId, callable $work): mixed
+            {
+                return $work();
+            }
+
             public function invalidateCaches(): void
             {
             }
@@ -267,6 +272,11 @@ final class NavigationNodeMenuEdgeTest extends TestCase
                 return $this->inner->findById($id, $class, $siteId);
             }
 
+            public function withCurrentSite(int $siteId, callable $work): mixed
+            {
+                return $this->inner->withCurrentSite($siteId, $work);
+            }
+
             public function invalidateCaches(): void
             {
                 $this->inner->invalidateCaches();
@@ -323,6 +333,11 @@ final class NavigationNodeMenuEdgeTest extends TestCase
             public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface
             {
                 return null;
+            }
+
+            public function withCurrentSite(int $siteId, callable $work): mixed
+            {
+                return $work();
             }
 
             public function invalidateCaches(): void

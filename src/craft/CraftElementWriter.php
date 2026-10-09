@@ -93,6 +93,25 @@ final class CraftElementWriter implements ElementWriter
         return Craft::$app->elements->saveElement($element, $runValidation, $propagate);
     }
 
+    public function withCurrentSite(int $siteId, callable $work): mixed
+    {
+        $sites = Craft::$app->getSites();
+        $previous = $sites->getCurrentSite();
+        $target = $sites->getSiteById($siteId);
+
+        if ($target === null) {
+            return $work();
+        }
+
+        $sites->setCurrentSite($target);
+
+        try {
+            return $work();
+        } finally {
+            $sites->setCurrentSite($previous);
+        }
+    }
+
     public function deferSearchIndexing(): void
     {
         if (self::$searchIndexDeferred) {

@@ -46,6 +46,13 @@ final class Compiler
     private array $skipped = [];
 
     /**
+     * Environment => entity lane => its rows that repeat a slug, see `repeatedSlugs()`.
+     *
+     * @var array<string, array<string, array<int, int>>>
+     */
+    private array $repeatedSlugs = [];
+
+    /**
      * @param ?list<string> $only compile only these page entities / entity-lane names; null is everything
      */
     public function __construct(
@@ -343,12 +350,14 @@ final class Compiler
                 continue;
             }
 
-            foreach ($reader->rows((string) $entity->table(), $entity->softDelete()) as $row) {
+            $rows = $reader->rows((string) $entity->table(), $entity->softDelete());
+
+            foreach ($rows as $row) {
                 if ($limit !== null && $this->entries >= $limit) {
                     return;
                 }
 
-                $this->compileEntityRow($entity, $row, $builder, $environment, $sites, $emit);
+                $this->compileEntityRow($entity, $row, $builder, $environment, $sites, $emit, $this->repeatedSlugs($entity, $rows, $builder, $environment));
             }
         }
     }
@@ -401,13 +410,92 @@ final class Compiler
         $rows = $reader->rows((string) $entity->table(), $entity->softDelete());
 
         foreach (array_slice($rows, $offset, $limit) as $row) {
-            $this->compileEntityRow($entity, $row, $run->builder, $run->environment, $sites, $emit);
+            $this->compileEntityRow(
+                $entity,
+                $row,
+                $run->builder,
+                $run->environment,
+                $sites,
+                $emit,
+                $this->repeatedSlugs($entity, $rows, $run->builder, $run->environment),
+            );
         }
+    }
+
+    /**
+     * The rows of one entity lane whose mapped slug an earlier row of the lane already holds:
+     * row id => the id of the row that holds it.
+     *
+     * Craft keeps a URI unique by suffixing the slug (`-1`), so a repeated legacy slug would
+     * migrate as a moved URL and nobody would hear of it. Found from the whole lane rather than
+     * the rows compiled so far, so a batched job reports each repeat once — in the slice that
+     * holds it — wherever the slice boundaries fall. Cached per lane: a batch compiles many
+     * slices of one lane against the same rows — per environment, since one compiler walks
+     * every environment of a console run and row ids restart in each database.
+     *
+     * @param list<array<string, mixed>> $rows the whole lane, in compile order
+     * @return array<int, int>
+     */
+    private function repeatedSlugs(EntityRow $entity, array $rows, BlockBuilder $builder, string $environment): array
+    {
+        $expression = $entity->slugExpression();
+
+        if ($expression === null) {
+            return [];
+        }
+
+        if (isset($this->repeatedSlugs[$environment][$entity->name])) {
+            return $this->repeatedSlugs[$environment][$entity->name];
+        }
+
+        $owners = [];
+        $repeats = [];
+
+        foreach ($rows as $row) {
+            // A row skipped for its title becomes no entry, so it holds no slug either.
+            if (self::lacksTitle($entity, $row)) {
+                continue;
+            }
+
+            $slug = $builder->fieldsFrom([EntityRow::SLUG => $expression], $row, $entity->name)[EntityRow::SLUG] ?? null;
+
+            if (!is_scalar($slug) || (string) $slug === '') {
+                continue;
+            }
+
+            $id = (int) ($row['id'] ?? 0);
+
+            if (isset($owners[(string) $slug])) {
+                $repeats[$id] = $owners[(string) $slug];
+
+                continue;
+            }
+
+            $owners[(string) $slug] = $id;
+        }
+
+        return $this->repeatedSlugs[$environment][$entity->name] = $repeats;
+    }
+
+    /**
+     * Whether a row is skipped for having no title.
+     *
+     * Craft's title is required on every one of these entry types, and an entry with no title
+     * is a row nobody can find again. A `single:` row is the exception: it merges into the
+     * section's existing entry, whose title an earlier contributor already set, so it carries
+     * no title of its own.
+     *
+     * @param array<string, mixed> $row
+     */
+    private static function lacksTitle(EntityRow $entity, array $row): bool
+    {
+        return !$entity->single() && trim((string) ($row[$entity->titleColumn()] ?? '')) === '';
     }
 
     /**
      * @param array<string, mixed> $row
      * @param list<string> $sites
+     * @param array<int, int> $repeatedSlugs see `repeatedSlugs()`
      */
     private function compileEntityRow(
         EntityRow $entity,
@@ -416,6 +504,7 @@ final class Compiler
         string $environment,
         array $sites,
         callable $emit,
+        array $repeatedSlugs = [],
     ): void {
         $name = $entity->name;
         $entryType = (string) $entity->entryType();
@@ -424,11 +513,7 @@ final class Compiler
         $titleColumn = $entity->titleColumn();
         $title = trim((string) ($row[$titleColumn] ?? ''));
 
-        // Craft's title is required on every one of these entry types, and an entry
-        // with no title is a row nobody can find again. A `single:` row is the
-        // exception: it merges into the section's existing entry, whose title an
-        // earlier contributor already set, so it carries no title of its own.
-        if ($title === '' && !$single) {
+        if (self::lacksTitle($entity, $row)) {
             $this->skip(sprintf('%s: row %s has no `%s`', $name, (string) ($row['id'] ?? '?'), $titleColumn));
 
             return;
@@ -453,12 +538,32 @@ final class Compiler
         $fields = $builder->fieldsFrom($entity->map(), $row, $name, $entryType);
         $fields += $builder->childrenOf($entity->children(), $entryType, (int) $row['id'], $name, true);
 
+        // The slug is the entry's own, not a field: the loader refuses a field value no layout
+        // carries, and reads the native slug from the site.
+        $slug = $fields[EntityRow::SLUG] ?? null;
+        unset($fields[EntityRow::SLUG]);
+
+        if (isset($repeatedSlugs[(int) $row['id']])) {
+            $this->skip(sprintf(
+                '%s: row %d repeats slug `%s` of row %d in section `%s` — Craft may suffix it',
+                $name,
+                (int) $row['id'],
+                is_scalar($slug) ? (string) $slug : '',
+                $repeatedSlugs[(int) $row['id']],
+                (string) $entity->section(),
+            ));
+        }
+
         // No `title` key at all when the row has none — an absent key reaches the
         // loader as null and leaves the existing entry title in place, where an
         // empty string would clear it.
         $site = ['enabled' => true];
         if ($title !== '') {
             $site['title'] = $title;
+        }
+
+        if (is_scalar($slug) && (string) $slug !== '') {
+            $site['slug'] = (string) $slug;
         }
 
         if ($fields !== []) {

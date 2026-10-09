@@ -374,6 +374,73 @@ final class Mapping
     }
 
     /**
+     * Every expression the compiler evaluates, by its path in the mapping: the string values
+     * at or below a `map:` key — a page's, an entity's, a part's or sidecar's, a child table's
+     * under `children:`, a `promote:`, a `switch:` case, a sequence rule, a form or global
+     * part. Prose (`note:`, `todo:`, `ignore:`) is not evaluated, so a note quoting
+     * `lookup(…)` is not an expression.
+     *
+     * @return array<string, string> path => expression
+     */
+    public function expressions(): array
+    {
+        return self::expressionsIn($this->data, '', false);
+    }
+
+    /**
+     * @param array<array-key, mixed> $node
+     * @return array<string, string>
+     */
+    private static function expressionsIn(array $node, string $path, bool $underMap): array
+    {
+        $found = [];
+
+        foreach ($node as $key => $value) {
+            $here = $path === '' ? (string) $key : $path . '.' . (string) $key;
+
+            if (is_array($value)) {
+                $found = [...$found, ...self::expressionsIn($value, $here, $underMap || $key === 'map')];
+            } elseif (is_string($value) && ($underMap || $key === 'map')) {
+                $found[$here] = $value;
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Every `lookup()` the mapping's expressions make, with the legacy table it reads: a
+     * declared entity's, the node tree's, or the plain table it names. A lookup that can name
+     * neither is left out — the shape check reports it.
+     *
+     * @return array<string, array{lookup: LookupExpression, table: string}> keyed by the expression
+     */
+    public function lookups(): array
+    {
+        $found = [];
+
+        foreach ($this->expressions() as $expression) {
+            foreach (LookupExpression::allIn($expression) as $lookup) {
+                $entity = $this->entities()[$lookup->source] ?? null;
+                $table = match (true) {
+                    $lookup->source === 'node' => 'kuma_nodes',
+                    is_array($entity) => is_string($entity['table'] ?? null) && $entity['table'] !== '' ? $entity['table'] : null,
+                    $lookup->namesTable() => $lookup->source,
+                    default => null,
+                };
+
+                if ($table !== null) {
+                    $found[(string) $lookup] = ['lookup' => $lookup, 'table' => $table];
+                }
+            }
+        }
+
+        ksort($found);
+
+        return $found;
+    }
+
+    /**
      * The legacy databases the mapping names, by environment. An environment
      * with no `database:` is declared but not readable and is left out.
      *

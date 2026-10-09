@@ -116,7 +116,8 @@ reported as warnings rather than errors, since a field may have a default.
 
 **Live** — with `--live`, the mapping's legacy databases are read (the `KUMA_DB_*` credentials) and
 a short-name part row that reads a table for two or more live classes sharing that short name is
-an error. See "Parts sharing a short name".
+an error. See "Parts sharing a short name". So is a `lookup()` into a table or column (the order
+column included) a database does not have: shape alone cannot tell a plain table from a typo.
 
 This check exists because the alternative is finding out at load time. On the first real
 mapping it caught eight wrong handles — `embed` for a field called `embedCode`, `logos` for
@@ -446,6 +447,15 @@ contributor saved first, and the compiled payload omits the title key entirely s
 leaves it untouched. `children:` works on an entity the same way it does on a page or a pagepart:
 a table hanging off the row by foreign key becomes nested Matrix blocks in the named field.
 
+`slug: <expression>` in an entity's `map:` sets the entry's native slug — no field, so the compiler
+lifts it onto each site's `slug` (the payload's own slot) and `validate --craft` / `migrate` accept
+it. A catalogue keeps its legacy URLs that way, where Craft would slugify the title instead and
+suffix a repeat (`insert-metallique-1`). A row whose slug another row of the same entity already
+holds is counted in the run report (`… repeats slug … — Craft may suffix it`) rather than left to
+Craft's silent suffix. The repeat is found from the whole lane, so a batched job reports it once,
+whatever its slice boundaries; two entities sharing one section are not compared with each other.
+A page's slug is its node translation's, so a page `map:` still may not name `slug`.
+
 ### `children:` into an Assets or Table field
 
 The named field's type, read from the target schema, decides what the child rows become — on a
@@ -500,6 +510,23 @@ Beyond `column | transform`, a `map:` value can be:
 - `lookup(<Entity>.<column>)` — follow a foreign key to a column on the row it points at. Some
   values are simply not on the table being read: the country code a Craft Address needs is the
   abbreviation on the row `country_id` names.
+- `lookup(<table>.<column>[, <order>])` — the same, in a plain legacy table no entity declares
+  (one that never becomes an entry): `document_id | lookup(document.path) | file(uploads/documents)`.
+  A declared entity name wins; any other name is a table, and must be written as the database
+  names it — lower-case snake case. An undeclared `CamelCase` name is a misspelled entity and
+  `validate` fails on it; whether a table exists is `validate --live`'s check. Over a list — an
+  `m2m(...)` read — it maps each id, so a join table with no id of its own reaches its target's
+  files: `m2m(models_photos, model_id, model_photo_id) | lookup(model_photos.path, photo_order) | file(uploads/models)`.
+  The list keeps the m2m order (target id) or, with `<order>`, sorts by that column and then the
+  id, as `children:` does (an unset order first); a missing row or an empty column is dropped.
+  `| asset` maps over a list the same way, one `_asset` per media id that resolves.
+- `seomatic(title=…, description=…, keywords=…, robots=…, ogTitle=…, ogDescription=…, twitterTitle=…, twitterDescription=…)`
+  — an SEOmatic field's value from mapped expressions, in the shape the SEO adapter writes a
+  page's (`Payload\SeomaticValue`, which `SeomaticPayloadBuilder` delegates to): `metaGlobalVars`
+  plus each `*Source: fromCustom`. An entity whose SEO sits on a row of its own reads it through
+  `lookup()`: `seo: seomatic(title=seo_id | lookup(modelseo.meta_title), …)`. Robots and keywords
+  are emitted only when set; a row with nothing to say writes no field. No images — an SEOmatic
+  image is a Craft asset id only the loader knows. `validate` rejects an argument it does not take.
 - `address(addressLine1=street, postalCode=postal_code, …)` — a Craft Address element gathered from
   the columns a legacy table spreads it across. Named arguments, because an address has nine usable
   parts and no natural order; each value is a full expression, so a country code can arrive through
