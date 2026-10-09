@@ -502,7 +502,12 @@ class SeoMigrationService extends Component implements MigrationAdapter
         // Fallback: derive from source + sourceKey directly. Requires source
         // to be FQCN-shaped (contains underscores → backslashes) and sourceKey
         // to be numeric (the FQCN entity row id).
-        if (!ctype_digit((string) $sourceKey) || !str_contains($source, '_')) {
+        //
+        // A compiled payload's source is `<ENV>:<table>` — never a class. Deriving one from it
+        // (`FR:product\photo`) matched no `kuma_seo` row, and the "no legacy SEO" branch then
+        // cleared whatever SEO the entry was saved with: an entity's own, compiled from a
+        // `seomatic(...)` map. Such an entry has no `kuma_seo` row to copy, so it is left alone.
+        if (!ctype_digit((string) $sourceKey) || !str_contains($source, '_') || str_contains($source, ':')) {
             return [null, 0];
         }
 
