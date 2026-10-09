@@ -48,6 +48,26 @@ final class MigrationStateServiceMetaTest extends TestCase
 
         self::assertSame(['handle' => 'kumaFrFormpage3'], $state->persisted[0]['existing']['meta']);
     }
+
+    /**
+     * Xidoor ticket 23, gap E: a `--force` save re-records every entry with no meta, and
+     * `persistRecord()` wrote the raw JSON string back, which Yii's JSON typecast stored as
+     * a string scalar. `structurePlaced` was then gone, the order pass took every member as
+     * unplaced, and a hand-dragged brand order went back to the legacy order. The fake
+     * stores what Yii would: the value `persistRecord()` is handed, JSON-encoded.
+     */
+    public function testStructurePlacedSurvivesTheReRecordOfAForceRun(): void
+    {
+        $state = new MetaFakeMigrationStateService(
+            ['id' => 1, 'targetId' => 47, 'targetUid' => 'uid-47', 'meta' => '{"structurePlaced":true,"blockIds":{"xidoorEn":[5]}}'],
+            storesWrites: true,
+        );
+
+        $state->record('XI:kuma_nodes', '47', 'entry', 47, 'uid-47');
+        $state->record('XI:kuma_nodes', '47', 'entry', 47, 'uid-47');
+
+        self::assertSame(['structurePlaced' => true, 'blockIds' => ['xidoorEn' => [5]]], $state->get('XI:kuma_nodes', '47')['meta'] ?? null);
+    }
 }
 
 /** @internal */
@@ -56,7 +76,7 @@ final class MetaFakeMigrationStateService extends MigrationStateService
     /** @var list<array<string, mixed>> */
     public array $persisted = [];
 
-    public function __construct(private readonly ?array $row)
+    public function __construct(private ?array $row, private readonly bool $storesWrites = false)
     {
     }
 
@@ -76,5 +96,10 @@ final class MetaFakeMigrationStateService extends MigrationStateService
         ?array $meta,
     ): void {
         $this->persisted[] = ['existing' => $existing, 'meta' => $meta];
+
+        if ($this->storesWrites && $this->row !== null) {
+            // Yii's JSON column typecast: whatever it is handed, encoded — a string included.
+            $this->row['meta'] = json_encode($meta !== null ? $meta : $existing['meta'] ?? null);
+        }
     }
 }
