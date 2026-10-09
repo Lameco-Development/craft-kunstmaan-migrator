@@ -153,7 +153,7 @@ final class SubmissionMigrationService
             $payload = [
                 'values' => $values,
                 'dateCreated' => (string) $submission['created'],
-                'siteId' => $context->sites->siteIdForLocale((string) $submission['lang']) ?? $context->sites->primary()?->siteId,
+                'siteId' => self::siteIdFor((string) $submission['lang'], $context),
                 'ipAddress' => (string) $submission['ip'] !== '' ? (string) $submission['ip'] : null,
             ];
 
@@ -192,6 +192,18 @@ final class SubmissionMigrationService
             );
             $report->incr($existing === null ? 'submissionsCreated' : 'submissionsUpdated');
         }
+    }
+
+    /**
+     * The site a submission is filed on: its locale's, else the environment's
+     * primary, else its first bound site. Never none: Formie would file it on
+     * Craft's primary site, which for Berkvens FR is another site group.
+     */
+    private static function siteIdFor(string $lang, EnvironmentContext $context): ?int
+    {
+        return $context->sites->siteIdForLocale($lang)
+            ?? $context->sites->primary()?->siteId
+            ?? ($context->sites->bindings()[0] ?? null)?->siteId;
     }
 
     /**

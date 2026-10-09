@@ -35,8 +35,11 @@ final class FormSubmissionMigrationTest extends TestCase
     /** Where the 2024 CV upload says it is, relative to the files root. */
     private string $cvUrl = '/uploads/formsubmissions/abc/cv.pdf';
 
-    /** The legacy locale every submission was made in. */
+    /** The legacy locale the mapping binds, and the pages and submissions carry. */
     private string $lang = 'nl';
+
+    /** A locale the submissions carry instead, when a test needs one the mapping does not bind. */
+    private ?string $submissionLang = null;
 
     private bool $hadEnvironment = false;
 
@@ -133,10 +136,11 @@ final class FormSubmissionMigrationTest extends TestCase
         $pdo->exec("INSERT INTO kuma_node_translations VALUES
                     (21, 222, '{$this->lang}', 'Solliciteren', 1, 11),
                     (22, 131, '{$this->lang}', 'Contact', 1, 12)");
+        $lang = $this->submissionLang ?? $this->lang;
         $pdo->exec("INSERT INTO kuma_form_submissions VALUES
-                    (1, 222, '10.0.0.1', '{$this->lang}', '2017-05-24 11:22:49'),
-                    (2, 222, '10.0.0.2', '{$this->lang}', '2024-09-04 12:06:47'),
-                    (3, 131, '10.0.0.3', '{$this->lang}', '2016-04-06 12:44:41')");
+                    (1, 222, '10.0.0.1', '$lang', '2017-05-24 11:22:49'),
+                    (2, 222, '10.0.0.2', '$lang', '2024-09-04 12:06:47'),
+                    (3, 131, '10.0.0.3', '$lang', '2016-04-06 12:44:41')");
 
         $prefix = 'field_KunstmaanFormBundleEntityPageParts';
         $dhr = 'a:2:{i:0;s:4:"Dhr.";i:1;s:5:"Mevr.";}';
@@ -409,13 +413,13 @@ final class FormSubmissionMigrationTest extends TestCase
 
     /**
      * FR runs with its own `forms.submissions:` block and environment-scoped
-     * state keys, onto Berkvens FR — not the primary site. A forced re-run
+     * state keys, onto Berkvens FR — not the primary site. Its content sits
+     * under the Kunstmaan `nl` locale, as on the real corpus. A forced re-run
      * finds what it wrote there and updates it in place.
      */
     #[Test]
     public function an_fr_submission_lands_on_the_fr_site_and_force_updates_it_in_place(): void
     {
-        $this->lang = 'fr';
         $this->migrate(submissions: 'nodes: [131]', env: 'FR');
         $id = $this->submissionId(3, 'FR');
 
@@ -481,5 +485,20 @@ final class FormSubmissionMigrationTest extends TestCase
 
         self::assertSame([], $this->gateway->submissions);
         self::assertSame([], $this->gateway->saved);
+    }
+
+    /**
+     * A submission in a locale the environment does not bind stays on the
+     * environment's own site. Formie would otherwise file it on Craft's primary
+     * site — Berkvens NL — and an FR lead would cross site groups.
+     */
+    #[Test]
+    public function a_submission_in_an_unbound_locale_stays_on_its_environments_site(): void
+    {
+        $this->submissionLang = 'en';
+
+        $this->migrate(submissions: 'nodes: [131]', env: 'FR');
+
+        self::assertSame(2, $this->gateway->submissions[$this->submissionId(3, 'FR')]['siteId']);
     }
 }
