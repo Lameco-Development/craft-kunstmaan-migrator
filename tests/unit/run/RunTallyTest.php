@@ -279,4 +279,24 @@ final class RunTallyTest extends TestCase
         self::assertFalse($tally->hasFailures());
         self::assertSame([], $tally->problems);
     }
+
+    /**
+     * One pipeline, two callers: the console's environment run and the control panel's
+     * queued `RunAdaptersJob` both fold adapter results into a tally through
+     * `runAdaptersFor()`, so a queued run's failed submissions reach its log entry as a
+     * count and a problem rather than only inside the adapter block.
+     */
+    public function testBothCallersFoldAdapterResultsThroughThePipeline(): void
+    {
+        $root = dirname(__DIR__, 3);
+        $pipeline = (string) file_get_contents($root . '/src/run/EnvironmentPipeline.php');
+        $job = (string) file_get_contents($root . '/src/queue/RunAdaptersJob.php');
+
+        self::assertStringContainsString('$this->runAdaptersFor($context, $settings, $tally)', $pipeline);
+        self::assertStringContainsString('$tally->absorbAdapters($context->name, $results)', $pipeline);
+        self::assertStringNotContainsString('$tally->absorbAdapters($env, $this->runAdapters(', $pipeline);
+        self::assertSame(2, substr_count($job, '->runAdaptersFor($context, $settings, $tally)'));
+        self::assertStringContainsString("\$extra['submissionsFailed'] = \$tally->counts['submissionsFailed'] ?? 0", $job);
+        self::assertStringContainsString("\$extra['problems'] = \$tally->problems", $job);
+    }
 }

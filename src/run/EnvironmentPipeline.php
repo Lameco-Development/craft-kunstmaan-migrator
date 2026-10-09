@@ -192,7 +192,7 @@ final class EnvironmentPipeline
             });
 
             if (!$settings->entriesOnly) {
-                $tally->absorbAdapters($env, $this->runAdapters($context, $settings));
+                $this->runAdaptersFor($context, $settings, $tally);
             }
         });
     }
@@ -334,13 +334,18 @@ final class EnvironmentPipeline
     }
 
     /**
-     * The adapter passes for one prepared environment, as `run()` executes them.
+     * The adapter passes for one prepared environment, as `run()` executes them — their
+     * results folded into the tally, so a failure that is a run failure (`submissionsFailed`)
+     * reaches the console's exit code and the queued job's log entry alike.
      *
      * @return array<string, mixed>
      */
-    public function runAdaptersFor(EnvironmentContext $context, RunSettings $settings): array
+    public function runAdaptersFor(EnvironmentContext $context, RunSettings $settings, RunTally $tally): array
     {
-        return $this->runAdapters($context, $settings);
+        $results = $this->runAdapters($context, $settings);
+        $tally->absorbAdapters($context->name, $results);
+
+        return $results;
     }
 
     /** @param array<string, mixed> $raw */
