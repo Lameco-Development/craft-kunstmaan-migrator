@@ -363,7 +363,7 @@ final class Schema
      *
      * A lookup into an undeclared entity read nothing and emitted nothing, and validated clean.
      * A lower-case name is a plain table — whether the database has it is `validate --live`'s
-     * question (`Mapping::lookupTables()`); an undeclared CamelCase one is a misspelled entity.
+     * question (`Mapping::lookups()`); an undeclared CamelCase one is a misspelled entity.
      *
      * @param list<string> $errors
      */
@@ -371,7 +371,7 @@ final class Schema
     {
         $index = new EntityIndex($mapping->entities());
 
-        foreach (self::stringsIn($mapping->all(), '') as $path => $value) {
+        foreach ($mapping->expressions() as $path => $value) {
             foreach (LookupExpression::allIn($value) as $lookup) {
                 if (!$index->has($lookup->source) && !$lookup->namesTable()) {
                     $errors[] = sprintf(
@@ -392,7 +392,7 @@ final class Schema
      */
     private function checkSeomatic(Mapping $mapping, array &$errors): void
     {
-        foreach (self::stringsIn($mapping->all(), '') as $path => $value) {
+        foreach ($mapping->expressions() as $path => $value) {
             if (preg_match('/^\s*seomatic\((.*)\)\s*$/s', $value, $m) !== 1) {
                 continue;
             }
@@ -410,27 +410,6 @@ final class Schema
                 }
             }
         }
-    }
-
-    /**
-     * @param array<array-key, mixed> $node
-     * @return array<string, string> path => every string value at or below it
-     */
-    private static function stringsIn(array $node, string $path): array
-    {
-        $found = [];
-
-        foreach ($node as $key => $value) {
-            $here = $path === '' ? (string) $key : $path . '.' . (string) $key;
-
-            if (is_array($value)) {
-                $found = [...$found, ...self::stringsIn($value, $here)];
-            } elseif (is_string($value)) {
-                $found[$here] = $value;
-            }
-        }
-
-        return $found;
     }
 
     /**
