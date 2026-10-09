@@ -163,4 +163,14 @@ final class TransformsTest extends TestCase
         );
         self::assertSame(1, $t->lossCount(), 'the addresses it could not carry are counted');
     }
+
+    #[Test]
+    public function an_all_digit_uploads_folder_is_a_path_not_a_media_id(): void
+    {
+        // Kunstmaan names upload folders with uniqid(): `6813428710619` is hex that happens to
+        // hold no letter, not the kuma_media id it was once parked as (Berkvens NL, node 1591).
+        $html = '<img alt="" src="[M3679]" data-src="/uploads/media/6813428710619/berkvens-type-eproc.jpg?token=[M3679]">';
+
+        self::assertSame($html, $this->transforms()->apply('ckeditor', $html));
+    }
 }
