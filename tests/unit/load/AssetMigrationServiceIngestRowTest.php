@@ -133,6 +133,33 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
             self::assertSame(['skipped' => 1], $counts);
         }
 
+        public function testAnEmptyLocalFileIsSkippedRatherThanSaved(): void
+        {
+            // Four Berkvens NL author photos are 0-byte files. Saving one threw from
+            // getimagesize() inside the asset save and failed the entry that referenced it.
+            file_put_contents($this->mediaRoot . '/empty.jpg', '');
+            $service = $this->service();
+            $counts = [];
+
+            try {
+                $result = $this->ingest(
+                    $service,
+                    ['id' => 3061, 'url' => '/uploads/media/empty.jpg', 'content_type' => 'image/jpeg'],
+                    new MigrationOptions(),
+                    $counts,
+                );
+            } finally {
+                @unlink($this->mediaRoot . '/empty.jpg');
+            }
+
+            self::assertNull($result);
+            self::assertSame(['skipped' => 1], $counts);
+
+            /** @var IngestRowState $state */
+            $state = $service->migrationState;
+            self::assertSame([], $state->recorded);
+        }
+
         public function testADryRunCountsAResolvableLocalFileAsCreated(): void
         {
             $service = $this->service();

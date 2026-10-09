@@ -741,6 +741,19 @@ class AssetMigrationService extends Component
             return null;
         }
 
+        // An empty file has nothing to migrate, and saving one throws from getimagesize()
+        // inside the asset save — which failed the whole entry that referenced it (four 0-byte
+        // author photos on Berkvens NL). Skipped like a missing file, so the reference is
+        // recorded as an unresolved asset and the entry still saves.
+        if (@filesize($sourcePath) === 0) {
+            Craft::warning(
+                "kuma_media:{$mediaId} file is empty (0 bytes) — skipped",
+                __METHOD__,
+            );
+            $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
+            return null;
+        }
+
         if ($opts->dryRun) {
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             $counts['created'] = ($counts['created'] ?? 0) + 1;
