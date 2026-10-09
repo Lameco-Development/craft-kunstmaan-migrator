@@ -451,7 +451,7 @@ a table hanging off the row by foreign key becomes nested Matrix blocks in the n
 lifts it onto each site's `slug` (the payload's own slot) and `validate --craft` / `migrate` accept
 it. A catalogue keeps its legacy URLs that way, where Craft would slugify the title instead and
 suffix a repeat (`insert-metallique-1`). A row whose slug another row of the same entity already
-holds is counted in the run report (`… repeats slug … — Craft will suffix it`) rather than left to
+holds is counted in the run report (`… repeats slug … — Craft may suffix it`) rather than left to
 Craft's silent suffix. The repeat is found from the whole lane, so a batched job reports it once,
 whatever its slice boundaries; two entities sharing one section are not compared with each other.
 A page's slug is its node translation's, so a page `map:` still may not name `slug`.

@@ -46,9 +46,9 @@ final class Compiler
     private array $skipped = [];
 
     /**
-     * Entity lane => its rows that repeat a slug, see `repeatedSlugs()`.
+     * Environment => entity lane => its rows that repeat a slug, see `repeatedSlugs()`.
      *
-     * @var array<string, array<int, int>>
+     * @var array<string, array<string, array<int, int>>>
      */
     private array $repeatedSlugs = [];
 
@@ -357,7 +357,7 @@ final class Compiler
                     return;
                 }
 
-                $this->compileEntityRow($entity, $row, $builder, $environment, $sites, $emit, $this->repeatedSlugs($entity, $rows, $builder));
+                $this->compileEntityRow($entity, $row, $builder, $environment, $sites, $emit, $this->repeatedSlugs($entity, $rows, $builder, $environment));
             }
         }
     }
@@ -417,7 +417,7 @@ final class Compiler
                 $run->environment,
                 $sites,
                 $emit,
-                $this->repeatedSlugs($entity, $rows, $run->builder),
+                $this->repeatedSlugs($entity, $rows, $run->builder, $run->environment),
             );
         }
     }
@@ -430,12 +430,13 @@ final class Compiler
      * migrate as a moved URL and nobody would hear of it. Found from the whole lane rather than
      * the rows compiled so far, so a batched job reports each repeat once — in the slice that
      * holds it — wherever the slice boundaries fall. Cached per lane: a batch compiles many
-     * slices of one lane against the same rows.
+     * slices of one lane against the same rows — per environment, since one compiler walks
+     * every environment of a console run and row ids restart in each database.
      *
      * @param list<array<string, mixed>> $rows the whole lane, in compile order
      * @return array<int, int>
      */
-    private function repeatedSlugs(EntityRow $entity, array $rows, BlockBuilder $builder): array
+    private function repeatedSlugs(EntityRow $entity, array $rows, BlockBuilder $builder, string $environment): array
     {
         $expression = $entity->slugExpression();
 
@@ -443,8 +444,8 @@ final class Compiler
             return [];
         }
 
-        if (isset($this->repeatedSlugs[$entity->name])) {
-            return $this->repeatedSlugs[$entity->name];
+        if (isset($this->repeatedSlugs[$environment][$entity->name])) {
+            return $this->repeatedSlugs[$environment][$entity->name];
         }
 
         $owners = [];
@@ -468,7 +469,7 @@ final class Compiler
             $owners[(string) $slug] = $id;
         }
 
-        return $this->repeatedSlugs[$entity->name] = $repeats;
+        return $this->repeatedSlugs[$environment][$entity->name] = $repeats;
     }
 
     /**
@@ -528,7 +529,7 @@ final class Compiler
 
         if (isset($repeatedSlugs[(int) $row['id']])) {
             $this->skip(sprintf(
-                '%s: row %d repeats slug `%s` of row %d in section `%s` — Craft will suffix it',
+                '%s: row %d repeats slug `%s` of row %d in section `%s` — Craft may suffix it',
                 $name,
                 (int) $row['id'],
                 is_scalar($slug) ? (string) $slug : '',

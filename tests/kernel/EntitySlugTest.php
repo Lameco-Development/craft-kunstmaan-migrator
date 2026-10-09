@@ -25,6 +25,7 @@ final class EntitySlugTest extends TestCase
         version: 1
         environments:
           FR: { database: fr, locales: { nl: berkvensFr } }
+          BE: { database: be, locales: { nl: berkvensFr } }
         entities:
           Model:
             table: model
@@ -35,7 +36,7 @@ final class EntitySlugTest extends TestCase
             map: { slug: slug, subname: sub_name }
         YAML;
 
-    private function db(): LegacyDatabase
+    private function db(string $environment = 'FR'): LegacyDatabase
     {
         $pdo = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
         $pdo->exec('CREATE TABLE kuma_nodes (id INTEGER, parent_id INTEGER, deleted INTEGER, lft INTEGER, ref_entity_name TEXT)');
@@ -44,13 +45,15 @@ final class EntitySlugTest extends TestCase
                     (id INTEGER, node_id INTEGER, lang TEXT, title TEXT, slug TEXT, url TEXT,
                      created TEXT, online INTEGER, public_node_version_id INTEGER)');
         $pdo->exec('CREATE TABLE model (id INTEGER, name TEXT, slug TEXT, sub_name TEXT)');
-        $pdo->exec("INSERT INTO model VALUES
-            (59, 'Insert métallique', 'insert-metallique-1', 'Pro'),
-            (60, 'Insert métallique', 'insert-metallique', NULL),
-            (61, 'Garniture', NULL, NULL),
-            (62, 'Coupe-feu', 'insert-metallique', NULL)");
+        $pdo->exec($environment === 'FR'
+            ? "INSERT INTO model VALUES
+                (59, 'Insert métallique', 'insert-metallique-1', 'Pro'),
+                (60, 'Insert métallique', 'insert-metallique', NULL),
+                (61, 'Garniture', NULL, NULL),
+                (62, 'Coupe-feu', 'insert-metallique', NULL)"
+            : "INSERT INTO model VALUES (1, 'Deur', 'deur', NULL), (62, 'Ander', 'deur', NULL)");
 
-        return new LegacyDatabase($pdo, 'FR', 'fr');
+        return new LegacyDatabase($pdo, $environment, strtolower($environment));
     }
 
     private function compiler(): Compiler
@@ -101,7 +104,7 @@ final class EntitySlugTest extends TestCase
         });
 
         self::assertSame(
-            ['Model: row 62 repeats slug `insert-metallique` of row 60 in section `models` — Craft will suffix it' => 1],
+            ['Model: row 62 repeats slug `insert-metallique` of row 60 in section `models` — Craft may suffix it' => 1],
             $compiler->skipped(),
         );
     }
@@ -120,7 +123,28 @@ final class EntitySlugTest extends TestCase
         }
 
         self::assertSame(
-            ['Model: row 62 repeats slug `insert-metallique` of row 60 in section `models` — Craft will suffix it' => 1],
+            ['Model: row 62 repeats slug `insert-metallique` of row 60 in section `models` — Craft may suffix it' => 1],
+            $compiler->skipped(),
+        );
+    }
+
+    #[Test]
+    public function each_environment_is_judged_on_its_own_rows(): void
+    {
+        // One compiler walks every environment of a console run; row 62 repeats a slug in BE
+        // for a reason of its own, not because of what row 62 held in FR.
+        $compiler = $this->compiler();
+
+        foreach (['FR', 'BE'] as $environment) {
+            $compiler->compile($this->db($environment), $environment, static function(): void {
+            });
+        }
+
+        self::assertSame(
+            [
+                'Model: row 62 repeats slug `insert-metallique` of row 60 in section `models` — Craft may suffix it' => 1,
+                'Model: row 62 repeats slug `deur` of row 1 in section `models` — Craft may suffix it' => 1,
+            ],
             $compiler->skipped(),
         );
     }
