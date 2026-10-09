@@ -104,6 +104,45 @@ final class TargetCheckTest extends TestCase
     }
 
     #[Test]
+    public function an_entity_may_map_the_native_slug(): void
+    {
+        // Not a field on any layout: the compiler lifts it onto the site's native slug, which is
+        // what keeps a catalogue's legacy URLs where Craft would slugify the title instead.
+        self::assertSame([], $this->check(<<<'YAML'
+            version: 1
+            environments:
+              COM: { database: legacy, locales: { en: comEnUs } }
+            entities:
+              Partner:
+                table: partner
+                section: partners
+                entryType: partnerPage
+                title: name
+                dedupe: false
+                map: { slug: slug, partnerAddress: street }
+            YAML));
+    }
+
+    #[Test]
+    public function a_page_still_may_not_map_the_slug(): void
+    {
+        // A page's slug is its node translation's; a mapped one would fight it.
+        self::assertSame(
+            ['page `PartnerPage`: entry type `partnerPage` has no field `slug`'],
+            $this->check(<<<'YAML'
+                version: 1
+                environments:
+                  COM: { database: legacy, locales: { en: comEnUs } }
+                pages:
+                  PartnerPage:
+                    section: partners
+                    entryType: partnerPage
+                    map: { slug: slug }
+                YAML),
+        );
+    }
+
+    #[Test]
     public function a_page_mapping_only_fields_that_exist_passes(): void
     {
         self::assertSame([], $this->check(<<<'YAML'

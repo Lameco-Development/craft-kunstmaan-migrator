@@ -11,6 +11,13 @@ final class EntityRow
 {
     private const DEFAULT_TITLE = 'title';
 
+    /**
+     * The `map:` target that is no field: the entry's native slug. The compiler lifts it onto
+     * each site's `slug`, the payload's own slot for it, so a catalogue keeps its legacy URLs
+     * (`insert-metallique-1`) where Craft would slugify the title and collide.
+     */
+    public const SLUG = 'slug';
+
     /** @param array<string, mixed> $spec the row as the file holds it */
     private function __construct(
         public readonly string $name,
@@ -77,6 +84,14 @@ final class EntityRow
     public function map(): array
     {
         return $this->arrayOf('map');
+    }
+
+    /** The expression the native slug is read from, when the row maps one. */
+    public function slugExpression(): ?string
+    {
+        $expression = $this->map()[self::SLUG] ?? null;
+
+        return is_string($expression) && trim($expression) !== '' ? $expression : null;
     }
 
     /** @return array<string, array<string, mixed>> Matrix field => child collection spec */
