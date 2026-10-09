@@ -159,6 +159,74 @@ final class EntryMigrationServiceSaveTest extends TestCase
         self::assertNull($this->writer->currentSiteId);
     }
 
+    /**
+     * Xidoor: four sites of one group, `xidoorEn` primary. A new entry's first save
+     * propagates, and Craft copies every field value into each new site row — the SEOmatic
+     * bundle included, built under xidoorEn. A later save in another site keeps a stored
+     * bundle as it is, so NL, FR and DE would all say "Xidoor EN". Each secondary save of a
+     * new entry hands the field a null, so SEOmatic builds the bundle under the site being
+     * saved; a site whose payload carries SEO writes that instead.
+     */
+    public function testANewEntrysSeomaticValueIsBuiltInEachSiteNotCopiedFromThePrimary(): void
+    {
+        $sites = EnvironmentFactory::sites(
+            ['en' => 'xidoorEn', 'nl' => 'xidoorNl', 'fr' => 'xidoorFr', 'de' => 'xidoorDe'],
+            ['xidoorEn' => [1, 'en-GB', true], 'xidoorNl' => [2, 'nl-NL'], 'xidoorFr' => [3, 'fr-FR'], 'xidoorDe' => [4, 'de-DE']],
+        );
+        $layout = SaveStubFieldLayout::withFields([self::field(SaveStubSeoField::class, 'seo'), self::field(\craft\fields\PlainText::class, 'intro')]);
+        $this->writer->entryFactory = function(int $sectionId, int $typeId, int $siteId) use ($layout): Entry {
+            $entry = SaveStubEntry::make($sectionId, $typeId, $siteId);
+            $entry->layout = $layout;
+
+            return $this->built[] = $entry;
+        };
+        $rows = [];
+        foreach ([2, 3, 4] as $siteId) {
+            $rows[$siteId] = SaveStubEntry::make(self::SECTION, self::TYPE, $siteId);
+            $rows[$siteId]->layout = $layout;
+            $this->writer->willFind(600, $rows[$siteId], $siteId);
+        }
+        $this->writer->nextId = 600;
+        $frSeo = SeomaticValue::fromRow(['meta_title' => 'Portes']);
+
+        $this->save([
+            'xidoorEn' => $this->siteData('Doors', ['intro' => 'Hi']),
+            'xidoorNl' => $this->siteData('Deuren', ['intro' => 'Hoi']),
+            'xidoorFr' => $this->siteData('Portes', ['intro' => 'Salut', 'seo' => $frSeo]),
+            'xidoorDe' => $this->siteData('Türen', ['intro' => 'Hallo']),
+        ], sites: $sites);
+
+        self::assertSame([1, 1, 2, 3, 4], array_column($this->writer->saved, 'currentSiteId'), 'every save in its own site');
+        self::assertArrayHasKey('seo', $rows[2]->capturedFieldValues);
+        self::assertNull($rows[2]->capturedFieldValues['seo'], 'NL: built afresh under xidoorNl');
+        self::assertNull($rows[4]->capturedFieldValues['seo'], 'DE: built afresh under xidoorDe');
+        self::assertSame($frSeo, $rows[3]->capturedFieldValues['seo'] ?? null, 'FR writes its own SEO');
+    }
+
+    /**
+     * An existing entry's rows were not just propagated: their SEO may be what the SEO
+     * adapter wrote, and an entry save without SEO leaves it alone.
+     */
+    public function testAnExistingEntrysStoredSeomaticValueIsLeftAlone(): void
+    {
+        $layout = SaveStubFieldLayout::withFields([self::field(SaveStubSeoField::class, 'seo')]);
+        $this->state->willResolve(self::SOURCE, '42', 600);
+        foreach ([1, 2] as $siteId) {
+            $row = SaveStubEntry::make(self::SECTION, self::TYPE, $siteId);
+            $row->id = 600;
+            $row->layout = $layout;
+            $this->writer->willFind(600, $row, $siteId);
+            $this->built[] = $row;
+        }
+        $this->writer->willFind(600, $this->built[0]);
+
+        $this->save(['default' => $this->siteData('Over ons'), 'en' => $this->siteData('About us')], force: true);
+
+        foreach ($this->built as $row) {
+            self::assertArrayNotHasKey('seo', $row->capturedFieldValues);
+        }
+    }
+
     /** @param class-string<\craft\base\FieldInterface> $class */
     private static function field(string $class, string $handle): \craft\base\FieldInterface
     {

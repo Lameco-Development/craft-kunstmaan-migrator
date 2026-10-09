@@ -355,6 +355,15 @@ class EntryMigrationService extends Component
 
             $siteData = $isPrimary ? $primaryData : $perSite[$site->handle];
 
+            // The first save of a new entry propagated, and Craft copied every field value
+            // into this row — an SEOmatic bundle built under the primary site included. A
+            // stored bundle keeps its `metaSiteVars`, so a site without SEO of its own would
+            // say the primary's name. Handed a null, SEOmatic builds it under this site.
+            if ($isNew && !$isPrimary) {
+                $siteData['fieldValues'] = (array) ($siteData['fieldValues'] ?? [])
+                    + array_fill_keys(self::seomaticHandles($localised), null);
+            }
+
             $this->applyPerSiteData(
                 $localised,
                 $siteData,
@@ -435,13 +444,21 @@ class EntryMigrationService extends Component
 
     private static function hasSeomaticField(Entry $entry): bool
     {
+        return self::seomaticHandles($entry) !== [];
+    }
+
+    /** @return list<string> the handles of the SEOmatic fields on the entry's layout */
+    private static function seomaticHandles(Entry $entry): array
+    {
+        $handles = [];
+
         foreach ($entry->getFieldLayout()?->getCustomFields() ?? [] as $field) {
             if (is_a($field, self::SEOMATIC_FIELD)) {
-                return true;
+                $handles[] = (string) $field->handle;
             }
         }
 
-        return false;
+        return $handles;
     }
 
     // --------------------------------------------------------------------------
