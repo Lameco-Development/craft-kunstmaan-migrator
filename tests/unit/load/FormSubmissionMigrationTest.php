@@ -285,6 +285,23 @@ final class FormSubmissionMigrationTest extends TestCase
         self::assertSame(3, $report->counts['submissionsUpdated'] ?? 0);
     }
 
+    /**
+     * The gateway copies a file in as a new asset every time it is handed one.
+     * A forced re-run that handed the CV over again would leave `cv_1.pdf`,
+     * `cv_2.pdf`… in the private volume; the asset already on the submission stays.
+     */
+    #[Test]
+    public function force_does_not_hand_an_already_migrated_file_over_again(): void
+    {
+        $this->laneWroteTheVacancyForm();
+        $this->migrate();
+
+        $this->migrate(new MigrationOptions(force: true));
+
+        self::assertArrayNotHasKey('files', $this->written(2));
+        self::assertSame('Piet', $this->written(2)['values']['voornaam']);
+    }
+
     #[Test]
     public function a_dry_run_counts_and_writes_nothing(): void
     {

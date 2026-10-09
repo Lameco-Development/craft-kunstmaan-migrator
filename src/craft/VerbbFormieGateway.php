@@ -242,10 +242,13 @@ final class VerbbFormieGateway implements FormGateway
         $record->dateCreated = new DateTime($submission['dateCreated']);
         $record->isIncomplete = false;
         $record->isSpam = false;
+        // Formie's afterSave() sends every status-condition notification when
+        // a save changes the status and this is false — which a create with an
+        // explicit status always does. The front-end controller sets it for the
+        // same reason; it gates nothing else.
+        $record->isNewSubmission = true;
 
-        // An explicit status on create, and the existing one kept on update:
-        // a status change on save is what fires Formie's status-condition
-        // notifications, and a re-run must not email anyone.
+        // An explicit status on create, the existing one kept on update.
         if ($existing === null) {
             $record->statusId = $form->getDefaultStatus()?->id;
         }

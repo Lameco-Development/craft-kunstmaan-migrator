@@ -173,6 +173,12 @@ class FormMigrationService extends Component implements MigrationAdapter
 
             $values = [];
             $files = [];
+            // Files an earlier run already copied in. Handing them over again
+            // would add a second asset per upload; leaving the handle out keeps
+            // the relation the submission already has.
+            $ingested = $existing === null
+                ? []
+                : (array) ($this->stateService?->get(self::SUBMISSION_STATE_SOURCE, $key, null)['meta']['files'] ?? []);
 
             foreach ((array) $submission['values'] as $part => $answer) {
                 $field = $fieldMap[$part] ?? null;
@@ -191,6 +197,10 @@ class FormMigrationService extends Component implements MigrationAdapter
                 }
 
                 if ($answer['kind'] === 'file') {
+                    if (in_array($field['handle'], $ingested, true)) {
+                        continue;
+                    }
+
                     $path = $this->legacyFile((array) $answer['value'], $lane->filesRoot);
 
                     if ($path === null) {
@@ -253,7 +263,11 @@ class FormMigrationService extends Component implements MigrationAdapter
                 $id,
                 null,
                 null,
-                ['form' => $group['formUid'], 'node' => $group['node']],
+                [
+                    'form' => $group['formUid'],
+                    'node' => $group['node'],
+                    'files' => array_values(array_unique([...$ingested, ...array_keys($files)])),
+                ],
             );
             $report->incr($existing === null ? 'submissionsCreated' : 'submissionsUpdated');
         }
