@@ -56,12 +56,22 @@ final class CkeditorFinalizeService
 
     public CkeditorRewriterService $rewriter;
 
-    /** Markers the rewriter knows how to resolve. Used to shortlist rows worth loading. */
+    /**
+     * Markers the rewriter knows how to resolve. Used to shortlist rows worth loading, both in
+     * SQL (`candidates()`) and per field (`carriesMarker()`), so the two cannot disagree.
+     *
+     * Craft percent-encodes the brackets of `src="[M3679]"` on save, so a body whose only legacy
+     * reference is a media placeholder is stored as `%5BM3679%5D`. Both escape cases are listed:
+     * `elements_sites.content` is JSON, and MySQL compares a JSON column case-sensitively.
+     */
     private const MARKERS = [
         '/uploads/media/',
         '[NT',
         '%5BNT',
+        '%5bNT',
         '[M',
+        '%5BM',
+        '%5bM',
     ];
 
     public function __construct(?CkeditorRewriterService $rewriter = null)
@@ -193,7 +203,7 @@ final class CkeditorFinalizeService
             $value = $element->getFieldValue($field->handle);
             $html = $value === null ? '' : (string) $value;
 
-            if ($html === '' || !$this->carriesMarker($html)) {
+            if ($html === '' || !self::carriesMarker($html)) {
                 continue;
             }
 
@@ -244,7 +254,8 @@ final class CkeditorFinalizeService
         $report->incr('saved');
     }
 
-    private function carriesMarker(string $html): bool
+    /** Whether rich text still holds a legacy reference the rewriter resolves. */
+    public static function carriesMarker(string $html): bool
     {
         foreach (self::MARKERS as $marker) {
             if (str_contains($html, $marker)) {
