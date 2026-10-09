@@ -290,6 +290,27 @@ final class PageFieldsLaneTest extends TestCase
     }
 
     #[Test]
+    public function a_remote_video_compiles_to_a_media_id_reference_and_is_no_loss(): void
+    {
+        // The Berkvens video blocks: `media_id | asset` on a YouTube row (no url, the code in
+        // `metadata`) compiled to nothing and recorded the media as unresolved, though the
+        // loader can make an embedded asset of it — by id.
+        $db = self::db();
+        $db->pdo()->exec('ALTER TABLE kuma_media ADD COLUMN content_type TEXT');
+        $db->pdo()->exec("UPDATE kuma_media SET url = NULL, content_type = 'remote/video' WHERE id = 7");
+
+        $transforms = new Transforms();
+        $out = [];
+        $compiler = new Compiler(Mapping::fromFile(self::mappingFile(self::MAPPING)), $transforms, self::schema());
+        $compiler->compile($db, 'NL', static function(array $p) use (&$out): void {
+            $out[] = $p;
+        });
+
+        self::assertSame(['_asset' => 'kuma:media:7'], self::fieldsOf($out[0])['heroImage'] ?? null);
+        self::assertArrayNotHasKey('asset', $transforms->losses());
+    }
+
+    #[Test]
     public function a_header_slider_part_fills_the_slider_hero(): void
     {
         [$entries] = $this->compile();

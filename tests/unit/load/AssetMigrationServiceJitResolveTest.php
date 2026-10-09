@@ -9,7 +9,10 @@ use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
 use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryEmbedGateway;
+use PDO;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
@@ -104,6 +107,78 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
         self::assertSame(0, $resolver->resolveFromLegacyId(5), 'skipAssets travels with the resolver');
         self::assertSame(0, $resolver->resolveFromLegacyUrl('/uploads/media/pics/one.png'));
         self::assertSame([], $state->recorded);
+    }
+
+    public function testAMediaIdReferenceResolvesByIdUnderTheEnvironmentsOwnKey(): void
+    {
+        // `kuma:media:<id>` is what the compile emits for a remote video, which has no path.
+        // It goes the id route — the one that builds an embedded asset — and so lands on the
+        // same environment-scoped state key a `{{kuma:media:<id>}}` token does.
+        $service = new AssetMigrationService();
+        // legacyDb deliberately left null: a correct lookup never leaves state.
+        $service->migrationState = new JitStateMap([
+            'media|FR:kuma_media:1381' => ['targetId' => 77],
+            'media|NL:kuma_media:1381' => ['targetId' => 88],
+        ]);
+
+        self::assertSame(77, $service->resolveFromLegacyUrl('kuma:media:1381', EnvironmentFactory::make('FR')));
+        self::assertSame(88, $service->resolveFromLegacyUrl('kuma:media:1381', EnvironmentFactory::make('NL')));
+    }
+
+    public function testAMediaIdReferenceToAMissingRowResolvesToNothing(): void
+    {
+        $service = new AssetMigrationService();
+        $service->legacyDb = new JitLegacyDb(null);
+        $service->migrationState = new JitStateMap();
+
+        self::assertSame(0, $service->resolveFromLegacyUrl('kuma:media:999', $this->env()));
+        self::assertSame([':id' => 999], $service->legacyDb->queryOneCalls[0][1]);
+    }
+
+    public function testAMediaIdReadsTheEnvironmentsOwnDatabaseNotTheSharedConnection(): void
+    {
+        // Media 618 is a different video in each Berkvens corpus. Outside a pipeline nothing
+        // points the shared LegacyDbService at the environment being resolved — here it is
+        // left on NL — so the row has to come from the environment's own connection, or FR's
+        // `FR:kuma_media:618` would record NL's video.
+        $nl = self::mediaDb('nlVideo618');
+        $fr = self::mediaDb('frVideo618');
+
+        $service = new AssetMigrationService();
+        $service->legacyDb = new LegacyDbService();
+        $service->legacyDb->usePdo($nl);
+        $service->embeds = new InMemoryEmbedGateway(false);
+        $service->serializedDecoder = new JitCodeDecoder();
+        $state = new JitStateMap();
+        $service->migrationState = $state;
+
+        $service->resolveFromLegacyUrl('kuma:media:618', self::envOver('FR', $fr));
+        $service->resolveFromLegacyUrl('kuma:media:618', self::envOver('NL', $nl));
+
+        self::assertSame(
+            ['FR:kuma_media:618' => 'frVideo618', 'NL:kuma_media:618' => 'nlVideo618'],
+            array_column(array_map(static fn(array $r): array => [$r['key'], $r['meta']['videoId']], $state->recorded), 1, 0),
+        );
+    }
+
+    private static function mediaDb(string $code): PDO
+    {
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->exec('CREATE TABLE kuma_media (id INTEGER, url TEXT, deleted INTEGER, content_type TEXT, metadata TEXT, folder_id INTEGER)');
+        $insert = $pdo->prepare("INSERT INTO kuma_media VALUES (618, NULL, 0, 'remote/video', :meta, 0)");
+        $insert->execute([':meta' => serialize(['code' => $code, 'type' => 'youtube'])]);
+
+        return $pdo;
+    }
+
+    private static function envOver(string $name, PDO $pdo): EnvironmentContext
+    {
+        return new EnvironmentContext(
+            name: $name,
+            database: 'legacy_' . strtolower($name),
+            sites: EnvironmentFactory::sites(),
+            legacy: new LegacyDatabase($pdo, $name, 'legacy_' . strtolower($name)),
+        );
     }
 
     public function testTheSameLegacyIdInTwoEnvironmentsResolvesToTwoDifferentAssets(): void
@@ -278,5 +353,23 @@ final class JitLegacyDb extends LegacyDbService
         $this->queryOneCalls[] = [$sql, $params];
 
         return $this->row;
+    }
+}
+
+/**
+ * The decoder slot's shape: a remote row's video code, read out of its metadata blob.
+ *
+ * @internal
+ */
+final class JitCodeDecoder
+{
+    public function decode(string $blob): mixed
+    {
+        return unserialize($blob, ['allowed_classes' => false]);
+    }
+
+    public function extractVideoId(mixed $meta): ?string
+    {
+        return is_array($meta) && is_string($meta['code'] ?? null) ? $meta['code'] : null;
     }
 }

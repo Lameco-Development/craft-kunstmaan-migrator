@@ -40,4 +40,35 @@ final class MediaIndexTest extends TestCase
         self::assertNull($this->index()->pathFor(null));
         self::assertSame(1, $this->index()->count());
     }
+
+    #[Test]
+    public function a_live_remote_video_resolves_to_its_media_id_rather_than_a_path(): void
+    {
+        // A YouTube or Vimeo row has no file and no url: Kunstmaan keeps the video code in
+        // `metadata`. Only the loader can turn it into an embedded asset, and it finds the row
+        // by id, so the reference names the id. Every live Berkvens video is one of these.
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->exec('CREATE TABLE kuma_media (id INTEGER, url TEXT, deleted INTEGER, content_type TEXT)');
+        $pdo->exec("INSERT INTO kuma_media VALUES (1381, NULL, 0, 'remote/video')");
+        $pdo->exec("INSERT INTO kuma_media VALUES (2, NULL, 1, 'remote/video')");
+        $pdo->exec("INSERT INTO kuma_media VALUES (7, '/uploads/media/deur.jpg', 0, 'image/jpeg')");
+        $pdo->exec("INSERT INTO kuma_media VALUES (8, NULL, 0, 'image/jpeg')");
+
+        $index = MediaIndex::load($pdo);
+
+        self::assertSame('kuma:media:1381', $index->pathFor(1381));
+        self::assertNull($index->pathFor(2), 'a deleted remote video is still a dangling reference');
+        self::assertSame('/uploads/media/deur.jpg', $index->pathFor(7));
+        self::assertNull($index->pathFor(8), 'a local file without a url has nothing to resolve');
+    }
+
+    #[Test]
+    public function an_id_reference_reads_back_as_its_media_id_and_nothing_else_does(): void
+    {
+        // The loader reads the form the index writes; one class owns both halves.
+        self::assertSame(1381, MediaIndex::mediaIdOf(MediaIndex::idReference(1381)));
+        self::assertNull(MediaIndex::mediaIdOf('/uploads/media/deur.jpg'));
+        self::assertNull(MediaIndex::mediaIdOf('kuma:media:12/../x'));
+        self::assertNull(MediaIndex::mediaIdOf('kuma:media:'));
+    }
 }
