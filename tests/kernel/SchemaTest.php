@@ -431,4 +431,52 @@ final class SchemaTest extends TestCase
             'forms.submissions: unknown key `node` (nodes, volume, filesRoot)',
         ], $errors);
     }
+
+    #[Test]
+    public function page_and_entity_rows_may_name_a_structure_order(): void
+    {
+        self::assertSame([], $this->validate(<<<'YAML'
+            version: 1
+            environments:
+              COM: { database: legacy, locales: { en: comEnUs } }
+            pages:
+              ServicePage: { section: services, entryType: servicePage, order: weight }
+            entities:
+              FaqItem:
+                table: faq_item
+                section: faqItems
+                entryType: faqItem
+                title: question
+                dedupe: false
+                order: weight
+                ignore: {}
+            YAML));
+    }
+
+    #[Test]
+    public function an_order_that_is_no_expression_is_rejected(): void
+    {
+        self::assertSame(
+            [
+                'page `ServicePage`: `order:` must be an expression, such as `weight`',
+                'entity `FaqItem`: `order:` must be an expression, such as `weight`',
+            ],
+            $this->validate(<<<'YAML'
+                version: 1
+                environments:
+                  COM: { database: legacy, locales: { en: comEnUs } }
+                pages:
+                  ServicePage: { section: services, entryType: servicePage, order: [weight] }
+                entities:
+                  FaqItem:
+                    table: faq_item
+                    section: faqItems
+                    entryType: faqItem
+                    title: question
+                    dedupe: false
+                    order: ''
+                    ignore: {}
+                YAML),
+        );
+    }
 }

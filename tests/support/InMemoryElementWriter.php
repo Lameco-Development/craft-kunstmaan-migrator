@@ -71,6 +71,17 @@ final class InMemoryElementWriter implements ElementWriter
     /** @var array<string, list<Entry>> section handle => entries, parents first */
     private array $structures = [];
 
+    /**
+     * Each Structure's sibling lists, in order — what `moveInStructure()` and
+     * `placeInStructure()` rearrange. The parent key is `''` at the root.
+     *
+     * @var array<string, array<string, list<int>>> section => parent key => sibling ids
+     */
+    private array $tree = [];
+
+    /** @var list<array{id: int, sibling: ?int, parent?: ?int, after: bool}> every move, in call order */
+    public array $moves = [];
+
     /** @var array<int, list<int>> owner id => the nested entries it primarily owns */
     private array $nested = [];
 
@@ -331,5 +342,87 @@ final class InMemoryElementWriter implements ElementWriter
     private function key(int $id, ?int $siteId): string
     {
         return $id . ':' . ($siteId ?? '*');
+    }
+
+    /** Like Craft's moveAfter/moveBefore: the entry takes the sibling's parent. */
+    public function moveInStructure(int $entryId, int $siblingId, bool $after): bool
+    {
+        $this->moves[] = ['id' => $entryId, 'sibling' => $siblingId, 'after' => $after];
+        $at = $this->locate($siblingId);
+
+        if ($at === null || $at[0] !== ($this->locate($entryId)[0] ?? $at[0])) {
+            return false;
+        }
+
+        $this->detach($entryId);
+        $list = $this->tree[$at[0]][$at[1]];
+        $index = (int) array_search($siblingId, $list, true);
+        array_splice($list, $after ? $index + 1 : $index, 0, [$entryId]);
+        $this->tree[$at[0]][$at[1]] = $list;
+
+        return true;
+    }
+
+    public function placeInStructure(int $entryId, ?int $parentId, bool $first): bool
+    {
+        $this->moves[] = ['id' => $entryId, 'sibling' => null, 'parent' => $parentId, 'after' => !$first];
+        $section = $this->locate($entryId)[0] ?? null;
+
+        if ($section === null || ($parentId !== null && ($this->locate($parentId)[0] ?? null) !== $section)) {
+            return false;
+        }
+
+        $this->detach($entryId);
+        $key = (string) ($parentId ?? '');
+        $list = $this->tree[$section][$key] ?? [];
+        $this->tree[$section][$key] = $first ? [$entryId, ...$list] : [...$list, $entryId];
+
+        return true;
+    }
+
+    public function parentInStructure(int $entryId): ?int
+    {
+        $key = $this->locate($entryId)[1] ?? '';
+
+        return $key === '' ? null : (int) $key;
+    }
+
+    /**
+     * The siblings one parent holds in a Structure before anything moves them, in order.
+     *
+     * @param list<int> $ids
+     */
+    public function willHoldInStructure(array $ids, ?int $parentId = null, string $section = 'structure'): void
+    {
+        $this->tree[$section][(string) ($parentId ?? '')] = $ids;
+    }
+
+    /** @return list<int> one parent's children, in their current order */
+    public function structureOrder(?int $parentId = null, string $section = 'structure'): array
+    {
+        return $this->tree[$section][(string) ($parentId ?? '')] ?? [];
+    }
+
+    /** @return array{0: string, 1: string}|null the section and parent key holding the entry */
+    private function locate(int $entryId): ?array
+    {
+        foreach ($this->tree as $section => $parents) {
+            foreach ($parents as $parent => $ids) {
+                if (in_array($entryId, $ids, true)) {
+                    return [$section, (string) $parent];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function detach(int $entryId): void
+    {
+        $at = $this->locate($entryId);
+
+        if ($at !== null) {
+            $this->tree[$at[0]][$at[1]] = array_values(array_diff($this->tree[$at[0]][$at[1]], [$entryId]));
+        }
     }
 }

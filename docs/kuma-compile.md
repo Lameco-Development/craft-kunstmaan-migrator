@@ -456,6 +456,47 @@ Craft's silent suffix. The repeat is found from the whole lane, so a batched job
 whatever its slice boundaries; two entities sharing one section are not compared with each other.
 A page's slug is its node translation's, so a page `map:` still may not name `slug`.
 
+### `order:` — sibling order in a Structure
+
+Without it, entries land in a Structure in load order: `lft` for pages, id for an entity lane.
+The legacy admin's drag order usually lives in a `weight` column instead. `order: <expression>` on
+a page or entity row sorts the row's entries among their siblings — the entries of one Structure
+under one parent — after the environment's entries are saved:
+
+```yaml
+pages:
+  ServicePage:
+    section: xidoorServicePages
+    order: weight          # kuma_node_translations.weight, under the page's own columns
+entities:
+  FaqItem:
+    table: lameco_websitebundle_faqitems
+    order: weight          # a column of the entity's table
+```
+
+- **Ascending, then id.** Two numbers compare as numbers. A tie, or a blank value, falls back to
+  the row id (the node id for a page); blank values sort after every keyed sibling.
+- **What a page reads.** Its node translation row (`kuma_node_translations`: `weight`, `title`,
+  `slug`, `created`, …) with the page table's own row over it. One Structure holds one order for
+  every site, so the translation is the mapping's first `locales:` entry the page is published in.
+- **Siblings.** A page whose legacy parent lands in another section sits at the Structure root, with
+  every other page re-rooted there; rows without the key are not moved.
+- **When.** The order is computed from the whole lane and the whole node tree
+  (`Compiler::structureOrder()`) and settled once the environment's entries exist — the console
+  after its compile walk, a batched job as the environment's last unit — so batch boundaries do not
+  matter. A dry run moves nothing, a mapping without the key reads nothing more than before, and
+  the compiled payloads are the same with or without the key.
+- **Once per entry.** The run moves an entry no run has placed yet next to its nearest placed
+  sibling and records it on its state row (`structurePlaced`); a later run leaves it alone, so an
+  editor's reordering survives. `migrate --reorder` puts every keyed entry back in the legacy order.
+- **An anchor shares the parent.** A move beside a sibling takes that sibling's parent, so a sibling
+  an editor has since moved under another parent is skipped as an anchor. With no placed sibling
+  left under the group's parent, the new entry goes to the start or end of that parent's children.
+- **`dedupe:` across environments.** A deduped entity is one entry for every environment, and each
+  environment settles its own order. Without `--reorder` the first environment to place an entry
+  decides; with it, the last environment in the run does. Not fixed: give a shared entity's
+  `order:` key the same values in every environment, or run `--reorder` on one environment.
+
 ### `children:` into an Assets or Table field
 
 The named field's type, read from the target schema, decides what the child rows become — on a

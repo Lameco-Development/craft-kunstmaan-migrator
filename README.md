@@ -281,6 +281,7 @@ media in rich text, and the URI pass settles every Structure entry's URL.
 | `--only=PartnerPage` | one page type / entity, comma separated |
 | `--limit=N` | stop after N entries |
 | `--force` | re-save entries that already exist |
+| `--reorder` | put every entry of an `order:`-keyed Structure back in its legacy sibling order, including ones an editor moved since (see `docs/kuma-compile.md`) |
 | `--entries-only` | skip the adapters, the fixup, finalize and URI passes |
 | `--finalize-only` | run the finalize pass alone (idempotent, safe to re-run) |
 | `--queue` | hand the run to Craft's queue as one chained sequence: each environment runs in ~50-node batches, its last batch pushes that environment's adapters, which push the next environment, with the fixup, finalize and URI passes chained after the last one — see **Running from the control panel** below |

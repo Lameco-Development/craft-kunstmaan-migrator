@@ -80,6 +80,15 @@ final class EntityRow
         return isset($this->spec['live']) ? (int) $this->spec['live'] : null;
     }
 
+    /**
+     * The expression that sorts this lane's entries among their siblings in a Structure, ties
+     * and blank values by id; null keeps load order. See `Compiler::structureOrder()`.
+     */
+    public function order(): ?string
+    {
+        return $this->string('order');
+    }
+
     /** @return array<string, mixed> Craft field => legacy column expression */
     public function map(): array
     {

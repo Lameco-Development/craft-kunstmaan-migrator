@@ -32,6 +32,8 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
     public array $remainingEnvironments = [];
     public bool $dryRun = false;
     public bool $force = false;
+    /** Carried to the next environment's job; see `RunSettings::$reorder`. */
+    public bool $reorder = false;
     public bool $entriesOnly = false;
     /** @var list<string>|null */
     public ?array $only = null;
@@ -92,6 +94,7 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
                 'remainingEnvironments' => array_values(array_slice($this->remainingEnvironments, 1)),
                 'dryRun' => $this->dryRun,
                 'force' => $this->force,
+                'reorder' => $this->reorder,
                 'entriesOnly' => $this->entriesOnly,
                 'only' => $this->only,
                 'chainCorpusPasses' => $this->chainCorpusPasses,
