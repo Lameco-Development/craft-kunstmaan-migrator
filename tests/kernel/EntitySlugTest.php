@@ -36,7 +36,7 @@ final class EntitySlugTest extends TestCase
             map: { slug: slug, subname: sub_name }
         YAML;
 
-    private function db(string $environment = 'FR'): LegacyDatabase
+    private function db(string $environment = 'FR', ?string $rows = null): LegacyDatabase
     {
         $pdo = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
         $pdo->exec('CREATE TABLE kuma_nodes (id INTEGER, parent_id INTEGER, deleted INTEGER, lft INTEGER, ref_entity_name TEXT)');
@@ -45,13 +45,13 @@ final class EntitySlugTest extends TestCase
                     (id INTEGER, node_id INTEGER, lang TEXT, title TEXT, slug TEXT, url TEXT,
                      created TEXT, online INTEGER, public_node_version_id INTEGER)');
         $pdo->exec('CREATE TABLE model (id INTEGER, name TEXT, slug TEXT, sub_name TEXT)');
-        $pdo->exec($environment === 'FR'
+        $pdo->exec($rows !== null ? 'INSERT INTO model VALUES ' . $rows : ($environment === 'FR'
             ? "INSERT INTO model VALUES
                 (59, 'Insert métallique', 'insert-metallique-1', 'Pro'),
                 (60, 'Insert métallique', 'insert-metallique', NULL),
                 (61, 'Garniture', NULL, NULL),
                 (62, 'Coupe-feu', 'insert-metallique', NULL)"
-            : "INSERT INTO model VALUES (1, 'Deur', 'deur', NULL), (62, 'Ander', 'deur', NULL)");
+            : "INSERT INTO model VALUES (1, 'Deur', 'deur', NULL), (62, 'Ander', 'deur', NULL)"));
 
         return new LegacyDatabase($pdo, $environment, strtolower($environment));
     }
@@ -147,5 +147,16 @@ final class EntitySlugTest extends TestCase
             ],
             $compiler->skipped(),
         );
+    }
+
+    #[Test]
+    public function a_row_skipped_for_its_missing_title_holds_no_slug(): void
+    {
+        // The untitled row never becomes an entry, so the slug is free for the next one.
+        $compiler = $this->compiler();
+        $compiler->compile($this->db('FR', "(1, NULL, 'deur', NULL), (2, 'Deur', 'deur', NULL)"), 'FR', static function(): void {
+        });
+
+        self::assertSame(['Model: row 1 has no `name`' => 1], $compiler->skipped());
     }
 }

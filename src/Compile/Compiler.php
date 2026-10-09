@@ -452,6 +452,11 @@ final class Compiler
         $repeats = [];
 
         foreach ($rows as $row) {
+            // A row skipped for its title becomes no entry, so it holds no slug either.
+            if (self::lacksTitle($entity, $row)) {
+                continue;
+            }
+
             $slug = $builder->fieldsFrom([EntityRow::SLUG => $expression], $row, $entity->name)[EntityRow::SLUG] ?? null;
 
             if (!is_scalar($slug) || (string) $slug === '') {
@@ -470,6 +475,21 @@ final class Compiler
         }
 
         return $this->repeatedSlugs[$environment][$entity->name] = $repeats;
+    }
+
+    /**
+     * Whether a row is skipped for having no title.
+     *
+     * Craft's title is required on every one of these entry types, and an entry with no title
+     * is a row nobody can find again. A `single:` row is the exception: it merges into the
+     * section's existing entry, whose title an earlier contributor already set, so it carries
+     * no title of its own.
+     *
+     * @param array<string, mixed> $row
+     */
+    private static function lacksTitle(EntityRow $entity, array $row): bool
+    {
+        return !$entity->single() && trim((string) ($row[$entity->titleColumn()] ?? '')) === '';
     }
 
     /**
@@ -493,11 +513,7 @@ final class Compiler
         $titleColumn = $entity->titleColumn();
         $title = trim((string) ($row[$titleColumn] ?? ''));
 
-        // Craft's title is required on every one of these entry types, and an entry
-        // with no title is a row nobody can find again. A `single:` row is the
-        // exception: it merges into the section's existing entry, whose title an
-        // earlier contributor already set, so it carries no title of its own.
-        if ($title === '' && !$single) {
+        if (self::lacksTitle($entity, $row)) {
             $this->skip(sprintf('%s: row %s has no `%s`', $name, (string) ($row['id'] ?? '?'), $titleColumn));
 
             return;
