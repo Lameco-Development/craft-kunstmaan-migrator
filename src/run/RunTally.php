@@ -130,9 +130,14 @@ final class RunTally
      */
     public array $timingsByType = [];
 
-    public function count(string $bucket): void
+    /** Adds `$by` to a bucket; a zero adds no bucket, so a summary lists only what happened. */
+    public function count(string $bucket, int $by = 1): void
     {
-        $this->counts[$bucket] = ($this->counts[$bucket] ?? 0) + 1;
+        if ($by === 0) {
+            return;
+        }
+
+        $this->counts[$bucket] = ($this->counts[$bucket] ?? 0) + $by;
     }
 
     /**

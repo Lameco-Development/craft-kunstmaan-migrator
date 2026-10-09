@@ -251,7 +251,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
                     'e' => $compiler->compileEntitySlice($this->compilerRun, (string) $item[1], (int) $item[2], (int) $item[3], $emit),
                     'n' => $compiler->compileNodeUnit($this->compilerRun, (int) $item[1], $emit),
                     't' => $compiler->finishStructural($this->compilerRun, $emit),
-                    'o' => $this->pipeline->settleStructureOrder($this->context->legacy, $this->environment, $this->settings, $this->tally, $this->compilerRun),
+                    'o' => $this->pipeline->settleStructureOrder($this->compilerRun, $this->settings, $this->tally),
                     default => throw new RuntimeException('Unknown work unit: ' . json_encode($item)),
                 };
             });

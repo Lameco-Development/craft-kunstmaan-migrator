@@ -77,7 +77,7 @@ final class Compiler
     /**
      * @param callable(array<string, mixed>): void $emit
      */
-    public function compile(LegacyDatabase $db, string $environment, callable $emit, ?int $limit = null): void
+    public function compile(LegacyDatabase $db, string $environment, callable $emit, ?int $limit = null): CompilerRun
     {
         $run = $this->begin($db, $environment);
 
@@ -88,7 +88,7 @@ final class Compiler
 
         foreach ($run->nodesById as $nodeId => $node) {
             if ($limit !== null && $this->entries >= $limit) {
-                return;
+                return $run;
             }
 
             $this->compileNodeUnit($run, $nodeId, $emit);
@@ -96,6 +96,8 @@ final class Compiler
 
         // Anything left is deeper in `lft` than the last page emitted.
         $this->finishStructural($run, $emit);
+
+        return $run;
     }
 
     /**

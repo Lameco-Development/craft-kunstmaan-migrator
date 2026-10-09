@@ -96,7 +96,7 @@ final class StructureOrderStepTest extends TestCase
     {
         $pipeline = $this->pipeline($yaml, $dryRun);
         $tally = new RunTally();
-        $pipeline->settleStructureOrder($this->db(), 'NL', $settings, $tally);
+        $pipeline->settleStructureOrder($pipeline->compiler()->begin($this->db(), 'NL'), $settings, $tally);
 
         return $tally;
     }
@@ -119,7 +119,7 @@ final class StructureOrderStepTest extends TestCase
         self::assertSame([103, 101, 102], $this->elements->structureOrder());
     }
 
-    public function testAMappingWithoutAnOrderKeyMovesNothingAndReadsNothing(): void
+    public function testAMappingWithoutAnOrderKeyMovesNothing(): void
     {
         $tally = $this->settle((string) preg_replace('/^ +order: weight$\n?/m', '', self::ORDERED));
 

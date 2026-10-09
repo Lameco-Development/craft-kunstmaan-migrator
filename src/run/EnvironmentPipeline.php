@@ -179,7 +179,7 @@ final class EnvironmentPipeline
 
         $this->guardMaintenance($settings, $tally, function() use ($context, $env, $settings, $tally, $writer): void {
             $this->timeCompile($tally, function() use ($context, $env, $settings, $tally, $writer): void {
-                $this->compiler->compile(
+                $run = $this->compiler->compile(
                     $context->legacy,
                     $env,
                     function(array $raw) use ($context, $settings, $tally, $writer): void {
@@ -187,9 +187,9 @@ final class EnvironmentPipeline
                     },
                     $settings->limit,
                 );
-            });
 
-            $this->settleStructureOrder($context->legacy, $env, $settings, $tally);
+                $this->settleStructureOrder($run, $settings, $tally);
+            });
 
             if (!$settings->entriesOnly) {
                 $tally->adapters[$env] = $this->runAdapters($context, $settings);
@@ -199,27 +199,15 @@ final class EnvironmentPipeline
 
     /**
      * Put the environment's `order:`-keyed Structures in their sibling order, once its entries
-     * exist — the console after its compile walk, the batched job as the environment's last
-     * unit. The order comes from the whole source (`Compiler::structureOrder()`), so it does not
-     * matter which batch saved which entry. Nothing to do on a dry run, or for a mapping that
-     * declares no `order:`, which then reads nothing more than it did before.
-     *
-     * @param ?CompilerRun $run the batched job's open run; the console has none left and begins one
+     * exist — the console at the end of its compile walk, the batched job as the environment's
+     * last unit, each on the run it compiled with and inside the same compile timing. The order
+     * comes from the whole source (`Compiler::structureOrder()`), so it does not matter which
+     * batch saved which entry. Nothing to do on a dry run, or for a mapping that declares no
+     * `order:`, which then reads nothing more than it did before.
      */
-    public function settleStructureOrder(
-        ?LegacyDatabase $db,
-        string $env,
-        RunSettings $settings,
-        RunTally $tally,
-        ?CompilerRun $run = null,
-    ): void {
+    public function settleStructureOrder(CompilerRun $run, RunSettings $settings, RunTally $tally): void
+    {
         if ($this->structureOrder === null || !$this->compiler->ordersStructures()) {
-            return;
-        }
-
-        $run ??= $db !== null ? $this->compiler->begin($db, $env) : null;
-
-        if ($run === null) {
             return;
         }
 
@@ -227,15 +215,12 @@ final class EnvironmentPipeline
 
         // Counted, not a problem: a member that never loaded already failed loudly when it was
         // saved, or sits outside a `--limit`/`--only` run. Its siblings are ordered without it.
-        foreach (['structureMoves' => $counts['moved'], 'structureOrderUnloaded' => $counts['unresolved']] as $bucket => $n) {
-            for ($i = 0; $i < $n; $i++) {
-                $tally->count($bucket);
-            }
-        }
+        $tally->count('structureMoves', $counts['moved']);
+        $tally->count('structureOrderUnloaded', $counts['unresolved']);
 
         // A move Craft refused is a problem: the entry sits where it loaded, and a re-run retries it.
         if ($counts['failed'] > 0) {
-            $tally->problem(sprintf('%s: Craft refused to move %d entries into their structure order', $env, $counts['failed']));
+            $tally->problem(sprintf('%s: Craft refused to move %d entries into their structure order', $run->environment, $counts['failed']));
         }
     }
 
