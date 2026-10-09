@@ -282,8 +282,9 @@ class AssetMigrationService extends Component
      */
     public function resolveFromLegacyUrl(string $legacyUrl, EnvironmentContext $env, ?MigrationOptions $opts = null): int
     {
-        if (preg_match('/^' . preg_quote(MediaIndex::ID_REFERENCE_PREFIX, '/') . '(\d+)$/D', $legacyUrl, $m) === 1) {
-            return $this->resolveFromLegacyId((int) $m[1], $env, $opts);
+        $mediaId = MediaIndex::mediaIdOf($legacyUrl);
+        if ($mediaId !== null) {
+            return $this->resolveFromLegacyId($mediaId, $env, $opts);
         }
 
         $path = '/' . ltrim($legacyUrl, '/');
@@ -536,23 +537,45 @@ class AssetMigrationService extends Component
     {
         // Same failure mode as ingestReferenced: an unwired connection is a
         // warned miss, not an uncaught null-dereference three frames deep.
-        if ($this->legacyDb === null) {
+        if ($env->legacy === null && $this->legacyDb === null) {
             Craft::warning("ingestOne: legacyDb is not wired — cannot look up kuma_media:{$kumaMediaId}", __METHOD__);
             return null;
         }
 
         $counts = []; // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
-        // v1 mediaById() helper dropped intentionally — page-driven JIT default per FH-03.
-        // Replacement: inline kuma_media lookup via LegacyDbService::queryOne.
-        $row = $this->legacyDb->queryOne(
-            'SELECT * FROM kuma_media WHERE id = :id LIMIT 1',
-            [':id' => $kumaMediaId],
-        );
+        $row = $this->mediaRowFor($kumaMediaId, $env);
         if (!$row) {
             return null;
         }
         $rootDir = $this->mediaRoots($env)[0] ?? '';
         return $this->ingestRow($row, $rootDir, $opts, $counts, null, $env);
+    }
+
+    /**
+     * One `kuma_media` row, read from the environment's own database.
+     *
+     * The row is recorded under `<ENV>:kuma_media:<id>`, and an id names a different file in
+     * every legacy database, so it must come from the database that key names. The shared
+     * `LegacyDbService` only follows the environment inside a pipeline; a console or JIT call
+     * gets whatever it last pointed at, or the Settings database. It is the fallback for an
+     * environment that carries no connection of its own.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function mediaRowFor(int $kumaMediaId, EnvironmentContext $env): ?array
+    {
+        $sql = 'SELECT * FROM kuma_media WHERE id = :id LIMIT 1';
+        $params = [':id' => $kumaMediaId];
+
+        if ($env->legacy === null) {
+            return $this->legacyDb?->queryOne($sql, $params);
+        }
+
+        $stmt = $env->legacy->pdo()->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
     }
 
     /**

@@ -25,7 +25,7 @@ use PDO;
 final class MediaIndex
 {
     /** The `_asset` form of a media row the loader resolves by id rather than by path. */
-    public const ID_REFERENCE_PREFIX = 'kuma:media:';
+    private const ID_REFERENCE_PREFIX = 'kuma:media:';
 
     /** @param array<int, string> $paths media id => path */
     private function __construct(private readonly array $paths)
@@ -56,7 +56,7 @@ final class MediaIndex
             if ($url !== '') {
                 $paths[$id] = $url;
             } elseif (str_starts_with((string) ($row['content_type'] ?? ''), 'remote/')) {
-                $paths[$id] = self::ID_REFERENCE_PREFIX . $id;
+                $paths[$id] = self::idReference($id);
             }
         }
 
@@ -74,6 +74,24 @@ final class MediaIndex
         }
 
         return $this->paths[(int) $id] ?? null;
+    }
+
+    /** The `_asset` reference for a media row resolved by id: `kuma:media:<id>`. */
+    public static function idReference(int $id): string
+    {
+        return self::ID_REFERENCE_PREFIX . $id;
+    }
+
+    /** The media id an `_asset` reference names, or null when it is a path. */
+    public static function mediaIdOf(string $reference): ?int
+    {
+        if (!str_starts_with($reference, self::ID_REFERENCE_PREFIX)) {
+            return null;
+        }
+
+        $id = substr($reference, strlen(self::ID_REFERENCE_PREFIX));
+
+        return ctype_digit($id) ? (int) $id : null;
     }
 
     public function count(): int

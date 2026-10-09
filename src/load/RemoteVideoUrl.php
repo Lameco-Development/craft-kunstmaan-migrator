@@ -51,6 +51,12 @@ final class RemoteVideoUrl
             return self::fromPastedUrl($code);
         }
 
+        // A Vimeo code may carry an unlisted video's privacy hash (`<id>/<hash>`, `<id>?h=<hash>`),
+        // which only the URL route reads; the host is fixed, so the code cannot name another.
+        if ($type === 'vimeo') {
+            return self::fromPastedUrl('https://vimeo.com/' . ltrim($code, '/'));
+        }
+
         if (str_starts_with($code, 'watch?')) {
             parse_str((string) parse_url($code, PHP_URL_QUERY), $query);
             $code = is_string($query['v'] ?? null) ? $query['v'] : '';
@@ -79,10 +85,41 @@ final class RemoteVideoUrl
         }
 
         if ($host === 'vimeo.com' || str_ends_with($host, '.vimeo.com')) {
-            return self::fromId('vimeo', (string) end($segments));
+            return self::fromVimeo($segments, (string) parse_url($url, PHP_URL_QUERY));
         }
 
         return null;
+    }
+
+    /**
+     * Vimeo's shapes: `vimeo.com/<id>`, `vimeo.com/channels/<name>/<id>`, an unlisted
+     * `vimeo.com/<id>/<hash>` and `player.vimeo.com/video/<id>?h=<hash>`. The id is the first
+     * all-digit segment — the last one is the hash on an unlisted link. The hash is the one
+     * thing kept beside it: without it an unlisted video does not play. Nothing else of the
+     * input reaches the URL, and a hash that is not plain alphanumeric is dropped.
+     *
+     * @param list<string> $segments
+     */
+    private static function fromVimeo(array $segments, string $query): ?string
+    {
+        $at = null;
+
+        foreach ($segments as $i => $segment) {
+            if (ctype_digit($segment)) {
+                $at = $i;
+                break;
+            }
+        }
+
+        if ($at === null) {
+            return null;
+        }
+
+        parse_str($query, $params);
+        $hash = $params['h'] ?? ($segments[$at + 1] ?? null);
+        $url = 'https://vimeo.com/' . $segments[$at];
+
+        return is_string($hash) && preg_match('/^[A-Za-z0-9]+$/D', $hash) === 1 ? $url . '/' . $hash : $url;
     }
 
     private static function fromId(string $type, string $code): ?string

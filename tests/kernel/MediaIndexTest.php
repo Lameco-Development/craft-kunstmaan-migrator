@@ -61,4 +61,14 @@ final class MediaIndexTest extends TestCase
         self::assertSame('/uploads/media/deur.jpg', $index->pathFor(7));
         self::assertNull($index->pathFor(8), 'a local file without a url has nothing to resolve');
     }
+
+    #[Test]
+    public function an_id_reference_reads_back_as_its_media_id_and_nothing_else_does(): void
+    {
+        // The loader reads the form the index writes; one class owns both halves.
+        self::assertSame(1381, MediaIndex::mediaIdOf(MediaIndex::idReference(1381)));
+        self::assertNull(MediaIndex::mediaIdOf('/uploads/media/deur.jpg'));
+        self::assertNull(MediaIndex::mediaIdOf('kuma:media:12/../x'));
+        self::assertNull(MediaIndex::mediaIdOf('kuma:media:'));
+    }
 }

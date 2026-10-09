@@ -73,6 +73,13 @@ final class RemoteVideoUrlTest extends TestCase
         yield 'a youtu.be link filed as Vimeo' => ['https://youtu.be/z-kYq_4PpMg', 'vimeo', 'https://www.youtube.com/watch?v=z-kYq_4PpMg'];
         yield 'a Vimeo URL with a share parameter' => ['https://vimeo.com/1111624337?share=copy', 'vimeo', 'https://vimeo.com/1111624337'];
         yield 'a YouTube embed URL' => ['https://www.youtube.com/embed/RsInP5y1k-4?rel=0', 'youtube', 'https://www.youtube.com/watch?v=RsInP5y1k-4'];
+        yield 'an unlisted Vimeo share link keeps its hash, not as the id' => ['https://vimeo.com/1006881301/a1b2c3d4e5?share=copy', 'vimeo', 'https://vimeo.com/1006881301/a1b2c3d4e5'];
+        yield 'a Vimeo player URL keeps its privacy hash' => ['https://player.vimeo.com/video/1006881301?h=a1b2c3d4e5&badge=0', 'vimeo', 'https://vimeo.com/1006881301/a1b2c3d4e5'];
+        yield 'a Vimeo channel URL names the id after the channel' => ['https://vimeo.com/channels/staffpicks/76979871', 'vimeo', 'https://vimeo.com/76979871'];
+        yield 'an unlisted Vimeo code keeps its hash' => ['1006881301/a1b2c3d4e5', 'vimeo', 'https://vimeo.com/1006881301/a1b2c3d4e5'];
+        yield 'a Vimeo code with a privacy parameter keeps the hash' => ['1006881301?h=a1b2c3d4e5', 'vimeo', 'https://vimeo.com/1006881301/a1b2c3d4e5'];
+        yield 'a hash that is not alphanumeric is dropped' => ['https://player.vimeo.com/video/1006881301?h=x%22onload%3D%22evil', 'vimeo', 'https://vimeo.com/1006881301'];
+        yield 'a Vimeo path with no numeric id is nothing' => ['https://vimeo.com/channels/staffpicks', 'vimeo', null];
         yield 'an iframe from a host with no provider' => [
             '<iframe allowfullscreen frameborder="0" src="https://multimedia.europarl.europa.eu/nl/share/N01?autoplay=off"></iframe>',
             'vimeo',
