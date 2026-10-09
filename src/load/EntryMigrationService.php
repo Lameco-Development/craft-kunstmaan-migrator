@@ -397,6 +397,15 @@ class EntryMigrationService extends Component
         // ------------------------------------------------------------------ 7b
         $blocks->prune($entry, $perSite, $sites);
 
+        // ------------------------------------------------------------------ 7c
+        // A new entry's rows on sites no payload names — the primary row's
+        // siblings Craft propagated — hold the SEOmatic bundle built for
+        // another site, and no per-site save above visits them.
+        // ------------------------------------------------------------------ 7c
+        if ($isNew) {
+            $this->rebuildSeomaticOnUnpayloadedSites($entry, $perSite, $sites, $primarySite->siteId);
+        }
+
         // ------------------------------------------------------------------ 8
         // Persist the per-site block id map so the NEXT re-run can thread
         // the ids back in and update blocks in place (Pitfall 3).
@@ -440,6 +449,55 @@ class EntryMigrationService extends Component
         }
 
         return $this->elements()->withCurrentSite((int) $entry->siteId, $save);
+    }
+
+    /**
+     * Rebuild the SEOmatic value of a new entry's rows on sites the payload does not name.
+     *
+     * Craft propagated those rows from the first save and copied its SEOmatic bundle, built
+     * for the primary site, into them; a stored bundle is never derived again. Xidoor's NL-only
+     * nodes kept another site's name on their disabled EN, FR and DE rows that way. Handed a
+     * null and saved in its own site, each row gets a bundle of its own. Nothing else on the
+     * row is touched.
+     *
+     * @param array<string, array<string, mixed>> $perSite
+     */
+    private function rebuildSeomaticOnUnpayloadedSites(Entry $entry, array $perSite, SiteMap $sites, int $primarySiteId): void
+    {
+        $handles = self::seomaticHandles($entry);
+
+        if ($handles === [] || $entry->id === null) {
+            return;
+        }
+
+        $payloaded = [$primarySiteId => true];
+
+        foreach (array_keys($perSite) as $handle) {
+            $siteId = $sites->siteIdForHandle((string) $handle);
+
+            if ($siteId !== null) {
+                $payloaded[$siteId] = true;
+            }
+        }
+
+        foreach ($this->elements()->siteIdsOf((int) $entry->id) as $siteId) {
+            if (isset($payloaded[$siteId])) {
+                continue;
+            }
+
+            $row = $this->elements()->findById((int) $entry->id, Entry::class, $siteId);
+
+            if (!$row instanceof Entry) {
+                continue;
+            }
+
+            $row->setFieldValues(array_fill_keys($handles, null));
+            $row->resaving = true;
+
+            if (!$this->elements()->withCurrentSite($siteId, fn(): bool => $this->elements()->save($row))) {
+                $this->warn(sprintf('site %d: SEOmatic rebuild save failed for entry %d — %s', $siteId, (int) $entry->id, json_encode($row->getErrors())));
+            }
+        }
     }
 
     private static function hasSeomaticField(Entry $entry): bool

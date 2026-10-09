@@ -204,6 +204,44 @@ final class EntryMigrationServiceSaveTest extends TestCase
     }
 
     /**
+     * Xidoor nodes 38/40/50 exist in NL only, yet the entry has rows on EN, FR and DE —
+     * the EN one because the entry is created in the primary site, the others by Craft's
+     * propagation. No payload names FR or DE, so no per-site save visits them, and they kept
+     * the SEOmatic bundle built for another site (9 rows storing "Berkvens"). A new entry's
+     * SEOmatic value is rebuilt on those rows too, each in its own site.
+     */
+    public function testANewEntrysRowsOnSitesNoPayloadNamesGetTheirOwnSeomaticValue(): void
+    {
+        $sites = EnvironmentFactory::sites(
+            ['en' => 'xidoorEn', 'nl' => 'xidoorNl', 'fr' => 'xidoorFr', 'de' => 'xidoorDe'],
+            ['xidoorEn' => [1, 'en-GB', true], 'xidoorNl' => [2, 'nl-NL'], 'xidoorFr' => [3, 'fr-FR'], 'xidoorDe' => [4, 'de-DE']],
+        );
+        $layout = SaveStubFieldLayout::withFields([self::field(SaveStubSeoField::class, 'seo')]);
+        $this->writer->entryFactory = function(int $sectionId, int $typeId, int $siteId) use ($layout): Entry {
+            $entry = SaveStubEntry::make($sectionId, $typeId, $siteId);
+            $entry->layout = $layout;
+
+            return $this->built[] = $entry;
+        };
+        $rows = [];
+        foreach ([2, 3, 4] as $siteId) {
+            $rows[$siteId] = SaveStubEntry::make(self::SECTION, self::TYPE, $siteId);
+            $rows[$siteId]->layout = $layout;
+            $this->writer->willFind(600, $rows[$siteId], $siteId);
+        }
+        $this->writer->willLiveOn(600, [1, 2, 3, 4]);
+        $this->writer->nextId = 600;
+
+        $this->save(['xidoorNl' => $this->siteData('Werken bij Xidoor', [], false)], sites: $sites);
+
+        self::assertSame([1, 2, 3, 4], array_values(array_unique(array_column($this->writer->saved, 'currentSiteId'))));
+        foreach ([3, 4] as $siteId) {
+            self::assertSame(['seo' => null], $rows[$siteId]->capturedFieldValues, 'site ' . $siteId . ': built afresh in its own site');
+            self::assertTrue($rows[$siteId]->resaving);
+        }
+    }
+
+    /**
      * An existing entry's rows were not just propagated: their SEO may be what the SEO
      * adapter wrote, and an entry save without SEO leaves it alone.
      */
