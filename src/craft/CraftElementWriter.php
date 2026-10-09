@@ -223,8 +223,11 @@ final class CraftElementWriter implements ElementWriter
 
     public function moveInStructure(int $entryId, int $siblingId, bool $after): bool
     {
-        $entry = Craft::$app->elements->getElementById($entryId, Entry::class);
-        $sibling = Craft::$app->elements->getElementById($siblingId, Entry::class);
+        // On whichever site the entry has a row: a lookup on the current site — the primary,
+        // in a console or queue run — finds nothing for a section the primary site lacks.
+        $find = static fn(int $id): ?Entry => Entry::find()->id($id)->siteId('*')->unique()->status(null)->one();
+        $entry = $find($entryId);
+        $sibling = $find($siblingId);
         $structureId = $entry?->getSection()?->structureId;
 
         if ($entry === null || $sibling === null || $structureId === null) {

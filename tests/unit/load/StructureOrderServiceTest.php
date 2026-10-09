@@ -121,4 +121,18 @@ final class StructureOrderServiceTest extends TestCase
         self::assertSame([101, 103, 104], $this->elements->structureOrder());
         self::assertSame(1, $counts['unresolved']);
     }
+
+    #[Test]
+    public function a_move_craft_refuses_is_counted_and_left_for_the_next_run(): void
+    {
+        // The twin refuses a move whose anchor it does not hold: 101 is missing from the structure.
+        $this->loaded([1]);
+        $this->elements->willHoldInStructure([102]);
+
+        $counts = $this->settle(group: [...self::GROUP, 'members' => ['kuma:NL:faq:1', 'kuma:NL:faq:2']]);
+
+        self::assertSame(1, $counts['failed']);
+        self::assertSame(0, $counts['moved']);
+        self::assertArrayNotHasKey('structurePlaced', $this->state->metaOf('NL:faq', '2') ?? []);
+    }
 }

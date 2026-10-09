@@ -232,6 +232,11 @@ final class EnvironmentPipeline
                 $tally->count($bucket);
             }
         }
+
+        // A move Craft refused is a problem: the entry sits where it loaded, and a re-run retries it.
+        if ($counts['failed'] > 0) {
+            $tally->problem(sprintf('%s: Craft refused to move %d entries into their structure order', $env, $counts['failed']));
+        }
     }
 
     /**

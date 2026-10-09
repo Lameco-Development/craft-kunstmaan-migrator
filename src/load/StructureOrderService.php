@@ -37,11 +37,11 @@ final class StructureOrderService
 
     /**
      * @param list<array{section: string, parent: ?string, members: list<string>}> $groups
-     * @return array{moved: int, unresolved: int}
+     * @return array{moved: int, unresolved: int, failed: int}
      */
     public function settle(array $groups, bool $reorder): array
     {
-        $counts = ['moved' => 0, 'unresolved' => 0];
+        $counts = ['moved' => 0, 'unresolved' => 0, 'failed' => 0];
 
         foreach ($groups as $group) {
             $members = [];
@@ -59,7 +59,9 @@ final class StructureOrderService
                 $members[] = ['uid' => $uid, 'id' => $id, 'inPlace' => !$reorder && $this->isPlaced($uid)];
             }
 
-            $counts['moved'] += $this->settleGroup($members);
+            [$moved, $failed] = $this->settleGroup($members);
+            $counts['moved'] += $moved;
+            $counts['failed'] += $failed;
         }
 
         return $counts;
@@ -67,11 +69,12 @@ final class StructureOrderService
 
     /**
      * @param list<array{uid: string, id: int, inPlace: bool}> $members in target order
-     * @return int how many entries moved
+     * @return array{0: int, 1: int} how many entries moved, and how many Craft refused to move
      */
-    private function settleGroup(array $members): int
+    private function settleGroup(array $members): array
     {
         $moved = 0;
+        $failed = 0;
 
         foreach ($members as $i => $member) {
             if ($member['inPlace']) {
@@ -86,8 +89,16 @@ final class StructureOrderService
                 $after = false;
             }
 
-            // The first of its group to be placed: wherever it is, its siblings place around it.
-            if ($anchor !== null && $this->elements->moveInStructure($member['id'], $anchor, $after)) {
+            // The first of its group to be placed needs no move: its siblings place around it.
+            if ($anchor !== null) {
+                // A refused move is not a placement: the entry stays unmarked, so the next run
+                // tries again, and its siblings do not take it as an anchor.
+                if (!$this->elements->moveInStructure($member['id'], $anchor, $after)) {
+                    $failed++;
+
+                    continue;
+                }
+
                 $moved++;
             }
 
@@ -95,7 +106,7 @@ final class StructureOrderService
             $this->markPlaced($member['uid']);
         }
 
-        return $moved;
+        return [$moved, $failed];
     }
 
     /** @param list<array{uid: string, id: int, inPlace: bool}> $members */
