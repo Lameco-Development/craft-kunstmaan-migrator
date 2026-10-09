@@ -31,6 +31,12 @@ const MODULES = [
     // because the ElementWriter seam made it reachable — which is the argument
     // for doing the same to the three below.
     'src/load/PayloadEntrySaver.php',
+
+    // The forms lane and its submissions pass, gated from the start: both were
+    // written behind the FormGateway seam and measured above the bar (90.6% and
+    // 78.9%) on the commit that added them.
+    'src/Compile/SubmissionCompiler.php',
+    'src/load/FormMigrationService.php',
 ];
 
 /**

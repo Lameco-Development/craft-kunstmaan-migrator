@@ -17,7 +17,8 @@ never required:
 [Retour](https://github.com/nystudio107/craft-retour),
 [Navigation](https://github.com/verbb/navigation),
 [Formie](https://github.com/verbb/formie) — the forms lane compiles a form-owning
-page into a Formie form and wires a `formBlock` on the page to reference it.
+page into a Formie form and wires a `formBlock` on the page to reference it, and,
+when the mapping opts in, carries the stored submissions across.
 [Embedded Assets](https://github.com/spicyweb/craft-embedded-assets) turns a
 legacy remote-video reference into a real embedded-asset element instead of an
 id-only state row.
@@ -409,14 +410,36 @@ only decide about something that has been written down.
 
 | | where it lives | why there is no lane |
 | --- | --- | --- |
-| **Form submissions** | `kuma_form_submissions` (+ `_fields`) | Formie holds submissions natively, so the target exists. Whether years of leads should move is a client decision with a data-retention answer attached, not a default. |
 | **Back-office users, roles, groups** | `kuma_users`, `kuma_roles`, `kuma_groups` | Password hashes do not port, so "migrated" users cannot log in without a reset anyway. Craft's own user model and permission set are not the Kunstmaan one; mapping them is a per-project decision every time. |
 | **Node version history** | `kuma_node_versions` | Craft has revisions and could hold these. A version is a serialised page in the *old* content model, so restoring one after cutover would restore a shape the new templates cannot render. |
 | **Scheduled publishing** | `kuma_node_queued_node_translation_actions` | Craft has `postDate`/`expiryDate` and a mapping can already fill them from a column. What has no lane is the *queue* — a page scheduled to go live after cutover silently does not. Small table, high consequence: check it before cutover. |
 | **The search index** | `kuma_nodes_search` | ⊘ by decision, not by omission. Craft rebuilds its own index from the migrated content, so carrying the old one across would be carrying a stale copy of something free. |
 
-On the reference corpus those are, across the three environments: 30 submissions, 64
-users in 11 groups, 32,272 node versions, 16 queued publishes.
+On the reference corpus those are, across the three environments: 64 users in 11
+groups, 32,272 node versions, 16 queued publishes.
+
+**Form submissions migrate only on request.** Formie holds submissions natively, but
+whether years of leads should move is a client decision with a data-retention answer
+attached, so `kuma_form_submissions` stays put unless the mapping opts in:
+
+```yaml
+forms:
+  submissions:
+    nodes: all                 # or [222, 8] — legacy kuma_form_submissions.node_id values
+    volume: formieUploads      # the (private) volume uploaded files land in
+    filesRoot: /var/www/legacy/site/public   # where /uploads/formsubmissions/… lives
+```
+
+A submission lands on the Formie form the `forms:` lane wrote for its node's page,
+under the field each answered pagepart became (the join is the part, never the label,
+which drifts). A node whose page no longer carries a form — deleted, offline, or
+rebuilt as a third-party embed — gets an archive form under the handle the lane would
+have used, built from what its submissions answered and scheduled closed so it takes
+no new leads. The legacy `created` date, IP and site are kept; an empty submission is
+skipped and counted; a value whose part has no field, or a file not found under
+`filesRoot`, is reported and the rest of the submission still lands. State keys are
+`<ENV>:kuma_form_submission:<id>`, so a re-run skips and `--force` updates in place.
+Saving never sends a notification or runs an integration.
 
 Three more that come up on every project, and are decisions rather than absences:
 

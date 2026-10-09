@@ -6,7 +6,10 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
 use Lameco\Kunstmaanmigrator\craft\FormGateway;
 use Lameco\Kunstmaanmigrator\load\FormMigrationService;
+use Lameco\Kunstmaanmigrator\load\MigrationOptions;
+use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryFormGateway;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryMigrationState;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 
@@ -92,5 +95,32 @@ final class FormMigrationServiceTest extends TestCase
     public function testTheLaneNamesItselfAfterTheRegistryHandle(): void
     {
         self::assertSame('forms', $this->service(new InMemoryFormGateway())->handle());
+    }
+
+    /**
+     * Which Formie handle each legacy pagepart became is the gateway's call —
+     * it folds accents and suffixes collisions — so the lane records what the
+     * gateway answered, keyed on the part. That record is the only reliable way
+     * a stored submission, which names the part, finds its field.
+     */
+    public function testTheStateRowRecordsWhichHandleEachPagepartBecame(): void
+    {
+        $gateway = new InMemoryFormGateway();
+        $service = $this->service($gateway);
+        $service->stateService = $state = new InMemoryMigrationState();
+
+        $this->invoke($service, 'load', [
+            'sourceUid' => 'kuma:NL:form:VacancyFormPage:75',
+            'title' => 'Solliciteren',
+            'fields' => [
+                ['type' => 'singleLineText', 'label' => 'Voornaam', 'handle' => '', 'required' => true, 'settings' => [], 'partRef' => 'SingleLineText:198'],
+                ['type' => 'dropdown', 'label' => 'Aanhef', 'handle' => '', 'required' => false, 'settings' => [], 'partRef' => 'Choice:66'],
+            ],
+        ], new MigrationOptions(), [], 'kuma', new MigrationReport());
+
+        self::assertSame(
+            ['SingleLineText:198' => ['handle' => 'voornaam', 'type' => 'singleLineText'], 'Choice:66' => ['handle' => 'aanhef', 'type' => 'dropdown']],
+            $state->get('form', 'kuma:NL:form:VacancyFormPage:75')['meta']['fieldMap'],
+        );
     }
 }
