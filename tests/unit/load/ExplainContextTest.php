@@ -107,6 +107,41 @@ final class ExplainContextTest extends TestCase
     }
 
     #[Test]
+    public function a_block_part_on_a_page_that_streams_no_context_is_not_a_hole(): void
+    {
+        // Berkvens NL node 4: OverallSolutionOverviewPage's only context is `right_column:
+        // {target: page}`, so it streams nothing into blocks. Its right-column Image was
+        // reported as unexplained, because an empty list of streamed contexts read as "unknown".
+        $context = ExplainContext::fromMapping('NL', Mapping::fromArray([
+            'version' => 1,
+            'environments' => ['NL' => ['database' => 'nl', 'locales' => ['nl' => 'berkvensNl']]],
+            'defaults' => ['contexts' => ['main' => ['field' => 'pageBuilder']]],
+            'pages' => [
+                'OverviewPage' => [
+                    'table' => 'overview_pages',
+                    'entryType' => 'contentPage',
+                    'contexts' => ['right_column' => ['target' => 'page']],
+                ],
+            ],
+            'parts' => [
+                'Image' => ['table' => 'image_parts', 'block' => 'imageBlock', 'map' => ['image' => 'image_id | asset']],
+            ],
+        ]));
+
+        $result = $context->reconcile([], [[
+            'lang' => 'nl',
+            'context' => 'right_column',
+            'part' => 'Image',
+            'entity' => 'App\\Entity\\PageParts\\ImagePagePart',
+            'id' => 80,
+            'sequence' => 1,
+        ]], 'OverviewPage', ['nl' => ['right_column' => null]]);
+
+        self::assertSame([], $result['unexplained']);
+        self::assertSame('`right_column` is not one of the contexts the mapping streams into blocks', self::why($result));
+    }
+
+    #[Test]
     public function the_lanes_tables_and_locales_come_from_the_mapping(): void
     {
         $context = self::context();

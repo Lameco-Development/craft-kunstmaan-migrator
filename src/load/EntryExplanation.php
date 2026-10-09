@@ -27,7 +27,9 @@ final readonly class EntryExplanation
      * @param list<array{lang: string, context: string, part: string, entity: string, id: int, sequence: int}> $legacyParts
      * @param array<string, string>                $lanes     pagepart class => the lane the mapping puts it in
      * @param array<string, string>                $tables    pagepart class => the legacy table the mapping names
-     * @param list<string>                         $contexts  Kunstmaan contexts the mapping streams into blocks
+     * @param list<string>|null                    $contexts  Kunstmaan contexts the mapping streams into blocks;
+     *        null when unknown, so no placement is judged by it. An empty list is a page that
+     *        streams nothing, and every placement on it is missing by decision
      * @param list<string>                         $locales   legacy langs that have a Craft site to land in
      * @param list<string>                         $pageContexts Kunstmaan contexts declared `target: page`
      * @param array<string, array<string, array{part: string, id: int}|null>>|null $pageFills
@@ -41,7 +43,7 @@ final readonly class EntryExplanation
         array $legacyParts,
         array $lanes,
         array $tables,
-        array $contexts = [],
+        ?array $contexts = null,
         array $locales = [],
         array $pageContexts = [],
         ?array $pageFills = null,
@@ -148,7 +150,7 @@ final readonly class EntryExplanation
             // not for an unknown one — and on a corpus where `form` and eight `footer-*`
             // contexts are deliberately left out, that is most of what would otherwise land in
             // the defect list.
-            if ($contexts !== [] && !in_array((string) $part['context'], $contexts, true)) {
+            if ($contexts !== null && !in_array((string) $part['context'], $contexts, true)) {
                 $row['why'] = sprintf('`%s` is not one of the contexts the mapping streams into blocks', $part['context']);
                 $accountedFor[] = $row;
 
