@@ -109,6 +109,25 @@ final class SeomaticValue
         ];
     }
 
+    /**
+     * Whether any of these field values is an SEOmatic value — the shape `fromRow()` returns.
+     *
+     * The loader asks before a save: SEOmatic bakes the current site's name into the stored
+     * value, so a save that writes one has to run in the site it writes.
+     *
+     * @param array<array-key, mixed> $fieldValues
+     */
+    public static function isIn(array $fieldValues): bool
+    {
+        foreach ($fieldValues as $value) {
+            if (is_array($value) && isset($value['metaGlobalVars'], $value['metaBundleSettings'])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** @param array<string, mixed> $row */
     private static function str(array $row, string $key): string
     {

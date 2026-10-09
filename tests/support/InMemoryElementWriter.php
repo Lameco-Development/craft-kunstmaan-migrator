@@ -17,8 +17,18 @@ use ReflectionClass;
  */
 final class InMemoryElementWriter implements ElementWriter
 {
-    /** @var list<array{element: ElementInterface, runValidation: bool, propagate: bool, updateSearchIndex: bool}> */
+    /**
+     * Every save, with Craft's current site at the time — null when nothing switched it.
+     *
+     * @var list<array{element: ElementInterface, runValidation: bool, propagate: bool, updateSearchIndex: bool, currentSiteId: ?int}>
+     */
     public array $saved = [];
+
+    /** Craft's current site, as `withCurrentSite()` sets it; null is the run's own. */
+    public ?int $currentSiteId = null;
+
+    /** @var list<int> every site `withCurrentSite()` switched to, in call order */
+    public array $siteSwitches = [];
 
     /** @var list<array{element: ElementInterface, hardDelete: bool}> */
     public array $deleted = [];
@@ -159,9 +169,23 @@ final class InMemoryElementWriter implements ElementWriter
             'runValidation' => $runValidation,
             'propagate' => $propagate,
             'updateSearchIndex' => !$this->searchIndexDeferred,
+            'currentSiteId' => $this->currentSiteId,
         ];
 
         return true;
+    }
+
+    public function withCurrentSite(int $siteId, callable $work): mixed
+    {
+        $this->siteSwitches[] = $siteId;
+        $previous = $this->currentSiteId;
+        $this->currentSiteId = $siteId;
+
+        try {
+            return $work();
+        } finally {
+            $this->currentSiteId = $previous;
+        }
     }
 
     public function deferSearchIndexing(): void

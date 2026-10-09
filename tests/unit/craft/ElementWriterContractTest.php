@@ -149,7 +149,7 @@ final class ElementWriterContractTest extends TestCase
      */
     public function testBothAdaptersShareTheSameSignatures(): void
     {
-        foreach (['save', 'delete', 'findById', 'invalidateCaches', 'structureEntries', 'updateSlugAndUri'] as $method) {
+        foreach (['save', 'withCurrentSite', 'delete', 'findById', 'invalidateCaches', 'structureEntries', 'updateSlugAndUri'] as $method) {
             $interface = new ReflectionMethod(ElementWriter::class, $method);
 
             foreach ([CraftElementWriter::class, InMemoryElementWriter::class] as $adapter) {

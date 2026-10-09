@@ -11,6 +11,7 @@ use craft\enums\PropagationMethod;
 use craft\fields\Matrix;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\Payload\SeomaticValue;
 use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use RuntimeException;
@@ -296,7 +297,7 @@ class EntryMigrationService extends Component
         // revision per call (and one snapshot of every propagationMethod=none
         // matrix-block set per revision). Migration is a re-save, not an edit.
         $entry->resaving = true;
-        if (!$this->elements()->save($entry)) {
+        if (!$this->saveInItsSite($entry, $bareData)) {
             throw new RuntimeException(
                 sprintf(
                     'Primary-site save failed for %s:%s — %s',
@@ -352,9 +353,11 @@ class EntryMigrationService extends Component
                 $blocks->reconcile($localised, $site->handle, (array) ($perSite[$site->handle]['fieldValues'] ?? []));
             }
 
+            $siteData = $isPrimary ? $primaryData : $perSite[$site->handle];
+
             $this->applyPerSiteData(
                 $localised,
-                $isPrimary ? $primaryData : $perSite[$site->handle],
+                $siteData,
                 $blocks,
                 $report,
                 $stateSource,
@@ -364,7 +367,7 @@ class EntryMigrationService extends Component
 
             // Critical: propagateChanges=false (Pitfall 2)
             $localised->resaving = true;
-            if (!$this->elements()->save($localised)) {
+            if (!$this->saveInItsSite($localised, $siteData)) {
                 $this->warn(sprintf(
                     'site "%s" save failed for %s:%s — %s',
                     $site->handle,
@@ -397,6 +400,25 @@ class EntryMigrationService extends Component
         // Return the primary-site Entry instance
         // ------------------------------------------------------------------ 9
         return $entry;
+    }
+
+    /**
+     * Save one site's row of the entry — with Craft's current site switched to that site when
+     * the data carries an SEOmatic value, which bakes the current site's name and identity into
+     * what it stores. Left alone, a console run's primary site named every other site's SEO;
+     * the SEO adapter switches for the same reason, through the same seam.
+     *
+     * @param array<string, mixed> $siteData
+     */
+    private function saveInItsSite(Entry $entry, array $siteData): bool
+    {
+        $save = fn(): bool => $this->elements()->save($entry);
+
+        if ($entry->siteId === null || !SeomaticValue::isIn((array) ($siteData['fieldValues'] ?? []))) {
+            return $save();
+        }
+
+        return $this->elements()->withCurrentSite((int) $entry->siteId, $save);
     }
 
     // --------------------------------------------------------------------------

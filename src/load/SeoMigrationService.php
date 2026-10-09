@@ -2,7 +2,6 @@
 
 namespace Lameco\Kunstmaanmigrator\load;
 
-use Craft;
 use craft\elements\Entry;
 use Lameco\Kunstmaanmigrator\adapters\GatedAdapter;
 use Lameco\Kunstmaanmigrator\adapters\MigrationAdapter;
@@ -376,17 +375,9 @@ class SeoMigrationService extends Component implements MigrationAdapter
             // JSON — even for EN. Temporarily switch the current site to match
             // the target and restore after each save to avoid leaking NL
             // defaults into the EN SEO bundle.
-            $previousSite = Craft::$app->sites->getCurrentSite();
-            $targetSite = Craft::$app->sites->getSiteById($siteId);
-            if ($targetSite !== null) {
-                Craft::$app->sites->setCurrentSite($targetSite);
-            }
-            try {
-                $entry->resaving = true;
-                $saved = $this->elements()->save($entry);
-            } finally {
-                Craft::$app->sites->setCurrentSite($previousSite);
-            }
+            // The entry save does the same for an entity's compiled SEO (`saveInItsSite()`).
+            $entry->resaving = true;
+            $saved = (bool) $this->elements()->withCurrentSite($siteId, fn(): bool => $this->elements()->save($entry));
 
             // Pitfall 2 — propagate=false on every per-site save
             if ($saved) {

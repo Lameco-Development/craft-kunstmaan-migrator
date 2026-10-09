@@ -91,6 +91,21 @@ interface ElementWriter
     public function save(ElementInterface $element, bool $runValidation = true, bool $propagate = false): bool;
 
     /**
+     * Run `$work` with Craft's current site switched to this one, and switch back afterwards
+     * — even when it throws. An unknown site id leaves the current site as it is.
+     *
+     * SEOmatic's field bakes `metaSiteVars` (siteName, identity, creator) into the stored value
+     * from the current site, not from the element's own: a console run stays on the primary
+     * site, so every other site's SEO would carry the primary's name. A save that writes an
+     * SEOmatic value goes through here.
+     *
+     * @template T
+     * @param callable(): T $work
+     * @return T
+     */
+    public function withCurrentSite(int $siteId, callable $work): mixed;
+
+    /**
      * Stop every save from here until `resumeSearchIndexing()` updating the
      * search index.
      *

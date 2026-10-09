@@ -11,6 +11,7 @@ use craft\models\EntryType;
 use craft\models\FieldLayout;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
+use Lameco\Kunstmaanmigrator\Payload\SeomaticValue;
 use Lameco\Kunstmaanmigrator\run\RunTally;
 use Lameco\Kunstmaanmigrator\sites\SiteMap;
 use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
@@ -106,6 +107,40 @@ final class EntryMigrationServiceSaveTest extends TestCase
         self::assertSame('About us', $onEn->title);
         self::assertSame([false, false, false], array_column($this->writer->saved, 'propagate'), 'the migration writes each site itself');
         self::assertSame(600, $this->state->getTargetId(self::SOURCE, '42'));
+    }
+
+    public function testAnEntryCarryingSeoIsSavedWhileCraftsCurrentSiteIsTheSiteItWrites(): void
+    {
+        // SEOmatic bakes `metaSiteVars` (siteName, identity) from Craft's current site, not the
+        // entry's: a console run stays on the primary site, so an entity's FR SEO compiled from
+        // `seomatic(...)` carried the NL site's name unless each save switches to its own site.
+        $onEn = SaveStubEntry::make(self::SECTION, self::TYPE, 2);
+        $this->writer->nextId = 600;
+        $this->writer->willFind(600, $onEn, 2);
+
+        $this->save([
+            'default' => $this->siteData('Over ons', ['seo' => SeomaticValue::fromRow(['meta_title' => 'Over ons'])]),
+            'en' => $this->siteData('About us', ['seo' => SeomaticValue::fromRow(['meta_title' => 'About us'])]),
+        ]);
+
+        self::assertSame([$this->built[0], $this->built[0], $onEn], array_column($this->writer->saved, 'element'));
+        self::assertSame([1, 1, 2], array_column($this->writer->saved, 'currentSiteId'));
+        self::assertNull($this->writer->currentSiteId, 'the run\'s own current site is restored after each save');
+    }
+
+    public function testAnEntryWithoutSeoLeavesCraftsCurrentSiteAlone(): void
+    {
+        $onEn = SaveStubEntry::make(self::SECTION, self::TYPE, 2);
+        $this->writer->nextId = 600;
+        $this->writer->willFind(600, $onEn, 2);
+
+        $this->save([
+            'default' => $this->siteData('Over ons', ['intro' => 'Hallo']),
+            'en' => $this->siteData('About us', ['intro' => 'Hello']),
+        ]);
+
+        self::assertSame([null, null, null], array_column($this->writer->saved, 'currentSiteId'));
+        self::assertSame([], $this->writer->siteSwitches);
     }
 
     public function testANewEntryIsSavedBareFirstSoPropagationHasNoBlocksToCopyThenOncePerSiteWithItsOwn(): void
@@ -401,6 +436,11 @@ final class EntryMigrationServiceSaveTest extends TestCase
             public function updateSlugAndUri(ElementInterface $element): void
             {
                 $this->inner->updateSlugAndUri($element);
+            }
+
+            public function withCurrentSite(int $siteId, callable $work): mixed
+            {
+                return $this->inner->withCurrentSite($siteId, $work);
             }
 
             public function invalidateCaches(): void
