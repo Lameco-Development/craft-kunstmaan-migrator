@@ -100,10 +100,16 @@ final class Transforms
         $raw = strtolower(trim((string) ($value ?? '')));
 
         // A hit is the mapping declaring what the value becomes: a label turned into the
-        // option value the target stores loses nothing. Only a value the map does not name
-        // (the fallback, or null) is a loss.
+        // option value the target stores loses nothing. A hit to nothing (`''` or `~`) drops
+        // the value on purpose, and a value the map does not name falls back: both are losses.
         if (array_key_exists($raw, $map)) {
-            return (string) $map[$raw];
+            $to = (string) $map[$raw];
+
+            if ($raw !== '' && $to === '') {
+                $this->record($name, $raw, '', $context);
+            }
+
+            return $to;
         }
 
         $fallback = $spec['fallback'] ?? null;
@@ -152,11 +158,12 @@ final class Transforms
         $raw = strtolower(trim((string) ($value ?? '')));
         $map = $this->config['colorScheme']['map'] ?? [];
 
+        // As a configured map: a hit is a translation, a hit to nothing a loss.
         if (array_key_exists($raw, $map)) {
             $scheme = (string) $map[$raw];
 
-            if ($raw !== '' && $scheme !== $raw) {
-                $this->record('colorScheme', $raw, $scheme, $context);
+            if ($raw !== '' && $scheme === '') {
+                $this->record('colorScheme', $raw, '', $context);
             }
 
             return $scheme;

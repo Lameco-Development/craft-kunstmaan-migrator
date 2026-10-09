@@ -335,11 +335,11 @@ A loss you have reviewed and accept goes in the mapping's top-level
 
 ```yaml
 acceptedLosses:
-  lossyConversions:            # transform => keys, as the report's `losses` lists them
+  lossyConversions:            # transform => keys, as acceptedLosses.unaccepted.losses lists them
     asset: ['media:889 -> unresolved', 'media:892 -> unresolved']
-  unresolvedAssets:            # paths, as `unresolvedAssetSample` lists them
+  unresolvedAssets:            # paths, as acceptedLosses.unaccepted.unresolvedAssetPaths lists them
     - /uploads/documents/2044….pdf
-  unresolvedReferences:        # fixup orphans: `<sourceUid>: <field> -> <ref>`
+  unresolvedReferences:        # fixup orphans, as acceptedLosses.unaccepted.unresolvedReferenceKeys lists them
     - 'kuma:FR:model:12: utilityCategoryPages -> kuma:FR:kuma_nodes:491'
   note: soft-deleted media; the PDF has no copy anywhere
 ```
@@ -349,8 +349,11 @@ splits the run into `accepted` and `unaccepted`, and lists as `stale` every entr
 the run no longer loses — a warning on stderr, not a failure; remove it, so it
 cannot excuse the same loss coming back. A reference to a target never migrated
 (`fixup.unresolvable`) and per-site block content the target cannot hold are not
-acceptable. A `transforms:` `map:` hit is a translation, not a loss; only its
-fallback or a miss is counted.
+acceptable. Copy from the report's `acceptedLosses.unaccepted` lists, which are
+complete; `unresolvedAssetSample` stops at five. Only references from the
+environments the run walked count: the state table is shared with other
+mappings' runs. A `transforms:` `map:` hit (and a `colorScheme` one) is a
+translation, not a loss; a hit to `''` or `~`, the fallback and a miss are.
 
 **`doctor` checks whether the target can hold per-locale blocks.** A page-builder
 Matrix with `propagationMethod: all` keeps *one* block set for the owner, shared by
