@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\unit\load;
 
-use Lameco\Kunstmaanmigrator\load\FormMigrationService;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
+use Lameco\Kunstmaanmigrator\load\SubmissionMigrationService;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\Source\LegacyDatabase;
@@ -16,7 +16,6 @@ use Lameco\Kunstmaanmigrator\tests\support\InMemoryMigrationState;
 use PDO;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
-use ReflectionClass;
 
 /**
  * `forms.submissions:` loaded behind the Formie seam.
@@ -30,16 +29,14 @@ final class FormSubmissionMigrationTest extends TestCase
 
     private InMemoryFormGateway $gateway;
     private InMemoryMigrationState $state;
-    private FormMigrationService $service;
+    private SubmissionMigrationService $service;
     private string $filesRoot;
 
     protected function setUp(): void
     {
         $this->gateway = new InMemoryFormGateway();
         $this->state = new InMemoryMigrationState();
-        $this->service = (new ReflectionClass(FormMigrationService::class))->newInstanceWithoutConstructor();
-        $this->service->forms = $this->gateway;
-        $this->service->stateService = $this->state;
+        $this->service = new SubmissionMigrationService($this->gateway, $this->state);
 
         $this->filesRoot = sys_get_temp_dir() . '/kuma-submissions-' . uniqid();
         mkdir($this->filesRoot . '/uploads/formsubmissions/abc', 0777, true);
@@ -145,7 +142,7 @@ final class FormSubmissionMigrationTest extends TestCase
     private function migrate(?MigrationOptions $opts = null, string $submissions = 'nodes: all'): MigrationReport
     {
         $report = new MigrationReport();
-        $this->service->migrateSubmissions($opts ?? new MigrationOptions(), $this->context($submissions), $report, 'kuma');
+        $this->service->migrate($opts ?? new MigrationOptions(), $this->context($submissions), $report, 'kuma');
 
         return $report;
     }
@@ -333,7 +330,7 @@ final class FormSubmissionMigrationTest extends TestCase
         $data = $context->mapping?->all() ?? [];
         unset($data['forms']['submissions']);
 
-        $this->service->migrateSubmissions(new MigrationOptions(), new EnvironmentContext(
+        $this->service->migrate(new MigrationOptions(), new EnvironmentContext(
             name: 'NL',
             database: 'legacy',
             sites: $context->sites,
