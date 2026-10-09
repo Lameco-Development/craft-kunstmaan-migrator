@@ -243,12 +243,57 @@ final class Schema
     {
         $forms = $mapping->all()['forms'] ?? null;
 
-        if (!is_array($forms) || !array_key_exists('field', $forms)) {
+        if (!is_array($forms)) {
             return;
         }
 
-        if (!is_string($forms['field']) || $forms['field'] === '') {
+        if (array_key_exists('field', $forms) && (!is_string($forms['field']) || $forms['field'] === '')) {
             $errors[] = 'forms: `field:` must be a Matrix field handle';
+        }
+
+        if (array_key_exists('submissions', $forms)) {
+            $this->checkSubmissions($forms['submissions'], $errors);
+        }
+    }
+
+    /**
+     * `forms.submissions:` moves personal data. A misspelt opt-in reads as
+     * "every node" or "none", both silently, so every key is checked.
+     *
+     * @param list<string> $errors
+     */
+    private function checkSubmissions(mixed $spec, array &$errors): void
+    {
+        if ($spec === true) {
+            return;
+        }
+
+        if (!is_array($spec)) {
+            $errors[] = 'forms.submissions: must be a map (`nodes:`, `volume:`, `filesRoot:`)';
+
+            return;
+        }
+
+        $nodes = $spec['nodes'] ?? 'all';
+        $isList = is_array($nodes) && array_is_list($nodes) && $nodes !== []
+            && array_filter($nodes, static fn(mixed $id): bool => !is_int($id)) === [];
+
+        if ($nodes !== 'all' && !$isList) {
+            $errors[] = 'forms.submissions: `nodes:` must be `all` or a list of legacy node ids';
+        }
+
+        if (array_key_exists('volume', $spec) && (!is_string($spec['volume']) || $spec['volume'] === '')) {
+            $errors[] = 'forms.submissions: `volume:` must be a volume handle';
+        }
+
+        if (array_key_exists('filesRoot', $spec) && (!is_string($spec['filesRoot']) || $spec['filesRoot'] === '')) {
+            $errors[] = 'forms.submissions: `filesRoot:` must be a directory path';
+        }
+
+        foreach (array_keys($spec) as $key) {
+            if (!in_array($key, ['nodes', 'volume', 'filesRoot'], true)) {
+                $errors[] = sprintf('forms.submissions: unknown key `%s` (nodes, volume, filesRoot)', $key);
+            }
         }
     }
 

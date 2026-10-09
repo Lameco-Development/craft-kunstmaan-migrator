@@ -141,6 +141,18 @@ final class FormCompilerTest extends TestCase
     }
 
     /**
+     * A stored submission names the pagepart it answered
+     * (`field_…SingleLineTextPagePart1`), so each field says which part it is in
+     * the same `<Class>:<id>` spelling — the join the submissions pass lands
+     * values on.
+     */
+    #[Test]
+    public function each_field_names_the_pagepart_a_submission_answered(): void
+    {
+        self::assertSame(['SingleLineText:1', 'SubmitButton:2'], array_column($this->compile()[0]['fields'], 'partRef'));
+    }
+
+    /**
      * `RowStart` is a layout bracket the mapping declares as unmapped on
      * purpose. Counting it beats warning about it — a run that complains about
      * every deliberate omission teaches people to stop reading the warnings.
