@@ -403,10 +403,21 @@ class EntryMigrationService extends Component
     }
 
     /**
+     * SEOmatic's field class, by name: SEOmatic is an optional plugin, so it is never imported.
+     */
+    private const SEOMATIC_FIELD = 'nystudio107\\seomatic\\fields\\SeoSettings';
+
+    /**
      * Save one site's row of the entry — with Craft's current site switched to that site when
-     * the data carries an SEOmatic value, which bakes the current site's name and identity into
+     * the entry has an SEOmatic field, which bakes the current site's name and identity into
      * what it stores. Left alone, a console run's primary site named every other site's SEO;
      * the SEO adapter switches for the same reason, through the same seam.
+     *
+     * Not only when the data carries an SEOmatic value: Craft serializes every field on the
+     * layout on save, and an SEOmatic field with no value normalizes a fresh bundle whose
+     * `metaSiteVars` reads the current site. Berkvens FR's 39 models and products without
+     * mapped SEO stored the NL site's name that way. Once a name is stored it is never derived
+     * again, so the bare first save is switched too.
      *
      * @param array<string, mixed> $siteData
      */
@@ -414,11 +425,23 @@ class EntryMigrationService extends Component
     {
         $save = fn(): bool => $this->elements()->save($entry);
 
-        if ($entry->siteId === null || !SeomaticValue::isIn((array) ($siteData['fieldValues'] ?? []))) {
+        if ($entry->siteId === null
+            || (!SeomaticValue::isIn((array) ($siteData['fieldValues'] ?? [])) && !self::hasSeomaticField($entry))) {
             return $save();
         }
 
         return $this->elements()->withCurrentSite((int) $entry->siteId, $save);
+    }
+
+    private static function hasSeomaticField(Entry $entry): bool
+    {
+        foreach ($entry->getFieldLayout()?->getCustomFields() ?? [] as $field) {
+            if (is_a($field, self::SEOMATIC_FIELD)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     // --------------------------------------------------------------------------

@@ -128,7 +128,47 @@ final class EntryMigrationServiceSaveTest extends TestCase
         self::assertNull($this->writer->currentSiteId, 'the run\'s own current site is restored after each save');
     }
 
-    public function testAnEntryWithoutSeoLeavesCraftsCurrentSiteAlone(): void
+    /**
+     * Berkvens FR: 39 models and products with an `seo` field but no mapped SEO stored
+     * "Berkvens", the NL site's name. Craft serializes every field on the layout on save,
+     * and an SEOmatic field with no value normalizes a fresh bundle whose `metaSiteVars`
+     * reads the current site — so leaving the field alone does not keep the name out.
+     * Every save of an entry whose layout has one is switched, the bare first one too:
+     * once a name is baked it is never derived again.
+     */
+    public function testAnEntryWhoseLayoutHasAnSeomaticFieldIsSavedInItsSiteEvenWithoutAnSeoValue(): void
+    {
+        $layout = SaveStubFieldLayout::withFields([self::field(SaveStubSeoField::class, 'seo'), self::field(\craft\fields\PlainText::class, 'intro')]);
+        $this->writer->entryFactory = function(int $sectionId, int $typeId, int $siteId) use ($layout): Entry {
+            $entry = SaveStubEntry::make($sectionId, $typeId, $siteId);
+            $entry->layout = $layout;
+
+            return $this->built[] = $entry;
+        };
+        $onEn = SaveStubEntry::make(self::SECTION, self::TYPE, 2);
+        $onEn->layout = $layout;
+        $this->writer->nextId = 600;
+        $this->writer->willFind(600, $onEn, 2);
+
+        $this->save([
+            'default' => $this->siteData('Over ons', ['intro' => 'Hallo']),
+            'en' => $this->siteData('About us', ['intro' => 'Hello']),
+        ]);
+
+        self::assertSame([1, 1, 2], array_column($this->writer->saved, 'currentSiteId'));
+        self::assertNull($this->writer->currentSiteId);
+    }
+
+    /** @param class-string<\craft\base\FieldInterface> $class */
+    private static function field(string $class, string $handle): \craft\base\FieldInterface
+    {
+        $field = (new \ReflectionClass($class))->newInstanceWithoutConstructor();
+        $field->handle = $handle;
+
+        return $field;
+    }
+
+    public function testAnEntryWithoutAnSeomaticFieldLeavesCraftsCurrentSiteAlone(): void
     {
         $onEn = SaveStubEntry::make(self::SECTION, self::TYPE, 2);
         $this->writer->nextId = 600;
@@ -794,4 +834,18 @@ final class SaveStubFieldLayout extends FieldLayout
 
         return null;
     }
+}
+
+/**
+ * SEOmatic's field, by the class name the loader recognises it by. SEOmatic is an
+ * optional plugin and not installed here, so the name is aliased onto a plain field.
+ *
+ * @internal
+ */
+final class SaveStubSeoField extends \craft\fields\PlainText
+{
+}
+
+if (!class_exists('nystudio107\\seomatic\\fields\\SeoSettings', false)) {
+    class_alias(SaveStubSeoField::class, 'nystudio107\\seomatic\\fields\\SeoSettings');
 }
