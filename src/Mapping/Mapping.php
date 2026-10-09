@@ -351,6 +351,15 @@ final class Mapping
         return is_array($transforms) ? $transforms : [];
     }
 
+    /**
+     * The `acceptedLosses:` block — the losses a reviewed run may report and still pass
+     * `--fail-on-loss`. Raw, as `Schema` checked it; `run\LossBaseline` reads it.
+     */
+    public function acceptedLosses(): mixed
+    {
+        return $this->data['acceptedLosses'] ?? null;
+    }
+
     public function forms(): FormsLane
     {
         return FormsLane::fromSpec($this->data['forms'] ?? null);

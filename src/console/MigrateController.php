@@ -27,6 +27,7 @@ use Lameco\Kunstmaanmigrator\Report\BlockPlacement;
 use Lameco\Kunstmaanmigrator\Report\Coverage;
 use Lameco\Kunstmaanmigrator\Report\CoverageReport;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
+use Lameco\Kunstmaanmigrator\run\LossBaseline;
 use Lameco\Kunstmaanmigrator\run\RunLog;
 use Lameco\Kunstmaanmigrator\run\RunOutcome;
 use Lameco\Kunstmaanmigrator\run\RunSettings;
@@ -140,10 +141,11 @@ final class MigrateController extends Controller
      * A migration that drops 496 pageparts exits 0 and looks exactly like one that dropped
      * none — the losses are counted, reported, and reachable only by reading the JSON. That
      * makes noticing them optional, which is how a lossy run reaches a client. With this on,
-     * lossy conversions, unresolved assets and fixup orphans are failures.
+     * lossy conversions, unresolved assets and fixup orphans are failures — except those the
+     * mapping's `acceptedLosses:` lists, keyed as the run report keys them.
      *
      * Off by default because every real corpus loses something and a green CI is not worth
-     * more than an honest one; turn it on once a corpus has a known-good loss count.
+     * more than an honest one; turn it on once the known-good losses are in `acceptedLosses:`.
      */
     public bool $failOnLoss = false;
 
@@ -463,10 +465,17 @@ final class MigrateController extends Controller
 
         $lossCount = $tally->lossyConversions;
         $unresolvedAssets = count($tally->unresolvedAssets);
-        // A reference nothing will ever resolve is as lost as one still pending.
-        $orphans = count($fixup['orphans'] ?? []) + (int) ($fixup['unresolvable'] ?? 0);
-
         $perSiteBlockLosses = $tally->perSiteBlockLosses;
+
+        // What the mapping's `acceptedLosses:` does not excuse is what --fail-on-loss gates on.
+        // A reference nothing will ever resolve is as lost as one still pending, and is not
+        // acceptable; nor is per-site block content the target cannot hold.
+        $losses = LossBaseline::fromSpec($mapping->acceptedLosses())->assess(
+            $tally->losses,
+            array_map(static fn(array $entry): string => (string) ($entry['asset'] ?? '?'), $tally->unresolvedAssets),
+            array_values((array) ($fixup['orphans'] ?? [])),
+        );
+        $unacceptedRefs = $losses->unresolvedReferences + (int) ($fixup['unresolvable'] ?? 0) + count($perSiteBlockLosses);
 
         $this->stdout(json_encode([
             'counts' => $tally->counts,
@@ -482,6 +491,7 @@ final class MigrateController extends Controller
             'resave' => $resave,
             'lossyConversions' => $lossCount,
             'losses' => $tally->losses,
+            'acceptedLosses' => $losses->report(),
             'skippedSources' => $tally->skippedSources,
             'droppedAddresses' => $tally->droppedAddresses,
             'unresolvedAssets' => $unresolvedAssets,
@@ -508,22 +518,34 @@ final class MigrateController extends Controller
 
         // Losses are counted either way; --fail-on-loss is what makes ignoring them a
         // decision rather than the default.
-        if ($this->failOnLoss && RunOutcome::lost($lossCount, $unresolvedAssets, $orphans + count($perSiteBlockLosses))) {
+        if ($this->failOnLoss && RunOutcome::lost($losses->lossyConversions, $losses->unresolvedAssets, $unacceptedRefs)) {
             $this->stderr(sprintf(
-                "Run lost content: %d lossy conversions, %d unresolved assets, %d unresolved references.\n",
-                $lossCount,
-                $unresolvedAssets,
-                $orphans,
+                "Run lost content: %d lossy conversions, %d unresolved assets, %d unresolved references not in acceptedLosses: (accepted: %d, %d, %d).\n",
+                $losses->lossyConversions,
+                $losses->unresolvedAssets,
+                $unacceptedRefs,
+                $losses->accepted['lossyConversions'],
+                $losses->accepted['unresolvedAssets'],
+                $losses->accepted['unresolvedReferences'],
             ), Console::FG_RED);
+        }
+
+        // An accepted loss the run no longer has would excuse the same loss coming back. A
+        // narrowed run or a dry run (no fixup pass) cannot tell, so only a full write says so.
+        if ($losses->stale !== [] && !$this->narrowed() && !$this->dryRun) {
+            $this->stderr(sprintf(
+                "acceptedLosses: lists losses this run no longer has; remove them: %s\n",
+                json_encode($losses->stale, JSON_UNESCAPED_SLASHES),
+            ), Console::FG_YELLOW);
         }
 
         return RunOutcome::exitCode(
             $tally->hasFailures(),
             (int) ($tally->counts['invalid'] ?? 0),
             $this->failOnLoss,
-            $lossCount,
-            $unresolvedAssets,
-            $orphans + count($perSiteBlockLosses),
+            $losses->lossyConversions,
+            $losses->unresolvedAssets,
+            $unacceptedRefs,
         );
     }
 

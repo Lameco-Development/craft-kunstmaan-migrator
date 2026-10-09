@@ -34,7 +34,11 @@ final class Schema
     private const TOP_LEVEL = [
         'version', 'environments', 'merge', 'pages', 'defaults', 'entities',
         'sequence', 'parts', 'sidecars', 'forms', 'globals', 'redirects', 'transforms', 'unmapped',
+        'acceptedLosses',
     ];
+
+    /** What `acceptedLosses:` may list, each keyed as the run report keys it. */
+    private const ACCEPTED_LOSS_KEYS = ['lossyConversions', 'unresolvedAssets', 'unresolvedReferences', 'note'];
 
     private const SIDECAR_KEYS = [
         'live', 'table', 'map', 'children', 'ignore', 'unreviewed', 'drop', 'manual', 'todo', 'note',
@@ -87,8 +91,78 @@ final class Schema
         $this->checkFiles($mapping, $errors);
         $this->checkSequence($mapping, $errors);
         $this->checkLaneCollisions($mapping, $errors);
+        $this->checkAcceptedLosses($mapping, $errors);
 
         return $errors;
+    }
+
+    /**
+     * `acceptedLosses:` is subtracted from what `--fail-on-loss` gates on. A wrong shape would
+     * accept nothing — or read as accepting everything — without a word, so each list is
+     * checked against how the run report keys the loss it accepts.
+     *
+     * @param list<string> $errors
+     */
+    private function checkAcceptedLosses(Mapping $mapping, array &$errors): void
+    {
+        if (!array_key_exists('acceptedLosses', $mapping->all())) {
+            return;
+        }
+
+        $spec = $mapping->all()['acceptedLosses'];
+
+        if (!is_array($spec)) {
+            $errors[] = 'acceptedLosses: must be a mapping of `lossyConversions:`, `unresolvedAssets:` and `unresolvedReferences:`';
+
+            return;
+        }
+
+        $conversions = $spec['lossyConversions'] ?? [];
+
+        if (!is_array($conversions) || array_is_list($conversions) && $conversions !== []) {
+            $errors[] = 'acceptedLosses.lossyConversions: must map a transform to its `<from> -> <to>` keys';
+        } else {
+            foreach ($conversions as $transform => $keys) {
+                if (!self::isStringList($keys)) {
+                    $errors[] = sprintf('acceptedLosses.lossyConversions.%s: must be a list of `<from> -> <to>` keys, as the run report\'s `losses` lists them', $transform);
+
+                    continue;
+                }
+
+                foreach ($keys as $key) {
+                    if (!str_contains($key, ' -> ')) {
+                        $errors[] = sprintf('acceptedLosses.lossyConversions.%s: `%s` is not a `<from> -> <to>` key, as the run report\'s `losses` lists them', $transform, $key);
+                    }
+                }
+            }
+        }
+
+        if (!self::isStringList($spec['unresolvedAssets'] ?? [])) {
+            $errors[] = 'acceptedLosses.unresolvedAssets: must be a list of asset paths, as the run report lists them';
+        }
+
+        if (!self::isStringList($spec['unresolvedReferences'] ?? [])) {
+            $errors[] = 'acceptedLosses.unresolvedReferences: must be a list of `<sourceUid>: <field> -> <ref>` keys';
+        }
+
+        foreach (array_diff(array_keys($spec), self::ACCEPTED_LOSS_KEYS) as $key) {
+            $errors[] = sprintf('acceptedLosses: unknown key `%s` (%s)', $key, implode(', ', self::ACCEPTED_LOSS_KEYS));
+        }
+    }
+
+    private static function isStringList(mixed $value): bool
+    {
+        if (!is_array($value) || !array_is_list($value)) {
+            return false;
+        }
+
+        foreach ($value as $item) {
+            if (!is_string($item) || $item === '') {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**

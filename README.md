@@ -330,6 +330,28 @@ counted and reported, and still exits 0. `--fail-on-loss` makes lossy
 conversions, unresolved assets and unresolved references non-zero, which is what
 you want in CI once a corpus has a known-good loss count.
 
+A loss you have reviewed and accept goes in the mapping's top-level
+`acceptedLosses:`, copied from the run report, and `--fail-on-loss` subtracts it:
+
+```yaml
+acceptedLosses:
+  lossyConversions:            # transform => keys, as the report's `losses` lists them
+    asset: ['media:889 -> unresolved', 'media:892 -> unresolved']
+  unresolvedAssets:            # paths, as `unresolvedAssetSample` lists them
+    - /uploads/documents/2044….pdf
+  unresolvedReferences:        # fixup orphans: `<sourceUid>: <field> -> <ref>`
+    - 'kuma:FR:model:12: utilityCategoryPages -> kuma:FR:kuma_nodes:491'
+  note: soft-deleted media; the PDF has no copy anywhere
+```
+
+An entry accepts every occurrence of its key. The report's `acceptedLosses` block
+splits the run into `accepted` and `unaccepted`, and lists as `stale` every entry
+the run no longer loses — a warning on stderr, not a failure; remove it, so it
+cannot excuse the same loss coming back. A reference to a target never migrated
+(`fixup.unresolvable`) and per-site block content the target cannot hold are not
+acceptable. A `transforms:` `map:` hit is a translation, not a loss; only its
+fallback or a miss is counted.
+
 **`doctor` checks whether the target can hold per-locale blocks.** A page-builder
 Matrix with `propagationMethod: all` keeps *one* block set for the owner, shared by
 every site. While each locale's payload names the same legacy parts that collapses
