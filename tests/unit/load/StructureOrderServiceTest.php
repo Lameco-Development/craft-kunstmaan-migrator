@@ -135,4 +135,50 @@ final class StructureOrderServiceTest extends TestCase
         self::assertSame(0, $counts['moved']);
         self::assertArrayNotHasKey('structurePlaced', $this->state->metaOf('NL:faq', '2') ?? []);
     }
+
+    #[Test]
+    public function a_new_entry_skips_an_anchor_an_editor_moved_under_another_parent(): void
+    {
+        // A was placed, then an editor moved it under P (900). B is new; C was placed at the root.
+        $this->loaded([1, 3]);
+        $this->elements->willHoldInStructure([900, 103, 102]);
+        $this->elements->willHoldInStructure([101], parentId: 900);
+
+        $this->settle(group: [...self::GROUP, 'members' => ['kuma:NL:faq:1', 'kuma:NL:faq:2', 'kuma:NL:faq:3']]);
+
+        self::assertSame([900, 102, 103], $this->elements->structureOrder());
+        self::assertSame([101], $this->elements->structureOrder(parentId: 900));
+    }
+
+    #[Test]
+    public function a_new_entry_with_no_anchor_left_under_its_parent_stays_under_that_parent(): void
+    {
+        $this->loaded([1]);
+        $this->elements->willHoldInStructure([900, 102]);
+        $this->elements->willHoldInStructure([101], parentId: 900);
+
+        $counts = $this->settle(group: [...self::GROUP, 'members' => ['kuma:NL:faq:1', 'kuma:NL:faq:2']]);
+
+        self::assertSame([900, 102], $this->elements->structureOrder());
+        self::assertSame([101], $this->elements->structureOrder(parentId: 900));
+        self::assertSame(0, $counts['failed']);
+        self::assertTrue($this->state->metaOf('NL:faq', '2')['structurePlaced'] ?? false);
+    }
+
+    #[Test]
+    public function a_group_under_a_parent_settles_beneath_that_parent_only(): void
+    {
+        // The members live under page 500; another Structure holds siblings of its own.
+        $this->state->willResolve('NL:page', '500', 500, ['pendingRefs' => []]);
+        $this->loaded();
+        $this->elements->willHoldInStructure([500]);
+        $this->elements->willHoldInStructure([104, 102, 101, 103], parentId: 500);
+        $this->elements->willHoldInStructure([7, 8], section: 'other');
+
+        $this->settle(group: [...self::GROUP, 'parent' => 'kuma:NL:page:500']);
+
+        self::assertSame([101, 102, 103, 104], $this->elements->structureOrder(parentId: 500));
+        self::assertSame([500], $this->elements->structureOrder());
+        self::assertSame([7, 8], $this->elements->structureOrder(section: 'other'));
+    }
 }

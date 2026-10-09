@@ -489,6 +489,13 @@ entities:
 - **Once per entry.** The run moves an entry no run has placed yet next to its nearest placed
   sibling and records it on its state row (`structurePlaced`); a later run leaves it alone, so an
   editor's reordering survives. `migrate --reorder` puts every keyed entry back in the legacy order.
+- **An anchor shares the parent.** A move beside a sibling takes that sibling's parent, so a sibling
+  an editor has since moved under another parent is skipped as an anchor. With no placed sibling
+  left under the group's parent, the new entry goes to the start or end of that parent's children.
+- **`dedupe:` across environments.** A deduped entity is one entry for every environment, and each
+  environment settles its own order. Without `--reorder` the first environment to place an entry
+  decides; with it, the last environment in the run does. Not fixed: give a shared entity's
+  `order:` key the same values in every environment, or run `--reorder` on one environment.
 
 ### `children:` into an Assets or Table field
 

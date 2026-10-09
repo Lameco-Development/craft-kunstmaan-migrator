@@ -223,11 +223,8 @@ final class CraftElementWriter implements ElementWriter
 
     public function moveInStructure(int $entryId, int $siblingId, bool $after): bool
     {
-        // On whichever site the entry has a row: a lookup on the current site — the primary,
-        // in a console or queue run — finds nothing for a section the primary site lacks.
-        $find = static fn(int $id): ?Entry => Entry::find()->id($id)->siteId('*')->unique()->status(null)->one();
-        $entry = $find($entryId);
-        $sibling = $find($siblingId);
+        $entry = $this->anySiteEntry($entryId);
+        $sibling = $this->anySiteEntry($siblingId);
         $structureId = $entry?->getSection()?->structureId;
 
         if ($entry === null || $sibling === null || $structureId === null) {
@@ -237,5 +234,40 @@ final class CraftElementWriter implements ElementWriter
         return $after
             ? Craft::$app->getStructures()->moveAfter($structureId, $entry, $sibling)
             : Craft::$app->getStructures()->moveBefore($structureId, $entry, $sibling);
+    }
+
+    public function placeInStructure(int $entryId, ?int $parentId, bool $first): bool
+    {
+        $entry = $this->anySiteEntry($entryId);
+        $parent = $parentId === null ? null : $this->anySiteEntry($parentId);
+        $structureId = $entry?->getSection()?->structureId;
+
+        if ($entry === null || $structureId === null || ($parentId !== null && $parent === null)) {
+            return false;
+        }
+
+        $structures = Craft::$app->getStructures();
+
+        if ($parent === null) {
+            return $first ? $structures->prependToRoot($structureId, $entry) : $structures->appendToRoot($structureId, $entry);
+        }
+
+        return $first ? $structures->prepend($structureId, $entry, $parent) : $structures->append($structureId, $entry, $parent);
+    }
+
+    public function parentInStructure(int $entryId): ?int
+    {
+        $parent = $this->anySiteEntry($entryId)?->getParent();
+
+        return $parent?->id;
+    }
+
+    /**
+     * On whichever site the entry has a row: a lookup on the current site — the primary, in a
+     * console or queue run — finds nothing for a section the primary site lacks.
+     */
+    private function anySiteEntry(int $id): ?Entry
+    {
+        return Entry::find()->id($id)->siteId('*')->unique()->status(null)->one();
     }
 }

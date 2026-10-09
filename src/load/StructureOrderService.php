@@ -21,6 +21,11 @@ use Lameco\Kunstmaanmigrator\craft\ElementWriter;
  * would undo their work. `--reorder` treats every member as unplaced, which is how the legacy
  * order is restored on purpose. A new entry joining an existing structure still lands in its
  * slot, beside the siblings it was placed between.
+ *
+ * A move beside a sibling takes that sibling's parent, so a sibling an editor has since moved
+ * under another parent is no anchor: the entry would follow it there. Only a sibling still
+ * under the group's parent anchors; with none left, the entry goes to the start or end of
+ * that parent's children.
  */
 final class StructureOrderService
 {
@@ -59,7 +64,7 @@ final class StructureOrderService
                 $members[] = ['uid' => $uid, 'id' => $id, 'inPlace' => !$reorder && $this->isPlaced($uid)];
             }
 
-            [$moved, $failed] = $this->settleGroup($members);
+            [$moved, $failed] = $this->settleGroup($members, $this->intendedParent($group['parent']));
             $counts['moved'] += $moved;
             $counts['failed'] += $failed;
         }
@@ -69,9 +74,11 @@ final class StructureOrderService
 
     /**
      * @param list<array{uid: string, id: int, inPlace: bool}> $members in target order
+     * @param int|false|null $parent the group's parent entry id, null for the root, false when
+     *        it never loaded — then no sibling can be checked against it, and any anchors
      * @return array{0: int, 1: int} how many entries moved, and how many Craft refused to move
      */
-    private function settleGroup(array $members): array
+    private function settleGroup(array $members, int|false|null $parent): array
     {
         $moved = 0;
         $failed = 0;
@@ -81,19 +88,14 @@ final class StructureOrderService
                 continue;
             }
 
-            $anchor = $this->nearestInPlace($members, $i, -1);
-            $after = true;
-
-            if ($anchor === null) {
-                $anchor = $this->nearestInPlace($members, $i, 1);
-                $after = false;
-            }
+            $before = $this->placedSiblings($members, $i, -1);
+            $after = $this->placedSiblings($members, $i, 1);
 
             // The first of its group to be placed needs no move: its siblings place around it.
-            if ($anchor !== null) {
+            if ($before !== [] || $after !== []) {
                 // A refused move is not a placement: the entry stays unmarked, so the next run
                 // tries again, and its siblings do not take it as an anchor.
-                if (!$this->elements->moveInStructure($member['id'], $anchor, $after)) {
+                if (!$this->place($member['id'], $before, $after, $parent)) {
                     $failed++;
 
                     continue;
@@ -109,16 +111,48 @@ final class StructureOrderService
         return [$moved, $failed];
     }
 
-    /** @param list<array{uid: string, id: int, inPlace: bool}> $members */
-    private function nearestInPlace(array $members, int $from, int $step): ?int
+    /**
+     * After the nearest placed predecessor still under the group's parent, else before the
+     * nearest such successor, else at the end of the parent's children — at the start when
+     * nothing placed comes before it.
+     *
+     * @param list<int> $before placed predecessors, nearest first
+     * @param list<int> $after placed successors, nearest first
+     */
+    private function place(int $id, array $before, array $after, int|false|null $parent): bool
     {
-        for ($i = $from + $step; isset($members[$i]); $i += $step) {
-            if ($members[$i]['inPlace']) {
-                return $members[$i]['id'];
+        foreach ([[$before, true], [$after, false]] as [$anchors, $isAfter]) {
+            foreach ($anchors as $anchor) {
+                if ($parent === false || $this->elements->parentInStructure($anchor) === $parent) {
+                    return $this->elements->moveInStructure($id, $anchor, $isAfter);
+                }
             }
         }
 
-        return null;
+        return $parent !== false && $this->elements->placeInStructure($id, $parent, $before === []);
+    }
+
+    /**
+     * @param list<array{uid: string, id: int, inPlace: bool}> $members
+     * @return list<int> the placed siblings from `$from` in the direction of `$step`, nearest first
+     */
+    private function placedSiblings(array $members, int $from, int $step): array
+    {
+        $ids = [];
+
+        for ($i = $from + $step; isset($members[$i]); $i += $step) {
+            if ($members[$i]['inPlace']) {
+                $ids[] = $members[$i]['id'];
+            }
+        }
+
+        return $ids;
+    }
+
+    /** @return int|false|null the parent's entry id, null for the root, false when it never loaded */
+    private function intendedParent(?string $uid): int|false|null
+    {
+        return $uid === null ? null : ($this->refs->resolve($uid) ?? false);
     }
 
     private function isPlaced(string $uid): bool

@@ -58,4 +58,14 @@ trait ConstructsNoElements
     {
         return false;
     }
+
+    public function placeInStructure(int $entryId, ?int $parentId, bool $first): bool
+    {
+        return false;
+    }
+
+    public function parentInStructure(int $entryId): ?int
+    {
+        return null;
+    }
 }

@@ -452,6 +452,16 @@ final class EntryMigrationServiceSaveTest extends TestCase
             {
                 return $this->inner->moveInStructure($entryId, $siblingId, $after);
             }
+
+            public function placeInStructure(int $entryId, ?int $parentId, bool $first): bool
+            {
+                return $this->inner->placeInStructure($entryId, $parentId, $first);
+            }
+
+            public function parentInStructure(int $entryId): ?int
+            {
+                return $this->inner->parentInStructure($entryId);
+            }
         };
 
         try {
