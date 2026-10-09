@@ -14,6 +14,10 @@ use Lameco\Kunstmaanmigrator\load\MigrationStateService;
  * things — resolve, record, read a row, update its meta — so those four are
  * all this answers.
  *
+ * A row's `meta` is held as MySQL hands it back — a JSON string — and read
+ * through the real `get()`, so a caller that forgets the column is JSON fails
+ * here rather than on a second run against a real database.
+ *
  * @internal
  */
 final class InMemoryMigrationState extends MigrationStateService
@@ -21,7 +25,7 @@ final class InMemoryMigrationState extends MigrationStateService
     /** @var array<string, int> */
     private array $targets = [];
 
-    /** @var array<string, array<string, mixed>> the row as `get()` returns it */
+    /** @var array<string, array<string, mixed>> the row as the database returns it, `meta` a JSON string */
     private array $rows = [];
 
     /** @var list<array{source: string, key: string, targetType: string, targetId: int, meta: array<string, mixed>|null}> */
@@ -34,8 +38,14 @@ final class InMemoryMigrationState extends MigrationStateService
             'source' => $source,
             'sourceKey' => $key,
             'targetId' => $targetId,
-            'meta' => $meta,
+            'meta' => self::stored($meta),
         ];
+    }
+
+    /** @param array<string, mixed>|null $meta */
+    private static function stored(?array $meta): ?string
+    {
+        return $meta === null ? null : json_encode($meta, JSON_THROW_ON_ERROR);
     }
 
     public function getTargetId(string $source, string $key, ?int $siteId = null): ?int
@@ -43,7 +53,7 @@ final class InMemoryMigrationState extends MigrationStateService
         return $this->targets[$source . '|' . $key] ?? null;
     }
 
-    public function get(string $source, string $key, ?int $siteId = null): ?array
+    protected function fetchRow(string $source, string $key, ?int $siteId): ?array
     {
         return $this->rows[$source . '|' . $key] ?? null;
     }
@@ -64,7 +74,7 @@ final class InMemoryMigrationState extends MigrationStateService
             'targetType' => $targetType,
             'targetId' => $targetId,
             'targetUid' => $targetUid,
-            'meta' => $meta ?? ($this->rows[$source . '|' . $key]['meta'] ?? null),
+            'meta' => $meta !== null ? self::stored($meta) : ($this->rows[$source . '|' . $key]['meta'] ?? null),
         ];
         $this->recorded[] = compact('source', 'key', 'targetType', 'targetId', 'meta');
     }
@@ -80,8 +90,8 @@ final class InMemoryMigrationState extends MigrationStateService
             return;
         }
 
-        $current = $this->rows[$source . '|' . $key]['meta'] ?? [];
-        $this->rows[$source . '|' . $key]['meta'] = array_merge(is_array($current) ? $current : [], $meta);
+        $current = self::decodeMeta($this->rows[$source . '|' . $key]['meta'] ?? null) ?? [];
+        $this->rows[$source . '|' . $key]['meta'] = self::stored(array_merge($current, $meta));
     }
 
     public function targetIds(string $targetType): Generator
@@ -102,9 +112,7 @@ final class InMemoryMigrationState extends MigrationStateService
     /** @return array<string, mixed>|null the meta a row carries, as the next run would read it */
     public function metaOf(string $source, string $key): ?array
     {
-        $meta = $this->rows[$source . '|' . $key]['meta'] ?? null;
-
-        return is_array($meta) ? $meta : null;
+        return self::decodeMeta($this->rows[$source . '|' . $key]['meta'] ?? null);
     }
 
     /** @return list<int> */

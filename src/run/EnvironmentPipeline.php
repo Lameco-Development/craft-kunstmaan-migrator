@@ -192,7 +192,7 @@ final class EnvironmentPipeline
             });
 
             if (!$settings->entriesOnly) {
-                $tally->adapters[$env] = $this->runAdapters($context, $settings);
+                $tally->absorbAdapters($env, $this->runAdapters($context, $settings));
             }
         });
     }

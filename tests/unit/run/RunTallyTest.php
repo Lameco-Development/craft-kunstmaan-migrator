@@ -251,4 +251,32 @@ final class RunTallyTest extends TestCase
         self::assertSame(['newsPage'], $settings->only);
         self::assertNull($settings->dumpDir);
     }
+
+    /**
+     * Berkvens FR's re-run: every submission group refused, `submissionsFailed: 794`
+     * in the forms adapter's counts, and the run exited 0 with `problems: []`. Submissions
+     * that could not be written are a run failure, not a number in a nested block.
+     */
+    public function testAdapterSubmissionFailuresAreARunFailureAndAProblem(): void
+    {
+        $tally = new RunTally();
+        $tally->absorbAdapters('FR', [
+            'seo' => ['counts' => ['updated' => 61], 'failures' => 0, 'warnings' => []],
+            'forms' => ['counts' => ['submissionsCompiled' => 794, 'submissionsFailed' => 794], 'failures' => 0, 'warnings' => []],
+        ]);
+
+        self::assertSame(794, $tally->counts['submissionsFailed']);
+        self::assertTrue($tally->hasFailures());
+        self::assertSame(['FR: forms: 794 form submissions failed to save; see adapters.FR.forms.warnings'], $tally->problems);
+        self::assertSame(794, $tally->adapters['FR']['forms']['counts']['submissionsFailed'], 'the adapter block is reported as before');
+    }
+
+    public function testAdaptersThatWroteEverythingLeaveTheRunClean(): void
+    {
+        $tally = new RunTally();
+        $tally->absorbAdapters('FR', ['forms' => ['counts' => ['submissionsCreated' => 794], 'failures' => 0, 'warnings' => []]]);
+
+        self::assertFalse($tally->hasFailures());
+        self::assertSame([], $tally->problems);
+    }
 }

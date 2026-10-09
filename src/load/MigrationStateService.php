@@ -59,14 +59,63 @@ class MigrationStateService extends Component implements MigrationStateReader, M
             ->exists($this->db());
     }
 
-    /** @return array<string, mixed>|null */
+    /**
+     * The row, with `meta` decoded to an array (or null).
+     *
+     * MySQL hands the JSON column back as a string, and every caller that tested
+     * `is_array($row['meta'])` instead of decoding read a written row as having no
+     * meta: the submissions pass refused every form group it had written itself.
+     * Decoded once, here, so no caller has to remember.
+     *
+     * @return array<string, mixed>|null
+     */
     public function get(string $source, string $key, ?int $siteId = null): ?array
+    {
+        $row = $this->fetchRow($source, $key, $siteId);
+
+        return $row === null ? null : self::decodedRow($row);
+    }
+
+    /**
+     * The raw row, as the database returns it. Overridable so a test can hand back
+     * what MySQL does — `meta` as a JSON string — without a booted Craft.
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function fetchRow(string $source, string $key, ?int $siteId): ?array
     {
         $row = (new Query())
             ->from($this->table())
             ->where($this->keyCondition($source, $key, $siteId))
             ->one($this->db());
+
         return $row ?: null;
+    }
+
+    /**
+     * A state row with its `meta` decoded: an array, or null when there is none or
+     * it does not decode to one.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    public static function decodedRow(array $row): array
+    {
+        if (array_key_exists('meta', $row)) {
+            $row['meta'] = self::decodeMeta($row['meta']);
+        }
+
+        return $row;
+    }
+
+    /** @return array<string, mixed>|null */
+    public static function decodeMeta(mixed $meta): ?array
+    {
+        if (is_string($meta) && $meta !== '') {
+            $meta = json_decode($meta, true);
+        }
+
+        return is_array($meta) ? $meta : null;
     }
 
     public function getTargetId(string $source, string $key, ?int $siteId = null): ?int
@@ -202,8 +251,9 @@ class MigrationStateService extends Component implements MigrationStateReader, M
     ): void {
         $now = Db::prepareDateForDb(new DateTime());
 
-        // Meta column is MySQL JSON; Yii's ColumnSchema auto-encodes arrays on
-        // write and auto-decodes on read — pass the array straight through.
+        // Meta column is MySQL JSON; Yii's ColumnSchema encodes arrays on write. It does
+        // not decode on read — `get()` does — so `$existing['meta']` is an array here. A
+        // string written back would be stored as a JSON string literal.
         if ($existing) {
             $this->db()->createCommand()->update(
                 $this->table(),
@@ -260,20 +310,8 @@ class MigrationStateService extends Component implements MigrationStateReader, M
             return;
         }
 
-        // Yii's MySQL driver returns JSON columns already decoded to arrays,
-        // but be defensive in case a row was written by a different path.
-        $currentMeta = [];
-        if (!empty($existing['meta'])) {
-            if (is_array($existing['meta'])) {
-                $currentMeta = $existing['meta'];
-            } else {
-                $decoded = json_decode((string) $existing['meta'], true);
-                if (is_array($decoded)) {
-                    $currentMeta = $decoded;
-                }
-            }
-        }
-        $merged = array_merge($currentMeta, $meta);
+        // `get()` has decoded it.
+        $merged = array_merge($existing['meta'] ?? [], $meta);
 
         $this->db()->createCommand()->update(
             $this->table(),
@@ -449,7 +487,7 @@ class MigrationStateService extends Component implements MigrationStateReader, M
         )->query();
         try {
             foreach ($reader as $row) {
-                yield $row;
+                yield self::decodedRow($row);
             }
         } finally {
             $reader->close();
@@ -474,7 +512,7 @@ class MigrationStateService extends Component implements MigrationStateReader, M
         )->query();
         try {
             foreach ($reader as $row) {
-                yield $row;
+                yield self::decodedRow($row);
             }
         } finally {
             $reader->close();
