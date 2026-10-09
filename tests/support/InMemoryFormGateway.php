@@ -32,6 +32,9 @@ final class InMemoryFormGateway implements FormGateway
     /** @var list<string> basenames whose copy fails, the way an unreadable file does */
     public array $failUploads = [];
 
+    /** When set, saveForm() throws with this message, as Formie does on a broken layout. */
+    public ?string $throwOnForm = null;
+
     /** When set, saveSubmission() throws with this message — as a driver error carrying bound values would. */
     public ?string $throwOnSubmission = null;
 
@@ -59,6 +62,10 @@ final class InMemoryFormGateway implements FormGateway
 
     public function saveForm(string $handle, string $title, array $fields, array $settings, array &$warnings, array &$handles = []): ?int
     {
+        if ($this->throwOnForm !== null) {
+            throw new RuntimeException($this->throwOnForm);
+        }
+
         if (in_array($handle, $this->refuse, true)) {
             $warnings[] = sprintf('%s: refused by the test', $handle);
 
