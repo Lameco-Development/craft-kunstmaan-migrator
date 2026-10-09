@@ -8,6 +8,7 @@ use Lameco\Kunstmaanmigrator\Compile\SubmissionCompiler;
 use Lameco\Kunstmaanmigrator\craft\FormGateway;
 use Lameco\Kunstmaanmigrator\Mapping\SubmissionsLane;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
+use Lameco\Kunstmaanmigrator\safety\ProductionGuard;
 use Throwable;
 
 /**
@@ -38,6 +39,13 @@ final class SubmissionMigrationService
      */
     public function migrate(MigrationOptions $opts, EnvironmentContext $context, MigrationReport $report, string $prefix): void
     {
+        // Public and legacy-reading, so it does not lean on a caller having asked.
+        if (ProductionGuard::isProduction()) {
+            $report->warn('Refusing to migrate form submissions against CRAFT_ENVIRONMENT=production.');
+
+            return;
+        }
+
         if ($context->mapping === null || $context->legacy === null) {
             return;
         }
@@ -99,13 +107,13 @@ final class SubmissionMigrationService
             }
 
             $values = [];
-            $files = [];
-            // Files an earlier run already copied in. Handing them over again
-            // would add a second asset per upload; leaving the handle out keeps
-            // the relation the submission already has.
+            // Assets an earlier run already made, by field handle. Copying the
+            // file again would add a second asset per upload; attaching these
+            // keeps one, and restores it on a field that lost it.
             $ingested = $existing === null
                 ? []
-                : (array) ($this->state?->get(self::STATE_SOURCE, $key, null)['meta']['files'] ?? []);
+                : self::recordedAssets($this->state?->get(self::STATE_SOURCE, $key, null)['meta']['files'] ?? null);
+            $files = [];
 
             foreach ((array) $submission['values'] as $part => $answer) {
                 $field = $fieldMap[$part] ?? null;
@@ -124,24 +132,12 @@ final class SubmissionMigrationService
                 }
 
                 if ($answer['kind'] === 'file') {
-                    if (in_array($field['handle'], $ingested, true)) {
-                        continue;
+                    $assetIds = $ingested[$field['handle']] ?? $this->ingestFile($key, $field['handle'], (array) $answer['value'], $lane, $report);
+
+                    if ($assetIds !== []) {
+                        $values[$field['handle']] = $assetIds;
+                        $files[$field['handle']] = $assetIds;
                     }
-
-                    $path = $this->legacyFile((array) $answer['value'], $lane->filesRoot);
-
-                    if ($path === null) {
-                        $report->incr('submissionFilesMissing');
-                        $report->warn(sprintf(
-                            '%s: uploaded file %s is not under the files root; the submission lands without it.',
-                            $key,
-                            $answer['value']['url'] ?? $answer['value']['name'] ?? '?',
-                        ));
-
-                        continue;
-                    }
-
-                    $files[$field['handle']][] = $path;
 
                     continue;
                 }
@@ -161,16 +157,13 @@ final class SubmissionMigrationService
                 'ipAddress' => (string) $submission['ip'] !== '' ? (string) $submission['ip'] : null,
             ];
 
-            if ($files !== []) {
-                $payload['files'] = $files;
-                $payload['uploadVolume'] = $lane->volume;
-            }
-
             try {
                 $id = $this->forms->saveSubmission($existing, $formId, $payload, $warnings);
             } catch (Throwable $e) {
                 $id = null;
-                $warnings[] = $e->getMessage();
+                // A driver error echoes the values it was bound — an applicant's
+                // name, address, message — so the report says what kind, not what.
+                $warnings[] = sprintf('%s while saving; its message is withheld because it can carry submission content.', $e::class);
             }
 
             foreach ($warnings as $warning) {
@@ -193,7 +186,8 @@ final class SubmissionMigrationService
                 [
                     'form' => $group['formUid'],
                     'node' => $group['node'],
-                    'files' => array_values(array_unique([...$ingested, ...array_keys($files)])),
+                    // Only a file that became an asset: one that failed is tried again.
+                    'files' => $files + $ingested,
                 ],
             );
             $report->incr($existing === null ? 'submissionsCreated' : 'submissionsUpdated');
@@ -326,19 +320,84 @@ final class SubmissionMigrationService
     }
 
     /**
+     * One answered upload copied into the lane's volume, as the asset ids it
+     * became — none when it cannot be, reported by state key and field handle.
+     *
+     * @param array{name?: ?string, url?: ?string} $file
+     * @return list<int>
+     */
+    private function ingestFile(string $key, string $handle, array $file, SubmissionsLane $lane, MigrationReport $report): array
+    {
+        $path = self::legacyFile($file, $lane->filesRoot);
+
+        if ($path === null) {
+            $report->incr('submissionFilesMissing');
+            $report->warn(sprintf('%s: %s: the uploaded file is not under the files root; the submission lands without it.', $key, $handle));
+
+            return [];
+        }
+
+        if ($lane->volume === null) {
+            $report->incr('submissionFilesMissing');
+            $report->warn(sprintf('%s: %s: forms.submissions declares no volume; the submission lands without its file.', $key, $handle));
+
+            return [];
+        }
+
+        $warnings = [];
+        $assetId = $this->forms->ingestUpload($path, $lane->volume, $warnings);
+
+        foreach ($warnings as $warning) {
+            $report->warn(sprintf('%s: %s: %s', $key, $handle, $warning));
+        }
+
+        if ($assetId === null) {
+            $report->incr('submissionFilesFailed');
+
+            return [];
+        }
+
+        return [$assetId];
+    }
+
+    /**
+     * The assets a state row says an earlier run made, by field handle.
+     *
+     * @return array<string, list<int>>
+     */
+    private static function recordedAssets(mixed $files): array
+    {
+        $out = [];
+
+        foreach (is_array($files) ? $files : [] as $handle => $ids) {
+            $ids = is_array($ids) ? array_values(array_filter($ids, 'is_int')) : [];
+
+            if (is_string($handle) && $ids !== []) {
+                $out[$handle] = $ids;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * Where a legacy upload is on disk: its stored url under the files root, or
      * — an upload from before Kunstmaan stored one — its name under
      * `uploads/formsubmissions`.
      *
+     * Only ever under the root. The url is what the legacy site stored, and a
+     * `../` in it must not reach a file the migration was never pointed at.
+     *
      * @param array{name?: ?string, url?: ?string} $file
      */
-    private function legacyFile(array $file, ?string $root): ?string
+    private static function legacyFile(array $file, ?string $root): ?string
     {
-        if ($root === null) {
+        $root = $root === null ? false : realpath($root);
+
+        if ($root === false) {
             return null;
         }
 
-        $root = rtrim($root, '/');
         $candidates = [];
 
         if (($file['url'] ?? null) !== null && $file['url'] !== '') {
@@ -349,8 +408,10 @@ final class SubmissionMigrationService
             $candidates[] = $root . '/uploads/formsubmissions/' . basename((string) $file['name']);
         }
 
-        foreach ($candidates as $path) {
-            if (is_file($path)) {
+        foreach ($candidates as $candidate) {
+            $path = realpath($candidate);
+
+            if ($path !== false && is_file($path) && str_starts_with($path, rtrim($root, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR)) {
                 return $path;
             }
         }

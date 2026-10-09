@@ -438,8 +438,12 @@ have used, built from what its submissions answered and scheduled closed so it t
 no new leads. The legacy `created` date, IP and site are kept; an empty submission is
 skipped and counted; a value whose part has no field, or a file not found under
 `filesRoot`, is reported and the rest of the submission still lands. State keys are
-`<ENV>:kuma_form_submission:<id>`, so a re-run skips and `--force` updates in place.
-Saving never sends a notification or runs an integration.
+`<ENV>:kuma_form_submission:<id>`, so a re-run skips and `--force` updates in place —
+reattaching the asset an earlier run copied in rather than copying the file again, and
+retrying one whose copy failed. Re-saving a form keeps the fields whose handle and type
+still match, so the values stored under them survive. Saving never sends a notification
+or runs an integration, and the run report names a submission by its state key and a
+field by its handle — never an applicant's name, address or file name.
 
 Three more that come up on every project, and are decisions rather than absences:
 

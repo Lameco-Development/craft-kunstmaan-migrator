@@ -90,6 +90,18 @@ final class VerbbFormieGateway implements FormGateway
         $form->handle = $handle;
         $form->title = $title !== '' ? $title : $handle;
 
+        // Formie files a submission's content under each field's uid. A re-save
+        // that built every field anew gave each a new uid and orphaned every
+        // value already stored, so a field whose handle and type still match is
+        // updated in place — its id, and so its uid, kept — and the layout it
+        // sits in is the form's own, not a second one.
+        $layout = $form->id ? $form->getFormLayout() : new FormLayout();
+        $previous = [];
+
+        foreach ($layout->getFields() as $field) {
+            $previous[$field->handle] = $field;
+        }
+
         $built = [];
         $refs = [];
 
@@ -109,8 +121,11 @@ final class VerbbFormieGateway implements FormGateway
             }
 
             try {
-                $field = new $class();
-                $field->handle = $this->fieldHandle($spec, $index, $built);
+                $fieldHandle = $this->fieldHandle($spec, $index, $built);
+                $field = isset($previous[$fieldHandle]) && $previous[$fieldHandle]::class === $class
+                    ? $previous[$fieldHandle]
+                    : new $class();
+                $field->handle = $fieldHandle;
                 // A legacy hidden field carries a name and no label. "Field 7"
                 // tells an editor nothing; `enreachGtm` at least says what it is.
                 $field->label = (string) ($spec['label'] ?? '')
@@ -156,8 +171,10 @@ final class VerbbFormieGateway implements FormGateway
         // One page, one row per field. The legacy Row/Col brackets describe a
         // two-column layout that Formie can express, but reproducing it wrongly
         // is worse than a single column an editor can rearrange in a minute.
-        $page = new FieldLayoutPage();
+        $pages = $layout->getPages();
+        $page = $pages[0] ?? new FieldLayoutPage();
         $page->label = (string) ($settings['pageLabel'] ?? 'Page 1');
+        $oldRows = $page->getRows();
         $page->setRows(array_map(static function($field): FieldLayoutRow {
             $row = new FieldLayoutRow();
             $row->setFields([$field]);
@@ -165,7 +182,21 @@ final class VerbbFormieGateway implements FormGateway
             return $row;
         }, array_values($built)));
 
-        $layout = new FormLayout();
+        // What the rebuilt layout no longer holds, for Formie to delete once
+        // the rest has saved: the old rows, any other page, and a field that
+        // went or changed type.
+        $kept = array_map(static fn($field): ?int => $field->id, $built);
+        $layout->setDeletedItems([
+            'fields' => array_values(array_filter(
+                array_map(static fn($field): ?int => $field->id, $previous),
+                static fn(?int $id): bool => $id !== null && !in_array($id, $kept, true),
+            )),
+            'rows' => array_values(array_filter(array_map(static fn($row): ?int => $row->id, [
+                ...$oldRows,
+                ...array_merge(...array_map(static fn($other): array => $other->getRows(), array_slice($pages, 1))),
+            ]))),
+            'pages' => array_values(array_filter(array_map(static fn($other): ?int => $other->id, array_slice($pages, 1)))),
+        ]);
         $layout->setPages([$page]);
         $form->setFormLayout($layout);
 
@@ -178,7 +209,12 @@ final class VerbbFormieGateway implements FormGateway
         // An archive form holds a deleted page's submissions and is placed
         // nowhere. Scheduled to have closed already, so that if someone does
         // place it, Formie shows its expired message rather than taking leads
-        // into a form nobody reads.
+        // into a form nobody reads. The schedule is also what refuses a posted
+        // submission: SubmissionsController::actionSubmit() validates it, and
+        // Submission::validate() fails an expired form. `enabled = false` would
+        // do nothing — Form has no statuses, so _getForm() finds it regardless.
+        // The CP is exempt from the schedule, so the form and its submissions
+        // stay readable there.
         if (!empty($settings['archived'])) {
             $form->settings->scheduleForm = true;
             $form->settings->scheduleFormStart = null;
@@ -230,7 +266,16 @@ final class VerbbFormieGateway implements FormGateway
             return null;
         }
 
-        $existing = $existingId === null ? null : Submission::find()->id($existingId)->status(null)->one();
+        // Every site, status, and spam or incomplete flag: a migrated lead filed
+        // on a non-primary site, or one an editor has since marked as spam, is
+        // still the one to update — not missing, and not to be written twice.
+        $existing = $existingId === null ? null : Submission::find()
+            ->id($existingId)
+            ->siteId('*')
+            ->status(null)
+            ->isIncomplete(null)
+            ->isSpam(null)
+            ->one();
         $record = $existing ?? new Submission();
         $record->setForm($form);
 
@@ -253,23 +298,7 @@ final class VerbbFormieGateway implements FormGateway
             $record->statusId = $form->getDefaultStatus()?->id;
         }
 
-        $values = $submission['values'];
-
-        foreach ($submission['files'] ?? [] as $fieldHandle => $paths) {
-            $ids = [];
-
-            foreach ($paths as $path) {
-                $assetId = $this->ingestUpload((string) $path, $submission['uploadVolume'] ?? null, $warnings);
-
-                if ($assetId !== null) {
-                    $ids[] = $assetId;
-                }
-            }
-
-            $values[$fieldHandle] = $ids;
-        }
-
-        foreach ($values as $fieldHandle => $value) {
+        foreach ($submission['values'] as $fieldHandle => $value) {
             if ($form->getFieldByHandle((string) $fieldHandle) === null) {
                 $warnings[] = sprintf('form %s has no field "%s"; value not written.', $form->handle, $fieldHandle);
 
@@ -282,7 +311,8 @@ final class VerbbFormieGateway implements FormGateway
         // Archival data is what it is: a field that was optional in 2016 and
         // required now must not refuse the 2016 lead.
         if (!Craft::$app->getElements()->saveElement($record, false)) {
-            $warnings[] = sprintf('form %s: Formie refused a submission — %s', $form->handle, implode('; ', $record->getErrorSummary(true)) ?: 'no reason given');
+            // The attributes, not the messages: a message can quote the value.
+            $warnings[] = sprintf('form %s: Formie refused the submission (%s).', $form->handle, implode(', ', array_keys($record->getErrors())) ?: 'no reason given');
 
             return null;
         }
@@ -290,13 +320,24 @@ final class VerbbFormieGateway implements FormGateway
         return (int) $record->id;
     }
 
-    /** A legacy upload copied into the volume, or null (with a warning) when it cannot be. */
-    private function ingestUpload(string $path, ?string $volumeHandle, array &$warnings): ?int
+    /**
+     * Not AssetMigrationService's ingest: that one places legacy *media* in the
+     * public volumes, unsanitised because it is the client's own artwork, and
+     * shares one asset per file across environments. An applicant's CV is an
+     * untrusted upload bound for a private volume, one asset per submission.
+     */
+    public function ingestUpload(string $path, string $volumeHandle, array &$warnings): ?int
     {
-        $volume = $volumeHandle === null ? null : Craft::$app->getVolumes()->getVolumeByHandle($volumeHandle);
+        if (!$this->isAvailable()) {
+            $warnings[] = 'formie is not installed; the upload was not copied.';
+
+            return null;
+        }
+
+        $volume = Craft::$app->getVolumes()->getVolumeByHandle($volumeHandle);
 
         if ($volume === null) {
-            $warnings[] = sprintf('no upload volume "%s"; %s not migrated.', (string) $volumeHandle, basename($path));
+            $warnings[] = sprintf('no upload volume "%s"; the upload was not copied.', $volumeHandle);
 
             return null;
         }
@@ -304,7 +345,7 @@ final class VerbbFormieGateway implements FormGateway
         $temp = Craft::$app->getPath()->getTempPath() . DIRECTORY_SEPARATOR . uniqid('kuma-upload-', true) . '-' . basename($path);
 
         if (!@copy($path, $temp)) {
-            $warnings[] = sprintf('could not copy %s.', $path);
+            $warnings[] = 'could not copy the upload.';
 
             return null;
         }
@@ -318,7 +359,8 @@ final class VerbbFormieGateway implements FormGateway
         $asset->setScenario(Asset::SCENARIO_CREATE);
 
         if (!Craft::$app->getElements()->saveElement($asset)) {
-            $warnings[] = sprintf('%s: %s', basename($path), implode('; ', $asset->getErrorSummary(true)));
+            // Craft's messages name the file; the attributes do not.
+            $warnings[] = sprintf('Craft refused the upload as an asset (%s).', implode(', ', array_keys($asset->getErrors())) ?: 'no reason given');
 
             return null;
         }

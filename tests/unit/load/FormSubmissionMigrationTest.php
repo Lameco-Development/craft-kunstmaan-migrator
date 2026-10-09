@@ -32,6 +32,16 @@ final class FormSubmissionMigrationTest extends TestCase
     private SubmissionMigrationService $service;
     private string $filesRoot;
 
+    /** Where the 2024 CV upload says it is, relative to the files root. */
+    private string $cvUrl = '/uploads/formsubmissions/abc/cv.pdf';
+
+    /** The legacy locale every submission was made in. */
+    private string $lang = 'nl';
+
+    private bool $hadEnvironment = false;
+
+    private ?string $environment = null;
+
     protected function setUp(): void
     {
         $this->gateway = new InMemoryFormGateway();
@@ -41,31 +51,45 @@ final class FormSubmissionMigrationTest extends TestCase
         $this->filesRoot = sys_get_temp_dir() . '/kuma-submissions-' . uniqid();
         mkdir($this->filesRoot . '/uploads/formsubmissions/abc', 0777, true);
         file_put_contents($this->filesRoot . '/uploads/formsubmissions/abc/cv.pdf', '%PDF');
+
+        $this->hadEnvironment = array_key_exists('CRAFT_ENVIRONMENT', $_SERVER);
+        $this->environment = $_SERVER['CRAFT_ENVIRONMENT'] ?? null;
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->hadEnvironment) {
+            $_SERVER['CRAFT_ENVIRONMENT'] = $this->environment;
+        } else {
+            unset($_SERVER['CRAFT_ENVIRONMENT']);
+        }
     }
 
     /** What the forms lane leaves behind for node 222: the form, and which handle each part became. */
     private function laneWroteTheVacancyForm(): int
     {
         $warnings = [];
-        $id = (int) $this->gateway->saveForm('kumaNlVacancyformpage75', 'Solliciteren', [], [], $warnings);
+        $handles = [];
+        $id = (int) $this->gateway->saveForm('kumaNlVacancyformpage75', 'Solliciteren', [
+            ['type' => 'dropdown', 'label' => 'Aanhef', 'handle' => 'aanhef', 'required' => false, 'settings' => [], 'partRef' => 'Choice:66'],
+            ['type' => 'singleLineText', 'label' => 'Voornaam', 'handle' => 'voornaam', 'required' => true, 'settings' => [], 'partRef' => 'SingleLineText:198'],
+            ['type' => 'fileUpload', 'label' => 'Upload je CV', 'handle' => 'uploadCv', 'required' => false, 'settings' => [], 'partRef' => 'FileUpload:1'],
+        ], [], $warnings, $handles);
         $this->state->record('form', self::LANE_FORM, 'formie_form', $id, null, null, [
             'handle' => 'kumaNlVacancyformpage75',
-            'fieldMap' => [
-                'Choice:66' => ['handle' => 'aanhef', 'type' => 'dropdown'],
-                'SingleLineText:198' => ['handle' => 'voornaam', 'type' => 'singleLineText'],
-                'FileUpload:1' => ['handle' => 'uploadCv', 'type' => 'fileUpload'],
-            ],
+            'fieldMap' => $handles,
         ]);
 
         return $id;
     }
 
-    private function context(string $submissions = 'nodes: all'): EnvironmentContext
+    private function context(string $submissions = 'nodes: all', string $env = 'NL'): EnvironmentContext
     {
+        $site = $env === 'FR' ? 'berkvensFr' : 'berkvensNl';
         $yaml = <<<YAML
             version: 1
             environments:
-              NL: { database: legacy, locales: { nl: berkvensNl } }
+              $env: { database: legacy, locales: { {$this->lang}: $site } }
             forms:
               context: main
               fields:
@@ -77,14 +101,14 @@ final class FormSubmissionMigrationTest extends TestCase
             YAML;
         $path = tempnam(sys_get_temp_dir(), 'kuma') . '.yaml';
         file_put_contents($path, $yaml);
-        $base = EnvironmentFactory::make('NL', ['nl' => 'berkvensNl'], ['berkvensNl' => [1, 'nl-NL', true]]);
+        $base = EnvironmentFactory::make($env, [$this->lang => $site], ['berkvensNl' => [1, 'nl-NL', true], 'berkvensFr' => [2, 'fr-FR']]);
 
         return new EnvironmentContext(
-            name: 'NL',
+            name: $env,
             database: 'legacy',
             sites: $base->sites,
             mapping: Mapping::fromFile($path),
-            legacy: new LegacyDatabase($this->db(), 'NL', 'legacy'),
+            legacy: new LegacyDatabase($this->db(), $env, 'legacy'),
         );
     }
 
@@ -107,12 +131,12 @@ final class FormSubmissionMigrationTest extends TestCase
                     (11, 21, 'App\\\\Entity\\\\Pages\\\\VacancyFormPage', 75),
                     (12, 22, 'App\\\\Entity\\\\Pages\\\\FormPage', 40)");
         $pdo->exec("INSERT INTO kuma_node_translations VALUES
-                    (21, 222, 'nl', 'Solliciteren', 1, 11),
-                    (22, 131, 'nl', 'Contact', 1, 12)");
+                    (21, 222, '{$this->lang}', 'Solliciteren', 1, 11),
+                    (22, 131, '{$this->lang}', 'Contact', 1, 12)");
         $pdo->exec("INSERT INTO kuma_form_submissions VALUES
-                    (1, 222, '10.0.0.1', 'nl', '2017-05-24 11:22:49'),
-                    (2, 222, '10.0.0.2', 'nl', '2024-09-04 12:06:47'),
-                    (3, 131, '10.0.0.3', 'nl', '2016-04-06 12:44:41')");
+                    (1, 222, '10.0.0.1', '{$this->lang}', '2017-05-24 11:22:49'),
+                    (2, 222, '10.0.0.2', '{$this->lang}', '2024-09-04 12:06:47'),
+                    (3, 131, '10.0.0.3', '{$this->lang}', '2016-04-06 12:44:41')");
 
         $prefix = 'field_KunstmaanFormBundleEntityPageParts';
         $dhr = 'a:2:{i:0;s:4:"Dhr.";i:1;s:5:"Mevr.";}';
@@ -127,7 +151,7 @@ final class FormSubmissionMigrationTest extends TestCase
             [12, 1, 'FileUploadPagePart1', 'Upload je CV', 'file', null, null, null, null, null, 'cv.docx', null, null, null],
             [20, 2, 'SingleLineTextPagePart198', 'Voornaam', 'stringformsubmissionfield', 'Piet', null, null, null, null, null, null, 1, null],
             [21, 2, 'EmailPagePart36', 'E-mailadres', 'emailformsubmissionfield', null, null, null, null, null, null, 'piet@example.nl', 2, null],
-            [22, 2, 'FileUploadPagePart1', 'Upload CV', 'fileformsubmissionfield', null, null, null, null, null, 'cv.pdf', null, 3, '/uploads/formsubmissions/abc/cv.pdf'],
+            [22, 2, 'FileUploadPagePart1', 'Upload CV', 'fileformsubmissionfield', null, null, null, null, null, 'cv.pdf', null, 3, $this->cvUrl],
             [30, 3, 'SingleLineTextPagePart121', 'Naam', 'string', 'Klaas', null, null, null, null, null, null, null, null],
             [31, 3, 'MultiLineTextPagePart44', 'Uw vraag', 'text', null, 'Hoe laat?', null, null, null, null, null, null, null],
             [32, 3, 'ChoicePagePart9', 'Markt', 'choice', null, null, 'a:2:{i:0;i:0;i:1;i:2;}', 0, $markt, null, null, null, null],
@@ -139,12 +163,20 @@ final class FormSubmissionMigrationTest extends TestCase
         return $pdo;
     }
 
-    private function migrate(?MigrationOptions $opts = null, string $submissions = 'nodes: all'): MigrationReport
+    private function migrate(?MigrationOptions $opts = null, string $submissions = 'nodes: all', string $env = 'NL'): MigrationReport
     {
         $report = new MigrationReport();
-        $this->service->migrate($opts ?? new MigrationOptions(), $this->context($submissions), $report, 'kuma');
+        $this->service->migrate($opts ?? new MigrationOptions(), $this->context($submissions, $env), $report, 'kuma');
 
         return $report;
+    }
+
+    private function submissionId(int $legacyId, string $env = 'NL'): int
+    {
+        $id = $this->state->getTargetId('form_submission', $env . ':kuma_form_submission:' . $legacyId);
+        self::assertNotNull($id, "legacy submission $legacyId was not recorded");
+
+        return $id;
     }
 
     /** @return array<string, mixed> the submission written for a legacy id */
@@ -199,16 +231,14 @@ final class FormSubmissionMigrationTest extends TestCase
     }
 
     #[Test]
-    public function an_uploaded_file_is_handed_over_from_under_the_files_root_into_the_volume(): void
+    public function an_uploaded_file_is_copied_in_from_under_the_files_root_and_lands_as_its_asset(): void
     {
         $this->laneWroteTheVacancyForm();
 
         $this->migrate(submissions: 'nodes: [222]');
 
-        $submission = $this->written(2);
-        self::assertSame(['uploadCv' => [$this->filesRoot . '/uploads/formsubmissions/abc/cv.pdf']], $submission['files']);
-        self::assertSame('formieUploads', $submission['uploadVolume']);
-        self::assertArrayNotHasKey('uploadCv', $submission['values']);
+        self::assertSame([7000 => realpath($this->filesRoot . '/uploads/formsubmissions/abc/cv.pdf')], $this->gateway->uploads);
+        self::assertSame([7000], $this->written(2)['values']['uploadCv']);
     }
 
     /** The 2017 upload has a name and no url; nothing on disk answers it, so the lead lands without it. */
@@ -219,9 +249,9 @@ final class FormSubmissionMigrationTest extends TestCase
 
         $report = $this->migrate(submissions: 'nodes: [222]');
 
-        self::assertSame([], $this->written(1)['files'] ?? []);
+        self::assertArrayNotHasKey('uploadCv', $this->written(1)['values']);
         self::assertSame(1, $report->counts['submissionFilesMissing'] ?? 0);
-        self::assertStringContainsString('cv.docx', implode("\n", $report->warnings));
+        self::assertStringContainsString('NL:kuma_form_submission:1: uploadCv', implode("\n", $report->warnings));
     }
 
     /**
@@ -283,20 +313,131 @@ final class FormSubmissionMigrationTest extends TestCase
     }
 
     /**
-     * The gateway copies a file in as a new asset every time it is handed one.
-     * A forced re-run that handed the CV over again would leave `cv_1.pdf`,
-     * `cv_2.pdf`… in the private volume; the asset already on the submission stays.
+     * The gateway copies a file in as a new asset every time it is asked to.
+     * A forced re-run that copied the CV again would leave `cv_1.pdf`,
+     * `cv_2.pdf`… in the private volume; instead the asset the first run made
+     * is attached again, which also restores it on a form whose field was rebuilt.
      */
     #[Test]
-    public function force_does_not_hand_an_already_migrated_file_over_again(): void
+    public function force_attaches_the_asset_an_earlier_run_made_rather_than_copying_again(): void
     {
         $this->laneWroteTheVacancyForm();
         $this->migrate();
 
         $this->migrate(new MigrationOptions(force: true));
 
-        self::assertArrayNotHasKey('files', $this->written(2));
+        self::assertCount(1, $this->gateway->uploads);
+        self::assertSame([7000], $this->written(2)['values']['uploadCv']);
         self::assertSame('Piet', $this->written(2)['values']['voornaam']);
+    }
+
+    /** A copy that failed recorded no asset, so the next forced run tries it again. */
+    #[Test]
+    public function force_retries_a_file_whose_copy_failed(): void
+    {
+        $this->laneWroteTheVacancyForm();
+        $this->gateway->failUploads = ['cv.pdf'];
+        $this->migrate();
+        self::assertSame([], $this->gateway->uploads);
+
+        $this->gateway->failUploads = [];
+        $this->migrate(new MigrationOptions(force: true));
+
+        self::assertCount(1, $this->gateway->uploads);
+        self::assertSame([7000], $this->written(2)['values']['uploadCv']);
+    }
+
+    /**
+     * Formie files a submission's content under each field's uid. The forms
+     * lane re-saves a form on `--force`; were its fields rebuilt with new uids,
+     * every migrated lead on it would open empty.
+     */
+    #[Test]
+    public function re_saving_a_form_leaves_the_values_its_submissions_hold(): void
+    {
+        $this->migrate(submissions: 'nodes: [131]');
+        $form = $this->gateway->saved['kumaNlFormpage40'];
+        $warnings = [];
+
+        $this->gateway->saveForm('kumaNlFormpage40', $form['title'], $form['fields'], $form['settings'], $warnings);
+
+        self::assertSame(
+            ['naam' => 'Klaas', 'uwVraag' => 'Hoe laat?', 'markt' => ['Woningbouw', 'Woonzorg']],
+            $this->gateway->valuesOf($this->submissionId(3)),
+        );
+    }
+
+    /** A url climbing out of the files root is not followed, whatever is out there. */
+    #[Test]
+    public function an_upload_url_outside_the_files_root_is_not_followed(): void
+    {
+        $outside = dirname($this->filesRoot) . '/kuma-outside-' . uniqid() . '.pdf';
+        file_put_contents($outside, '%PDF');
+        $this->cvUrl = '/../' . basename($outside);
+        $this->laneWroteTheVacancyForm();
+
+        $report = $this->migrate(submissions: 'nodes: [222]');
+
+        self::assertSame([], $this->gateway->uploads);
+        self::assertSame(2, $report->counts['submissionFilesMissing'] ?? 0);
+        unlink($outside);
+    }
+
+    /**
+     * A run report is read, pasted and kept. It names the submission by its
+     * state key and the field by its handle; never an applicant's name, address
+     * or file name — not even inside a driver error that echoes bound values.
+     */
+    #[Test]
+    public function the_report_carries_no_personal_data(): void
+    {
+        $this->laneWroteTheVacancyForm();
+        $this->gateway->failUploads = ['cv.pdf'];
+        $report = $this->migrate();
+
+        $this->gateway->throwOnSubmission = "SQLSTATE[22001]: value 'Jan Jansen <piet@example.nl>' too long";
+        $forced = $this->migrate(new MigrationOptions(force: true));
+
+        $text = implode("\n", [...$report->warnings, ...$forced->warnings]);
+        self::assertStringContainsString('NL:kuma_form_submission:2', $text);
+        self::assertStringContainsString('RuntimeException', $text);
+
+        foreach (['cv.pdf', 'cv.docx', 'piet@example.nl', 'Jan Jansen', 'Piet', 'Klaas', '10.0.0.'] as $personal) {
+            self::assertStringNotContainsString($personal, $text);
+        }
+    }
+
+    /**
+     * FR runs with its own `forms.submissions:` block and environment-scoped
+     * state keys, onto Berkvens FR — not the primary site. A forced re-run
+     * finds what it wrote there and updates it in place.
+     */
+    #[Test]
+    public function an_fr_submission_lands_on_the_fr_site_and_force_updates_it_in_place(): void
+    {
+        $this->lang = 'fr';
+        $this->migrate(submissions: 'nodes: [131]', env: 'FR');
+        $id = $this->submissionId(3, 'FR');
+
+        $report = $this->migrate(new MigrationOptions(force: true), 'nodes: [131]', 'FR');
+
+        self::assertArrayHasKey('kumaFrFormpage40', $this->gateway->saved);
+        self::assertSame(2, $this->gateway->submissions[$id]['siteId']);
+        self::assertCount(1, $this->gateway->submissions);
+        self::assertSame(1, $report->counts['submissionsUpdated'] ?? 0);
+    }
+
+    /** The public pass is a legacy-reading, writing path, so it refuses production on its own. */
+    #[Test]
+    public function it_refuses_to_run_in_production(): void
+    {
+        $this->laneWroteTheVacancyForm();
+        $_SERVER['CRAFT_ENVIRONMENT'] = 'production';
+
+        $report = $this->migrate();
+
+        self::assertSame([], $this->gateway->submissions);
+        self::assertStringContainsString('production', implode("\n", $report->warnings));
     }
 
     #[Test]

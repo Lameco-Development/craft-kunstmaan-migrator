@@ -15,7 +15,8 @@ namespace Lameco\Kunstmaanmigrator\craft;
  *
  * Narrower than Formie's API on purpose. The lane needs to know a form exists,
  * make one, give it fields, hand back an id and the handles it chose, and file
- * a migrated submission on it; it does not need Formie's
+ * a migrated submission on it, with any uploaded file copied in as an asset;
+ * it does not need Formie's
  * element model, and a fake should not have to build one.
  */
 interface FormGateway
@@ -52,22 +53,35 @@ interface FormGateway
     ): ?int;
 
     /**
+     * Copies one legacy upload into a volume as a new asset, returning its id.
+     *
+     * Every call is a new asset, so a caller that has one already hands its id
+     * to saveSubmission() rather than the file again. A warning names neither
+     * the file nor the path: an applicant's file name is personal data, and the
+     * run report is not the place for it.
+     *
+     * @param string $path         absolute path of the legacy file
+     * @param string $volumeHandle the volume it lands in — private, for a CV
+     * @param list<string> &$warnings why it could not be copied, when it could not
+     */
+    public function ingestUpload(string $path, string $volumeHandle, array &$warnings): ?int;
+
+    /**
      * Creates or updates one submission on a form, returning its id.
      *
      * Not a front-end submission: no captcha, no validation, no notification,
      * no integration — a migrated lead must not email anyone or post to a CRM a
      * second time, years later.
      *
-     * @param ?int $existingId the submission an earlier run wrote, to update in place
+     * @param ?int $existingId the submission an earlier run wrote, to update in place,
+     *        whichever site it was filed on
      * @param array{
      *     values: array<string, mixed>,
-     *     files?: array<string, list<string>>,
      *     dateCreated: string,
      *     siteId?: ?int,
      *     ipAddress?: ?string,
-     *     uploadVolume?: ?string,
-     * } $submission `values` by field handle; `files` by field handle, absolute paths to
-     *        copy into `uploadVolume`; `dateCreated` is the legacy `created`, kept
+     * } $submission `values` by field handle — a file field's value is the asset ids
+     *        ingestUpload() returned; `dateCreated` is the legacy `created`, kept
      * @param list<string> &$warnings anything the gateway declined to write
      */
     public function saveSubmission(?int $existingId, int $formId, array $submission, array &$warnings): ?int;
