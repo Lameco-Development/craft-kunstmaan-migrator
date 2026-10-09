@@ -27,16 +27,23 @@ final class LossBaseline
      * @param array<string, list<string>> $conversions
      * @param list<string>                $assets
      * @param list<string>                $references
+     * @param list<string>                $environments
      */
     private function __construct(
         private readonly array $conversions,
         private readonly array $assets,
         private readonly array $references,
+        private readonly array $environments,
     ) {
     }
 
-    /** @param mixed $spec the mapping's `acceptedLosses:`, already through `Schema` */
-    public static function fromSpec(mixed $spec): self
+    /**
+     * @param mixed        $spec         the mapping's `acceptedLosses:`, already through `Schema`
+     * @param list<string> $environments the legacy environments the run walked. The fixup pass
+     *   reads the whole state table, which other mappings' runs share; only references from
+     *   these environments are this run's. Empty: every reference counts.
+     */
+    public static function fromSpec(mixed $spec, array $environments = []): self
     {
         $spec = is_array($spec) ? $spec : [];
         $conversions = [];
@@ -49,6 +56,7 @@ final class LossBaseline
             $conversions,
             self::strings($spec['unresolvedAssets'] ?? []),
             self::strings($spec['unresolvedReferences'] ?? []),
+            array_values(array_map('strval', $environments)),
         );
     }
 
@@ -56,9 +64,13 @@ final class LossBaseline
      * @param array<string, array<string, int>> $losses           as the run report's `losses`
      * @param list<string>                      $unresolvedAssets one asset reference per unresolved occurrence
      * @param list<array<string, mixed>>        $orphans          as the fixup pass reports them
+     * @param array<string, int>                $unresolvable     sourceUid => refs to a target never migrated
      */
-    public function assess(array $losses, array $unresolvedAssets, array $orphans): LossAssessment
+    public function assess(array $losses, array $unresolvedAssets, array $orphans, array $unresolvable = []): LossAssessment
     {
+        $orphans = array_values(array_filter($orphans, fn(array $orphan): bool => $this->ours((string) ($orphan['sourceUid'] ?? ''))));
+        $unresolvable = array_filter($unresolvable, fn(string $sourceUid): bool => $this->ours($sourceUid), ARRAY_FILTER_USE_KEY);
+
         $acceptedConversions = 0;
         $unacceptedLosses = [];
         $stale = [];
@@ -105,6 +117,7 @@ final class LossBaseline
             lossyConversions: array_sum(array_map('array_sum', $unacceptedLosses)),
             unresolvedAssets: count($unacceptedAssets),
             unresolvedReferences: count($unacceptedRefs),
+            unresolvable: array_sum($unresolvable),
             accepted: [
                 'lossyConversions' => $acceptedConversions,
                 'unresolvedAssets' => $acceptedAssets,
@@ -115,6 +128,22 @@ final class LossBaseline
             unacceptedReferences: $unacceptedRefs,
             stale: $stale,
         );
+    }
+
+    /** Whether a reference's source belongs to an environment this run walked. */
+    private function ours(string $sourceUid): bool
+    {
+        if ($this->environments === []) {
+            return true;
+        }
+
+        foreach ($this->environments as $env) {
+            if (str_starts_with($sourceUid, 'kuma:' . $env . ':')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

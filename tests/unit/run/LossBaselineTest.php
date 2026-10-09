@@ -116,4 +116,33 @@ final class LossBaselineTest extends TestCase
         ], $assessment->stale);
         self::assertSame($assessment->stale, $assessment->report()['stale']);
     }
+
+    /**
+     * The fixup pass walks the whole state table, which Berkvens NL, Berkvens FR and
+     * Xidoor share. An FR run would otherwise gate on — and have to accept — NL's and
+     * Xidoor's orphans, and could never pass on their unresolvable references.
+     */
+    public function testOnlyTheRunsOwnEnvironmentsReferencesCount(): void
+    {
+        $orphans = [
+            ...$this->orphans(),
+            ['sourceUid' => 'kuma:NL:model:12', 'field' => 'utilityCategoryPages', 'ref' => 'kuma:NL:kuma_nodes:491', 'path' => []],
+            ['sourceUid' => 'kuma:XI:kuma_nodes:38', 'field' => 'link', 'ref' => 'kuma:XI:kuma_nodes:1', 'path' => []],
+        ];
+        $unresolvable = ['kuma:FR:model:12' => 2, 'kuma:NL:model:7' => 5, 'kuma:FRX:model:1' => 3];
+
+        $assessment = LossBaseline::fromSpec(null, ['FR'])->assess([], [], $orphans, $unresolvable);
+
+        self::assertSame(2, $assessment->unresolvedReferences, 'the two FR orphans, not NL\'s or Xidoor\'s');
+        self::assertSame(2, $assessment->unresolvable, 'FR\'s own, not NL\'s nor an environment that merely starts with FR');
+        self::assertTrue($assessment->lost());
+    }
+
+    public function testAnUnresolvableReferenceIsALossNothingCanAccept(): void
+    {
+        $assessment = LossBaseline::fromSpec(null)->assess([], [], [], ['kuma:FR:model:12' => 1]);
+
+        self::assertSame(1, $assessment->unresolvable);
+        self::assertTrue($assessment->lost());
+    }
 }

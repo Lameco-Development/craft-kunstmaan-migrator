@@ -470,12 +470,15 @@ final class MigrateController extends Controller
         // What the mapping's `acceptedLosses:` does not excuse is what --fail-on-loss gates on.
         // A reference nothing will ever resolve is as lost as one still pending, and is not
         // acceptable; nor is per-site block content the target cannot hold.
-        $losses = LossBaseline::fromSpec($mapping->acceptedLosses())->assess(
+        // The fixup pass reads the whole state table, which other mappings' runs share: only
+        // references from the environments this run walked are its own.
+        $losses = LossBaseline::fromSpec($mapping->acceptedLosses(), $this->legacyEnv !== null ? [(string) $this->legacyEnv] : array_map('strval', array_keys($mapping->environments())))->assess(
             $tally->losses,
             array_map(static fn(array $entry): string => (string) ($entry['asset'] ?? '?'), $tally->unresolvedAssets),
             array_values((array) ($fixup['orphans'] ?? [])),
+            (array) ($fixup['unresolvableFrom'] ?? []),
         );
-        $unacceptedRefs = $losses->unresolvedReferences + (int) ($fixup['unresolvable'] ?? 0) + count($perSiteBlockLosses);
+        $unacceptedRefs = $losses->unresolvedReferences + $losses->unresolvable + count($perSiteBlockLosses);
 
         $this->stdout(json_encode([
             'counts' => $tally->counts,

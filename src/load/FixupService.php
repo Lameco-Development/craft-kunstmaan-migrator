@@ -85,6 +85,7 @@ final class FixupService
      *   patched: int,
      *   orphans: list<array{sourceUid: string, field: string, ref: string, path: list<int|string>, error?: string}>,
      *   unresolvable: int,
+     *   unresolvableFrom: array<string, int>,
      *   unresolvableTargets: list<array{ref: string, count: int, reason: string, from: list<string>}>,
      * }
      */
@@ -96,6 +97,8 @@ final class FixupService
         /** @var array<string, array{count: int, from: array<string, true>}> keyed by target ref */
         $unresolvableTargets = [];
         $unresolvableCount = 0;
+        /** @var array<string, int> sourceUid => refs to a target never migrated, uncapped */
+        $unresolvableFrom = [];
         /**
          * `updateMeta()` is a write; deferring every call until after this
          * method's own foreach over `entryRows()` has fully exhausted (and
@@ -131,6 +134,7 @@ final class FixupService
                 if ($lookup['id'] === null && $fullCorpus && !$lookup['recorded']) {
                     $unresolvable[] = $pending + ['reason' => self::REASON_TARGET_NEVER_MIGRATED];
                     $unresolvableCount++;
+                    $unresolvableFrom[$sourceUid] = ($unresolvableFrom[$sourceUid] ?? 0) + 1;
                     $unresolvableTargets[$ref] ??= ['count' => 0, 'from' => []];
                     $unresolvableTargets[$ref]['count']++;
                     $unresolvableTargets[$ref]['from'][$sourceUid] = true;
@@ -190,6 +194,7 @@ final class FixupService
             'patched' => $patched,
             'orphans' => $orphans,
             'unresolvable' => $unresolvableCount,
+            'unresolvableFrom' => $unresolvableFrom,
             'unresolvableTargets' => self::targetSample($unresolvableTargets),
         ];
     }
