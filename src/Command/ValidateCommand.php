@@ -31,8 +31,9 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  * CP Check button ask. This one answers from `config/project/**` on disk
  * (`--craft`) instead of the live schema gateway, so it runs before a Craft
  * install exists; without `--craft` the verdict covers what is checkable —
- * shape and conflicts. `--live` adds the one check that needs the corpus: a
- * short-name row reading one table for two live classes that share the name.
+ * shape and conflicts. `--live` adds the checks that need the corpus: a
+ * short-name row reading one table for two live classes that share the name, and a
+ * `lookup()` into a table or column the database does not have.
  */
 final class ValidateCommand extends Command
 {
@@ -48,7 +49,8 @@ final class ValidateCommand extends Command
             ->addOption('live', null, InputOption::VALUE_NONE,
                 'Read the mapping\'s legacy databases (KUMA_DB_* credentials) — fails on a short-name row '
                 . 'that reads one table for several live classes sharing that short name (with --introspection, '
-                . 'classes the artifact shows reading the same table are no collision)')
+                . 'classes the artifact shows reading the same table are no collision), and on a lookup() '
+                . 'into a table or column the database does not have')
             ->addOption('introspection', null, InputOption::VALUE_REQUIRED,
                 'Introspection artifact from `introspect` — checks the mapping against the legacy '
                 . 'app\'s own wiring: unclaimed ManyToMany joins, editor-facing columns ignored '
@@ -72,12 +74,20 @@ final class ValidateCommand extends Command
         $artifact = $input->getOption('introspection');
         $introspection = $artifact !== null ? Introspection::fromFile((string) $artifact) : null;
         $liveParts = null;
+        $legacyColumns = null;
 
         if ($input->getOption('live')) {
             $liveParts = [];
+            $legacyColumns = [];
+            $lookedUp = array_unique(array_column($mapping->lookups(), 'table'));
 
-            foreach (LegacyDatabase::connectAll($mapping->databases(), Dsn::fromEnvironment()) as $db) {
+            foreach (LegacyDatabase::connectAll($mapping->databases(), Dsn::fromEnvironment()) as $environment => $db) {
                 $liveParts = PartClass::tally($liveParts, $db->livePartPlacements());
+
+                // A missing table has no columns — which is how the check reads "missing".
+                foreach ($lookedUp as $table) {
+                    $legacyColumns[$environment][$table] = $db->columns($table);
+                }
             }
         }
 
@@ -86,6 +96,7 @@ final class ValidateCommand extends Command
             $liveParts,
             // Two classes the artifact shows reading one table are no collision.
             $introspection !== null ? EntityTableIndex::fromIntrospection($introspection) : null,
+            $legacyColumns,
         );
         $specNotes = array_map(static fn($dir): SpecNotes => SpecNotes::fromDirectory((string) $dir), $specDirs);
 

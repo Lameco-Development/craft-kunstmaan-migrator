@@ -374,6 +374,48 @@ final class Mapping
     }
 
     /**
+     * Every `lookup()` the mapping makes, with the legacy table it reads: a declared entity's,
+     * the node tree's, or the plain table it names. A lookup that can name neither is left out —
+     * the shape check reports it.
+     *
+     * @return array<string, array{lookup: LookupExpression, table: string}> keyed by the expression
+     */
+    public function lookups(): array
+    {
+        $found = [];
+        $walk = function(mixed $node) use (&$walk, &$found): void {
+            if (is_array($node)) {
+                array_walk($node, $walk);
+
+                return;
+            }
+
+            if (!is_string($node)) {
+                return;
+            }
+
+            foreach (LookupExpression::allIn($node) as $lookup) {
+                $entity = $this->entities()[$lookup->source] ?? null;
+                $table = match (true) {
+                    $lookup->source === 'node' => 'kuma_nodes',
+                    is_array($entity) => is_string($entity['table'] ?? null) && $entity['table'] !== '' ? $entity['table'] : null,
+                    $lookup->namesTable() => $lookup->source,
+                    default => null,
+                };
+
+                if ($table !== null) {
+                    $found[(string) $lookup] = ['lookup' => $lookup, 'table' => $table];
+                }
+            }
+        };
+
+        $walk($this->data);
+        ksort($found);
+
+        return $found;
+    }
+
+    /**
      * The legacy databases the mapping names, by environment. An environment
      * with no `database:` is declared but not readable and is left out.
      *

@@ -33,11 +33,15 @@ final class MappingCheck
      *        when the legacy databases were read; null leaves the collision check out
      * @param ?EntityTableIndex $tables the legacy entities' tables, where known: classes that
      *        share a short name and read one table are no collision
+     * @param array<string, array<string, list<string>>>|null $legacyColumns environment => table =>
+     *        its columns (none when the table is missing), for every table a `lookup()` reads —
+     *        when the legacy databases were read; null leaves the lookup check out
      */
     public function __construct(
         private readonly ?TargetSchema $target = null,
         private readonly ?array $liveParts = null,
         private readonly ?EntityTableIndex $tables = null,
+        private readonly ?array $legacyColumns = null,
     ) {
     }
 
@@ -54,6 +58,10 @@ final class MappingCheck
 
         if ($this->liveParts !== null && ($errors = $this->collisionErrors($mapping, $this->liveParts))) {
             return ['Short-name rows that read one table for several live classes', $errors];
+        }
+
+        if ($this->legacyColumns !== null && ($errors = $this->lookupErrors($mapping, $this->legacyColumns))) {
+            return ['Lookups into tables or columns the legacy database does not have', $errors];
         }
 
         if ($this->target !== null) {
@@ -109,6 +117,40 @@ final class MappingCheck
         }
 
         return $warnings;
+    }
+
+    /**
+     * A lookup into a table the database lacks read nothing and emitted nothing — the shape
+     * check cannot tell a plain table from a typo, so the live read does.
+     *
+     * @param array<string, array<string, list<string>>> $legacyColumns
+     * @return list<string>
+     */
+    private function lookupErrors(Mapping $mapping, array $legacyColumns): array
+    {
+        $errors = [];
+        $databases = $mapping->databases();
+
+        foreach ($legacyColumns as $environment => $tables) {
+            foreach ($mapping->lookups() as $expression => ['lookup' => $lookup, 'table' => $table]) {
+                $columns = $tables[$table] ?? [];
+                $where = sprintf('%s (%s): `%s`', $environment, $databases[$environment] ?? '?', $expression);
+
+                if ($columns === []) {
+                    $errors[] = sprintf('%s — no table `%s`', $where, $table);
+
+                    continue;
+                }
+
+                foreach (array_filter([$lookup->column, $lookup->order]) as $column) {
+                    if (!in_array($column, $columns, true)) {
+                        $errors[] = sprintf('%s — table `%s` has no column `%s`', $where, $table, $column);
+                    }
+                }
+            }
+        }
+
+        return $errors;
     }
 
     /**

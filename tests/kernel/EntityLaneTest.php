@@ -101,6 +101,29 @@ final class EntityLaneTest extends TestCase
     }
 
     #[Test]
+    public function a_lookup_into_an_undeclared_entity_is_rejected_not_compiled_to_nothing(): void
+    {
+        // A lower-case name is a plain table (checked with `validate --live`); an undeclared
+        // CamelCase one can only be an entity somebody misspelled.
+        $errors = $this->validate(<<<'YAML'
+            version: 1
+            environments:
+              COM: { database: legacy, locales: { en: comEnUs } }
+            pages:
+              CasePage:
+                entryType: casePage
+                map:
+                  countryCode: country_id | lookup(Contry.code)
+                  brochure: document_id | lookup(document.path) | file(uploads/documents)
+            YAML);
+
+        self::assertSame(
+            ['pages.CasePage.map.countryCode: `lookup(Contry.code)` names no entity and cannot be a table — declare it under `entities:`, or name the table as the database does (lower case)'],
+            $errors,
+        );
+    }
+
+    #[Test]
     public function a_ref_to_an_undeclared_entity_is_rejected_by_the_mapping_not_silently_dropped(): void
     {
         $errors = $this->validate(<<<'YAML'

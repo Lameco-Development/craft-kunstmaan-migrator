@@ -90,6 +90,45 @@ final class MappingCheckTest extends TestCase
     }
 
     #[Test]
+    public function a_lookup_into_a_table_or_column_the_legacy_database_lacks_is_refused(): void
+    {
+        // Shape alone cannot tell a plain table from a typo: the live read can. Every lookup is
+        // checked, a declared entity's by its table, the order column too.
+        $mapping = $this->mapping(<<<'YAML'
+            version: 1
+            environments:
+              FR: { database: legacy_fr, locales: { nl: siteNl } }
+            entities:
+              Country: { table: countries, section: pages, entryType: contentPage, title: name, dedupe: false, ignore: [] }
+            pages:
+              ContentPage:
+                entryType: contentPage
+                map:
+                  summary: document_id | lookup(documents.path) | file(uploads/documents)
+                  photos: m2m(models_photos, model_id, model_photo_id) | lookup(model_photos.path, photo_order)
+                  code: country_id | lookup(Country.code)
+            YAML);
+
+        $columns = ['FR' => [
+            'documents' => [],
+            'model_photos' => ['id', 'path'],
+            'countries' => ['id', 'code', 'name'],
+        ]];
+
+        self::assertSame(
+            ['Lookups into tables or columns the legacy database does not have', [
+                'FR (legacy_fr): `lookup(documents.path)` — no table `documents`',
+                'FR (legacy_fr): `lookup(model_photos.path, photo_order)` — table `model_photos` has no column `photo_order`',
+            ]],
+            (new MappingCheck(null, null, null, $columns))->verdict($mapping),
+        );
+
+        $columns['FR']['documents'] = ['id', 'path'];
+        $columns['FR']['model_photos'][] = 'photo_order';
+        self::assertNull((new MappingCheck(null, null, null, $columns))->verdict($mapping));
+    }
+
+    #[Test]
     public function shape_is_judged_before_the_target(): void
     {
         // The entry type is also wrong for this install — but the malformed

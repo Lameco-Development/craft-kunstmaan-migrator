@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\Compile;
 
 use Lameco\Kunstmaanmigrator\Mapping\FieldExpression;
+use Lameco\Kunstmaanmigrator\Mapping\LookupExpression;
+use Lameco\Kunstmaanmigrator\Payload\SeomaticValue;
 use Lameco\Kunstmaanmigrator\Source\MediaIndex;
 use Lameco\Kunstmaanmigrator\Source\PartReader;
 use Lameco\Kunstmaanmigrator\Target\Slot;
@@ -246,6 +248,10 @@ final class BlockBuilder
             return $this->address($m[1], $row, $context);
         }
 
+        if (preg_match('/^seomatic\((.*)\)$/s', $expression, $m) === 1) {
+            return $this->seomatic($m[1], $row, $context);
+        }
+
         // One target, two legacy columns that may each hold it. A case page's brand is in
         // `brand_id` on 122 rows and only in `brand_url`'s internal-link form on 53 more.
         if (preg_match('/^coalesce\((.*)\)$/s', $expression, $m) === 1) {
@@ -327,9 +333,39 @@ final class BlockBuilder
 
             // `lookup(Entity.column)` follows a foreign key to a column on the row it points
             // at. The country code an address needs is not on the page's own table: it is on
-            // the country row the page's `country_id` names.
-            if (preg_match('/^lookup\((\w+)\.(\w+)\)$/', $transform, $m) === 1) {
-                $value = $this->lookup($m[1], $m[2], $value);
+            // the country row the page's `country_id` names. `lookup(table.column)` does the
+            // same in a plain table no entity declares — a photo's path behind a join table —
+            // and an optional second argument orders a list of them.
+            $lookup = LookupExpression::parse($transform);
+
+            if ($lookup !== null) {
+                $value = $this->lookup($lookup, $value);
+
+                continue;
+            }
+
+            // A list of media ids — an m2m read, or a lookup over one — is a list of assets,
+            // one per id that resolves, in order.
+            if ($transform === 'asset' && is_array($value)) {
+                $nodes = [];
+
+                foreach ($value as $id) {
+                    $path = is_int($id) || is_string($id) ? $this->media?->pathFor($id) : null;
+
+                    if ($path === null) {
+                        $this->transforms->recordMissingAsset($context, $id);
+
+                        continue;
+                    }
+
+                    $nodes[] = ['_asset' => $path];
+                }
+
+                if ($nodes === []) {
+                    return null;
+                }
+
+                $value = $nodes;
 
                 continue;
             }
@@ -385,16 +421,94 @@ final class BlockBuilder
         return $parts === [] ? null : ['_address' => $parts];
     }
 
-    /** One column of the entity row a foreign key points at. */
-    private function lookup(string $entity, string $column, mixed $foreignKey): mixed
+    /**
+     * An SEOmatic field's value, from mapped values — `seomatic(title=…, description=…, …)`.
+     *
+     * Named arguments, as `address()` takes, each a full expression: an entity's SEO usually
+     * sits on a row of its own (`seo_id | lookup(modelseo.meta_title)`). Shaped by the same
+     * `SeomaticValue` the SEO adapter writes a page's with. A row with nothing to say writes no
+     * field, so SEOmatic's own defaults stand.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function seomatic(string $arguments, array $row, string $context): ?array
     {
-        $table = $this->entities?->tableFor($entity);
+        $values = [];
 
-        if ($table === null || $foreignKey === null || !ctype_digit((string) $foreignKey)) {
+        foreach (FieldExpression::splitArguments($arguments) as $argument) {
+            if (!str_contains($argument, '=')) {
+                continue;
+            }
+
+            [$name, $expression] = array_map(trim(...), explode('=', $argument, 2));
+            $column = SeomaticValue::ARGUMENTS[$name] ?? null;
+            $value = $column !== null ? $this->evaluate($expression, $row, $context) : null;
+
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                $values[$column] = (string) $value;
+            }
+        }
+
+        return $values === [] ? null : SeomaticValue::fromRow($values);
+    }
+
+    /**
+     * One column of the row a foreign key points at, or of each row a list of them does.
+     *
+     * The source is a declared entity — its table — or else a plain legacy table, named as the
+     * database names it (see `LookupExpression`); an undeclared entity reads nothing.
+     *
+     * A list keeps its order, or is sorted by the order column and then by id, as `children:`
+     * sorts — an unset order first. A row that is missing, or whose column is empty, is dropped.
+     */
+    private function lookup(LookupExpression $lookup, mixed $foreignKey): mixed
+    {
+        $table = $this->entities?->has($lookup->source) === true
+            ? $this->entities->tableFor($lookup->source)
+            : ($lookup->namesTable() ? $lookup->source : null);
+
+        if ($table === null) {
             return null;
         }
 
-        return $this->parts->row($table, (int) $foreignKey)[$column] ?? null;
+        $column = $lookup->column;
+
+        if (!is_array($foreignKey)) {
+            if ($foreignKey === null || !ctype_digit((string) $foreignKey)) {
+                return null;
+            }
+
+            return $this->parts->row($table, (int) $foreignKey)[$column] ?? null;
+        }
+
+        $rows = [];
+
+        foreach ($foreignKey as $id) {
+            $row = is_int($id) || (is_string($id) && ctype_digit($id)) ? $this->parts->row($table, (int) $id) : null;
+
+            if ($row !== null) {
+                $rows[] = $row;
+            }
+        }
+
+        $order = $lookup->order;
+
+        if ($order !== null) {
+            usort($rows, static fn(array $a, array $b): int => [$a[$order] ?? null, (int) ($a['id'] ?? 0)]
+                <=> [$b[$order] ?? null, (int) ($b['id'] ?? 0)]);
+        }
+
+        $values = [];
+
+        foreach ($rows as $row) {
+            $value = $row[$column] ?? null;
+
+            if ($value !== null && $value !== '') {
+                $values[] = $value;
+            }
+        }
+
+        return $values === [] ? null : $values;
     }
 
     /**

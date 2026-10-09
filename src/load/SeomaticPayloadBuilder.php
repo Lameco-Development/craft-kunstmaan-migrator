@@ -3,6 +3,7 @@
 namespace Lameco\Kunstmaanmigrator\load;
 
 use Closure;
+use Lameco\Kunstmaanmigrator\Payload\SeomaticValue;
 use yii\base\Component;
 
 /**
@@ -79,117 +80,17 @@ class SeomaticPayloadBuilder extends Component
     {
         $row = $seoRow ?? [];
 
-        $metaTitle = $this->str($row, 'meta_title');
-        $metaDescription = $this->str($row, 'meta_description');
-
-        // og_image_id → numeric Craft asset id via state. twitter_image_id
-        // is resolved separately below in the twitter-overrides block (and
-        // gated on differing from og_image — see comment there).
-        $ogImageId = $this->resolveMediaId($row['og_image_id'] ?? null, $environment);
-
-        $ogTitle = $this->str($row, 'og_title') ?: $metaTitle;
-        $ogDescription = $this->str($row, 'og_description') ?: $metaDescription;
-
-        // SEOmatic per-entry field expects a nested metaGlobalVars +
-        // metaBundleSettings structure; each override requires a *Source key
-        // set to 'fromCustom' (text) or 'fromAsset' (image) to take effect
-        // at render time.
+        // og_image_id → numeric Craft asset id via state. The twitter image is emitted only
+        // when the row has its own and it differs from the og image — `sameAsSeo` covers the
+        // rest at render time (see the class docblock).
         //
-        // Per-column drop / map decisions are documented in
-        // SEO-COVERAGE-DIAGNOSTIC.md (kunstmaan-craft-scaffolder repo).
-        $metaGlobalVars = [
-            'seoTitle' => $metaTitle,
-            'seoDescription' => $metaDescription,
-            'seoImage' => $ogImageId !== null ? (string) $ogImageId : '',
-            'ogTitle' => $ogTitle,
-            'ogDescription' => $ogDescription,
-            'ogImage' => $ogImageId !== null ? (string) $ogImageId : '',
-        ];
-
-        // Always use 'fromCustom' for title/description sources — including
-        // when the value is empty. Using 'sameAsSiteTwitter' for empty values
-        // causes SEOmatic to resolve the Twitter-fallback description (which
-        // may be the NL description propagated from the primary site), writing
-        // that back into the per-site content JSON and making EN pages show NL
-        // SEO content. An explicit 'fromCustom' + empty string correctly clears
-        // any propagated content and stores a true empty for that locale.
-        $metaBundleSettings = [
-            'seoTitleSource' => 'fromCustom',
-            'seoDescriptionSource' => 'fromCustom',
-            'ogTitleSource' => 'fromCustom',
-            'ogDescriptionSource' => 'fromCustom',
-        ];
-
-        // Conditional: meta_robots is only emitted when the source row has
-        // an explicit override. Empty source → omit, so SEOmatic falls
-        // through to the sitewide default ('all'). Without this the noindex
-        // editorial choice is silently discarded (228 / 1 291 rows on
-        // deklerk / simac).
-        //
-        // CRITICAL: do NOT emit `metaBundleSettings.robotsSource` — that
-        // property doesn't exist on `MetaBundleSettings`. SEOmatic's per-
-        // field source-toggle pattern only covers seoTitle / seoDescription /
-        // ogTitle / ogDescription / seoImage; robots is read directly from
-        // metaGlobalVars.robots without indirection. Including a
-        // `robotsSource` key triggers `UnknownPropertyException` inside
-        // SEOmatic's normalizeValue → MetaBundleSettings::create chain,
-        // which silently aborts the whole field's persistence (Craft's
-        // saveElement returns true but the seo field never lands in
-        // elements_sites.content). Verified with a tinker-style debug
-        // script against the dewert smoke target on 2026-05-09.
-        $metaRobots = $this->str($row, 'meta_robots');
-        if ($metaRobots !== '') {
-            $metaGlobalVars['robots'] = $metaRobots;
-        }
-
-        if ($ogImageId !== null) {
-            $metaBundleSettings['seoImageSource'] = 'fromAsset';
-            $metaBundleSettings['seoImageIds'] = [$ogImageId];
-            $metaBundleSettings['ogImageSource'] = 'sameAsSeo';
-        }
-
-        // Twitter overrides — conditional, mirrors the meta_robots pattern.
-        // Only emit when the source row has an explicit value; otherwise let
-        // SEOmatic fall through to its defaults (sameAsSeo for image,
-        // sameAsSeoTwitter for title/description). Emitting a `fromCustom`
-        // toggle with empty value would force-clear the field on the per-site
-        // entry, propagating empty twitter content downstream. Verified
-        // against MetaBundleSettings.php — twitterTitleSource /
-        // twitterDescriptionSource / twitterImageSource / twitterImageIds
-        // exist on the model (unlike the fictional `robotsSource` from the
-        // 58ee7f6 bug fix). Closes P8 / P2 (SEO-COVERAGE-DIAGNOSTIC.md):
-        // ~70 unique twitter overrides per-page on dewert that previously
-        // rendered as og copy at the editor's expense.
-        $twitterTitle = $this->str($row, 'twitter_title');
-        if ($twitterTitle !== '') {
-            $metaGlobalVars['twitterTitle'] = $twitterTitle;
-            $metaBundleSettings['twitterTitleSource'] = 'fromCustom';
-        }
-        $twitterDescription = $this->str($row, 'twitter_description');
-        if ($twitterDescription !== '') {
-            $metaGlobalVars['twitterDescription'] = $twitterDescription;
-            $metaBundleSettings['twitterDescriptionSource'] = 'fromCustom';
-        }
-        // Twitter image is the trickier case. The original code resolved
-        // twitter_image_id INTO `$twitterImageId`, then fell back to
-        // `$ogImageId` when the explicit twitter_image_id was empty — and
-        // then never used the result. The og-fallback was wrong-direction
-        // (twitter falling back to og is what SEOmatic's `sameAsSeo` source
-        // already does at render time). Drop the unused fallback; emit
-        // twitterImage only when the source row has its own twitter image
-        // AND it differs from og_image (avoids ~91% of redundant rows per
-        // SEO-COVERAGE-DIAGNOSTIC.md — the `sameAsSeo` default covers them).
-        $rawTwitterImageId = $this->resolveMediaId($row['twitter_image_id'] ?? null, $environment);
-        if ($rawTwitterImageId !== null && $rawTwitterImageId !== $ogImageId) {
-            $metaGlobalVars['twitterImage'] = (string) $rawTwitterImageId;
-            $metaBundleSettings['twitterImageSource'] = 'fromAsset';
-            $metaBundleSettings['twitterImageIds'] = [$rawTwitterImageId];
-        }
-
-        return [
-            'metaGlobalVars' => $metaGlobalVars,
-            'metaBundleSettings' => $metaBundleSettings,
-        ];
+        // The shaping itself is `Payload\SeomaticValue`'s, shared with the compiler, which
+        // builds an entity's SEO from mapped columns the same way.
+        return SeomaticValue::fromRow(
+            $row,
+            $this->resolveMediaId($row['og_image_id'] ?? null, $environment),
+            $this->resolveMediaId($row['twitter_image_id'] ?? null, $environment),
+        );
     }
 
     /**
@@ -205,15 +106,6 @@ class SeomaticPayloadBuilder extends Component
     public function setResolver(callable $resolver): void
     {
         $this->resolver = Closure::fromCallable($resolver);
-    }
-
-    /**
-     * @param array<string, mixed> $row
-     */
-    private function str(array $row, string $key): string
-    {
-        $v = $row[$key] ?? null;
-        return $v === null ? '' : (string) $v;
     }
 
     private function resolveMediaId(mixed $kumaMediaId, string $environment): ?int

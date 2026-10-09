@@ -357,4 +357,51 @@ final class RecordingStateService extends MigrationStateService
 
         return $this->map[$key] ?? null;
     }
+    public function testAFullRowProducesExactlyThePageShape(): void
+    {
+        // The whole value, key order included: entity rows compile through the same shaping
+        // (`Payload\SeomaticValue`), and a page's SEO must not move when that is shared.
+        $builder = new SeomaticPayloadBuilder();
+        $builder->setResolver(static fn(int $id): int => $id + 1000);
+
+        $this->assertSame(
+            [
+                'metaGlobalVars' => [
+                    'seoTitle' => 'Title',
+                    'seoDescription' => 'Desc',
+                    'seoImage' => '1042',
+                    'ogTitle' => 'Title',
+                    'ogDescription' => 'OGD',
+                    'ogImage' => '1042',
+                    'robots' => 'noindex',
+                    'twitterTitle' => 'TT',
+                    'twitterDescription' => 'TD',
+                    'twitterImage' => '1007',
+                ],
+                'metaBundleSettings' => [
+                    'seoTitleSource' => 'fromCustom',
+                    'seoDescriptionSource' => 'fromCustom',
+                    'ogTitleSource' => 'fromCustom',
+                    'ogDescriptionSource' => 'fromCustom',
+                    'seoImageSource' => 'fromAsset',
+                    'seoImageIds' => [1042],
+                    'ogImageSource' => 'sameAsSeo',
+                    'twitterTitleSource' => 'fromCustom',
+                    'twitterDescriptionSource' => 'fromCustom',
+                    'twitterImageSource' => 'fromAsset',
+                    'twitterImageIds' => [1007],
+                ],
+            ],
+            $builder->build([
+                'meta_title' => 'Title',
+                'meta_description' => 'Desc',
+                'og_description' => 'OGD',
+                'og_image_id' => 42,
+                'meta_robots' => 'noindex',
+                'twitter_title' => 'TT',
+                'twitter_description' => 'TD',
+                'twitter_image_id' => 7,
+            ], 1, 'COM'),
+        );
+    }
 }
