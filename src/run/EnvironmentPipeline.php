@@ -15,6 +15,8 @@ use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\RedirectGuard;
+use Lameco\Kunstmaanmigrator\craft\RetourRedirectGuard;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
@@ -62,9 +64,10 @@ final class EnvironmentPipeline
         ElementWriter $elements,
         /** Null on a dry run, which settles no order: nothing was written to put in one. */
         private readonly ?StructureOrderService $structureOrder = null,
+        ?RedirectGuard $redirects = null,
     ) {
         $this->retry = $saver === null ? null : new WriteConflictRetry($saver->save(...));
-        $this->maintenance = new MaintenanceGuard($uriJobs, $elements);
+        $this->maintenance = new MaintenanceGuard($uriJobs, $elements, $redirects);
     }
 
     /**
@@ -90,6 +93,7 @@ final class EnvironmentPipeline
             new CraftUriJobGuard(),
             $elements,
             $settings->dryRun ? null : new StructureOrderService($plugin->migrationStateService, $elements),
+            new RetourRedirectGuard(),
         );
     }
 

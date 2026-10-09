@@ -128,6 +128,6 @@ final class CorpusPassGuardTest extends TestCase
     {
         $source = (string) file_get_contents((string) (new ReflectionClass(MaintenanceGuard::class))->getFileName());
 
-        self::assertStringContainsString('new self(new CraftUriJobGuard(), new CraftElementWriter())', $source);
+        self::assertStringContainsString('new self(new CraftUriJobGuard(), new CraftElementWriter(), new RetourRedirectGuard())', $source);
     }
 }

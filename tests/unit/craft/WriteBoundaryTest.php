@@ -76,6 +76,15 @@ final class WriteBoundaryTest extends TestCase
             'seam' => 'UriJobGuard',
             'instead' => 'QueueHelper::push for a push; arm/disarm/release for the rest',
         ],
+        // Retour's settings, switched by the run; the redirects adapter's own imports are
+        // `Retour::$plugin`, not its settings.
+        [
+            'pattern' => '~Retour::\$settings->(\w+)~',
+            'adapter' => 'src/craft/RetourRedirectGuard.php',
+            'fake' => 'tests/support/InMemoryRedirectGuard.php',
+            'seam' => 'RedirectGuard',
+            'instead' => 'suspend/resume',
+        ],
     ];
 
     /**

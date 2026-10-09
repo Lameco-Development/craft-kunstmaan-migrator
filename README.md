@@ -307,6 +307,18 @@ last job of the chain — and the JSON summary reports it under `uris`.
 afterwards for an operator comparing the two; note that a re-save is a full
 save that propagates, which creates rows on sites the payload never named.
 
+**Retour's URI-change redirects are off while the run writes.** Retour stores
+a 301 whenever an enabled entry's URI changes on a save
+(`createUriChangeRedirects`, on by default). A multi-site load changes URIs by
+design: an entry is saved in its primary site, the slug propagates, then each
+other site is saved with its own. Xidoor's first load left 35 redirects from
+paths nobody ever visited, such as `/companies` → `/bedrijven`. Every writing
+pass, on the console and in the queue, switches the setting off and restores it
+afterwards, even when the pass throws. A project that had it off keeps it off.
+The redirects the migration means to write are the ones the redirects adapter
+imports. An `--entries-only` run is held too; a dry run writes nothing, so it
+isn't.
+
 **The run warns about blocks the target will reject.** A Matrix names the entry types
 it accepts, and a part whose block is not on that list is dropped at write time. Whether
 that costs anything is a fact about the data — `contactCardBlock` is fine on a
