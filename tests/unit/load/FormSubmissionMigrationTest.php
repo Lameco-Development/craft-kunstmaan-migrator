@@ -69,14 +69,15 @@ final class FormSubmissionMigrationTest extends TestCase
     }
 
     /** What the forms lane leaves behind for node 222: the form, and which handle each part became. */
-    private function laneWroteTheVacancyForm(): int
+    /** @param array<string, mixed> $uploadSettings what the mapping put on the file field */
+    private function laneWroteTheVacancyForm(array $uploadSettings = []): int
     {
         $warnings = [];
         $handles = [];
         $id = (int) $this->gateway->saveForm('kumaNlVacancyformpage75', 'Solliciteren', [
             ['type' => 'dropdown', 'label' => 'Aanhef', 'handle' => 'aanhef', 'required' => false, 'settings' => [], 'partRef' => 'Choice:66'],
             ['type' => 'singleLineText', 'label' => 'Voornaam', 'handle' => 'voornaam', 'required' => true, 'settings' => [], 'partRef' => 'SingleLineText:198'],
-            ['type' => 'fileUpload', 'label' => 'Upload je CV', 'handle' => 'uploadCv', 'required' => false, 'settings' => [], 'partRef' => 'FileUpload:1'],
+            ['type' => 'fileUpload', 'label' => 'Upload je CV', 'handle' => 'uploadCv', 'required' => false, 'settings' => $uploadSettings, 'partRef' => 'FileUpload:1'],
         ], [], $warnings, $handles);
         $this->state->record('form', self::LANE_FORM, 'formie_form', $id, null, null, [
             'handle' => 'kumaNlVacancyformpage75',
@@ -243,6 +244,49 @@ final class FormSubmissionMigrationTest extends TestCase
 
         self::assertSame([7000 => realpath($this->filesRoot . '/uploads/formsubmissions/abc/cv.pdf')], $this->gateway->uploads);
         self::assertSame([7000], $this->written(2)['values']['uploadCv']);
+    }
+
+    /**
+     * The mapping points the lane's file field at a volume and a site group's
+     * subpath; the copy lands in that folder, where Formie itself would put a
+     * new upload — not in the root of the lane's volume.
+     */
+    #[Test]
+    public function an_upload_lands_in_the_folder_its_file_field_names(): void
+    {
+        $this->laneWroteTheVacancyForm(['uploadLocationSource' => 'volume:uid-uploads', 'uploadLocationSubpath' => 'berkvensNl']);
+
+        $this->migrate(submissions: 'nodes: [222]');
+
+        self::assertSame([7000 => ['source' => 'volume:uid-uploads', 'subpath' => 'berkvensNl']], $this->gateway->uploadFolders);
+    }
+
+    /** A file field that names no upload location leaves the copy in the root of the lane's volume. */
+    #[Test]
+    public function an_upload_on_a_field_without_a_location_lands_in_the_lane_volume_root(): void
+    {
+        $this->laneWroteTheVacancyForm();
+
+        $this->migrate(submissions: 'nodes: [222]');
+
+        self::assertSame([7000 => ['source' => 'formieUploads', 'subpath' => '']], $this->gateway->uploadFolders);
+    }
+
+    /**
+     * An archive form is the lane's own, so its file field takes the lane's
+     * volume and `subpath:` — the site group's folder (ADR-0006) — and the
+     * copies land where the field says they are.
+     */
+    #[Test]
+    public function an_archive_forms_file_field_takes_the_lanes_subpath_and_its_uploads_land_there(): void
+    {
+        $this->migrate(submissions: "nodes: [222]\n    subpath: berkvensNl");
+
+        $archive = array_values(array_filter($this->gateway->saved, static fn(array $form): bool => (bool) ($form['settings']['archived'] ?? false)));
+        self::assertCount(1, $archive);
+        $upload = array_values(array_filter($archive[0]['fields'], static fn(array $field): bool => $field['type'] === 'fileUpload'));
+        self::assertSame(['uploadVolume' => 'formieUploads', 'uploadLocationSubpath' => 'berkvensNl'], $upload[0]['settings']);
+        self::assertSame([7000 => ['source' => 'formieUploads', 'subpath' => 'berkvensNl']], $this->gateway->uploadFolders);
     }
 
     /** The 2017 upload has a name and no url; nothing on disk answers it, so the lead lands without it. */

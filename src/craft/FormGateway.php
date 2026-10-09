@@ -53,18 +53,26 @@ interface FormGateway
     ): ?int;
 
     /**
-     * Copies one legacy upload into a volume as a new asset, returning its id.
+     * Copies one legacy upload into the folder a form's file field uploads to,
+     * as a new asset, returning its id.
+     *
+     * The folder is the one Formie itself would put a new upload in: the
+     * field's upload location — its volume and subpath — or, when the field
+     * names none, the root of the fallback volume.
      *
      * Every call is a new asset, so a caller that has one already hands its id
      * to saveSubmission() rather than the file again. A warning names neither
      * the file nor the path: an applicant's file name is personal data, and the
      * run report is not the place for it.
      *
-     * @param string $path         absolute path of the legacy file
-     * @param string $volumeHandle the volume it lands in — private, for a CV
+     * @param string  $path         absolute path of the legacy file
+     * @param int     $formId       the form the submission lands on
+     * @param string  $fieldHandle  its file field, whose upload location decides the folder
+     * @param ?string $volumeHandle the fallback, when the field has no upload location —
+     *        private, for a CV
      * @param list<string> &$warnings why it could not be copied, when it could not
      */
-    public function ingestUpload(string $path, string $volumeHandle, array &$warnings): ?int;
+    public function ingestUpload(string $path, int $formId, string $fieldHandle, ?string $volumeHandle, array &$warnings): ?int;
 
     /**
      * Creates or updates one submission on a form, returning its id.

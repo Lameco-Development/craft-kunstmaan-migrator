@@ -401,6 +401,7 @@ final class SchemaTest extends TestCase
                     $nodes
                     volume: formieUploads
                     filesRoot: /var/www/legacy/public
+                    subpath: berkvensNl
                 YAML));
         }
     }
@@ -421,6 +422,7 @@ final class SchemaTest extends TestCase
                 nodes: everything
                 volume: [formieUploads]
                 filesRoot: 7
+                subpath: ''
                 node: [222]
             YAML);
 
@@ -428,7 +430,8 @@ final class SchemaTest extends TestCase
             'forms.submissions: `nodes:` must be `all` or a list of legacy node ids',
             'forms.submissions: `volume:` must be a volume handle',
             'forms.submissions: `filesRoot:` must be a directory path',
-            'forms.submissions: unknown key `node` (nodes, volume, filesRoot)',
+            'forms.submissions: `subpath:` must be a folder path in the volume',
+            'forms.submissions: unknown key `node` (nodes, volume, filesRoot, subpath)',
         ], $errors);
     }
 

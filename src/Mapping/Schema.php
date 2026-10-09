@@ -269,7 +269,7 @@ final class Schema
         }
 
         if (!is_array($spec)) {
-            $errors[] = 'forms.submissions: must be a map (`nodes:`, `volume:`, `filesRoot:`)';
+            $errors[] = 'forms.submissions: must be a map (`nodes:`, `volume:`, `filesRoot:`, `subpath:`)';
 
             return;
         }
@@ -290,9 +290,13 @@ final class Schema
             $errors[] = 'forms.submissions: `filesRoot:` must be a directory path';
         }
 
+        if (array_key_exists('subpath', $spec) && (!is_string($spec['subpath']) || trim($spec['subpath'], '/') === '')) {
+            $errors[] = 'forms.submissions: `subpath:` must be a folder path in the volume';
+        }
+
         foreach (array_keys($spec) as $key) {
-            if (!in_array($key, ['nodes', 'volume', 'filesRoot'], true)) {
-                $errors[] = sprintf('forms.submissions: unknown key `%s` (nodes, volume, filesRoot)', $key);
+            if (!in_array($key, ['nodes', 'volume', 'filesRoot', 'subpath'], true)) {
+                $errors[] = sprintf('forms.submissions: unknown key `%s` (nodes, volume, filesRoot, subpath)', $key);
             }
         }
     }

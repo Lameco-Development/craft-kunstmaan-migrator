@@ -17,7 +17,7 @@ use RuntimeException;
  */
 final class InMemoryFormGateway implements FormGateway
 {
-    /** @var array<string, array{id: int, title: string, fields: list<array<string, mixed>>, settings: array<string, mixed>, uids: array<string, array{uid: string, type: string}>}> */
+    /** @var array<string, array{id: int, title: string, fields: list<array<string, mixed>>, settings: array<string, mixed>, uids: array<string, array{uid: string, type: string}>, handles: array<string, string>}> */
     public array $saved = [];
 
     /** @var list<string> */
@@ -28,6 +28,14 @@ final class InMemoryFormGateway implements FormGateway
 
     /** @var array<int, string> asset id => the path it was copied from */
     public array $uploads = [];
+
+    /**
+     * asset id => the folder it was copied into: the file field's upload
+     * location when it names one, else the root of the fallback volume.
+     *
+     * @var array<int, array{source: string, subpath: string}>
+     */
+    public array $uploadFolders = [];
 
     /** @var list<string> basenames whose copy fails, the way an unreadable file does */
     public array $failUploads = [];
@@ -74,6 +82,7 @@ final class InMemoryFormGateway implements FormGateway
 
         $before = $this->saved[$handle]['uids'] ?? [];
         $uids = [];
+        $written = [];
 
         foreach ($fields as $index => $spec) {
             $type = (string) ($spec['type'] ?? '');
@@ -98,15 +107,16 @@ final class InMemoryFormGateway implements FormGateway
                 ? $kept
                 : ['uid' => 'uid-' . $this->nextUid++, 'type' => $type];
             $handles[(string) ($spec['partRef'] ?? $index)] = ['handle' => $fieldHandle, 'type' => $type];
+            $written[(string) ($spec['partRef'] ?? $index)] = $fieldHandle;
         }
 
         $id = $this->saved[$handle]['id'] ?? $this->nextId++;
-        $this->saved[$handle] = ['id' => $id, 'title' => $title, 'fields' => $fields, 'settings' => $settings, 'uids' => $uids];
+        $this->saved[$handle] = ['id' => $id, 'title' => $title, 'fields' => $fields, 'settings' => $settings, 'uids' => $uids, 'handles' => $written];
 
         return $id;
     }
 
-    public function ingestUpload(string $path, string $volumeHandle, array &$warnings): ?int
+    public function ingestUpload(string $path, int $formId, string $fieldHandle, ?string $volumeHandle, array &$warnings): ?int
     {
         if (in_array(basename($path), $this->failUploads, true)) {
             $warnings[] = 'could not copy the upload.';
@@ -114,8 +124,23 @@ final class InMemoryFormGateway implements FormGateway
             return null;
         }
 
+        $settings = $this->fieldSettings($formId, $fieldHandle);
+        // `uploadVolume:` is a handle the production adapter turns into Formie's
+        // `volume:<uid>` source; the twin keeps whichever it was given.
+        $source = (string) ($settings['uploadLocationSource'] ?? $settings['uploadVolume'] ?? '');
+        $folder = $source !== ''
+            ? ['source' => $source, 'subpath' => trim((string) ($settings['uploadLocationSubpath'] ?? ''), '/')]
+            : ($volumeHandle !== null ? ['source' => $volumeHandle, 'subpath' => ''] : null);
+
+        if ($folder === null) {
+            $warnings[] = 'the field has no upload location and no fallback volume; the upload was not copied.';
+
+            return null;
+        }
+
         $id = $this->nextAssetId++;
         $this->uploads[$id] = $path;
+        $this->uploadFolders[$id] = $folder;
 
         return $id;
     }
@@ -175,7 +200,29 @@ final class InMemoryFormGateway implements FormGateway
         return $values;
     }
 
-    /** @return array{id: int, uids: array<string, array{uid: string, type: string}>}|null */
+    /**
+     * The settings a form's field was saved with, found by the handle it got.
+     *
+     * @return array<string, mixed>
+     */
+    private function fieldSettings(int $formId, string $fieldHandle): array
+    {
+        $form = $this->formById($formId);
+
+        if ($form === null) {
+            return [];
+        }
+
+        foreach ($form['fields'] as $index => $spec) {
+            if (($form['handles'][(string) ($spec['partRef'] ?? $index)] ?? null) === $fieldHandle) {
+                return (array) ($spec['settings'] ?? []);
+            }
+        }
+
+        return [];
+    }
+
+    /** @return array{id: int, fields: list<array<string, mixed>>, uids: array<string, array{uid: string, type: string}>, handles: array<string, string>}|null */
     private function formById(int $formId): ?array
     {
         foreach ($this->saved as $form) {
