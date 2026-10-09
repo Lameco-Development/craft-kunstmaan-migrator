@@ -99,14 +99,11 @@ final class Transforms
 
         $raw = strtolower(trim((string) ($value ?? '')));
 
+        // A hit is the mapping declaring what the value becomes: a label turned into the
+        // option value the target stores loses nothing. Only a value the map does not name
+        // (the fallback, or null) is a loss.
         if (array_key_exists($raw, $map)) {
-            $to = (string) $map[$raw];
-
-            if ($raw !== '' && $to !== $raw) {
-                $this->record($name, $raw, $to, $context);
-            }
-
-            return $to;
+            return (string) $map[$raw];
         }
 
         $fallback = $spec['fallback'] ?? null;

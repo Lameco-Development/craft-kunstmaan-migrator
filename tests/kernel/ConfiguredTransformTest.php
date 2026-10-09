@@ -30,12 +30,18 @@ final class ConfiguredTransformTest extends TestCase
     }
 
     #[Test]
-    public function a_configured_map_translates_and_records_the_loss(): void
+    public function a_mapped_value_is_translated_not_lost(): void
     {
+        // A `map:` hit is the mapping saying what the value becomes: a label turned
+        // into the option value the target stores (Berkvens FR's `technische informatie`
+        // → `technicalInformation`) carries everything across. Counting it as a loss
+        // made `--fail-on-loss` refuse a run that lost nothing.
         $t = $this->transforms();
 
         self::assertSame('indigo', $t->apply('heroColorScheme', 'purple', 'HeaderTab'));
-        self::assertSame(['heroColorScheme' => ['purple -> indigo' => 1]], $t->losses());
+        self::assertSame('', (new Transforms(['alignRight' => ['map' => ['left' => '', 'right' => '1']]]))->apply('alignRight', 'left'));
+        self::assertSame([], $t->losses());
+        self::assertSame(0, $t->lossCount());
     }
 
     #[Test]
