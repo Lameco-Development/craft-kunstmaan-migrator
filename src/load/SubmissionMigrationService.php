@@ -132,7 +132,7 @@ final class SubmissionMigrationService
                 }
 
                 if ($answer['kind'] === 'file') {
-                    $assetIds = $ingested[$field['handle']] ?? $this->ingestFile($key, $field['handle'], (array) $answer['value'], $lane, $report);
+                    $assetIds = $ingested[$field['handle']] ?? $this->ingestFile($key, $formId, $field['handle'], (array) $answer['value'], $lane, $report);
 
                     if ($assetIds !== []) {
                         $values[$field['handle']] = $assetIds;
@@ -241,7 +241,7 @@ final class SubmissionMigrationService
         $formId = $this->forms->saveForm(
             $handle,
             sprintf('%s (legacy node %d, archived)', $group['title'], $group['node']),
-            self::archiveFields((array) $group['fields'], $lane->volume),
+            self::archiveFields((array) $group['fields'], $lane->volume, $lane->subpath),
             ['archived' => true],
             $warnings,
             $handles,
@@ -276,7 +276,7 @@ final class SubmissionMigrationService
      * @param array<string, array<string, mixed>> $fields
      * @return list<array{type: string, label: string, handle: string, required: bool, settings: array<string, mixed>, partRef: string}>
      */
-    private static function archiveFields(array $fields, ?string $volume): array
+    private static function archiveFields(array $fields, ?string $volume, ?string $subpath): array
     {
         $out = [];
 
@@ -298,8 +298,14 @@ final class SubmissionMigrationService
                 );
             }
 
+            // The lane's volume and subpath, so the field says where its files
+            // are — the folder ingestUpload() puts them in, and Formie would.
             if ($type === 'fileUpload' && $volume !== null) {
                 $settings['uploadVolume'] = $volume;
+
+                if ($subpath !== null) {
+                    $settings['uploadLocationSubpath'] = $subpath;
+                }
             }
 
             $out[] = [
@@ -332,13 +338,14 @@ final class SubmissionMigrationService
     }
 
     /**
-     * One answered upload copied into the lane's volume, as the asset ids it
-     * became — none when it cannot be, reported by state key and field handle.
+     * One answered upload copied into the folder its file field uploads to — the
+     * lane's volume when the field names none — as the asset ids it became;
+     * none when it cannot be, reported by state key and field handle.
      *
      * @param array{name?: ?string, url?: ?string} $file
      * @return list<int>
      */
-    private function ingestFile(string $key, string $handle, array $file, SubmissionsLane $lane, MigrationReport $report): array
+    private function ingestFile(string $key, int $formId, string $handle, array $file, SubmissionsLane $lane, MigrationReport $report): array
     {
         $path = self::legacyFile($file, $lane->filesRoot);
 
@@ -349,15 +356,8 @@ final class SubmissionMigrationService
             return [];
         }
 
-        if ($lane->volume === null) {
-            $report->incr('submissionFilesMissing');
-            $report->warn(sprintf('%s: %s: forms.submissions declares no volume; the submission lands without its file.', $key, $handle));
-
-            return [];
-        }
-
         $warnings = [];
-        $assetId = $this->forms->ingestUpload($path, $lane->volume, $warnings);
+        $assetId = $this->forms->ingestUpload($path, $formId, $handle, $lane->volume, $warnings);
 
         foreach ($warnings as $warning) {
             $report->warn(sprintf('%s: %s: %s', $key, $handle, $warning));

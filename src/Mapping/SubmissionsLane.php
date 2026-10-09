@@ -14,8 +14,9 @@ namespace Lameco\Kunstmaanmigrator\Mapping;
  *     forms:
  *       submissions:
  *         nodes: all                 # or [222, 8] — the legacy `kuma_form_submissions.node_id`s
- *         volume: formieUploads      # where an uploaded file lands; none leaves file values empty
+ *         volume: formieUploads      # where an upload lands when its file field names no location
  *         filesRoot: /var/www/legacy/site/public   # what a legacy `/uploads/formsubmissions/…` url is under
+ *         subpath: berkvensNl        # the folder in `volume:` an archive form's file field uploads to; none is the root
  *
  * Keyed on the node because that is the only thing a submission names; the
  * node's page, live or deleted, decides which Formie form it lands in.
@@ -28,6 +29,7 @@ final class SubmissionsLane
         public readonly ?array $nodes,
         public readonly ?string $volume,
         public readonly ?string $filesRoot,
+        public readonly ?string $subpath = null,
     ) {
     }
 
@@ -48,6 +50,7 @@ final class SubmissionsLane
             nodes: is_array($nodes) ? array_values(array_map('intval', $nodes)) : null,
             volume: self::string($spec, 'volume'),
             filesRoot: self::string($spec, 'filesRoot'),
+            subpath: ($subpath = trim((string) self::string($spec, 'subpath'), '/')) !== '' ? $subpath : null,
         );
     }
 

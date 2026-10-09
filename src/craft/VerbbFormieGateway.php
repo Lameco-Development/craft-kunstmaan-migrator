@@ -7,6 +7,7 @@ namespace Lameco\Kunstmaanmigrator\craft;
 use Craft;
 use craft\elements\Asset;
 use craft\helpers\StringHelper;
+use craft\models\VolumeFolder;
 use DateTime;
 use Throwable;
 use verbb\formie\elements\Form;
@@ -326,7 +327,7 @@ final class VerbbFormieGateway implements FormGateway
      * shares one asset per file across environments. An applicant's CV is an
      * untrusted upload bound for a private volume, one asset per submission.
      */
-    public function ingestUpload(string $path, string $volumeHandle, array &$warnings): ?int
+    public function ingestUpload(string $path, int $formId, string $fieldHandle, ?string $volumeHandle, array &$warnings): ?int
     {
         if (!$this->isAvailable()) {
             $warnings[] = 'formie is not installed; the upload was not copied.';
@@ -334,11 +335,9 @@ final class VerbbFormieGateway implements FormGateway
             return null;
         }
 
-        $volume = Craft::$app->getVolumes()->getVolumeByHandle($volumeHandle);
+        $folder = $this->uploadFolder($formId, $fieldHandle, $volumeHandle, $warnings);
 
-        if ($volume === null) {
-            $warnings[] = sprintf('no upload volume "%s"; the upload was not copied.', $volumeHandle);
-
+        if ($folder === null) {
             return null;
         }
 
@@ -353,8 +352,8 @@ final class VerbbFormieGateway implements FormGateway
         $asset = new Asset();
         $asset->tempFilePath = $temp;
         $asset->filename = basename($path);
-        $asset->newFolderId = Craft::$app->getAssets()->getRootFolderByVolumeId($volume->id)?->id;
-        $asset->volumeId = $volume->id;
+        $asset->newFolderId = $folder->id;
+        $asset->volumeId = $folder->volumeId;
         $asset->avoidFilenameConflicts = true;
         $asset->setScenario(Asset::SCENARIO_CREATE);
 
@@ -366,6 +365,68 @@ final class VerbbFormieGateway implements FormGateway
         }
 
         return (int) $asset->id;
+    }
+
+    /**
+     * The folder Formie itself would put a new upload on this field in: the
+     * field's upload location — volume and subpath, tokens rendered — by
+     * Formie's own resolver; else the root of the fallback volume.
+     *
+     * A subpath token that needs a saved submission (`{id}`) cannot render
+     * before the submission exists, and Formie then answers with a user's
+     * temporary upload folder. That is no place for a CV, so it falls back to
+     * the root of the field's volume, and says so.
+     *
+     * @param list<string> $warnings
+     */
+    private function uploadFolder(int $formId, string $fieldHandle, ?string $volumeHandle, array &$warnings): ?VolumeFolder
+    {
+        $assets = Craft::$app->getAssets();
+        $form = Form::find()->id($formId)->status(null)->one();
+        $field = $form?->getFieldByHandle($fieldHandle);
+        $source = $field instanceof \verbb\formie\fields\FileUpload ? (string) $field->uploadLocationSource : '';
+
+        if ($form !== null && $field instanceof \verbb\formie\fields\FileUpload && $source !== '') {
+            // How Formie reads its source: `volume:<uid>` or `folder:<uid>`, the uid a volume's.
+            $volume = str_contains($source, ':')
+                ? Craft::$app->getVolumes()->getVolumeByUid(explode(':', $source)[1])
+                : null;
+
+            if ($volume === null) {
+                $warnings[] = sprintf('the %s field uploads to a volume that does not exist; the upload was not copied.', $fieldHandle);
+
+                return null;
+            }
+
+            $submission = new Submission();
+            $submission->setForm($form);
+
+            try {
+                $folder = $assets->getFolderById($field->resolveDynamicPathToFolderId($submission));
+            } catch (Throwable) {
+                $folder = null;
+            }
+
+            if ($folder !== null && $folder->volumeId === $volume->id) {
+                return $folder;
+            }
+
+            $warnings[] = sprintf('the %s field\'s upload subpath does not resolve before the submission is saved; the upload lands in its volume\'s root.', $fieldHandle);
+
+            return $assets->getRootFolderByVolumeId($volume->id);
+        }
+
+        $volume = $volumeHandle === null ? null : Craft::$app->getVolumes()->getVolumeByHandle($volumeHandle);
+
+        if ($volume === null) {
+            $warnings[] = $volumeHandle === null
+                ? sprintf('the %s field has no upload location and forms.submissions declares no volume; the upload was not copied.', $fieldHandle)
+                : sprintf('no upload volume "%s"; the upload was not copied.', $volumeHandle);
+
+            return null;
+        }
+
+        return $assets->getRootFolderByVolumeId($volume->id);
     }
 
     /**

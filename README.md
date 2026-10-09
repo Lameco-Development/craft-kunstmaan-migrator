@@ -429,7 +429,14 @@ forms:
     nodes: all                 # or [222, 8] — legacy kuma_form_submissions.node_id values
     volume: formieUploads      # the (private) volume uploaded files land in
     filesRoot: /var/www/legacy/site/public   # where /uploads/formsubmissions/… lives
+    subpath: berkvensNl        # optional: the folder in `volume:` an archive form's file field uploads to
 ```
+
+An uploaded file lands in the folder Formie itself would use for the file field it
+answers: the field's upload location (volume and subpath) when it has one, as the
+`forms:` lane's fields can set with `uploadLocationSource`/`uploadLocationSubpath`,
+else the root of `volume:`. An archive form's file field gets `volume:` and `subpath:`
+as its upload location, so its files and its settings agree.
 
 A submission lands on the Formie form the `forms:` lane wrote for its node's page,
 under the field each answered pagepart became (the join is the part, never the label,
