@@ -33,7 +33,8 @@ class FormMigrationService extends Component implements MigrationAdapter
 {
     use GatedAdapter;
 
-    private const STATE_SOURCE = 'form';
+    /** Also where SubmissionMigrationService finds the form a node's submissions land on. */
+    public const STATE_SOURCE = 'form';
 
     public ?MigrationStateService $stateService = null;
 
@@ -89,6 +90,11 @@ class FormMigrationService extends Component implements MigrationAdapter
             $report->warn(sprintf('%d skipped: %s', $count, $reason));
         }
 
+        // After the forms, in the same pass: a submission lands on the form
+        // the lane just wrote, so the order is structural, not hopeful.
+        (new SubmissionMigrationService($this->gateway(), $this->stateService))
+            ->migrate($opts, $context, $report, $prefix);
+
         return $report;
     }
 
@@ -99,7 +105,7 @@ class FormMigrationService extends Component implements MigrationAdapter
     private function load(array $record, MigrationOptions $opts, array $config, string $prefix, MigrationReport $report): void
     {
         $sourceUid = (string) $record['sourceUid'];
-        $handle = $this->handleFor($sourceUid, $prefix);
+        $handle = self::handleFor($sourceUid, $prefix);
 
         $report->incr('compiled');
 
@@ -116,6 +122,7 @@ class FormMigrationService extends Component implements MigrationAdapter
         }
 
         $warnings = [];
+        $handles = [];
 
         try {
             $formId = $this->gateway()->saveForm(
@@ -127,6 +134,7 @@ class FormMigrationService extends Component implements MigrationAdapter
                     'pageLabel' => $config['pageLabel'] ?? 'Page 1',
                 ],
                 $warnings,
+                $handles,
             );
         } catch (Throwable $e) {
             $report->incr('failed');
@@ -154,7 +162,9 @@ class FormMigrationService extends Component implements MigrationAdapter
             $formId,
             null,
             null,
-            ['handle' => $handle, 'fields' => count((array) ($record['fields'] ?? []))],
+            // `fieldMap` is how a stored submission, which names the pagepart it
+            // answered, finds the Formie field that part became.
+            ['handle' => $handle, 'fields' => count((array) ($record['fields'] ?? [])), 'fieldMap' => $handles],
         );
 
         $report->incr($existing === null ? 'created' : 'updated');
@@ -173,7 +183,7 @@ class FormMigrationService extends Component implements MigrationAdapter
      * would overwrite the first — the same class of bug as the rewriter caching
      * bare legacy ids across databases.
      */
-    private function handleFor(string $sourceUid, string $prefix): string
+    public static function handleFor(string $sourceUid, string $prefix): string
     {
         // kuma:<ENV>:form:<Entity>:<id>
         $parts = explode(':', $sourceUid);

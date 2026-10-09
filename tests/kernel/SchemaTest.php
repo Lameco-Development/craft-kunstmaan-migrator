@@ -387,4 +387,48 @@ final class SchemaTest extends TestCase
             );
         }
     }
+
+    #[Test]
+    public function a_submissions_opt_in_for_all_nodes_or_a_list_is_sound(): void
+    {
+        foreach (['nodes: all', 'nodes: [222, 8]'] as $nodes) {
+            self::assertSame([], $this->validate(<<<YAML
+                version: 1
+                environments:
+                  NL: { database: legacy, locales: { nl: berkvensNl } }
+                forms:
+                  submissions:
+                    $nodes
+                    volume: formieUploads
+                    filesRoot: /var/www/legacy/public
+                YAML));
+        }
+    }
+
+    /**
+     * A misspelt opt-in would read as "every node" or as "none" — both silent,
+     * and one of them moves years of personal data nobody asked for.
+     */
+    #[Test]
+    public function a_submissions_block_that_is_not_all_or_a_node_list_is_rejected(): void
+    {
+        $errors = $this->validate(<<<'YAML'
+            version: 1
+            environments:
+              NL: { database: legacy, locales: { nl: berkvensNl } }
+            forms:
+              submissions:
+                nodes: everything
+                volume: [formieUploads]
+                filesRoot: 7
+                node: [222]
+            YAML);
+
+        self::assertSame([
+            'forms.submissions: `nodes:` must be `all` or a list of legacy node ids',
+            'forms.submissions: `volume:` must be a volume handle',
+            'forms.submissions: `filesRoot:` must be a directory path',
+            'forms.submissions: unknown key `node` (nodes, volume, filesRoot)',
+        ], $errors);
+    }
 }

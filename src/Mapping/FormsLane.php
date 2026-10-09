@@ -10,11 +10,15 @@ namespace Lameco\Kunstmaanmigrator\Mapping;
  * The lane's per-field rows stay on `Mapping::formFields()`; this is the rest of
  * it: whether it is declared at all, which Kunstmaan context holds a page's form,
  * the Matrix field a page's form block lands in (`field:`, else the page's main
- * builder), and the block the lane emits (with the field on it the lane fills itself).
+ * builder), the block the lane emits (with the field on it the lane fills itself),
+ * and whether the legacy submissions travel (`submissions:`).
  */
 final class FormsLane
 {
     private const DEFAULT_CONTEXT = 'form';
+
+    /** `forms.submissions:` — off unless the mapping opts in. */
+    public readonly SubmissionsLane $submissions;
 
     private function __construct(
         public readonly bool $declared,
@@ -22,7 +26,9 @@ final class FormsLane
         public readonly ?string $emitBlock,
         public readonly ?string $emitField,
         public readonly ?string $field = null,
+        ?SubmissionsLane $submissions = null,
     ) {
+        $this->submissions = $submissions ?? SubmissionsLane::fromSpec(null);
     }
 
     public static function fromSpec(mixed $spec): self
@@ -40,6 +46,7 @@ final class FormsLane
             emitBlock: self::string($emit, 'block'),
             emitField: self::string($emit, 'field'),
             field: self::string($spec, 'field'),
+            submissions: SubmissionsLane::fromSpec($spec['submissions'] ?? null),
         );
     }
 

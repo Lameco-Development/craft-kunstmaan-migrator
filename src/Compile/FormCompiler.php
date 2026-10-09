@@ -108,6 +108,8 @@ final class FormCompiler
                     'required' => (bool) ($mapped['required'] ?? false),
                     'settings' => array_diff_key($mapped, array_flip(['label', 'handle', 'required'])),
                     'sourceRef' => sprintf('%s:%d', $table, $ref['id']),
+                    // What a stored submission's `field_name` names; SubmissionCompiler::partKey().
+                    'partRef' => sprintf('%s:%d', $ref['part'], $ref['id']),
                 ];
             }
 

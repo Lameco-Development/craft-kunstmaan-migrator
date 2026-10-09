@@ -57,7 +57,7 @@ final class WriteBoundaryTest extends TestCase
             'adapter' => 'src/craft/VerbbFormieGateway.php',
             'fake' => 'tests/support/InMemoryFormGateway.php',
             'seam' => 'FormGateway',
-            'instead' => 'isAvailable/formIdByHandle/saveForm',
+            'instead' => 'isAvailable/formIdByHandle/saveForm/ingestUpload/saveSubmission',
         ],
         [
             'pattern' => '~\\\\spicyweb\\\\embeddedassets\\\\Plugin::\$plugin(?:->(\w+))?~',
