@@ -85,7 +85,11 @@ class SeomaticPayloadBuilder extends Component
         // rest at render time (see the class docblock).
         //
         // The shaping itself is `Payload\SeomaticValue`'s, shared with the compiler, which
-        // builds an entity's SEO from mapped columns the same way.
+        // builds an entity's SEO from mapped columns the same way. Keywords are the entity
+        // path's alone (`seomatic(keywords=…)`): a page's SEO never carried them, and a
+        // `kuma_seo` that happens to have the column must not change it now.
+        unset($row['meta_keywords']);
+
         return SeomaticValue::fromRow(
             $row,
             $this->resolveMediaId($row['og_image_id'] ?? null, $environment),

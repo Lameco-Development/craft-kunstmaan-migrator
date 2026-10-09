@@ -332,6 +332,69 @@ final class SeomaticPayloadBuilderTest extends TestCase
         $this->assertArrayNotHasKey('seoImageIds', $payload['metaBundleSettings']);
         $this->assertSame(['LV:kuma_media:42'], $state->keys);
     }
+
+    public function testAFullRowProducesExactlyThePageShape(): void
+    {
+        // The whole value, key order included: entity rows compile through the same shaping
+        // (`Payload\SeomaticValue`), and a page's SEO must not move when that is shared.
+        $this->assertSame(self::FULL_PAGE_SHAPE, $this->buildFullRow([]));
+    }
+
+    public function testAKumaSeoRowWithKeywordsKeepsThePageShape(): void
+    {
+        // A consumer's `kuma_seo` may carry `meta_keywords`; a page's SEO never emitted it, and
+        // sharing the shaping with entities (`seomatic(keywords=…)`) must not start to.
+        $this->assertSame(self::FULL_PAGE_SHAPE, $this->buildFullRow(['meta_keywords' => 'deur, kozijn']));
+    }
+
+    private const FULL_PAGE_SHAPE = [
+        'metaGlobalVars' => [
+            'seoTitle' => 'Title',
+            'seoDescription' => 'Desc',
+            'seoImage' => '1042',
+            'ogTitle' => 'Title',
+            'ogDescription' => 'OGD',
+            'ogImage' => '1042',
+            'robots' => 'noindex',
+            'twitterTitle' => 'TT',
+            'twitterDescription' => 'TD',
+            'twitterImage' => '1007',
+        ],
+        'metaBundleSettings' => [
+            'seoTitleSource' => 'fromCustom',
+            'seoDescriptionSource' => 'fromCustom',
+            'ogTitleSource' => 'fromCustom',
+            'ogDescriptionSource' => 'fromCustom',
+            'seoImageSource' => 'fromAsset',
+            'seoImageIds' => [1042],
+            'ogImageSource' => 'sameAsSeo',
+            'twitterTitleSource' => 'fromCustom',
+            'twitterDescriptionSource' => 'fromCustom',
+            'twitterImageSource' => 'fromAsset',
+            'twitterImageIds' => [1007],
+        ],
+    ];
+
+    /**
+     * @param array<string, mixed> $extra
+     * @return array<string, mixed>
+     */
+    private function buildFullRow(array $extra): array
+    {
+        $builder = new SeomaticPayloadBuilder();
+        $builder->setResolver(static fn(int $id): int => $id + 1000);
+
+        return $builder->build([
+            'meta_title' => 'Title',
+            'meta_description' => 'Desc',
+            'og_description' => 'OGD',
+            'og_image_id' => 42,
+            'meta_robots' => 'noindex',
+            'twitter_title' => 'TT',
+            'twitter_description' => 'TD',
+            'twitter_image_id' => 7,
+        ] + $extra, 1, 'COM');
+    }
 }
 
 /**
@@ -356,52 +419,5 @@ final class RecordingStateService extends MigrationStateService
         $this->keys[] = $key;
 
         return $this->map[$key] ?? null;
-    }
-    public function testAFullRowProducesExactlyThePageShape(): void
-    {
-        // The whole value, key order included: entity rows compile through the same shaping
-        // (`Payload\SeomaticValue`), and a page's SEO must not move when that is shared.
-        $builder = new SeomaticPayloadBuilder();
-        $builder->setResolver(static fn(int $id): int => $id + 1000);
-
-        $this->assertSame(
-            [
-                'metaGlobalVars' => [
-                    'seoTitle' => 'Title',
-                    'seoDescription' => 'Desc',
-                    'seoImage' => '1042',
-                    'ogTitle' => 'Title',
-                    'ogDescription' => 'OGD',
-                    'ogImage' => '1042',
-                    'robots' => 'noindex',
-                    'twitterTitle' => 'TT',
-                    'twitterDescription' => 'TD',
-                    'twitterImage' => '1007',
-                ],
-                'metaBundleSettings' => [
-                    'seoTitleSource' => 'fromCustom',
-                    'seoDescriptionSource' => 'fromCustom',
-                    'ogTitleSource' => 'fromCustom',
-                    'ogDescriptionSource' => 'fromCustom',
-                    'seoImageSource' => 'fromAsset',
-                    'seoImageIds' => [1042],
-                    'ogImageSource' => 'sameAsSeo',
-                    'twitterTitleSource' => 'fromCustom',
-                    'twitterDescriptionSource' => 'fromCustom',
-                    'twitterImageSource' => 'fromAsset',
-                    'twitterImageIds' => [1007],
-                ],
-            ],
-            $builder->build([
-                'meta_title' => 'Title',
-                'meta_description' => 'Desc',
-                'og_description' => 'OGD',
-                'og_image_id' => 42,
-                'meta_robots' => 'noindex',
-                'twitter_title' => 'TT',
-                'twitter_description' => 'TD',
-                'twitter_image_id' => 7,
-            ], 1, 'COM'),
-        );
     }
 }

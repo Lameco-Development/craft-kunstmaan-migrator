@@ -13,9 +13,10 @@ namespace Lameco\Kunstmaanmigrator\Payload;
  * its own. Why each key is emitted, or left out, is the builder's docblock; the rules live here
  * so the two cannot drift.
  *
- * `meta_keywords` is not a `kuma_seo` column, so a page never carries it; an entity's SEO table
- * may. It is emitted only when set, with its `fromCustom` source, as robots and the Twitter
- * overrides are: an empty one falls through to the sitewide default.
+ * `meta_keywords` reaches this only from an entity's `seomatic(keywords=…)`: the SEO adapter
+ * drops it from a `kuma_seo` row, whatever columns that table has, so a page's SEO stays what it
+ * always was. It is emitted only when set, with its `fromCustom` source, as robots and the
+ * Twitter overrides are: an empty one falls through to the sitewide default.
  */
 final class SeomaticValue
 {
