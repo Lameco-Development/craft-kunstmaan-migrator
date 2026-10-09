@@ -7,6 +7,8 @@ namespace Lameco\Kunstmaanmigrator\run;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\RedirectGuard;
+use Lameco\Kunstmaanmigrator\craft\RetourRedirectGuard;
 use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
 
 /**
@@ -22,20 +24,28 @@ use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
  * the two passes, every one queued for indexing again by the index stage.
  * So the hold is its own value, and both callers arm it around every pass
  * that writes.
+ *
+ * It also holds Retour's URI-change redirects for every pass that writes, whether or not the
+ * run settles URIs: a multi-site load changes each entry's URI from the propagated primary
+ * slug to its own, and Retour stored a 301 for each (`RedirectGuard`).
  */
 final class MaintenanceGuard
 {
     private bool $armed = false;
 
+    private bool $redirectsHeld = false;
+
     public function __construct(
         private readonly UriJobGuard $uriJobs,
         private readonly ElementWriter $elements,
+        /** Null holds no redirects: a test that is not about them. */
+        private readonly ?RedirectGuard $redirects = null,
     ) {
     }
 
     public static function build(): self
     {
-        return new self(new CraftUriJobGuard(), new CraftElementWriter());
+        return new self(new CraftUriJobGuard(), new CraftElementWriter(), new RetourRedirectGuard());
     }
 
     /**
@@ -63,6 +73,11 @@ final class MaintenanceGuard
      */
     public function arm(RunSettings $settings): void
     {
+        if (!$settings->dryRun && !$this->redirectsHeld && $this->redirects !== null) {
+            $this->redirects->suspend();
+            $this->redirectsHeld = true;
+        }
+
         if (!$settings->settlesUris() || $this->armed) {
             return;
         }
@@ -75,6 +90,11 @@ final class MaintenanceGuard
     /** The disarm half; what was vetoed and what went unindexed land on the tally. */
     public function disarm(RunTally $tally): void
     {
+        if ($this->redirectsHeld && $this->redirects !== null) {
+            $this->redirectsHeld = false;
+            $this->redirects->resume();
+        }
+
         if (!$this->armed) {
             return;
         }

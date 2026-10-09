@@ -15,6 +15,8 @@ use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\CraftSchemaGateway;
 use Lameco\Kunstmaanmigrator\craft\CraftUriJobGuard;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\RedirectGuard;
+use Lameco\Kunstmaanmigrator\craft\RetourRedirectGuard;
 use Lameco\Kunstmaanmigrator\craft\TargetModel;
 use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
@@ -62,9 +64,10 @@ final class EnvironmentPipeline
         ElementWriter $elements,
         /** Null on a dry run, which settles no order: nothing was written to put in one. */
         private readonly ?StructureOrderService $structureOrder = null,
+        ?RedirectGuard $redirects = null,
     ) {
         $this->retry = $saver === null ? null : new WriteConflictRetry($saver->save(...));
-        $this->maintenance = new MaintenanceGuard($uriJobs, $elements);
+        $this->maintenance = new MaintenanceGuard($uriJobs, $elements, $redirects);
     }
 
     /**
@@ -90,6 +93,7 @@ final class EnvironmentPipeline
             new CraftUriJobGuard(),
             $elements,
             $settings->dryRun ? null : new StructureOrderService($plugin->migrationStateService, $elements),
+            new RetourRedirectGuard(),
         );
     }
 
@@ -192,7 +196,7 @@ final class EnvironmentPipeline
             });
 
             if (!$settings->entriesOnly) {
-                $tally->adapters[$env] = $this->runAdapters($context, $settings);
+                $this->runAdaptersFor($context, $settings, $tally);
             }
         });
     }
@@ -334,13 +338,18 @@ final class EnvironmentPipeline
     }
 
     /**
-     * The adapter passes for one prepared environment, as `run()` executes them.
+     * The adapter passes for one prepared environment, as `run()` executes them — their
+     * results folded into the tally, so a failure that is a run failure (`submissionsFailed`)
+     * reaches the console's exit code and the queued job's log entry alike.
      *
      * @return array<string, mixed>
      */
-    public function runAdaptersFor(EnvironmentContext $context, RunSettings $settings): array
+    public function runAdaptersFor(EnvironmentContext $context, RunSettings $settings, RunTally $tally): array
     {
-        return $this->runAdapters($context, $settings);
+        $results = $this->runAdapters($context, $settings);
+        $tally->absorbAdapters($context->name, $results);
+
+        return $results;
     }
 
     /** @param array<string, mixed> $raw */

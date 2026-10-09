@@ -355,6 +355,15 @@ class EntryMigrationService extends Component
 
             $siteData = $isPrimary ? $primaryData : $perSite[$site->handle];
 
+            // The first save of a new entry propagated, and Craft copied every field value
+            // into this row — an SEOmatic bundle built under the primary site included. A
+            // stored bundle keeps its `metaSiteVars`, so a site without SEO of its own would
+            // say the primary's name. Handed a null, SEOmatic builds it under this site.
+            if ($isNew && !$isPrimary) {
+                $siteData['fieldValues'] = (array) ($siteData['fieldValues'] ?? [])
+                    + array_fill_keys(self::seomaticHandles($localised), null);
+            }
+
             $this->applyPerSiteData(
                 $localised,
                 $siteData,
@@ -388,6 +397,15 @@ class EntryMigrationService extends Component
         // ------------------------------------------------------------------ 7b
         $blocks->prune($entry, $perSite, $sites);
 
+        // ------------------------------------------------------------------ 7c
+        // A new entry's rows on sites no payload names — the primary row's
+        // siblings Craft propagated — hold the SEOmatic bundle built for
+        // another site, and no per-site save above visits them.
+        // ------------------------------------------------------------------ 7c
+        if ($isNew) {
+            $this->rebuildSeomaticOnUnpayloadedSites($entry, $perSite, $sites, $primarySite->siteId);
+        }
+
         // ------------------------------------------------------------------ 8
         // Persist the per-site block id map so the NEXT re-run can thread
         // the ids back in and update blocks in place (Pitfall 3).
@@ -403,10 +421,21 @@ class EntryMigrationService extends Component
     }
 
     /**
+     * SEOmatic's field class, by name: SEOmatic is an optional plugin, so it is never imported.
+     */
+    private const SEOMATIC_FIELD = 'nystudio107\\seomatic\\fields\\SeoSettings';
+
+    /**
      * Save one site's row of the entry — with Craft's current site switched to that site when
-     * the data carries an SEOmatic value, which bakes the current site's name and identity into
+     * the entry has an SEOmatic field, which bakes the current site's name and identity into
      * what it stores. Left alone, a console run's primary site named every other site's SEO;
      * the SEO adapter switches for the same reason, through the same seam.
+     *
+     * Not only when the data carries an SEOmatic value: Craft serializes every field on the
+     * layout on save, and an SEOmatic field with no value normalizes a fresh bundle whose
+     * `metaSiteVars` reads the current site. Berkvens FR's 39 models and products without
+     * mapped SEO stored the NL site's name that way. Once a name is stored it is never derived
+     * again, so the bare first save is switched too.
      *
      * @param array<string, mixed> $siteData
      */
@@ -414,11 +443,80 @@ class EntryMigrationService extends Component
     {
         $save = fn(): bool => $this->elements()->save($entry);
 
-        if ($entry->siteId === null || !SeomaticValue::isIn((array) ($siteData['fieldValues'] ?? []))) {
+        if ($entry->siteId === null
+            || (!SeomaticValue::isIn((array) ($siteData['fieldValues'] ?? [])) && !self::hasSeomaticField($entry))) {
             return $save();
         }
 
         return $this->elements()->withCurrentSite((int) $entry->siteId, $save);
+    }
+
+    /**
+     * Rebuild the SEOmatic value of a new entry's rows on sites the payload does not name.
+     *
+     * Craft propagated those rows from the first save and copied its SEOmatic bundle, built
+     * for the primary site, into them; a stored bundle is never derived again. Xidoor's NL-only
+     * nodes kept another site's name on their disabled EN, FR and DE rows that way. Handed a
+     * null and saved in its own site, each row gets a bundle of its own. Nothing else on the
+     * row is touched.
+     *
+     * @param array<string, array<string, mixed>> $perSite
+     */
+    private function rebuildSeomaticOnUnpayloadedSites(Entry $entry, array $perSite, SiteMap $sites, int $primarySiteId): void
+    {
+        $handles = self::seomaticHandles($entry);
+
+        if ($handles === [] || $entry->id === null) {
+            return;
+        }
+
+        $payloaded = [$primarySiteId => true];
+
+        foreach (array_keys($perSite) as $handle) {
+            $siteId = $sites->siteIdForHandle((string) $handle);
+
+            if ($siteId !== null) {
+                $payloaded[$siteId] = true;
+            }
+        }
+
+        foreach ($this->elements()->siteIdsOf((int) $entry->id) as $siteId) {
+            if (isset($payloaded[$siteId])) {
+                continue;
+            }
+
+            $row = $this->elements()->findById((int) $entry->id, Entry::class, $siteId);
+
+            if (!$row instanceof Entry) {
+                continue;
+            }
+
+            $row->setFieldValues(array_fill_keys($handles, null));
+            $row->resaving = true;
+
+            if (!$this->elements()->withCurrentSite($siteId, fn(): bool => $this->elements()->save($row))) {
+                $this->warn(sprintf('site %d: SEOmatic rebuild save failed for entry %d — %s', $siteId, (int) $entry->id, json_encode($row->getErrors())));
+            }
+        }
+    }
+
+    private static function hasSeomaticField(Entry $entry): bool
+    {
+        return self::seomaticHandles($entry) !== [];
+    }
+
+    /** @return list<string> the handles of the SEOmatic fields on the entry's layout */
+    private static function seomaticHandles(Entry $entry): array
+    {
+        $handles = [];
+
+        foreach ($entry->getFieldLayout()?->getCustomFields() ?? [] as $field) {
+            if (is_a($field, self::SEOMATIC_FIELD)) {
+                $handles[] = (string) $field->handle;
+            }
+        }
+
+        return $handles;
     }
 
     // --------------------------------------------------------------------------

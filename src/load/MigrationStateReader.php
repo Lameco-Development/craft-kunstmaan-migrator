@@ -37,7 +37,8 @@ interface MigrationStateReader
     /**
      * Returns the full row array for (source, sourceKey, siteId), or null
      * when no row exists. Used by handlers that need access to the stored
-     * `meta` JSON alongside the target id.
+     * `meta` alongside the target id — decoded to an array, or null, whatever
+     * shape the database hands the JSON column back in.
      *
      * @return array<string, mixed>|null
      */

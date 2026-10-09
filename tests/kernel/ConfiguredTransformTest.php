@@ -30,12 +30,33 @@ final class ConfiguredTransformTest extends TestCase
     }
 
     #[Test]
-    public function a_configured_map_translates_and_records_the_loss(): void
+    public function a_mapped_value_is_translated_not_lost(): void
     {
+        // A `map:` hit is the mapping saying what the value becomes: a label turned
+        // into the option value the target stores (Berkvens FR's `technische informatie`
+        // → `technicalInformation`) carries everything across. Counting it as a loss
+        // made `--fail-on-loss` refuse a run that lost nothing.
         $t = $this->transforms();
 
         self::assertSame('indigo', $t->apply('heroColorScheme', 'purple', 'HeaderTab'));
-        self::assertSame(['heroColorScheme' => ['purple -> indigo' => 1]], $t->losses());
+        self::assertSame([], $t->losses());
+        self::assertSame(0, $t->lossCount());
+    }
+
+    /**
+     * A hit that maps to nothing (`''` or `~`) drops the value the source held — the map
+     * says so on purpose, but the value is still gone, so it is counted, and a reviewed
+     * one goes in `acceptedLosses:`.
+     */
+    #[Test]
+    public function a_value_mapped_to_nothing_is_a_loss(): void
+    {
+        $t = new Transforms(['alignRight' => ['map' => ['left' => '', 'right' => '1', 'none' => null]]]);
+
+        self::assertSame('', $t->apply('alignRight', 'left'));
+        self::assertSame('1', $t->apply('alignRight', 'right'));
+        self::assertSame('', $t->apply('alignRight', 'none'));
+        self::assertSame(['alignRight' => ['left -> ' => 1, 'none -> ' => 1]], $t->losses());
     }
 
     #[Test]

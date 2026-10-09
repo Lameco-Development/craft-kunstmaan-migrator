@@ -307,6 +307,18 @@ last job of the chain — and the JSON summary reports it under `uris`.
 afterwards for an operator comparing the two; note that a re-save is a full
 save that propagates, which creates rows on sites the payload never named.
 
+**Retour's URI-change redirects are off while the run writes.** Retour stores
+a 301 whenever an enabled entry's URI changes on a save
+(`createUriChangeRedirects`, on by default). A multi-site load changes URIs by
+design: an entry is saved in its primary site, the slug propagates, then each
+other site is saved with its own. Xidoor's first load left 35 redirects from
+paths nobody ever visited, such as `/companies` → `/bedrijven`. Every writing
+pass, on the console and in the queue, switches the setting off and restores it
+afterwards, even when the pass throws. A project that had it off keeps it off.
+The redirects the migration means to write are the ones the redirects adapter
+imports. An `--entries-only` run is held too; a dry run writes nothing, so it
+isn't.
+
 **The run warns about blocks the target will reject.** A Matrix names the entry types
 it accepts, and a part whose block is not on that list is dropped at write time. Whether
 that costs anything is a fact about the data — `contactCardBlock` is fine on a
@@ -329,6 +341,31 @@ warns instead, because the tight iteration loop is not claiming to be complete.
 counted and reported, and still exits 0. `--fail-on-loss` makes lossy
 conversions, unresolved assets and unresolved references non-zero, which is what
 you want in CI once a corpus has a known-good loss count.
+
+A loss you have reviewed and accept goes in the mapping's top-level
+`acceptedLosses:`, copied from the run report, and `--fail-on-loss` subtracts it:
+
+```yaml
+acceptedLosses:
+  lossyConversions:            # transform => keys, as acceptedLosses.unaccepted.losses lists them
+    asset: ['media:889 -> unresolved', 'media:892 -> unresolved']
+  unresolvedAssets:            # paths, as acceptedLosses.unaccepted.unresolvedAssetPaths lists them
+    - /uploads/documents/2044….pdf
+  unresolvedReferences:        # fixup orphans, as acceptedLosses.unaccepted.unresolvedReferenceKeys lists them
+    - 'kuma:FR:model:12: utilityCategoryPages -> kuma:FR:kuma_nodes:491'
+  note: soft-deleted media; the PDF has no copy anywhere
+```
+
+An entry accepts every occurrence of its key. The report's `acceptedLosses` block
+splits the run into `accepted` and `unaccepted`, and lists as `stale` every entry
+the run no longer loses — a warning on stderr, not a failure; remove it, so it
+cannot excuse the same loss coming back. A reference to a target never migrated
+(`fixup.unresolvable`) and per-site block content the target cannot hold are not
+acceptable. Copy from the report's `acceptedLosses.unaccepted` lists, which are
+complete; `unresolvedAssetSample` stops at five. Only references from the
+environments the run walked count: the state table is shared with other
+mappings' runs. A `transforms:` `map:` hit (and a `colorScheme` one) is a
+translation, not a loss; a hit to `''` or `~`, the fallback and a miss are.
 
 **`doctor` checks whether the target can hold per-locale blocks.** A page-builder
 Matrix with `propagationMethod: all` keeps *one* block set for the owner, shared by

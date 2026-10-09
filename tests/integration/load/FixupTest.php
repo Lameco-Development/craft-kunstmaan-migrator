@@ -488,7 +488,7 @@ final class FixupTest extends TestCase
 
         $report = $fixup->run();
 
-        self::assertSame(['patched' => 0, 'orphans' => [], 'unresolvable' => 0, 'unresolvableTargets' => []], $report);
+        self::assertSame(['patched' => 0, 'orphans' => [], 'unresolvable' => 0, 'unresolvableFrom' => [], 'unresolvableTargets' => []], $report);
     }
 
     public function testAFullCorpusPassClassifiesATargetWithNoStateRowAsUnresolvableAndStopsWalkingIt(): void
@@ -517,6 +517,7 @@ final class FixupTest extends TestCase
         self::assertSame(0, $report['patched']);
         self::assertSame([], $report['orphans'], 'An unresolvable ref is not an orphan: orphans are what is still pending.');
         self::assertSame(3, $report['unresolvable']);
+        self::assertSame(['kuma:COM:kuma_nodes:1' => 3], $report['unresolvableFrom'], 'by source, uncapped: what the run gate scopes to its environments');
         self::assertSame([
             [
                 'ref' => 'kuma:COM:kuma_nodes:22',
@@ -542,7 +543,7 @@ final class FixupTest extends TestCase
         // The next pass has nothing to walk: reported once, not on every run.
         $again = $fixup->run(fullCorpus: true);
 
-        self::assertSame(['patched' => 0, 'orphans' => [], 'unresolvable' => 0, 'unresolvableTargets' => []], $again);
+        self::assertSame(['patched' => 0, 'orphans' => [], 'unresolvable' => 0, 'unresolvableFrom' => [], 'unresolvableTargets' => []], $again);
         self::assertSame(0, $entryService->reads, 'A ref that cannot resolve never costs an element load.');
     }
 

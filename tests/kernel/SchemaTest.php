@@ -482,4 +482,54 @@ final class SchemaTest extends TestCase
                 YAML),
         );
     }
+
+    /**
+     * `acceptedLosses:` is copied out of a run report's `losses` and samples, so
+     * each list is keyed the way the report keys it.
+     */
+    #[Test]
+    public function an_accepted_loss_baseline_keyed_as_the_run_report_is_sound(): void
+    {
+        self::assertSame([], $this->validate(<<<'YAML'
+            version: 1
+            environments:
+              FR: { database: legacy, locales: { nl: berkvensFr } }
+            acceptedLosses:
+              lossyConversions:
+                asset: ['media:889 -> unresolved', 'media:892 -> unresolved']
+              unresolvedAssets: [/uploads/documents/2044.pdf]
+              unresolvedReferences: ['kuma:FR:model:12: utilityCategoryPages -> kuma:FR:kuma_nodes:491']
+              note: soft-deleted media, spec answer 8
+            YAML));
+    }
+
+    /**
+     * A misspelt baseline accepts nothing, and the run fails on losses the
+     * mapping says it accepted — or, worse, a wrong shape reads as accepted
+     * everything. Every key and every entry is checked.
+     */
+    #[Test]
+    public function an_accepted_loss_baseline_of_the_wrong_shape_is_rejected(): void
+    {
+        $errors = $this->validate(<<<'YAML'
+            version: 1
+            environments:
+              FR: { database: legacy, locales: { nl: berkvensFr } }
+            acceptedLosses:
+              lossyConversions:
+                asset: 'media:889 -> unresolved'
+                fileCategory: ['overig']
+              unresolvedAssets: /uploads/a.pdf
+              unresolvedReferences: [7]
+              orphans: []
+            YAML);
+
+        self::assertSame([
+            'acceptedLosses.lossyConversions.asset: must be a list of `<from> -> <to>` keys, as the run report\'s `losses` lists them',
+            'acceptedLosses.lossyConversions.fileCategory: `overig` is not a `<from> -> <to>` key, as the run report\'s `losses` lists them',
+            'acceptedLosses.unresolvedAssets: must be a list of asset paths, as the run report lists them',
+            'acceptedLosses.unresolvedReferences: must be a list of `<sourceUid>: <field> -> <ref>` keys',
+            'acceptedLosses: unknown key `orphans` (lossyConversions, unresolvedAssets, unresolvedReferences, note)',
+        ], $errors);
+    }
 }

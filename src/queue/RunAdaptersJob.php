@@ -73,12 +73,19 @@ final class RunAdaptersJob extends BaseJob implements RetryableJobInterface
                 // work and indexing a batch does; the hold applies only to a
                 // chain that ends in the closing passes.
                 if ($this->chainCorpusPasses) {
-                    $pipeline->guardMaintenance($settings, $tally, function() use (&$extra, $pipeline, $context, $settings): void {
-                        $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings);
+                    $pipeline->guardMaintenance($settings, $tally, function() use (&$extra, $pipeline, $context, $settings, $tally): void {
+                        $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings, $tally);
                     });
                 } else {
-                    $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings);
+                    $extra['adapters'] = $pipeline->runAdaptersFor($context, $settings, $tally);
                 }
+
+                // Content failures are the report's to carry, not the queue's to abort on,
+                // as in `MigrateEnvironmentJob`: a submission that could not be written is
+                // said here, where the run panel and the log read it, not only inside the
+                // forms adapter's block.
+                $extra['submissionsFailed'] = $tally->counts['submissionsFailed'] ?? 0;
+                $extra['problems'] = $tally->problems;
 
                 $extra['slugJobsVetoed'] = $tally->slugJobsVetoed;
                 $extra['searchIndexDeferred'] = $tally->searchIndexDeferred;

@@ -56,12 +56,11 @@ final class TransformsTest extends TestCase
         $t = $this->transforms();
         $t->apply('titleLevel', 'h1');
         $t->apply('titleLevel', 'h1');
-        $t->apply('colorScheme', 'indigo');
+        $t->apply('colorScheme', 'indigo'); // a mapped colour: translated, not lost
         $t->apply('titleLevel', 'h3');   // no loss
 
-        self::assertSame(3, $t->lossCount());
-        self::assertSame(['h1 -> h2' => 2], $t->losses()['titleLevel']);
-        self::assertSame(['indigo -> purple' => 1], $t->losses()['colorScheme']);
+        self::assertSame(2, $t->lossCount());
+        self::assertSame(['titleLevel' => ['h1 -> h2' => 2]], $t->losses());
     }
 
     #[Test]

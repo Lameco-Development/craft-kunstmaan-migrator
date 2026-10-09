@@ -231,9 +231,41 @@ final class RunTally
         $this->assetFailures[] = ['legacyId' => $legacyId, 'reason' => $reason, 'path' => $path];
     }
 
+    /**
+     * One environment's adapter results, as the report shows them — and the ones that are
+     * a run failure, folded where the exit code sees them.
+     *
+     * A submission that could not be written is personal data the run was asked to move and
+     * did not: Berkvens FR's re-run refused all 794 and still exited 0 with no problem listed,
+     * the count visible only inside `adapters.FR.forms`. The other adapters' `failed` counts
+     * stay in their own block, as they always have.
+     *
+     * @param array<string, mixed> $results adapter handle => summary
+     */
+    public function absorbAdapters(string $env, array $results): void
+    {
+        $this->adapters[$env] = $results;
+
+        foreach ($results as $handle => $result) {
+            $failed = (int) (is_array($result) ? ($result['counts']['submissionsFailed'] ?? 0) : 0);
+
+            if ($failed > 0) {
+                $this->count('submissionsFailed', $failed);
+                $this->problem(sprintf(
+                    '%s: %s: %d form submissions failed to save; see adapters.%s.%s.warnings',
+                    $env,
+                    $handle,
+                    $failed,
+                    $env,
+                    $handle,
+                ));
+            }
+        }
+    }
+
     public function hasFailures(): bool
     {
-        return ($this->counts['failed'] ?? 0) > 0;
+        return ($this->counts['failed'] ?? 0) > 0 || ($this->counts['submissionsFailed'] ?? 0) > 0;
     }
 
     /** Close a phase opened with `hrtime(true)`. */
