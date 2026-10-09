@@ -81,6 +81,14 @@ final class MigrateController extends Controller
     /** Refresh entries that already exist. */
     public bool $force = false;
 
+    /**
+     * Put every entry of an `order:`-keyed Structure back in its legacy sibling order.
+     *
+     * Without it a run places an entry once — when it first arrives — and leaves it alone
+     * after that, so an editor's reordering survives a re-run.
+     */
+    public bool $reorder = false;
+
     /** Compile and report without writing to Craft. */
     public bool $dryRun = false;
 
@@ -187,7 +195,7 @@ final class MigrateController extends Controller
         return array_merge(
             parent::options($actionID),
             [
-                'mapping', 'legacyEnv', 'limit', 'force', 'dryRun', 'dump', 'entriesOnly',
+                'mapping', 'legacyEnv', 'limit', 'force', 'reorder', 'dryRun', 'dump', 'entriesOnly',
                 'finalizeOnly', 'only', 'queue', 'failOnLoss', 'skipAssets', 'resave',
                 'allowDrift',
             ],
@@ -270,6 +278,7 @@ final class MigrateController extends Controller
             only: $only,
             dumpDir: $this->dump,
             skipAssets: $this->skipAssets,
+            reorder: $this->reorder,
         );
 
         // Finalize compiles nothing and needs no target schema, but it does need the legacy
@@ -322,6 +331,7 @@ final class MigrateController extends Controller
                 'remainingEnvironments' => array_values(array_slice($queued, 1)),
                 'dryRun' => $this->dryRun,
                 'force' => $this->force,
+                'reorder' => $this->reorder,
                 'limit' => $this->limit,
                 'entriesOnly' => $this->entriesOnly,
                 'only' => $only,

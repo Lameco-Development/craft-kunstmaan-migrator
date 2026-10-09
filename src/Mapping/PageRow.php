@@ -98,6 +98,16 @@ final class PageRow
         return $this->string('postDate');
     }
 
+    /**
+     * The expression that sorts these pages among their structure siblings, read against the
+     * node translation (`kuma_node_translations`, where Kunstmaan keeps `weight`) with the page's
+     * own table row over it; null keeps `lft` order. See `Compiler::structureOrder()`.
+     */
+    public function order(): ?string
+    {
+        return $this->string('order');
+    }
+
     public function live(): ?int
     {
         return isset($this->spec['live']) ? (int) $this->spec['live'] : null;

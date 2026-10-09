@@ -447,6 +447,11 @@ final class EntryMigrationServiceSaveTest extends TestCase
             {
                 $this->inner->invalidateCaches();
             }
+
+            public function moveInStructure(int $entryId, int $siblingId, bool $after): bool
+            {
+                return $this->inner->moveInStructure($entryId, $siblingId, $after);
+            }
         };
 
         try {

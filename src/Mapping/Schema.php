@@ -51,10 +51,10 @@ final class Schema
     private const CHILD_KEYS = ['table', 'fk', 'order', 'map', 'ignore', 'unreviewed', 'todo'];
 
     private const PAGE_KEYS = ['live', 'table', 'section', 'entryType', 'map', 'children', 'ignore',
-        'unreviewed', 'contexts', 'postDate', 'manual', 'drop', 'todo', 'note', ];
+        'unreviewed', 'contexts', 'postDate', 'order', 'manual', 'drop', 'todo', 'note', ];
 
     private const ENTITY_KEYS = ['live', 'table', 'section', 'entryType', 'title', 'softDelete', 'dedupe',
-        'single', 'children', 'map', 'ignore', 'unreviewed', 'todo', 'note', ];
+        'single', 'order', 'children', 'map', 'ignore', 'unreviewed', 'todo', 'note', ];
 
     private const REDIRECT_KEYS = ['live', 'table', 'map', 'defaultType', 'ignore', 'unreviewed', 'todo', 'note'];
 
@@ -559,6 +559,8 @@ final class Schema
             $errors[] = sprintf('page `%s`: unknown key `%s`', $name, $key);
         }
 
+        $this->checkOrder(sprintf('page `%s`', $name), $spec, $errors);
+
         if (isset($spec['manual']) || isset($spec['drop'])) {
             return;
         }
@@ -621,6 +623,8 @@ final class Schema
             $errors[] = sprintf('entity `%s`: unknown key `%s`', $name, $key);
         }
 
+        $this->checkOrder(sprintf('entity `%s`', $name), $spec, $errors);
+
         if (array_key_exists('dedupe', $spec) && !is_bool($spec['dedupe'])) {
             $errors[] = sprintf('entity `%s`: `dedupe:` is %s, not true or false', $name, get_debug_type($spec['dedupe']));
         }
@@ -667,6 +671,24 @@ final class Schema
                 'entity `%s`: neither maps nor ignores any column beyond its title',
                 $name,
             );
+        }
+    }
+
+    /**
+     * `order:` sorts a row's entries among their Structure siblings (`Compiler::structureOrder()`).
+     * Anything but a non-empty expression would sort nothing, and say so nowhere.
+     *
+     * @param array<string, mixed> $spec
+     * @param list<string> $errors
+     */
+    private function checkOrder(string $where, array $spec, array &$errors): void
+    {
+        if (!array_key_exists('order', $spec)) {
+            return;
+        }
+
+        if (!is_string($spec['order']) || trim($spec['order']) === '') {
+            $errors[] = sprintf('%s: `order:` must be an expression, such as `weight`', $where);
         }
     }
 

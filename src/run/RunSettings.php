@@ -24,6 +24,11 @@ final class RunSettings
         public readonly ?string $dumpDir = null,
         /** Skip the asset stage entirely. */
         public readonly bool $skipAssets = false,
+        /**
+         * Put every entry of an `order:`-keyed Structure back in its legacy order, including
+         * the ones an earlier run placed and an editor may have moved since.
+         */
+        public readonly bool $reorder = false,
     ) {
     }
 

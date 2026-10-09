@@ -220,4 +220,19 @@ final class CraftElementWriter implements ElementWriter
             queue: false,
         );
     }
+
+    public function moveInStructure(int $entryId, int $siblingId, bool $after): bool
+    {
+        $entry = Craft::$app->elements->getElementById($entryId, Entry::class);
+        $sibling = Craft::$app->elements->getElementById($siblingId, Entry::class);
+        $structureId = $entry?->getSection()?->structureId;
+
+        if ($entry === null || $sibling === null || $structureId === null) {
+            return false;
+        }
+
+        return $after
+            ? Craft::$app->getStructures()->moveAfter($structureId, $entry, $sibling)
+            : Craft::$app->getStructures()->moveBefore($structureId, $entry, $sibling);
+    }
 }

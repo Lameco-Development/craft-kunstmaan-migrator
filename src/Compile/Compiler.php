@@ -273,6 +273,211 @@ final class Compiler
         $this->flushStructural($run, PHP_INT_MAX, $emit);
     }
 
+    /**
+     * The sibling groups an `order:` key sorts, each in its target order.
+     *
+     * Entries land in a Structure in load order — `lft` for pages, id for an entity lane — and
+     * the legacy admin's drag order lives elsewhere (`weight`). Sorting the emission instead
+     * would break what load order guarantees (a parent before its children, a placeholder after
+     * its parent), and placing each entry beside a sibling as it saves cannot be right when that
+     * sibling loads later. So the order is computed here and settled once the environment's
+     * entries exist: from the whole lane and the whole node tree, never from what one batch
+     * compiled, which is what keeps it independent of where batch boundaries fall.
+     *
+     * A group is the entries of one Structure under one parent: a page whose legacy parent
+     * lands in another section is a root sibling, like every page re-rooted there. Members sort
+     * by the key ascending — numerically when both values are numbers — and a tie or a blank
+     * value falls back to id (the node id for a page), blanks after every keyed member. A page
+     * reads its key from the mapping's first locale it is published in: one Structure holds one
+     * order for every site, so one locale has to decide it. Rows without the key take no part.
+     *
+     * @return list<array{section: string, parent: ?string, members: list<string>}>
+     */
+    public function structureOrder(CompilerRun $run): array
+    {
+        /** @var array<string, array{section: string, parent: ?string, ranked: list<array{0: mixed, 1: int, 2: string}>}> $groups */
+        $groups = [];
+
+        $add = static function(string $section, ?string $parent, mixed $key, int $id, string $uid) use (&$groups): void {
+            $groups[$section . '|' . ($parent ?? '')] ??= ['section' => $section, 'parent' => $parent, 'ranked' => []];
+            $groups[$section . '|' . ($parent ?? '')]['ranked'][] = [$key, $id, $uid];
+        };
+
+        $this->entityOrder($run, $add);
+        $this->pageOrder($run, $add);
+
+        $out = [];
+
+        foreach ($groups as $group) {
+            usort($group['ranked'], self::rankOrder(...));
+            $out[] = [
+                'section' => $group['section'],
+                'parent' => $group['parent'],
+                'members' => array_column($group['ranked'], 2),
+            ];
+        }
+
+        return $out;
+    }
+
+    /** Whether any row this run compiles carries an `order:` key — whether there is anything to settle. */
+    public function ordersStructures(): bool
+    {
+        foreach ($this->mapping->entityRows() as $name => $entity) {
+            if ($entity->order() !== null && $this->wanted($name)) {
+                return true;
+            }
+        }
+
+        foreach ($this->mapping->pageRows() as $name => $page) {
+            if ($page->order() !== null && $this->wanted($name)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param callable(string, ?string, mixed, int, string): void $add */
+    private function entityOrder(CompilerRun $run, callable $add): void
+    {
+        $reader = null;
+
+        foreach ($this->mapping->entityRows() as $name => $entity) {
+            $order = $entity->order();
+
+            if ($order === null || !$this->wanted($name) || !$entity->compiles() || $entity->single()) {
+                continue;
+            }
+
+            $reader ??= new TaxonomyReader($run->pdo);
+
+            foreach ($reader->rows((string) $entity->table(), $entity->softDelete()) as $row) {
+                // The same rows the lane emits: one with no title becomes no entry.
+                if (self::lacksTitle($entity, $row)) {
+                    continue;
+                }
+
+                $id = (int) $row['id'];
+                $uid = EntityIndex::uid(
+                    $entity->dedupe() ? EntityIndex::SHARED : $run->environment,
+                    (string) $entity->table(),
+                    $id,
+                );
+
+                $add((string) $entity->section(), null, $this->orderKey($run->builder, $order, $row, $name), $id, $uid);
+            }
+        }
+    }
+
+    /** @param callable(string, ?string, mixed, int, string): void $add */
+    private function pageOrder(CompilerRun $run, callable $add): void
+    {
+        $translations = null;
+        $structural = $this->mapping->structuralSection();
+
+        foreach ($run->nodesById as $nodeId => $node) {
+            $page = $run->pageRows[$node['entity']] ?? null;
+            $order = $page?->order();
+
+            if ($page === null || $order === null || !$page->compiles() || !$this->wanted($node['entity'])) {
+                continue;
+            }
+
+            $translation = $this->orderTranslation($node, $run->locales);
+
+            // Published in no mapped locale: the page lane emits nothing for it.
+            if ($translation === null) {
+                continue;
+            }
+
+            $translations ??= $run->pages->translationRows();
+            $row = (array) ($translations[$nodeId][$translation['lang']] ?? []);
+
+            if ($page->table() !== null) {
+                $row = ($run->parts->row($page->table(), $translation['entityId']) ?? []) + $row;
+            }
+
+            // The parent `site()` gives the entry: its legacy parent when that lands in the
+            // same Structure, the root otherwise. A placeholder ancestor lands in the
+            // structural section.
+            $parentId = $node['parentId'];
+            $parentSection = $parentId === null
+                ? null
+                : ($run->parentable[$parentId] ?? (isset($run->pendingStructural[$parentId]) ? $structural : null));
+            $parent = $parentSection !== null && $parentSection === $page->section()
+                ? $this->uid($run->environment, (int) $parentId)
+                : null;
+
+            $add(
+                $page->section(),
+                $parent,
+                $this->orderKey($run->builder, $order, $row, $node['entity']),
+                $nodeId,
+                $this->uid($run->environment, $nodeId),
+            );
+        }
+    }
+
+    /**
+     * The translation a page's order is read from: the mapping's first mapped locale the node
+     * is published in.
+     *
+     * @param array<string, mixed> $node
+     * @param array<string, ?string> $locales
+     * @return array<string, mixed>|null
+     */
+    private function orderTranslation(array $node, array $locales): ?array
+    {
+        foreach ($locales as $lang => $site) {
+            if (!is_string($site) || $site === '') {
+                continue;
+            }
+
+            foreach ($node['translations'] as $translation) {
+                if ($translation['lang'] === (string) $lang) {
+                    return $translation;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed> $row */
+    private function orderKey(BlockBuilder $builder, string $expression, array $row, string $context): mixed
+    {
+        $value = $builder->fieldsFrom(['order' => $expression], $row, $context)['order'] ?? null;
+
+        return is_scalar($value) ? $value : null;
+    }
+
+    /**
+     * @param array{0: mixed, 1: int, 2: string} $a
+     * @param array{0: mixed, 1: int, 2: string} $b
+     */
+    private static function rankOrder(array $a, array $b): int
+    {
+        $blankA = $a[0] === null || $a[0] === '';
+        $blankB = $b[0] === null || $b[0] === '';
+
+        if ($blankA !== $blankB) {
+            return $blankA ? 1 : -1;
+        }
+
+        if (!$blankA) {
+            $byKey = is_numeric($a[0]) && is_numeric($b[0])
+                ? (float) $a[0] <=> (float) $b[0]
+                : strcmp((string) $a[0], (string) $b[0]);
+
+            if ($byKey !== 0) {
+                return $byKey;
+            }
+        }
+
+        return $a[1] <=> $b[1];
+    }
+
     private function flushStructural(CompilerRun $run, int $beforeLft, callable $emit): void
     {
         foreach ($run->pendingStructural as $nodeId => $lft) {

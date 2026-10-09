@@ -53,4 +53,9 @@ trait ConstructsNoElements
     public function queueSearchIndex(string $elementType, array $elementIds): void
     {
     }
+
+    public function moveInStructure(int $entryId, int $siblingId, bool $after): bool
+    {
+        return false;
+    }
 }

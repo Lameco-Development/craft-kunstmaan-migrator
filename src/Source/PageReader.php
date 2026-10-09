@@ -178,4 +178,22 @@ final class PageReader
 
         return $ids;
     }
+
+    /**
+     * Every translation row, whole, by node and locale — what a page row's `order:` expression
+     * reads. A query of its own rather than more columns on `nodes()`: only a mapping that
+     * declares an order needs it, and `weight` is not a column every fixture or install has.
+     *
+     * @return array<int, array<string, array<string, mixed>>> node id => lang => row
+     */
+    public function translationRows(): array
+    {
+        $rows = [];
+
+        foreach ($this->pdo->query('SELECT * FROM kuma_node_translations', PDO::FETCH_ASSOC) as $row) {
+            $rows[(int) $row['node_id']][(string) $row['lang']] = $row;
+        }
+
+        return $rows;
+    }
 }

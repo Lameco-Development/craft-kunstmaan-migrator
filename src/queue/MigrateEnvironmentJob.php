@@ -44,6 +44,8 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
     public string $environment = '';
     public bool $dryRun = false;
     public bool $force = false;
+    /** See `RunSettings::$reorder`. */
+    public bool $reorder = false;
     public ?int $limit = null;
     public bool $entriesOnly = false;
     /** @var list<string>|null */
@@ -182,6 +184,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             limit: $this->limit,
             entriesOnly: $this->entriesOnly,
             only: $this->only,
+            reorder: $this->reorder,
         );
         $this->tally = new RunTally();
         $this->pipeline = EnvironmentPipeline::build($mapping, $this->settings);
@@ -213,6 +216,13 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
 
         $units[] = ['t'];
 
+        // The environment's last unit: every entry it compiled exists by now, so the sibling
+        // order an `order:` key asks for is settled from the whole source, whichever batch
+        // each entry was saved in. A mapping without the key gets no such unit.
+        if ($compiler->ordersStructures()) {
+            $units[] = ['o'];
+        }
+
         // A resumed batch rebuilds the run from scratch; the structural
         // placeholders an earlier batch emitted must be registered, silently,
         // up to the last node unit already processed.
@@ -241,6 +251,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
                     'e' => $compiler->compileEntitySlice($this->compilerRun, (string) $item[1], (int) $item[2], (int) $item[3], $emit),
                     'n' => $compiler->compileNodeUnit($this->compilerRun, (int) $item[1], $emit),
                     't' => $compiler->finishStructural($this->compilerRun, $emit),
+                    'o' => $this->pipeline->settleStructureOrder($this->context->legacy, $this->environment, $this->settings, $this->tally, $this->compilerRun),
                     default => throw new RuntimeException('Unknown work unit: ' . json_encode($item)),
                 };
             });
@@ -352,6 +363,7 @@ final class MigrateEnvironmentJob extends BaseBatchedJob implements RetryableJob
             'remainingEnvironments' => $this->remainingEnvironments,
             'dryRun' => $this->dryRun,
             'force' => $this->force,
+            'reorder' => $this->reorder,
             'entriesOnly' => $this->entriesOnly,
             'only' => $this->only,
             'chainCorpusPasses' => $this->chainCorpusPasses,

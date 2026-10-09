@@ -8,6 +8,7 @@ use Craft;
 use craft\helpers\App;
 use Lameco\Kunstmaanmigrator\adapters\AdapterRegistry;
 use Lameco\Kunstmaanmigrator\Compile\Compiler;
+use Lameco\Kunstmaanmigrator\Compile\CompilerRun;
 use Lameco\Kunstmaanmigrator\Compile\PayloadWriter;
 use Lameco\Kunstmaanmigrator\Compile\Transforms;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
@@ -19,6 +20,7 @@ use Lameco\Kunstmaanmigrator\craft\UriJobGuard;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\load\PayloadEntrySaver;
+use Lameco\Kunstmaanmigrator\load\StructureOrderService;
 use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Payload\Payload;
 use Lameco\Kunstmaanmigrator\Payload\PayloadValidator;
@@ -58,6 +60,8 @@ final class EnvironmentPipeline
         private readonly Transforms $transforms,
         UriJobGuard $uriJobs,
         ElementWriter $elements,
+        /** Null on a dry run, which settles no order: nothing was written to put in one. */
+        private readonly ?StructureOrderService $structureOrder = null,
     ) {
         $this->retry = $saver === null ? null : new WriteConflictRetry($saver->save(...));
         $this->maintenance = new MaintenanceGuard($uriJobs, $elements);
@@ -76,6 +80,7 @@ final class EnvironmentPipeline
         $gateway = new CraftSchemaGateway();
         $plugin = Plugin::getInstance();
         $transforms = new Transforms($mapping->all()['transforms'] ?? []);
+        $elements = new CraftElementWriter();
 
         return new self(
             new PayloadValidator($gateway),
@@ -83,7 +88,8 @@ final class EnvironmentPipeline
             new Compiler($mapping, $transforms, new TargetModel($gateway), $settings->only),
             $transforms,
             new CraftUriJobGuard(),
-            new CraftElementWriter(),
+            $elements,
+            $settings->dryRun ? null : new StructureOrderService($plugin->migrationStateService, $elements),
         );
     }
 
@@ -183,10 +189,49 @@ final class EnvironmentPipeline
                 );
             });
 
+            $this->settleStructureOrder($context->legacy, $env, $settings, $tally);
+
             if (!$settings->entriesOnly) {
                 $tally->adapters[$env] = $this->runAdapters($context, $settings);
             }
         });
+    }
+
+    /**
+     * Put the environment's `order:`-keyed Structures in their sibling order, once its entries
+     * exist — the console after its compile walk, the batched job as the environment's last
+     * unit. The order comes from the whole source (`Compiler::structureOrder()`), so it does not
+     * matter which batch saved which entry. Nothing to do on a dry run, or for a mapping that
+     * declares no `order:`, which then reads nothing more than it did before.
+     *
+     * @param ?CompilerRun $run the batched job's open run; the console has none left and begins one
+     */
+    public function settleStructureOrder(
+        ?LegacyDatabase $db,
+        string $env,
+        RunSettings $settings,
+        RunTally $tally,
+        ?CompilerRun $run = null,
+    ): void {
+        if ($this->structureOrder === null || !$this->compiler->ordersStructures()) {
+            return;
+        }
+
+        $run ??= $db !== null ? $this->compiler->begin($db, $env) : null;
+
+        if ($run === null) {
+            return;
+        }
+
+        $counts = $this->structureOrder->settle($this->compiler->structureOrder($run), $settings->reorder);
+
+        // Counted, not a problem: a member that never loaded already failed loudly when it was
+        // saved, or sits outside a `--limit`/`--only` run. Its siblings are ordered without it.
+        foreach (['structureMoves' => $counts['moved'], 'structureOrderUnloaded' => $counts['unresolved']] as $bucket => $n) {
+            for ($i = 0; $i < $n; $i++) {
+                $tally->count($bucket);
+            }
+        }
     }
 
     /**

@@ -71,6 +71,16 @@ final class InMemoryElementWriter implements ElementWriter
     /** @var array<string, list<Entry>> section handle => entries, parents first */
     private array $structures = [];
 
+    /**
+     * One Structure's siblings, in order — what `moveInStructure()` rearranges.
+     *
+     * @var list<int>
+     */
+    private array $siblings = [];
+
+    /** @var list<array{id: int, sibling: int, after: bool}> every move, in call order */
+    public array $moves = [];
+
     /** @var array<int, list<int>> owner id => the nested entries it primarily owns */
     private array $nested = [];
 
@@ -331,5 +341,37 @@ final class InMemoryElementWriter implements ElementWriter
     private function key(int $id, ?int $siteId): string
     {
         return $id . ':' . ($siteId ?? '*');
+    }
+
+    public function moveInStructure(int $entryId, int $siblingId, bool $after): bool
+    {
+        $this->moves[] = ['id' => $entryId, 'sibling' => $siblingId, 'after' => $after];
+        $siblings = array_values(array_diff($this->siblings, [$entryId]));
+        $at = array_search($siblingId, $siblings, true);
+
+        if ($at === false) {
+            return false;
+        }
+
+        array_splice($siblings, $after ? $at + 1 : $at, 0, [$entryId]);
+        $this->siblings = $siblings;
+
+        return true;
+    }
+
+    /**
+     * The siblings a Structure holds before anything moves them, in order.
+     *
+     * @param list<int> $ids
+     */
+    public function willHoldInStructure(array $ids): void
+    {
+        $this->siblings = $ids;
+    }
+
+    /** @return list<int> the siblings, in their current order */
+    public function structureOrder(): array
+    {
+        return $this->siblings;
     }
 }

@@ -196,4 +196,13 @@ interface ElementWriter
      * next.
      */
     public function updateSlugAndUri(ElementInterface $element): void;
+
+    /**
+     * Moves an entry directly after — or before — a sibling in its section's Structure, taking
+     * the sibling's parent. False when either entry is gone or the section is not a Structure.
+     *
+     * What settles a Structure's sibling order (`StructureOrderService`): Craft places a new
+     * entry at the end of its parent's children, in load order, and the legacy order is another.
+     */
+    public function moveInStructure(int $entryId, int $siblingId, bool $after): bool;
 }
