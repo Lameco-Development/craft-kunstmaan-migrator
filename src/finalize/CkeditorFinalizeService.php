@@ -8,6 +8,8 @@ use Craft;
 use craft\ckeditor\Field as CkeditorField;
 use craft\db\Query;
 use craft\elements\Entry;
+use craft\fields\data\LinkData;
+use craft\fields\Link as LinkField;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
@@ -92,8 +94,10 @@ final class CkeditorFinalizeService
 
         $ckeditorFieldIds = $this->ckeditorFieldUids();
 
-        if ($ckeditorFieldIds === []) {
-            $report->warn('finalize: no CKEditor fields exist on this install; nothing to rewrite.');
+        // Link fields are rewritten here too (a legacy media URL becomes an asset link), so an
+        // install with Link fields and no CKEditor still has something to finalize.
+        if ($ckeditorFieldIds === [] && !$this->hasLinkFields()) {
+            $report->warn('finalize: no CKEditor or Link fields exist on this install; nothing to rewrite.');
 
             return $report;
         }
@@ -161,6 +165,17 @@ final class CkeditorFinalizeService
         return $uids;
     }
 
+    private function hasLinkFields(): bool
+    {
+        foreach (Craft::$app->fields->getAllFields() as $field) {
+            if ($field instanceof LinkField) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /**
      * @param list<string> $ckeditorHandles
      */
@@ -193,6 +208,12 @@ final class CkeditorFinalizeService
         $changed = false;
 
         foreach ($layout->getCustomFields() as $field) {
+            if ($field instanceof LinkField) {
+                $changed = $this->finalizeLink($element, $field, $elementId, $siteId, $report) || $changed;
+
+                continue;
+            }
+
             // `instanceof` only. Craft 5 field *instances* may override the handle when a field
             // is placed on a layout, so the handle here is the instance's — `content`, say —
             // and never matches the global field handle. Filtering on that finds nothing.
@@ -252,6 +273,50 @@ final class CkeditorFinalizeService
         }
 
         $report->incr('saved');
+    }
+
+    /**
+     * A Link field still pointing at a legacy media file becomes an asset link.
+     *
+     * `link()` writes a legacy button URL as it found it, so a Link field can hold
+     * `/uploads/media/…?token=[M<id>]` — 19 of them on Berkvens NL, all dead after the
+     * migration. Counted as `linksRewritten`, apart from the rich-text `rewritten`, and a link
+     * that cannot be rewritten is warned rather than left behind silently.
+     */
+    private function finalizeLink(Entry $element, LinkField $field, int $elementId, int $siteId, MigrationReport $report): bool
+    {
+        $value = $element->getFieldValue($field->handle);
+
+        if (!$value instanceof LinkData) {
+            return false;
+        }
+
+        $serialized = $value->serialize();
+        $rewritten = $this->rewriter->rewriteLink(
+            is_array($serialized) ? $serialized : [],
+            $siteId,
+            array_map(strval(...), array_keys($field->getLinkTypes())),
+        );
+
+        foreach ($this->rewriter->consumeUnresolvedDiagnostics() as $diagnostic) {
+            $report->warn(sprintf(
+                'finalize: legacy media link %s left on element %d field %s site %d — %s',
+                (string) ($diagnostic['token'] ?? ''),
+                $elementId,
+                $field->handle,
+                $siteId,
+                (string) ($diagnostic['reason'] ?? 'unresolved'),
+            ));
+        }
+
+        if ($rewritten === null) {
+            return false;
+        }
+
+        $element->setFieldValue($field->handle, $rewritten);
+        $report->incr('linksRewritten');
+
+        return true;
     }
 
     /** Whether rich text still holds a legacy reference the rewriter resolves. */

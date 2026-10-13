@@ -423,6 +423,59 @@ class CkeditorRewriterService extends Component
     }
 
     /**
+     * A Link field value that points at a legacy media file, as an asset link.
+     *
+     * `link()` hands a legacy button URL over as it found it, so a Link field can hold
+     * `/uploads/media/<folder>/<file>?token=[M<id>]` — a path that dead-ends once the site is
+     * migrated (19 buttons and image links on Berkvens NL). It resolves the way an `<a href>`
+     * in rich text does: by path first, then by the `[M<id>]` token. Label, target and every
+     * other key of the link are kept.
+     *
+     * Null means "leave the link as it is": not a url link to a legacy file, a file that has no
+     * asset, or a field whose link types do not include `asset`. The last two are recorded as
+     * unresolved diagnostics (`link_media`), so the caller can say what it left behind.
+     *
+     * @param array<string, mixed> $link         the field's serialized link: `type`, `value`, `label`, …
+     * @param list<string>         $allowedTypes the link types the field offers
+     * @return array<string, mixed>|null
+     */
+    public function rewriteLink(array $link, int $siteId, array $allowedTypes): ?array
+    {
+        $url = trim((string) ($link['value'] ?? ''));
+
+        if (($link['type'] ?? 'url') !== 'url' || $url === '') {
+            return null;
+        }
+
+        $isMediaPath = str_contains($url, self::LEGACY_MEDIA_URL_PREFIX);
+        $tokenId = preg_match(self::KUMA_MEDIA_PLACEHOLDER_REGEX, $url, $m) === 1 ? (int) $m[1] : null;
+
+        if (!$isMediaPath && $tokenId === null) {
+            return null;
+        }
+
+        $diagnostic = $this->diagnosticMediaUrlToken($url);
+
+        if (!in_array('asset', $allowedTypes, true)) {
+            $this->recordUnresolvedDiagnostic('link_media', $tokenId ?? 0, $siteId, $diagnostic, $diagnostic, 'the Link field does not allow asset links');
+
+            return null;
+        }
+
+        $assetId = $isMediaPath ? $this->resolveMediaIdForUrl($url) : null;
+        $assetId ??= $tokenId !== null ? $this->resolveKumaMediaId($tokenId) : null;
+
+        if ($assetId === null) {
+            $this->recordUnresolvedDiagnostic('link_media', $tokenId ?? 0, $siteId, $diagnostic, $diagnostic, 'no matching Craft asset id for legacy media link');
+
+            return null;
+        }
+
+        return ['type' => 'asset', 'value' => '{asset:' . $assetId . '@' . $siteId . ':url}']
+            + array_diff_key($link, ['type' => true, 'value' => true]);
+    }
+
+    /**
      * Resolve kuma_media.id → Craft asset numeric id via state rows.
      * Cache warmed lazily, then reused across all rewrites this request.
      *
