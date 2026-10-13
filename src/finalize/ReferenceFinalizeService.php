@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\finalize;
 
 use Craft;
+use craft\base\Element;
+use craft\base\ElementInterface;
 use craft\ckeditor\Field as CkeditorField;
 use craft\db\Query;
-use craft\elements\Entry;
+use craft\fields\data\LinkData;
+use craft\fields\Link as LinkField;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
 use Lameco\Kunstmaanmigrator\load\MigrationOptions;
@@ -15,7 +18,7 @@ use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Throwable;
 
 /**
- * The finalize pass: rewrite legacy references left in migrated rich text.
+ * The finalize pass: rewrite legacy references left in migrated CKEditor and Link fields.
  *
  * `CkeditorRewriterService::rewrite()` has always known how to do this — legacy
  * `<img src="/uploads/media/...">`, `[M<id>]` media placeholders and `[NT<id>]` internal links —
@@ -46,7 +49,7 @@ use Throwable;
  * database that question directly is both cheaper and less fragile than recursing through Matrix
  * fields looking for something that might not be there.
  */
-final class CkeditorFinalizeService
+final class ReferenceFinalizeService
 {
     /**
      * The seam at Craft's element writes. Wired in Plugin::init(); read
@@ -55,14 +58,6 @@ final class CkeditorFinalizeService
     public ?ElementWriter $elementWriter = null;
 
     public CkeditorRewriterService $rewriter;
-
-    /** Markers the rewriter knows how to resolve. Used to shortlist rows worth loading. */
-    private const MARKERS = [
-        '/uploads/media/',
-        '[NT',
-        '%5BNT',
-        '[M',
-    ];
 
     public function __construct(?CkeditorRewriterService $rewriter = null)
     {
@@ -80,18 +75,16 @@ final class CkeditorFinalizeService
     {
         $report ??= new MigrationReport();
 
-        $ckeditorFieldIds = $this->ckeditorFieldUids();
-
-        if ($ckeditorFieldIds === []) {
-            $report->warn('finalize: no CKEditor fields exist on this install; nothing to rewrite.');
+        if (!$this->hasRewritableFields()) {
+            $report->warn('finalize: no CKEditor or Link fields exist on this install; nothing to rewrite.');
 
             return $report;
         }
 
-        foreach ($this->candidates() as $siteId => $elementIds) {
-            foreach ($elementIds as $elementId) {
+        foreach ($this->candidates() as $siteId => $rows) {
+            foreach ($rows as ['id' => $elementId, 'type' => $type]) {
                 try {
-                    $this->finalizeElement((int) $elementId, (int) $siteId, $ckeditorFieldIds, $opts, $report);
+                    $this->finalizeElement($elementId, $type, $siteId, $opts, $report);
                 } catch (Throwable $e) {
                     $report->incr('failed');
                     $report->warn(sprintf(
@@ -108,67 +101,82 @@ final class CkeditorFinalizeService
     }
 
     /**
-     * Element ids per site whose stored content still carries a legacy marker.
+     * Elements per site whose stored content still carries a legacy marker, with their type —
+     * a global set or a category holds rich text as well as an entry does. Revisions and
+     * trashed elements are history, not content, and are left alone.
      *
-     * @return array<int, list<int>>
+     * @return array<int, list<array{id: int, type: string}>>
      */
     private function candidates(): array
     {
         $query = (new Query())
-            ->select(['elementId', 'siteId'])
-            ->from(['{{%elements_sites}}']);
+            ->select(['es.elementId', 'es.siteId', 'e.type'])
+            ->from(['es' => '{{%elements_sites}}'])
+            ->innerJoin(['e' => '{{%elements}}'], '[[e.id]] = [[es.elementId]]')
+            ->andWhere(['e.revisionId' => null, 'e.dateDeleted' => null]);
 
-        $conditions = ['or'];
-
-        foreach (self::MARKERS as $marker) {
-            // No fourth operand: Yii's `false` there means "match the value literally", which
-            // turns a contains-check into an equality-check and finds nothing.
-            $conditions[] = ['like', 'content', $marker];
-        }
-
-        $query->where($conditions);
+        $query->andWhere(LegacyMarkers::likeConditions('es.content'));
 
         $out = [];
 
         foreach ($query->all() as $row) {
-            $out[(int) $row['siteId']][] = (int) $row['elementId'];
+            $out[(int) $row['siteId']][] = ['id' => (int) $row['elementId'], 'type' => (string) $row['type']];
         }
 
         return $out;
     }
 
-    /** @return list<string> field uids */
-    private function ckeditorFieldUids(): array
+    /**
+     * Whether the install has a field this pass rewrites: CKEditor rich text, or a Link field
+     * (a legacy media URL becomes an asset link).
+     */
+    private function hasRewritableFields(): bool
     {
-        $uids = [];
-
         foreach (Craft::$app->fields->getAllFields() as $field) {
-            if ($field instanceof CkeditorField) {
-                $uids[] = $field->handle;
+            if ($field instanceof CkeditorField || $field instanceof LinkField) {
+                return true;
             }
         }
 
-        return $uids;
+        return false;
     }
 
     /**
-     * @param list<string> $ckeditorHandles
+     * The element a shortlisted row is, loaded as the type the row names. An element type the
+     * install no longer has, or a row that does not load, is warned rather than skipped silently.
+     *
+     * @param string $type the `elements.type` class
      */
+    public function candidate(int $elementId, string $type, int $siteId, MigrationReport $report): ?ElementInterface
+    {
+        if (!is_a($type, ElementInterface::class, true)) {
+            $report->warn(sprintf(
+                'finalize: element %d site %d is a %s, which this install cannot load; left as it is',
+                $elementId,
+                $siteId,
+                $type,
+            ));
+
+            return null;
+        }
+
+        $element = $this->elements()->findById($elementId, $type, $siteId);
+
+        if ($element === null) {
+            $report->warn(sprintf('finalize: element %d site %d (%s) could not be loaded; left as it is', $elementId, $siteId, $type));
+        }
+
+        return $element;
+    }
+
     private function finalizeElement(
         int $elementId,
+        string $type,
         int $siteId,
-        array $ckeditorHandles,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
-        /** @var Entry|null $element */
-        $element = Entry::find()
-            ->id($elementId)
-            ->siteId($siteId)
-            ->status(null)
-            ->drafts(null)
-            ->revisions(false)
-            ->one();
+        $element = $this->candidate($elementId, $type, $siteId, $report);
 
         if ($element === null) {
             return;
@@ -183,6 +191,12 @@ final class CkeditorFinalizeService
         $changed = false;
 
         foreach ($layout->getCustomFields() as $field) {
+            if ($field instanceof LinkField) {
+                $changed = $this->finalizeLink($element, $field, $elementId, $siteId, $report) || $changed;
+
+                continue;
+            }
+
             // `instanceof` only. Craft 5 field *instances* may override the handle when a field
             // is placed on a layout, so the handle here is the instance's — `content`, say —
             // and never matches the global field handle. Filtering on that finds nothing.
@@ -193,10 +207,9 @@ final class CkeditorFinalizeService
             $value = $element->getFieldValue($field->handle);
             $html = $value === null ? '' : (string) $value;
 
-            if ($html === '' || !$this->carriesMarker($html)) {
+            if ($html === '' || !LegacyMarkers::inText($html)) {
                 continue;
             }
-
 
             $rewritten = $this->rewriter->rewrite($html, $siteId);
 
@@ -227,7 +240,9 @@ final class CkeditorFinalizeService
         // its owner: re-saving the owner would put its whole Matrix through another write for the
         // sake of one string, and Matrix maintenance is exactly the machinery this migration has
         // had the most trouble with.
-        $element->resaving = true;
+        if ($element instanceof Element) {
+            $element->resaving = true;
+        }
 
         if (!$this->elements()->save($element)) {
             $report->incr('failed');
@@ -244,14 +259,47 @@ final class CkeditorFinalizeService
         $report->incr('saved');
     }
 
-    private function carriesMarker(string $html): bool
+    /**
+     * A Link field still pointing at a legacy media file becomes an asset link.
+     *
+     * `link()` writes a legacy button URL as it found it, so a Link field can hold
+     * `/uploads/media/…?token=[M<id>]` — 19 of them on Berkvens NL, all dead after the
+     * migration. Counted as `linksRewritten`, apart from the rich-text `rewritten`, and a link
+     * that cannot be rewritten is warned rather than left behind silently.
+     */
+    private function finalizeLink(ElementInterface $element, LinkField $field, int $elementId, int $siteId, MigrationReport $report): bool
     {
-        foreach (self::MARKERS as $marker) {
-            if (str_contains($html, $marker)) {
-                return true;
-            }
+        $value = $element->getFieldValue($field->handle);
+
+        if (!$value instanceof LinkData) {
+            return false;
         }
 
-        return false;
+        $serialized = $value->serialize();
+        $rewritten = $this->rewriter->rewriteLink(
+            is_array($serialized) ? $serialized : [],
+            $siteId,
+            array_map(strval(...), array_keys($field->getLinkTypes())),
+        );
+
+        foreach ($this->rewriter->consumeUnresolvedDiagnostics() as $diagnostic) {
+            $report->warn(sprintf(
+                'finalize: legacy media link %s left on element %d field %s site %d — %s',
+                (string) ($diagnostic['token'] ?? ''),
+                $elementId,
+                $field->handle,
+                $siteId,
+                (string) ($diagnostic['reason'] ?? 'unresolved'),
+            ));
+        }
+
+        if ($rewritten === null) {
+            return false;
+        }
+
+        $element->setFieldValue($field->handle, $rewritten);
+        $report->incr('linksRewritten');
+
+        return true;
     }
 }

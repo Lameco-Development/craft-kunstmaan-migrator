@@ -378,7 +378,14 @@ final class Transforms
         return ['_asset' => '/' . $name];
     }
 
-    /** Legacy HTML, with media references parked for the loader to rewrite. */
+    /**
+     * Legacy HTML, with media references parked for the loader to rewrite.
+     *
+     * `/uploads/media/<folder>/` is a file path, never an id: Kunstmaan names the folder with
+     * `uniqid()`, and hex such as `6813428710619` can hold no letter. Read as an id, it resolved
+     * to nothing on Berkvens NL, and would resolve to the wrong file where it met a real id. The
+     * loader and finalize resolve the path form themselves.
+     */
     private function ckeditor(mixed $value): ?string
     {
         if ($value === null || trim((string) $value) === '') {
@@ -386,7 +393,7 @@ final class Transforms
         }
 
         return preg_replace(
-            '/\/media\/(\d+)\//',
+            '/(?<!\/uploads)\/media\/(\d+)\//',
             '{{kuma:media:$1}}',
             (string) $value,
         );

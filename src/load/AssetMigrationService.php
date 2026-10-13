@@ -10,7 +10,9 @@ use craft\helpers\App;
 use craft\helpers\Console;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\EmbedFetchFailed;
 use Lameco\Kunstmaanmigrator\craft\EmbedGateway;
+use Lameco\Kunstmaanmigrator\craft\RetryingEmbedGateway;
 use Lameco\Kunstmaanmigrator\craft\SpicywebEmbedGateway;
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
@@ -127,12 +129,16 @@ class AssetMigrationService extends Component
      */
     public bool $skipAssetSizeValidation = false;
 
-    /** Injectable for tests; defaults to the spicyweb/craft-embedded-assets implementation. */
+    /**
+     * Injectable for tests; defaults to the spicyweb/craft-embedded-assets implementation, asked
+     * again when a fetch fails — the provider is on the network, and one timeout made a video
+     * land on one run and not the next.
+     */
     public ?EmbedGateway $embeds = null;
 
     private function embedGateway(): EmbedGateway
     {
-        return $this->embeds ??= new SpicywebEmbedGateway();
+        return $this->embeds ??= new RetryingEmbedGateway(new SpicywebEmbedGateway());
     }
 
     /** DI slot: LegacyDbService (read-only connection to Kunstmaan MySQL). */
@@ -653,6 +659,8 @@ class AssetMigrationService extends Component
         if ($isRemoteVideo) {
             $videoUrl = RemoteVideoUrl::fromRow($row);
 
+            $embedFailed = false;
+
             if ($videoUrl !== null && $this->embedGateway()->available()) {
                 if ($opts->dryRun) {
                     $counts['created'] = ($counts['created'] ?? 0) + 1;
@@ -663,7 +671,12 @@ class AssetMigrationService extends Component
                 $folder = $volume !== null
                     ? Craft::$app->assets->ensureFolderByFullPathAndVolume($this->targetFolderPath($row, $env), $volume)
                     : null;
-                $assetId = $folder !== null ? $this->embedGateway()->createFromUrl($videoUrl, (int) $folder->id) : null;
+                try {
+                    $assetId = $folder !== null ? $this->embedGateway()->createFromUrl($videoUrl, (int) $folder->id) : null;
+                } catch (EmbedFetchFailed) {
+                    // An injected gateway that does not retry: unreachable is a miss here.
+                    $assetId = null;
+                }
 
                 if ($assetId !== null) {
                     $this->migrationState->record(
@@ -685,6 +698,7 @@ class AssetMigrationService extends Component
                 }
                 // Fetch or save failed — fall through to the id-only state row
                 // this branch always wrote, so a re-run can try again.
+                $embedFailed = true;
             }
 
             // Serialized-blob decoder deferred to Phase 4 — null-slot guard.
@@ -722,7 +736,9 @@ class AssetMigrationService extends Component
             // persist a half-complete row.
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
-                "kuma_media:{$mediaId} remote video has no extractable ID",
+                $embedFailed
+                    ? "kuma_media:{$mediaId} remote video {$videoUrl} could not be embedded — the provider did not answer"
+                    : "kuma_media:{$mediaId} remote video has no extractable ID",
                 __METHOD__,
             );
             $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
@@ -735,6 +751,19 @@ class AssetMigrationService extends Component
             // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
             Craft::warning(
                 "kuma_media:{$mediaId} file not found or unsafe path",
+                __METHOD__,
+            );
+            $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
+            return null;
+        }
+
+        // An empty image throws from getimagesize() inside the asset save — which failed the
+        // whole entry that referenced it (four 0-byte author photos on Berkvens NL). Skipped like
+        // a missing file, so the reference is recorded as an unresolved asset and the entry still
+        // saves. Any other empty file saves as it always did.
+        if (@filesize($sourcePath) === 0 && self::isImage($contentType, $sourcePath)) {
+            Craft::warning(
+                "kuma_media:{$mediaId} image is empty (0 bytes) — skipped",
                 __METHOD__,
             );
             $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
@@ -915,6 +944,20 @@ class AssetMigrationService extends Component
         // MigrationReport VO deferred to Plan 03-13 — Phase 3 wiring lands in 03-14.
         $counts['created'] = ($counts['created'] ?? 0) + 1;
         return $asset;
+    }
+
+    /**
+     * Whether Craft will treat the file as an image. The extension decides that for Craft, and
+     * the type is checked too because a sniffed empty file reads as `application/x-empty`.
+     */
+    private static function isImage(string $contentType, string $path): bool
+    {
+        return str_starts_with(strtolower($contentType), 'image/')
+            || in_array(
+                strtolower((string) pathinfo($path, PATHINFO_EXTENSION)),
+                ['jpg', 'jpeg', 'jpe', 'png', 'gif', 'webp', 'avif', 'bmp', 'tif', 'tiff', 'svg', 'heic', 'heif'],
+                true,
+            );
     }
 
     /**

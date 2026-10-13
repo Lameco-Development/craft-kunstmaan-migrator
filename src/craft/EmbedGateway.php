@@ -15,6 +15,11 @@ interface EmbedGateway
 {
     public function available(): bool;
 
-    /** The saved Asset element's id, or null when the embed could not be created. */
+    /**
+     * The saved Asset element's id, or null when the embed could not be created.
+     *
+     * @throws EmbedFetchFailed when the provider could not be reached — the one failure
+     *         worth asking again (`RetryingEmbedGateway`)
+     */
     public function createFromUrl(string $url, int $folderId): ?int;
 }

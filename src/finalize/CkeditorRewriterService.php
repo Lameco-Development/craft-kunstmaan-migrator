@@ -49,17 +49,19 @@ class CkeditorRewriterService extends Component
      * that Craft's CKEditor serializer produces when saving a shortcode as an
      * `src`/`href` attribute value (brackets are not valid in URLs so they get
      * percent-encoded on save). The `i` flag handles the rare `%5b`/`%5d`
-     * lower-case variant emitted by some HTTP clients.
+     * lower-case variant emitted by some HTTP clients, and `%25` the double-encoded
+     * `%255BM482%255D` an editor leaves by re-saving an already-encoded href.
      */
-    public const KUMA_MEDIA_PLACEHOLDER_REGEX = '~(?:\[|%5B)M(\d+)(?:\]|%5D)~i';
+    public const KUMA_MEDIA_PLACEHOLDER_REGEX = '~(?:\[|%(?:25)?5B)M(\d+)(?:\]|%(?:25)?5D)~i';
 
     /**
      * Kunstmaan CKEditor internal-link placeholder `[NT<digits>]` — the numeric
      * value is `kuma_node_translations.id`, which maps (via node_id) to a state
      * row for a migrated entry. Typical occurrence: `href="[NT80]"`.
-     * Also matches the URL-encoded form `%5BNT80%5D` (same encoding as [M]).
+     * Also matches the URL-encoded form `%5BNT80%5D` and the double-encoded
+     * `%255BNT80%255D` (same encodings as [M]).
      */
-    public const KUMA_NT_PLACEHOLDER_REGEX = '~(?:\[|%5B)NT(\d+)(?:\]|%5D)~i';
+    public const KUMA_NT_PLACEHOLDER_REGEX = '~(?:\[|%(?:25)?5B)NT(\d+)(?:\]|%(?:25)?5D)~i';
 
     /**
      * Task 8 / docs/loader-contract.md — the v2 loader's OWN normalized
@@ -320,7 +322,7 @@ class CkeditorRewriterService extends Component
      */
     private function rewriteMediaPlaceholders(string $html, int $siteId): string
     {
-        if (!str_contains($html, '[M') && !str_contains($html, '%5BM') && !str_contains($html, '%5bM')) {
+        if (!str_contains($html, '[M') && stripos($html, '5BM') === false) {
             return $html;
         }
 
@@ -350,7 +352,7 @@ class CkeditorRewriterService extends Component
      */
     private function rewriteNodeTranslationPlaceholders(string $html, int $siteId): string
     {
-        if (!str_contains($html, '[NT') && !str_contains($html, '%5BNT') && !str_contains($html, '%5bNT')) {
+        if (!str_contains($html, '[NT') && stripos($html, '5BNT') === false) {
             return $html;
         }
 
@@ -420,6 +422,59 @@ class CkeditorRewriterService extends Component
             },
             $html,
         ) ?? $html;
+    }
+
+    /**
+     * A Link field value that points at a legacy media file, as an asset link.
+     *
+     * `link()` hands a legacy button URL over as it found it, so a Link field can hold
+     * `/uploads/media/<folder>/<file>?token=[M<id>]` — a path that dead-ends once the site is
+     * migrated (19 buttons and image links on Berkvens NL). It resolves the way an `<a href>`
+     * in rich text does: by path first, then by the `[M<id>]` token. Label, target and every
+     * other key of the link are kept.
+     *
+     * Null means "leave the link as it is": not a url link to a legacy file, a file that has no
+     * asset, or a field whose link types do not include `asset`. The last two are recorded as
+     * unresolved diagnostics (`link_media`), so the caller can say what it left behind.
+     *
+     * @param array<string, mixed> $link         the field's serialized link: `type`, `value`, `label`, …
+     * @param list<string>         $allowedTypes the link types the field offers
+     * @return array<string, mixed>|null
+     */
+    public function rewriteLink(array $link, int $siteId, array $allowedTypes): ?array
+    {
+        $url = trim((string) ($link['value'] ?? ''));
+
+        if (($link['type'] ?? 'url') !== 'url' || $url === '') {
+            return null;
+        }
+
+        $isMediaPath = str_contains($url, self::LEGACY_MEDIA_URL_PREFIX);
+        $tokenId = preg_match(self::KUMA_MEDIA_PLACEHOLDER_REGEX, $url, $m) === 1 ? (int) $m[1] : null;
+
+        if (!$isMediaPath && $tokenId === null) {
+            return null;
+        }
+
+        $diagnostic = $this->diagnosticMediaUrlToken($url);
+
+        if (!in_array('asset', $allowedTypes, true)) {
+            $this->recordUnresolvedDiagnostic('link_media', $tokenId ?? 0, $siteId, $diagnostic, $diagnostic, 'the Link field does not allow asset links');
+
+            return null;
+        }
+
+        $assetId = $isMediaPath ? $this->resolveMediaIdForUrl($url) : null;
+        $assetId ??= $tokenId !== null ? $this->resolveKumaMediaId($tokenId) : null;
+
+        if ($assetId === null) {
+            $this->recordUnresolvedDiagnostic('link_media', $tokenId ?? 0, $siteId, $diagnostic, $diagnostic, 'no matching Craft asset id for legacy media link');
+
+            return null;
+        }
+
+        return ['type' => 'asset', 'value' => '{asset:' . $assetId . '@' . $siteId . ':url}']
+            + array_diff_key($link, ['type' => true, 'value' => true]);
     }
 
     /**

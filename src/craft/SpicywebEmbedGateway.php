@@ -47,8 +47,13 @@ final class SpicywebEmbedGateway implements EmbedGateway
         } catch (Throwable $e) {
             // A provider that stopped answering for one URL must not take the
             // whole asset lane down — the caller falls back to the id-only
-            // state row this branch used to write.
+            // state row this branch used to write. A network failure is thrown
+            // as such, so it can be asked again; anything else is final.
             Craft::warning(sprintf('Embed fetch failed for %s: %s', $url, $e->getMessage()), __METHOD__);
+
+            if (EmbedFetchFailed::isTransient($e)) {
+                throw new EmbedFetchFailed($e->getMessage(), 0, $e);
+            }
 
             return null;
         }
