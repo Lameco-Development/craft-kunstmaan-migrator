@@ -10,6 +10,7 @@ use craft\helpers\App;
 use craft\helpers\Console;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
 use Lameco\Kunstmaanmigrator\craft\ElementWriter;
+use Lameco\Kunstmaanmigrator\craft\EmbedFetchFailed;
 use Lameco\Kunstmaanmigrator\craft\EmbedGateway;
 use Lameco\Kunstmaanmigrator\craft\RetryingEmbedGateway;
 use Lameco\Kunstmaanmigrator\craft\SpicywebEmbedGateway;
@@ -670,7 +671,12 @@ class AssetMigrationService extends Component
                 $folder = $volume !== null
                     ? Craft::$app->assets->ensureFolderByFullPathAndVolume($this->targetFolderPath($row, $env), $volume)
                     : null;
-                $assetId = $folder !== null ? $this->embedGateway()->createFromUrl($videoUrl, (int) $folder->id) : null;
+                try {
+                    $assetId = $folder !== null ? $this->embedGateway()->createFromUrl($videoUrl, (int) $folder->id) : null;
+                } catch (EmbedFetchFailed) {
+                    // An injected gateway that does not retry: unreachable is a miss here.
+                    $assetId = null;
+                }
 
                 if ($assetId !== null) {
                     $this->migrationState->record(

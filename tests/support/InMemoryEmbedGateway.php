@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Lameco\Kunstmaanmigrator\tests\support;
 
+use Lameco\Kunstmaanmigrator\craft\EmbedFetchFailed;
 use Lameco\Kunstmaanmigrator\craft\EmbedGateway;
 
 /**
@@ -14,10 +15,13 @@ final class InMemoryEmbedGateway implements EmbedGateway
     /** @var array<string, int> url => asset id */
     public array $created = [];
 
-    /** @var list<string> URLs to fail on */
+    /** @var list<string> URLs the provider refuses for good — unsupported, or a save that fails */
     public array $refuse = [];
 
-    /** How many calls fail before the provider answers — a timeout that clears on retry. */
+    /** @var list<string> URLs whose provider never answers — every call times out */
+    public array $unreachable = [];
+
+    /** How many calls time out before the provider answers — a timeout that clears on retry. */
     public int $flaky = 0;
 
     /** @var list<string> every URL asked for, in order */
@@ -41,7 +45,11 @@ final class InMemoryEmbedGateway implements EmbedGateway
         if ($this->flaky > 0) {
             $this->flaky--;
 
-            return null;
+            throw new EmbedFetchFailed('Connection timed out after 10003 milliseconds');
+        }
+
+        if (in_array($url, $this->unreachable, true)) {
+            throw new EmbedFetchFailed('Connection timed out after 10003 milliseconds');
         }
 
         if (in_array($url, $this->refuse, true)) {
