@@ -7,7 +7,8 @@ namespace Lameco\Kunstmaanmigrator\finalize;
 use Craft;
 use craft\ckeditor\Field as CkeditorField;
 use craft\db\Query;
-use craft\elements\Entry;
+use craft\base\Element;
+use craft\base\ElementInterface;
 use craft\fields\data\LinkData;
 use craft\fields\Link as LinkField;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
@@ -107,10 +108,10 @@ final class CkeditorFinalizeService
             return $report;
         }
 
-        foreach ($this->candidates() as $siteId => $elementIds) {
-            foreach ($elementIds as $elementId) {
+        foreach ($this->candidates() as $siteId => $rows) {
+            foreach ($rows as ['id' => $elementId, 'type' => $type]) {
                 try {
-                    $this->finalizeElement((int) $elementId, (int) $siteId, $ckeditorFieldIds, $opts, $report);
+                    $this->finalizeElement($elementId, $type, $siteId, $ckeditorFieldIds, $opts, $report);
                 } catch (Throwable $e) {
                     $report->incr('failed');
                     $report->warn(sprintf(
@@ -127,30 +128,34 @@ final class CkeditorFinalizeService
     }
 
     /**
-     * Element ids per site whose stored content still carries a legacy marker.
+     * Elements per site whose stored content still carries a legacy marker, with their type —
+     * a global set or a category holds rich text as well as an entry does. Revisions and
+     * trashed elements are history, not content, and are left alone.
      *
-     * @return array<int, list<int>>
+     * @return array<int, list<array{id: int, type: string}>>
      */
     private function candidates(): array
     {
         $query = (new Query())
-            ->select(['elementId', 'siteId'])
-            ->from(['{{%elements_sites}}']);
+            ->select(['es.elementId', 'es.siteId', 'e.type'])
+            ->from(['es' => '{{%elements_sites}}'])
+            ->innerJoin(['e' => '{{%elements}}'], '[[e.id]] = [[es.elementId]]')
+            ->andWhere(['e.revisionId' => null, 'e.dateDeleted' => null]);
 
         $conditions = ['or'];
 
         foreach (self::MARKERS as $marker) {
             // No fourth operand: Yii's `false` there means "match the value literally", which
             // turns a contains-check into an equality-check and finds nothing.
-            $conditions[] = ['like', 'content', $marker];
+            $conditions[] = ['like', 'es.content', $marker];
         }
 
-        $query->where($conditions);
+        $query->andWhere($conditions);
 
         $out = [];
 
         foreach ($query->all() as $row) {
-            $out[(int) $row['siteId']][] = (int) $row['elementId'];
+            $out[(int) $row['siteId']][] = ['id' => (int) $row['elementId'], 'type' => (string) $row['type']];
         }
 
         return $out;
@@ -182,23 +187,45 @@ final class CkeditorFinalizeService
     }
 
     /**
+     * The element a shortlisted row is, loaded as the type the row names. An element type the
+     * install no longer has, or a row that does not load, is warned rather than skipped silently.
+     *
+     * @param string $type the `elements.type` class
+     */
+    public function candidate(int $elementId, string $type, int $siteId, MigrationReport $report): ?ElementInterface
+    {
+        if (!is_a($type, ElementInterface::class, true)) {
+            $report->warn(sprintf(
+                'finalize: element %d site %d is a %s, which this install cannot load; left as it is',
+                $elementId,
+                $siteId,
+                $type,
+            ));
+
+            return null;
+        }
+
+        $element = $this->elements()->findById($elementId, $type, $siteId);
+
+        if ($element === null) {
+            $report->warn(sprintf('finalize: element %d site %d (%s) could not be loaded; left as it is', $elementId, $siteId, $type));
+        }
+
+        return $element;
+    }
+
+    /**
      * @param list<string> $ckeditorHandles
      */
     private function finalizeElement(
         int $elementId,
+        string $type,
         int $siteId,
         array $ckeditorHandles,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
-        /** @var Entry|null $element */
-        $element = Entry::find()
-            ->id($elementId)
-            ->siteId($siteId)
-            ->status(null)
-            ->drafts(null)
-            ->revisions(false)
-            ->one();
+        $element = $this->candidate($elementId, $type, $siteId, $report);
 
         if ($element === null) {
             return;
@@ -263,7 +290,9 @@ final class CkeditorFinalizeService
         // its owner: re-saving the owner would put its whole Matrix through another write for the
         // sake of one string, and Matrix maintenance is exactly the machinery this migration has
         // had the most trouble with.
-        $element->resaving = true;
+        if ($element instanceof Element) {
+            $element->resaving = true;
+        }
 
         if (!$this->elements()->save($element)) {
             $report->incr('failed');
@@ -288,7 +317,7 @@ final class CkeditorFinalizeService
      * migration. Counted as `linksRewritten`, apart from the rich-text `rewritten`, and a link
      * that cannot be rewritten is warned rather than left behind silently.
      */
-    private function finalizeLink(Entry $element, LinkField $field, int $elementId, int $siteId, MigrationReport $report): bool
+    private function finalizeLink(ElementInterface $element, LinkField $field, int $elementId, int $siteId, MigrationReport $report): bool
     {
         $value = $element->getFieldValue($field->handle);
 
