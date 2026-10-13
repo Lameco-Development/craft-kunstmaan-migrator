@@ -207,6 +207,41 @@ final class CkeditorRewriterCacheWarmingTest extends TestCase
         self::assertNull($this->callPrivate($svc, 'resolveNodeTranslationId', 1303), 'an alias key is not a node id');
     }
 
+    public function testNtWarmPrefersTheNodesOwnRowOverLegacyShapedRows(): void
+    {
+        // A legacy-shaped row bridged to node 1204, and another environment's
+        // meta claiming it, both after the node's own row: the node row wins
+        // and the other environment's meta is never read.
+        $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('NL');
+        $svc->migrationState = new FakeStateStream(entries: [
+            ['source' => 'NL:kuma_nodes', 'targetType' => 'entry', 'targetId' => 5000, 'sourceKey' => '1204'],
+            ['source' => 'App_Entity_ProductPage', 'targetType' => 'entry', 'targetId' => 6000, 'sourceKey' => '12'],
+            ['source' => 'FR:kuma_nodes', 'targetType' => 'entry', 'targetId' => 7000, 'sourceKey' => '9', 'meta' => ['kumaNodeId' => 1300]],
+        ]);
+        $svc->legacyDb = new FakeLegacyDb([
+            [['node_id' => 1204, 'ref_id' => 12, 'ref_entity_name' => 'App\\Entity\\ProductPage']],
+            [['nt_id' => 1206, 'node_id' => 1204], ['nt_id' => 1302, 'node_id' => 1300]],
+        ]);
+
+        self::assertSame(5000, $this->callPrivate($svc, 'resolveNodeTranslationId', 1206));
+        self::assertNull($this->callPrivate($svc, 'resolveNodeTranslationId', 1302));
+    }
+
+    public function testNtWarmWithoutAnEnvironmentTrustsNoEnvironmentScopedRow(): void
+    {
+        $svc = new CkeditorRewriterService();
+        $svc->migrationState = new FakeStateStream(entries: [
+            ['source' => 'NL:kuma_nodes', 'targetType' => 'entry', 'targetId' => 5000, 'sourceKey' => '1204'],
+        ]);
+        $svc->legacyDb = new FakeLegacyDb([
+            [],
+            [['nt_id' => 1206, 'node_id' => 1204]],
+        ]);
+
+        self::assertNull($this->callPrivate($svc, 'resolveNodeTranslationId', 1206));
+    }
+
     public function testNtWarmSurvivesALegacyDbThatThrows(): void
     {
         $svc = new CkeditorRewriterService();

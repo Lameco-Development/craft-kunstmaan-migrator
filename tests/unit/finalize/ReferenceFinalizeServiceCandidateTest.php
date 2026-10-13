@@ -68,4 +68,23 @@ final class ReferenceFinalizeServiceCandidateTest extends TestCase
         self::assertCount(1, $this->report->warnings);
         self::assertStringContainsString('element 41 site 6', $this->report->warnings[0]);
     }
+
+    /**
+     * Finalize runs once per environment, but the shortlist is every marker-bearing
+     * element on the install. Resolving FR's `[NT1204]` against NL's node map writes
+     * a link to NL's node 1204, and the marker is gone before FR's turn comes.
+     */
+    #[Test]
+    public function an_environment_only_finalizes_its_own_sites(): void
+    {
+        $candidates = [
+            1 => [['id' => 10, 'type' => 'craft\\elements\\Entry']],
+            2 => [['id' => 20, 'type' => 'craft\\elements\\Entry']],
+            3 => [['id' => 30, 'type' => 'craft\\elements\\Entry']],
+        ];
+
+        self::assertSame([1 => $candidates[1], 3 => $candidates[3]], ReferenceFinalizeService::scopeToSites($candidates, [3, 1]));
+        self::assertSame([], ReferenceFinalizeService::scopeToSites($candidates, []), 'an environment with no bound site owns nothing');
+        self::assertSame($candidates, ReferenceFinalizeService::scopeToSites($candidates, null), 'unscoped callers keep every site');
+    }
 }

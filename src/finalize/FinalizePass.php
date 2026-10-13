@@ -10,6 +10,7 @@ use Lameco\Kunstmaanmigrator\Mapping\Mapping;
 use Lameco\Kunstmaanmigrator\Plugin;
 use Lameco\Kunstmaanmigrator\run\EnvironmentPipeline;
 use Lameco\Kunstmaanmigrator\run\RunSettings;
+use Lameco\Kunstmaanmigrator\sites\SiteBinding;
 
 /**
  * The finalize pass over every environment the mapping declares.
@@ -62,9 +63,13 @@ final class FinalizePass
             // The database answers `[NT<id>]`; the media roots let an image no
             // payload pulled in be ingested on demand. Opening the environment
             // the way the pipeline does is what keeps both together.
-            EnvironmentPipeline::open($mapping, (string) $name, (array) $spec, $settings);
+            $context = EnvironmentPipeline::open($mapping, (string) $name, (array) $spec, $settings);
 
-            $plugin->referenceFinalizeService->run(new MigrationOptions(dryRun: $dryRun), $report);
+            // Only this environment's sites: the rewriter now answers for this database alone,
+            // and another environment's `[NT1204]` is a different node.
+            $siteIds = array_map(static fn(SiteBinding $binding): int => $binding->siteId, $context->sites->targets());
+
+            $plugin->referenceFinalizeService->run(new MigrationOptions(dryRun: $dryRun), $report, $siteIds);
 
             $done++;
 
