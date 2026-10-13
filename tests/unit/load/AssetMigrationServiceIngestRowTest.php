@@ -160,6 +160,46 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\load {
             self::assertSame([], $state->recorded);
         }
 
+        public function testAnEmptyFileThatIsNotAnImageStillMigrates(): void
+        {
+            // Only an image is read by getimagesize() on save; an empty PDF saves as before.
+            file_put_contents($this->mediaRoot . '/empty.pdf', '');
+            $counts = [];
+
+            try {
+                $this->ingest(
+                    $this->service(),
+                    ['id' => 3062, 'url' => '/uploads/media/empty.pdf', 'content_type' => 'application/pdf'],
+                    new MigrationOptions(dryRun: true),
+                    $counts,
+                );
+            } finally {
+                @unlink($this->mediaRoot . '/empty.pdf');
+            }
+
+            self::assertSame(['created' => 1], $counts);
+        }
+
+        public function testAnEmptyImageIsKnownByItsExtensionWhenTheTypeIsNot(): void
+        {
+            // resolveFromLegacyUrl() sniffs the type, and an empty file sniffs as application/x-empty.
+            file_put_contents($this->mediaRoot . '/empty.jpg', '');
+            $counts = [];
+
+            try {
+                $this->ingest(
+                    $this->service(),
+                    ['id' => 3063, 'url' => '/uploads/media/empty.jpg', 'content_type' => 'application/x-empty'],
+                    new MigrationOptions(dryRun: true),
+                    $counts,
+                );
+            } finally {
+                @unlink($this->mediaRoot . '/empty.jpg');
+            }
+
+            self::assertSame(['skipped' => 1], $counts);
+        }
+
         public function testADryRunCountsAResolvableLocalFileAsCreated(): void
         {
             $service = $this->service();
