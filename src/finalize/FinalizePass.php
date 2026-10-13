@@ -64,7 +64,7 @@ final class FinalizePass
             // the way the pipeline does is what keeps both together.
             EnvironmentPipeline::open($mapping, (string) $name, (array) $spec, $settings);
 
-            $plugin->ckeditorFinalizeService->run(new MigrationOptions(dryRun: $dryRun), $report);
+            $plugin->referenceFinalizeService->run(new MigrationOptions(dryRun: $dryRun), $report);
 
             $done++;
 

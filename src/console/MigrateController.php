@@ -598,7 +598,7 @@ final class MigrateController extends Controller
      * Last, and only after every environment: `[NT<id>]` resolves a legacy node translation to
      * the entry it became, and `/uploads/media/...` to a migrated asset. Neither can be
      * answered until the entries and assets exist. The rewriter has always been able to do
-     * this and was called by nothing; see CkeditorFinalizeService.
+     * this and was called by nothing; see ReferenceFinalizeService.
      *
      * Per environment, not once: the pass resolves against the legacy database, and running
      * it after the loop meant it only ever saw the last one.

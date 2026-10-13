@@ -19,8 +19,8 @@ use Lameco\Kunstmaanmigrator\craft\CraftPluginRegistry;
 use Lameco\Kunstmaanmigrator\craft\VerbbNavigationGateway;
 use Lameco\Kunstmaanmigrator\db\KunstmaanEnvReader;
 use Lameco\Kunstmaanmigrator\db\LegacyDbService;
-use Lameco\Kunstmaanmigrator\finalize\CkeditorFinalizeService;
 use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
+use Lameco\Kunstmaanmigrator\finalize\ReferenceFinalizeService;
 use Lameco\Kunstmaanmigrator\load\AssetMigrationService;
 use Lameco\Kunstmaanmigrator\load\EntryMigrationService;
 use Lameco\Kunstmaanmigrator\load\FormMigrationService;
@@ -49,7 +49,7 @@ use yii\base\Event;
  * @property-read KunstmaanEnvReader $kunstmaanEnvReader
  * @property-read MigrationStateService $migrationStateService
  * @property-read CkeditorRewriterService $ckeditorRewriterService
- * @property-read CkeditorFinalizeService $ckeditorFinalizeService
+ * @property-read ReferenceFinalizeService $referenceFinalizeService
  * @property-read AssetMigrationService $assetMigrationService
  * @property-read EntryMigrationService $entryMigrationService
  * @property-read SeoMigrationService $seoMigrationService
@@ -131,7 +131,7 @@ class Plugin extends BasePlugin
                 'kunstmaanEnvReader' => KunstmaanEnvReader::class, // Settings::beforeValidate() DSN auto-fill seam
                 'migrationStateService' => MigrationStateService::class,
                 'ckeditorRewriterService' => CkeditorRewriterService::class,
-                'ckeditorFinalizeService' => CkeditorFinalizeService::class,
+                'referenceFinalizeService' => ReferenceFinalizeService::class,
                 'assetMigrationService' => AssetMigrationService::class,
                 'entryMigrationService' => EntryMigrationService::class,
                 // Phase 4 additions — load-side adapter services.
@@ -212,8 +212,8 @@ class Plugin extends BasePlugin
         // environment being rewritten, so `EnvironmentPipeline::adoptEnvironment()`
         // binds one per environment, alongside the connection and the caches.
         // The finalize pass shares the one rewriter, so its lazily-warmed caches are warmed once.
-        $this->ckeditorFinalizeService->rewriter = $this->ckeditorRewriterService;
-        $this->ckeditorFinalizeService->elementWriter = new CraftElementWriter();
+        $this->referenceFinalizeService->rewriter = $this->ckeditorRewriterService;
+        $this->referenceFinalizeService->elementWriter = new CraftElementWriter();
 
         $this->ckeditorRewriterService->migrationState = $this->migrationStateService;
         $this->ckeditorRewriterService->legacyDb = $this->legacyDbService;

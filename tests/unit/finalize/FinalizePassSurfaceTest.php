@@ -32,7 +32,7 @@ final class FinalizePassSurfaceTest extends TestCase
         $callers = [];
 
         foreach (['src/console/MigrateController.php', 'src/queue/FinalizeJob.php', 'src/finalize/FinalizePass.php'] as $file) {
-            if (str_contains($this->source($file), 'ckeditorFinalizeService->run(')) {
+            if (str_contains($this->source($file), 'referenceFinalizeService->run(')) {
                 $callers[] = $file;
             }
         }

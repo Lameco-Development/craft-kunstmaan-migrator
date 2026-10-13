@@ -6,7 +6,7 @@ namespace Lameco\Kunstmaanmigrator\tests\unit\finalize;
 
 use craft\elements\Category;
 use craft\elements\GlobalSet;
-use Lameco\Kunstmaanmigrator\finalize\CkeditorFinalizeService;
+use Lameco\Kunstmaanmigrator\finalize\ReferenceFinalizeService;
 use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
 use PHPUnit\Framework\Attributes\Test;
@@ -20,17 +20,17 @@ use ReflectionClass;
  * type. Loading it as an Entry dropped a global set or a category holding the same rich text
  * without a word.
  */
-final class CkeditorFinalizeServiceCandidateTest extends TestCase
+final class ReferenceFinalizeServiceCandidateTest extends TestCase
 {
     private InMemoryElementWriter $writer;
 
     private MigrationReport $report;
 
-    private function service(): CkeditorFinalizeService
+    private function service(): ReferenceFinalizeService
     {
         $this->writer = new InMemoryElementWriter();
         $this->report = new MigrationReport();
-        $service = new CkeditorFinalizeService();
+        $service = new ReferenceFinalizeService();
         $service->elementWriter = $this->writer;
 
         return $service;

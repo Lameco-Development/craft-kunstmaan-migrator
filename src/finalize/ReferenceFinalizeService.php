@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\finalize;
 
 use Craft;
-use craft\ckeditor\Field as CkeditorField;
-use craft\db\Query;
 use craft\base\Element;
 use craft\base\ElementInterface;
+use craft\ckeditor\Field as CkeditorField;
+use craft\db\Query;
 use craft\fields\data\LinkData;
 use craft\fields\Link as LinkField;
 use Lameco\Kunstmaanmigrator\craft\CraftElementWriter;
@@ -18,7 +18,7 @@ use Lameco\Kunstmaanmigrator\load\MigrationReport;
 use Throwable;
 
 /**
- * The finalize pass: rewrite legacy references left in migrated rich text.
+ * The finalize pass: rewrite legacy references left in migrated CKEditor and Link fields.
  *
  * `CkeditorRewriterService::rewrite()` has always known how to do this — legacy
  * `<img src="/uploads/media/...">`, `[M<id>]` media placeholders and `[NT<id>]` internal links —
@@ -49,7 +49,7 @@ use Throwable;
  * database that question directly is both cheaper and less fragile than recursing through Matrix
  * fields looking for something that might not be there.
  */
-final class CkeditorFinalizeService
+final class ReferenceFinalizeService
 {
     /**
      * The seam at Craft's element writes. Wired in Plugin::init(); read
@@ -58,29 +58,6 @@ final class CkeditorFinalizeService
     public ?ElementWriter $elementWriter = null;
 
     public CkeditorRewriterService $rewriter;
-
-    /**
-     * Markers the rewriter knows how to resolve. Used to shortlist rows worth loading, both in
-     * SQL (`candidates()`) and per field (`carriesMarker()`), so the two cannot disagree.
-     *
-     * Craft percent-encodes the brackets of `src="[M3679]"` on save, so a body whose only legacy
-     * reference is a media placeholder is stored as `%5BM3679%5D` (and `%255BM3679%255D` when an
-     * already-encoded href was saved again). Both escape cases are listed:
-     * `elements_sites.content` is JSON, and MySQL compares a JSON column case-sensitively.
-     */
-    private const MARKERS = [
-        '/uploads/media/',
-        '[NT',
-        '%5BNT',
-        '%5bNT',
-        '%255BNT',
-        '%255bNT',
-        '[M',
-        '%5BM',
-        '%5bM',
-        '%255BM',
-        '%255bM',
-    ];
 
     public function __construct(?CkeditorRewriterService $rewriter = null)
     {
@@ -98,11 +75,7 @@ final class CkeditorFinalizeService
     {
         $report ??= new MigrationReport();
 
-        $ckeditorFieldIds = $this->ckeditorFieldUids();
-
-        // Link fields are rewritten here too (a legacy media URL becomes an asset link), so an
-        // install with Link fields and no CKEditor still has something to finalize.
-        if ($ckeditorFieldIds === [] && !$this->hasLinkFields()) {
+        if (!$this->hasRewritableFields()) {
             $report->warn('finalize: no CKEditor or Link fields exist on this install; nothing to rewrite.');
 
             return $report;
@@ -111,7 +84,7 @@ final class CkeditorFinalizeService
         foreach ($this->candidates() as $siteId => $rows) {
             foreach ($rows as ['id' => $elementId, 'type' => $type]) {
                 try {
-                    $this->finalizeElement($elementId, $type, $siteId, $ckeditorFieldIds, $opts, $report);
+                    $this->finalizeElement($elementId, $type, $siteId, $opts, $report);
                 } catch (Throwable $e) {
                     $report->incr('failed');
                     $report->warn(sprintf(
@@ -142,15 +115,7 @@ final class CkeditorFinalizeService
             ->innerJoin(['e' => '{{%elements}}'], '[[e.id]] = [[es.elementId]]')
             ->andWhere(['e.revisionId' => null, 'e.dateDeleted' => null]);
 
-        $conditions = ['or'];
-
-        foreach (self::MARKERS as $marker) {
-            // No fourth operand: Yii's `false` there means "match the value literally", which
-            // turns a contains-check into an equality-check and finds nothing.
-            $conditions[] = ['like', 'es.content', $marker];
-        }
-
-        $query->andWhere($conditions);
+        $query->andWhere(LegacyMarkers::likeConditions('es.content'));
 
         $out = [];
 
@@ -161,24 +126,14 @@ final class CkeditorFinalizeService
         return $out;
     }
 
-    /** @return list<string> field uids */
-    private function ckeditorFieldUids(): array
-    {
-        $uids = [];
-
-        foreach (Craft::$app->fields->getAllFields() as $field) {
-            if ($field instanceof CkeditorField) {
-                $uids[] = $field->handle;
-            }
-        }
-
-        return $uids;
-    }
-
-    private function hasLinkFields(): bool
+    /**
+     * Whether the install has a field this pass rewrites: CKEditor rich text, or a Link field
+     * (a legacy media URL becomes an asset link).
+     */
+    private function hasRewritableFields(): bool
     {
         foreach (Craft::$app->fields->getAllFields() as $field) {
-            if ($field instanceof LinkField) {
+            if ($field instanceof CkeditorField || $field instanceof LinkField) {
                 return true;
             }
         }
@@ -214,14 +169,10 @@ final class CkeditorFinalizeService
         return $element;
     }
 
-    /**
-     * @param list<string> $ckeditorHandles
-     */
     private function finalizeElement(
         int $elementId,
         string $type,
         int $siteId,
-        array $ckeditorHandles,
         MigrationOptions $opts,
         MigrationReport $report,
     ): void {
@@ -256,10 +207,9 @@ final class CkeditorFinalizeService
             $value = $element->getFieldValue($field->handle);
             $html = $value === null ? '' : (string) $value;
 
-            if ($html === '' || !self::carriesMarker($html)) {
+            if ($html === '' || !LegacyMarkers::inText($html)) {
                 continue;
             }
-
 
             $rewritten = $this->rewriter->rewrite($html, $siteId);
 
@@ -351,17 +301,5 @@ final class CkeditorFinalizeService
         $report->incr('linksRewritten');
 
         return true;
-    }
-
-    /** Whether rich text still holds a legacy reference the rewriter resolves. */
-    public static function carriesMarker(string $html): bool
-    {
-        foreach (self::MARKERS as $marker) {
-            if (str_contains($html, $marker)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }
