@@ -9,6 +9,7 @@ use Lameco\Kunstmaanmigrator\finalize\CkeditorRewriterService;
 use Lameco\Kunstmaanmigrator\load\MigrationStateStream;
 use Lameco\Kunstmaanmigrator\tests\support\FakeLegacyDb;
 use Lameco\Kunstmaanmigrator\tests\support\ThrowingLegacyDb;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
@@ -149,6 +150,61 @@ final class CkeditorRewriterCacheWarmingTest extends TestCase
         self::assertSame(900, $this->callPrivate($svc, 'resolveNodeTranslationId', 80));
         self::assertSame(901, $this->callPrivate($svc, 'resolveNodeTranslationId', 81));
         self::assertNull($this->callPrivate($svc, 'resolveNodeTranslationId', 82));
+    }
+
+    /**
+     * `seo_meta` rows are entry rows keyed `<entryId>:<siteId>`. Read as an int,
+     * `'1204:2'` is node 1204, so when it came after node 1204's own row it won
+     * and `[NT1206]` (producten/verdi) linked to entry 1204 (a dealer page).
+     * Row order must not matter: the node's own row is the only authority.
+     *
+     * @return iterable<string, array{bool}>
+     */
+    public static function rowOrders(): iterable
+    {
+        yield 'node row first' => [false];
+        yield 'node row last' => [true];
+    }
+
+    #[DataProvider('rowOrders')]
+    public function testNtWarmIgnoresSeoMetaCompositeKeysThatLookLikeNodeIds(bool $nodeRowLast): void
+    {
+        $rows = [
+            ['source' => 'NL:kuma_nodes', 'targetType' => 'entry', 'targetId' => 5000, 'sourceKey' => '1204'],
+            ['source' => 'seo_meta', 'targetType' => 'entry', 'targetId' => 1204, 'sourceKey' => '1204:2'],
+        ];
+        $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('NL');
+        $svc->migrationState = new FakeStateStream(entries: $nodeRowLast ? array_reverse($rows) : $rows);
+        $svc->legacyDb = new FakeLegacyDb([
+            [],
+            [['nt_id' => 1206, 'node_id' => 1204]],
+        ]);
+
+        self::assertSame(5000, $this->callPrivate($svc, 'resolveNodeTranslationId', 1206));
+    }
+
+    public function testNtWarmIgnoresAnotherEnvironmentsNodeRowsAndAliasRows(): void
+    {
+        // Node ids restart per legacy database, and an alias row is keyed by its
+        // own table's id. Neither is this environment's node.
+        $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('NL');
+        $svc->migrationState = new FakeStateStream(entries: [
+            ['source' => 'NL:kuma_nodes', 'targetType' => 'entry', 'targetId' => 5000, 'sourceKey' => '1204'],
+            ['source' => 'FR:kuma_nodes', 'targetType' => 'entry', 'targetId' => 7000, 'sourceKey' => '1204'],
+            ['source' => 'NL:app_product_pages', 'targetType' => 'entry', 'targetId' => 7001, 'sourceKey' => '1204'],
+            ['source' => 'FR:kuma_nodes', 'targetType' => 'entry', 'targetId' => 7002, 'sourceKey' => '1300'],
+            ['source' => 'NL:app_product_pages', 'targetType' => 'entry', 'targetId' => 7003, 'sourceKey' => '1301'],
+        ]);
+        $svc->legacyDb = new FakeLegacyDb([
+            [],
+            [['nt_id' => 1206, 'node_id' => 1204], ['nt_id' => 1302, 'node_id' => 1300], ['nt_id' => 1303, 'node_id' => 1301]],
+        ]);
+
+        self::assertSame(5000, $this->callPrivate($svc, 'resolveNodeTranslationId', 1206));
+        self::assertNull($this->callPrivate($svc, 'resolveNodeTranslationId', 1302), 'FR node 1300 is not NL node 1300');
+        self::assertNull($this->callPrivate($svc, 'resolveNodeTranslationId', 1303), 'an alias key is not a node id');
     }
 
     public function testNtWarmSurvivesALegacyDbThatThrows(): void

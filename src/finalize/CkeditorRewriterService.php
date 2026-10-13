@@ -513,8 +513,8 @@ class CkeditorRewriterService extends Component
     /**
      * Resolve kuma_node_translations.id → Craft entry numeric id via the
      * legacy DB (NT→node_id) plus state rows (node_id→targetId). Cache warmed
-     * lazily. Handles news/cases/page (sourceKey is node_id) and singleton/team
-     * (meta.kumaNodeId) transparently.
+     * lazily, from this environment's `<ENV>:kuma_nodes` rows (sourceKey is the
+     * node id) plus the legacy ref-bridged and meta.kumaNodeId shapes.
      */
     private function resolveNodeTranslationId(int $ntId): ?int
     {
@@ -535,17 +535,8 @@ class CkeditorRewriterService extends Component
      */
     private function warmKumaMediaCacheFromState(): void
     {
-        if (
-            $this->migrationState === null
-            || $this->assetResolver === null
-            || !method_exists($this->assetResolver, 'environmentName')
-        ) {
-            $this->kumaMediaCacheWarm = true;
-            return;
-        }
-
-        $environment = (string) $this->assetResolver->environmentName();
-        if ($environment === '') {
+        $environment = $this->environmentName();
+        if ($this->migrationState === null || $environment === null) {
             $this->kumaMediaCacheWarm = true;
             return;
         }
@@ -569,6 +560,22 @@ class CkeditorRewriterService extends Component
     }
 
     /**
+     * The environment this rewriter is bound to, or null when none is. The
+     * resolver `EnvironmentPipeline::adoptEnvironment()` binds is where it
+     * comes from; both state-warmed caches are keyed by bare legacy ids, which
+     * only hold within one environment.
+     */
+    private function environmentName(): ?string
+    {
+        if ($this->assetResolver === null || !method_exists($this->assetResolver, 'environmentName')) {
+            return null;
+        }
+        $environment = (string) $this->assetResolver->environmentName();
+
+        return $environment !== '' ? $environment : null;
+    }
+
+    /**
      * Warm the `[NT<id>]` → Craft entry-id cache.
      *
      * Three inputs, and the mapping itself lives in the pure static below so
@@ -581,6 +588,9 @@ class CkeditorRewriterService extends Component
         if ($this->migrationState === null || $this->legacyDb === null) {
             $this->ntCacheWarm = true;
             return;
+        }
+        if ($this->environmentName() === null) {
+            $this->warn('no environment bound: [NT] links resolve only through legacy-shaped state rows');
         }
 
         // Bridge the two legacy id sequences: state.sourceKey is
@@ -605,6 +615,7 @@ class CkeditorRewriterService extends Component
                 $this->stateEntryRows(),
                 $refNodeRows,
                 $ntRows,
+                $this->environmentName(),
             );
         } catch (\Throwable $e) {
             $this->warn('could not warm NT cache: ' . $e->getMessage());
@@ -614,16 +625,28 @@ class CkeditorRewriterService extends Component
     }
 
     /**
-     * Pure NT cache builder used by warmNtCache() and PHPUnit. It maps state rows
-     * to node ids through both sourceKey/ref rows and decoded meta.kumaNodeId,
-     * then maps node translations to Craft entry ids.
+     * Pure NT cache builder used by warmNtCache() and PHPUnit.
+     *
+     * Only rows that are about a node of THIS environment may say which entry a
+     * node is. Every entry row used to be read as `(int) sourceKey` = node id,
+     * so `seo_meta` rows (`<entryId>:<siteId>`), alias rows (keyed by their own
+     * table's id) and other environments' `<ENV>:kuma_nodes` rows (node ids
+     * restart per legacy database) all shadowed real nodes, last row winning.
+     *
+     * Two tiers, the authoritative one applied last so row order can't matter:
+     *   - fallback: unprefixed legacy FQCN rows bridged through the ref→node
+     *     map (never their raw key), and `meta.kumaNodeId` on unprefixed or
+     *     this environment's rows;
+     *   - authoritative: `<ENV>:kuma_nodes` rows whose key is all digits.
+     * Rows prefixed with another environment are skipped. Without an
+     * environment no prefixed row is trusted.
      *
      * @param list<array<string, mixed>> $stateRows
      * @param list<array<string, mixed>> $refNodeRows
      * @param list<array<string, mixed>> $ntRows
      * @return array<int, int>
      */
-    private static function buildNtToEntryCacheFromRows(array $stateRows, array $refNodeRows, array $ntRows): array
+    private static function buildNtToEntryCacheFromRows(array $stateRows, array $refNodeRows, array $ntRows, ?string $environment = null): array
     {
         $refToNodeMap = [];
         foreach ($refNodeRows as $r) {
@@ -636,23 +659,38 @@ class CkeditorRewriterService extends Component
             }
         }
 
-        $nodeIdToTargetId = [];
+        $nodeSource = ($environment !== null && $environment !== '') ? $environment . ':kuma_nodes' : null;
+        $fallback = [];
+        $authoritative = [];
         foreach ($stateRows as $row) {
             if (($row['targetType'] ?? null) !== 'entry' || empty($row['targetId'])) {
                 continue;
             }
             $source = (string) ($row['source'] ?? '');
-            $fqcn = str_replace('_', '\\', $source);
+            $sourceKey = (string) ($row['sourceKey'] ?? '');
             $targetId = (int) $row['targetId'];
-            $sourceKey = (int) ($row['sourceKey'] ?? 0);
-            $mappedNodeId = $sourceKey > 0
-                ? (int) ($refToNodeMap[$fqcn][$sourceKey] ?? $refToNodeMap[$source][$sourceKey] ?? 0)
-                : 0;
-            if ($mappedNodeId > 0) {
-                $nodeIdToTargetId[$mappedNodeId] = $targetId;
-            } elseif ($sourceKey > 0) {
-                $nodeIdToTargetId[$sourceKey] = $targetId;
+
+            $colon = strpos($source, ':');
+            if ($colon !== false && ($nodeSource === null || substr($source, 0, $colon) !== $environment)) {
+                continue;
             }
+
+            if ($source === $nodeSource) {
+                if (ctype_digit($sourceKey) && (int) $sourceKey > 0) {
+                    $authoritative[(int) $sourceKey] = $targetId;
+                }
+                continue;
+            }
+
+            if ($colon === false && ctype_digit($sourceKey)) {
+                $fqcn = str_replace('_', '\\', $source);
+                $refId = (int) $sourceKey;
+                $mappedNodeId = (int) ($refToNodeMap[$fqcn][$refId] ?? $refToNodeMap[$source][$refId] ?? 0);
+                if ($mappedNodeId > 0) {
+                    $fallback[$mappedNodeId] = $targetId;
+                }
+            }
+
             $meta = $row['meta'] ?? null;
             if (is_string($meta)) {
                 $meta = json_decode($meta, true);
@@ -660,10 +698,11 @@ class CkeditorRewriterService extends Component
             if (is_array($meta)) {
                 $metaNodeId = (int) ($meta['kumaNodeId'] ?? 0);
                 if ($metaNodeId > 0) {
-                    $nodeIdToTargetId[$metaNodeId] = $targetId;
+                    $fallback[$metaNodeId] = $targetId;
                 }
             }
         }
+        $nodeIdToTargetId = $authoritative + $fallback;
 
         $out = [];
         foreach ($ntRows as $r) {
