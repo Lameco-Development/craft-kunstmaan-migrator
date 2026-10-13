@@ -71,7 +71,12 @@ final class ReferenceFinalizeService
         return $this->elementWriter ??= new CraftElementWriter();
     }
 
-    public function run(MigrationOptions $opts, ?MigrationReport $report = null): MigrationReport
+    /**
+     * @param list<int>|null $siteIds the Craft sites of the environment being finalized; null
+     *   finalizes every site. The rewriter's `[NT]` and media caches belong to one environment,
+     *   so another environment's content must wait for its own turn.
+     */
+    public function run(MigrationOptions $opts, ?MigrationReport $report = null, ?array $siteIds = null): MigrationReport
     {
         $report ??= new MigrationReport();
 
@@ -81,7 +86,7 @@ final class ReferenceFinalizeService
             return $report;
         }
 
-        foreach ($this->candidates() as $siteId => $rows) {
+        foreach (self::scopeToSites($this->candidates(), $siteIds) as $siteId => $rows) {
             foreach ($rows as ['id' => $elementId, 'type' => $type]) {
                 try {
                     $this->finalizeElement($elementId, $type, $siteId, $opts, $report);
@@ -98,6 +103,23 @@ final class ReferenceFinalizeService
         }
 
         return $report;
+    }
+
+    /**
+     * Keep only the candidates on the given sites; null keeps them all.
+     *
+     * @template T
+     * @param array<int, T> $candidatesBySite
+     * @param list<int>|null $siteIds
+     * @return array<int, T>
+     */
+    public static function scopeToSites(array $candidatesBySite, ?array $siteIds): array
+    {
+        if ($siteIds === null) {
+            return $candidatesBySite;
+        }
+
+        return array_intersect_key($candidatesBySite, array_flip($siteIds));
     }
 
     /**
