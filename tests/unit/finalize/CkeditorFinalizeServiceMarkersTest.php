@@ -28,6 +28,8 @@ final class CkeditorFinalizeServiceMarkersTest extends TestCase
         yield 'raw node placeholder' => ['<a href="[NT558]">x</a>'];
         yield 'encoded node placeholder' => ['<a href="%5BNT558%5D">x</a>'];
         yield 'encoded node placeholder, lower-case escape' => ['<a href="%5bNT558%5d">x</a>'];
+        yield 'double-encoded media placeholder' => ['<img src="%255BM3679%255D">'];
+        yield 'double-encoded node placeholder, lower-case escape' => ['<a href="%255bNT558%255d">x</a>'];
         yield 'legacy media url' => ['<img src="/uploads/media/abc/x.jpg">'];
     }
 

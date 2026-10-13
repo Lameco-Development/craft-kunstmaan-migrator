@@ -49,17 +49,19 @@ class CkeditorRewriterService extends Component
      * that Craft's CKEditor serializer produces when saving a shortcode as an
      * `src`/`href` attribute value (brackets are not valid in URLs so they get
      * percent-encoded on save). The `i` flag handles the rare `%5b`/`%5d`
-     * lower-case variant emitted by some HTTP clients.
+     * lower-case variant emitted by some HTTP clients, and `%25` the double-encoded
+     * `%255BM482%255D` an editor leaves by re-saving an already-encoded href.
      */
-    public const KUMA_MEDIA_PLACEHOLDER_REGEX = '~(?:\[|%5B)M(\d+)(?:\]|%5D)~i';
+    public const KUMA_MEDIA_PLACEHOLDER_REGEX = '~(?:\[|%(?:25)?5B)M(\d+)(?:\]|%(?:25)?5D)~i';
 
     /**
      * Kunstmaan CKEditor internal-link placeholder `[NT<digits>]` — the numeric
      * value is `kuma_node_translations.id`, which maps (via node_id) to a state
      * row for a migrated entry. Typical occurrence: `href="[NT80]"`.
-     * Also matches the URL-encoded form `%5BNT80%5D` (same encoding as [M]).
+     * Also matches the URL-encoded form `%5BNT80%5D` and the double-encoded
+     * `%255BNT80%255D` (same encodings as [M]).
      */
-    public const KUMA_NT_PLACEHOLDER_REGEX = '~(?:\[|%5B)NT(\d+)(?:\]|%5D)~i';
+    public const KUMA_NT_PLACEHOLDER_REGEX = '~(?:\[|%(?:25)?5B)NT(\d+)(?:\]|%(?:25)?5D)~i';
 
     /**
      * Task 8 / docs/loader-contract.md — the v2 loader's OWN normalized
@@ -320,7 +322,7 @@ class CkeditorRewriterService extends Component
      */
     private function rewriteMediaPlaceholders(string $html, int $siteId): string
     {
-        if (!str_contains($html, '[M') && !str_contains($html, '%5BM') && !str_contains($html, '%5bM')) {
+        if (!str_contains($html, '[M') && stripos($html, '5BM') === false) {
             return $html;
         }
 
@@ -350,7 +352,7 @@ class CkeditorRewriterService extends Component
      */
     private function rewriteNodeTranslationPlaceholders(string $html, int $siteId): string
     {
-        if (!str_contains($html, '[NT') && !str_contains($html, '%5BNT') && !str_contains($html, '%5bNT')) {
+        if (!str_contains($html, '[NT') && stripos($html, '5BNT') === false) {
             return $html;
         }
 

@@ -63,7 +63,8 @@ final class CkeditorFinalizeService
      * SQL (`candidates()`) and per field (`carriesMarker()`), so the two cannot disagree.
      *
      * Craft percent-encodes the brackets of `src="[M3679]"` on save, so a body whose only legacy
-     * reference is a media placeholder is stored as `%5BM3679%5D`. Both escape cases are listed:
+     * reference is a media placeholder is stored as `%5BM3679%5D` (and `%255BM3679%255D` when an
+     * already-encoded href was saved again). Both escape cases are listed:
      * `elements_sites.content` is JSON, and MySQL compares a JSON column case-sensitively.
      */
     private const MARKERS = [
@@ -71,9 +72,13 @@ final class CkeditorFinalizeService
         '[NT',
         '%5BNT',
         '%5bNT',
+        '%255BNT',
+        '%255bNT',
         '[M',
         '%5BM',
         '%5bM',
+        '%255BM',
+        '%255bM',
     ];
 
     public function __construct(?CkeditorRewriterService $rewriter = null)

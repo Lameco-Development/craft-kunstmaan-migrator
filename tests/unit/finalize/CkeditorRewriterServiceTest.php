@@ -220,6 +220,19 @@ final class CkeditorRewriterServiceTest extends TestCase
         self::assertSame([], $svc->consumeUnresolvedDiagnostics());
     }
 
+    public function testDoubleEncodedPlaceholdersResolveToo(): void
+    {
+        // An editor that re-saved an already-encoded href leaves `%255BM482%255D`.
+        $svc = $this->service();
+        $svc->seedKumaMediaIdCache([482 => 1234]);
+        $svc->seedNtToEntryCache([80 => 55]);
+
+        $out = $svc->rewrite('<a href="%255BM482%255D">file</a><a href="%255bNT80%255d">page</a>', 3);
+
+        self::assertSame('<a href="{asset:1234@3:url}">file</a><a href="{entry:55@3:url}">page</a>', $out);
+        self::assertSame([], $svc->consumeUnresolvedDiagnostics());
+    }
+
     public function testUnresolvedKumaMediaPlaceholderPreservesLiteralWithMarker(): void
     {
         $svc = $this->service();
