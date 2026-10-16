@@ -11,6 +11,7 @@ use Lameco\Kunstmaanmigrator\load\MigrationOptions;
 use Lameco\Kunstmaanmigrator\load\MigrationStateService;
 use Lameco\Kunstmaanmigrator\run\EnvironmentContext;
 use Lameco\Kunstmaanmigrator\tests\support\EnvironmentFactory;
+use Lameco\Kunstmaanmigrator\tests\support\InMemoryElementWriter;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
@@ -218,9 +219,12 @@ final class AssetMigrationServiceUploadPathTest extends TestCase
     public function testMediaPathsResolveAsBefore(): void
     {
         $service = new AssetMigrationService();
+        // A row written before keys named their volume: reused because asset 5 is in this one.
         $service->migrationState = new UploadStateMap([
             'media|legacy_url:' . sha1('/uploads/media/pic.png') => ['targetId' => 5],
         ]);
+        $service->elementWriter = new InMemoryElementWriter();
+        $service->elementWriter->willHoldAsset(5, $service->targetVolume);
 
         self::assertSame(5, $service->resolveFromLegacyUrl('/uploads/media/pic.png', $this->env()));
         self::assertSame(0, $service->resolveFromLegacyUrl('/other/A12.jpg', $this->env()));

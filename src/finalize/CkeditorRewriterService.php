@@ -994,7 +994,7 @@ class CkeditorRewriterService extends Component
             // silently, for every image.
             //
             // The id→asset cache it consults is warmed only from state rows keyed `kuma_media:`,
-            // and AssetMigrationService writes them keyed `legacy_url:sha1(path)` — on the Enreach
+            // and AssetMigrationService writes them keyed `legacy_url:<volume>:sha1(path)` — on the Enreach
             // corpus, 978 of the latter and none of the former. So that cache is empty by
             // construction and this branch is the normal case, not the exception.
             return $this->resolveByLegacyUrl($stripped);
@@ -1054,7 +1054,7 @@ class CkeditorRewriterService extends Component
     /**
      * Last resort: ask the asset resolver to map the legacy URL itself.
      *
-     * It hashes the path to `legacy_url:sha1(path)`, which is the key AssetMigrationService
+     * It hashes the path to `legacy_url:<volume>:sha1(path)`, which is the key AssetMigrationService
      * actually writes, so it finds rows the id-keyed cache cannot.
      */
     private function resolveByLegacyUrl(string $strippedUrl): ?int
@@ -1075,14 +1075,53 @@ class CkeditorRewriterService extends Component
         return $resolved;
     }
 
+    /**
+     * Warm the legacy URL → Craft asset-id cache from the state rows this run can vouch for.
+     *
+     * The cache is keyed by path alone, and a path is not an identity across site groups:
+     * Berkvens NL and Berkvens FR share `/uploads/media/<hash>/…` paths and migrate into
+     * separate volumes. Warmed from every `media` row, NL's assets answered FR's rich text and
+     * Link fields. So only two kinds of row are adopted: this environment's own
+     * `<ENV>:kuma_media:<id>`, and `legacy_url:<volume>:…` for the volume this run ingests into.
+     * Everything else — another environment's or volume's rows, a `legacy_url:` row from before
+     * keys named their volume, a `legacy_file:` row (keyed by a checkout's real path, not by the
+     * URL) — is left to resolveByLegacyUrl(), which answers it with the volume checked.
+     *
+     * Without a resolver there is nothing to scope against, and the cache stays cold.
+     */
     private function warmUrlCacheFromState(): void
     {
-        if ($this->migrationState === null) {
+        $prefixes = [];
+        if ($this->assetResolver !== null && method_exists($this->assetResolver, 'environmentName')) {
+            $environment = (string) $this->assetResolver->environmentName();
+            if ($environment !== '') {
+                $prefixes[] = $environment . ':kuma_media:';
+            }
+        }
+        if ($this->assetResolver !== null && method_exists($this->assetResolver, 'targetVolume')) {
+            $volume = (string) $this->assetResolver->targetVolume();
+            if ($volume !== '') {
+                $prefixes[] = 'legacy_url:' . $volume . ':';
+            }
+        }
+
+        if ($this->migrationState === null || $prefixes === []) {
             $this->urlCacheWarm = true;
             return;
         }
 
         foreach ($this->migrationState->all('media') as $row) {
+            $sourceKey = (string) ($row['sourceKey'] ?? '');
+            $owned = false;
+            foreach ($prefixes as $prefix) {
+                if (str_starts_with($sourceKey, $prefix)) {
+                    $owned = true;
+                    break;
+                }
+            }
+            if (!$owned) {
+                continue;
+            }
             $meta = $row['meta'] ?? null;
             if (is_string($meta)) {
                 $meta = json_decode($meta, true);

@@ -246,7 +246,7 @@ final class AssetMigrationServiceJitResolveTest extends TestCase
     {
         $service = new AssetMigrationService();
         $service->migrationState = new JitStateMap([
-            'media|legacy_url:' . sha1('/uploads/media/pics/one.png') => ['targetId' => 77],
+            'media|legacy_url:' . $service->targetVolume . ':' . sha1('/uploads/media/pics/one.png') => ['targetId' => 77],
         ]);
 
         self::assertSame(

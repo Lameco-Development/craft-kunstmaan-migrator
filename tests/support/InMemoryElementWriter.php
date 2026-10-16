@@ -112,6 +112,12 @@ final class InMemoryElementWriter implements ElementWriter
     /** @var array<int, array<int, true>> element id => site ids it has a row on */
     private array $sitesOf = [];
 
+    /** @var array<int, string> asset id => the handle of the volume it lives in */
+    private array $assetVolumes = [];
+
+    /** @var list<int> every asset whose volume was asked for, in call order */
+    public array $volumeLookups = [];
+
     /** Elements this writer should refuse to save, by spl_object_id. */
     private array $refuse = [];
 
@@ -251,6 +257,13 @@ final class InMemoryElementWriter implements ElementWriter
         return $this->findable[$this->key($id, $siteId)] ?? $this->findable[$this->key($id, null)] ?? null;
     }
 
+    public function volumeHandleOf(int $assetId): ?string
+    {
+        $this->volumeLookups[] = $assetId;
+
+        return $this->assetVolumes[$assetId] ?? null;
+    }
+
     public function invalidateCaches(): void
     {
         $this->cacheInvalidations++;
@@ -301,6 +314,11 @@ final class InMemoryElementWriter implements ElementWriter
     public function willFindOnlyOnKnownSites(int $id): void
     {
         unset($this->findable[$this->key($id, null)]);
+    }
+
+    public function willHoldAsset(int $assetId, string $volumeHandle): void
+    {
+        $this->assetVolumes[$assetId] = $volumeHandle;
     }
 
     public function willFindSingle(int $sectionId, Entry $entry): void

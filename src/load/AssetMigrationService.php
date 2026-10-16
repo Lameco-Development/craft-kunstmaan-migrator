@@ -41,6 +41,8 @@ use yii\base\Component;
  *   targetType='asset' (local file) or 'video' (remote),
  *   targetId=<craft asset id | 0>, targetUid=<asset uid | null>,
  *   meta={ originalUrl, location, contentType, videoId? }
+ * A file ingested by its `/uploads/media/…` path is keyed
+ * `legacy_url:<volume>:<sha1(path)>` instead (see legacyUrlStateKey()).
  *
  * Re-runs: ids already present in state are skipped unless $opts->force=true.
  *
@@ -224,16 +226,80 @@ class AssetMigrationService extends Component
      * cosmetic, but a key format that changed shape when a second environment was
      * added would silently orphan every row already written.
      *
-     * `legacy_url:` keys stay global on purpose: they are keyed by file path, and
-     * the mediaRoots fallback chain (DE → [DE root, COM root]) means a DE page
-     * resolving to a file under COM's root is the intended sharing. Scoping those
-     * would fetch a second copy of the same file for every environment.
+     * `legacy_url:` keys are not scoped by environment: they are keyed by file
+     * path, and the mediaRoots fallback chain (DE → [DE root, COM root]) means a
+     * DE page resolving to a file under COM's root is the intended sharing.
+     * Scoping those by environment would fetch a second copy of the same file for
+     * every environment. They are scoped by volume instead; see legacyUrlStateKey().
      */
     private static function mediaStateKey(int $mediaId, ?EnvironmentContext $env): string
     {
         $name = $env?->name ?? '';
 
         return $name !== '' ? $name . ':kuma_media:' . $mediaId : 'kuma_media:' . $mediaId;
+    }
+
+    /**
+     * The state key for a file ingested by its `/uploads/media/…` path:
+     * `legacy_url:<volume>:<sha1(path)>`.
+     *
+     * Scoped by the volume it lands in, not by the environment that asked. Within one volume a
+     * path is one asset: Enreach's COM, DE and LV run into one volume, and a DE page resolving a
+     * file under COM's root through the mediaRoots chain reuses COM's asset, as it always did.
+     * Across volumes a path is two: Berkvens NL and Berkvens FR are separate installs whose
+     * `/uploads/media/<hash>/<file>` paths coincide, and they migrate into separate volumes
+     * because site groups never share assets. The global key handed the FR run NL's assets —
+     * 12 FR entries related to 49 assets in the NL volume.
+     *
+     * Rows written before the volume was part of the key, `legacy_url:<sha1(path)>`, are still
+     * read: see legacyUrlTargetId().
+     */
+    public function legacyUrlStateKey(string $path): string
+    {
+        return 'legacy_url:' . $this->targetVolume . ':' . sha1($path);
+    }
+
+    /**
+     * The asset a media path already became in this volume, or null.
+     *
+     * The scoped key first. Then the unscoped `legacy_url:<sha1(path)>` a run before the scoping
+     * wrote, which is reused only when its asset is in this volume — a row pointing into another
+     * volume is another site group's asset, and one whose asset is gone points nowhere. A reused
+     * row is recorded under the scoped key too, so the next lookup asks Craft nothing and the
+     * rewriter's volume-scoped URL cache sees it. The unscoped row is left as it is: the volume
+     * that wrote it still reads it.
+     */
+    private function legacyUrlTargetId(string $path): ?int
+    {
+        $key = $this->legacyUrlStateKey($path);
+        $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $key, null);
+        if ($existing !== null) {
+            return (int) $existing;
+        }
+
+        $unscopedKey = 'legacy_url:' . sha1($path);
+        $row = $this->migrationState?->get(self::STATE_SOURCE, $unscopedKey, null);
+        $assetId = (int) ($row['targetId'] ?? 0);
+        if ($row === null || $assetId <= 0) {
+            return null;
+        }
+
+        if ($this->elements()->volumeHandleOf($assetId) !== $this->targetVolume) {
+            return null;
+        }
+
+        $meta = $row['meta'] ?? null;
+        $this->migrationState->record(
+            self::STATE_SOURCE,
+            $key,
+            (string) ($row['targetType'] ?? 'asset'),
+            $assetId,
+            isset($row['targetUid']) ? (string) $row['targetUid'] : null,
+            null,
+            (is_array($meta) ? $meta : []) + ['scopedFrom' => $unscopedKey],
+        );
+
+        return $assetId;
     }
 
     private static function jitOptions(?MigrationOptions $opts): MigrationOptions
@@ -311,10 +377,10 @@ class AssetMigrationService extends Component
         $isMedia = AssetPathResolver::isMediaPath($path);
 
         if ($isMedia) {
-            $stateKey = 'legacy_url:' . sha1($path);
-            $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, $stateKey, null);
+            $stateKey = $this->legacyUrlStateKey($path);
+            $existing = $this->legacyUrlTargetId($path);
             if ($existing !== null) {
-                return (int) $existing;
+                return $existing;
             }
         }
 

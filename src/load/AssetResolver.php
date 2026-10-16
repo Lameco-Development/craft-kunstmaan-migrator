@@ -36,6 +36,17 @@ final class AssetResolver
         return $this->env->name;
     }
 
+    /**
+     * The volume these lookups ingest into.
+     *
+     * `legacy_url:` state keys are scoped by it, and the rewriter's URL cache is
+     * keyed by path alone, so it may only adopt rows that name this volume.
+     */
+    public function targetVolume(): string
+    {
+        return $this->assets->targetVolume;
+    }
+
     public function resolveFromLegacyId(int $kumaMediaId): int
     {
         return $this->assets->resolveFromLegacyId($kumaMediaId, $this->env, $this->opts);

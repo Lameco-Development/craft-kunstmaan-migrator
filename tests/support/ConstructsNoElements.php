@@ -68,4 +68,9 @@ trait ConstructsNoElements
     {
         return null;
     }
+
+    public function volumeHandleOf(int $assetId): ?string
+    {
+        return null;
+    }
 }
