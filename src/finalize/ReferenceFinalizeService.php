@@ -36,7 +36,7 @@ use Throwable;
  * `{asset:...}` only when the asset already exists in state — 24 of 177 on that corpus.
  *
  * What is left needs the asset service's media roots, which this pass does not configure.
- * `AssetMigrationService::resolveFromLegacyUrl()` looks the URL up by `legacy_url:sha1(path)`,
+ * `AssetMigrationService::resolveFromLegacyUrl()` looks the URL up by `legacy_url:<volume>:sha1(path)`,
  * and when there is no such row it falls back to *ingesting* the file from `mediaRoot()` and the
  * configured fallback roots. The main migrate flow sets those per environment; a `--finalize-only`
  * run does not, so a reference to media that no payload happened to pull in cannot be materialised

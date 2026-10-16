@@ -105,8 +105,10 @@ final class CkeditorRewriterCacheWarmingTest extends TestCase
     public function testUrlCacheWarmsFromStateMetaOriginalUrl(): void
     {
         $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('COM');
         $svc->migrationState = new FakeStateStream(media: [
             [
+                'sourceKey' => 'COM:kuma_media:71',
                 'targetType' => 'asset',
                 'targetId' => 71,
                 'meta' => ['originalUrl' => 'uploads/media/report.pdf'],
@@ -119,18 +121,58 @@ final class CkeditorRewriterCacheWarmingTest extends TestCase
     public function testUrlCacheAcceptsMetaStoredAsJsonAndIgnoresRowsWithoutAnOriginalUrl(): void
     {
         $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('COM');
         $svc->migrationState = new FakeStateStream(media: [
             [
+                'sourceKey' => 'legacy_url:uploads:' . sha1('/uploads/media/photo.png'),
                 'targetType' => 'asset',
                 'targetId' => 88,
                 'meta' => json_encode(['originalUrl' => '/uploads/media/photo.png']),
             ],
-            ['targetType' => 'asset', 'targetId' => 89, 'meta' => ['size' => 12]],
-            ['targetType' => 'asset', 'targetId' => 90, 'meta' => null],
+            ['sourceKey' => 'COM:kuma_media:89', 'targetType' => 'asset', 'targetId' => 89, 'meta' => ['size' => 12]],
+            ['sourceKey' => 'COM:kuma_media:90', 'targetType' => 'asset', 'targetId' => 90, 'meta' => null],
         ]);
 
         self::assertSame(88, $this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/media/photo.png'));
         self::assertNull($this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/media/absent.png'));
+    }
+
+    public function testUrlCacheWarmsOnlyFromThisEnvironmentsAndThisVolumesRows(): void
+    {
+        // The cache is keyed by URL, and Berkvens NL and FR share `/uploads/media/<hash>/…`
+        // paths across two volumes. Warmed from every row, NL's assets answered FR's rich text
+        // and Link fields. What it cannot vouch for is left to resolveFromLegacyUrl(), which
+        // checks the volume.
+        $own = '/uploads/media/a/own.jpg';
+        $svc = new CkeditorRewriterService();
+        $svc->assetResolver = new FakeEnvResolver('FR', 'berkvensFr');
+        $svc->migrationState = new FakeStateStream(media: [
+            ['sourceKey' => 'FR:kuma_media:870', 'targetType' => 'asset', 'targetId' => 10, 'meta' => ['originalUrl' => $own]],
+            ['sourceKey' => 'legacy_url:berkvensFr:' . sha1('/uploads/media/a/scoped.jpg'), 'targetType' => 'asset', 'targetId' => 11, 'meta' => ['originalUrl' => '/uploads/media/a/scoped.jpg']],
+            ['sourceKey' => 'NL:kuma_media:870', 'targetType' => 'asset', 'targetId' => 20, 'meta' => ['originalUrl' => '/uploads/media/a/nl-id.jpg']],
+            ['sourceKey' => 'legacy_url:berkvensNl:' . sha1('/uploads/media/a/nl.jpg'), 'targetType' => 'asset', 'targetId' => 21, 'meta' => ['originalUrl' => '/uploads/media/a/nl.jpg']],
+            ['sourceKey' => 'legacy_url:' . sha1('/uploads/media/a/unscoped.jpg'), 'targetType' => 'asset', 'targetId' => 22, 'meta' => ['originalUrl' => '/uploads/media/a/unscoped.jpg']],
+            ['sourceKey' => 'legacy_file:' . sha1('/srv/nl/uploads/documents/montage.pdf'), 'targetType' => 'asset', 'targetId' => 23, 'meta' => ['originalUrl' => '/uploads/documents/montage.pdf']],
+            ['sourceKey' => 'kuma_media:870', 'targetType' => 'asset', 'targetId' => 24, 'meta' => ['originalUrl' => '/uploads/media/a/bare.jpg']],
+        ]);
+
+        self::assertSame(10, $this->callPrivate($svc, 'resolveMediaIdForUrl', $own));
+        self::assertSame(11, $this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/media/a/scoped.jpg'));
+        self::assertNull($this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/media/a/nl-id.jpg'), 'another environment');
+        self::assertNull($this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/media/a/nl.jpg'), 'another volume');
+        self::assertNull($this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/media/a/unscoped.jpg'), 'a pre-scoping row names no volume');
+        self::assertNull($this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/documents/montage.pdf'), 'a file key names a checkout, not a URL');
+        self::assertNull($this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/media/a/bare.jpg'));
+    }
+
+    public function testUrlCacheStaysColdWithoutAnEnvironment(): void
+    {
+        $svc = new CkeditorRewriterService();
+        $svc->migrationState = new FakeStateStream(media: [
+            ['sourceKey' => 'COM:kuma_media:1', 'targetType' => 'asset', 'targetId' => 10, 'meta' => ['originalUrl' => '/uploads/media/x.jpg']],
+        ]);
+
+        self::assertNull($this->callPrivate($svc, 'resolveMediaIdForUrl', '/uploads/media/x.jpg'));
     }
 
     public function testNtCacheWarmsFromStateRowsJoinedToLegacyNodeTranslations(): void
@@ -323,13 +365,20 @@ final class FakeStateStream implements MigrationStateStream
  */
 final class FakeEnvResolver
 {
-    public function __construct(private readonly string $environment = 'COM')
-    {
+    public function __construct(
+        private readonly string $environment = 'COM',
+        private readonly string $volume = 'uploads',
+    ) {
     }
 
     public function environmentName(): string
     {
         return $this->environment;
+    }
+
+    public function targetVolume(): string
+    {
+        return $this->volume;
     }
 
     public function resolveFromLegacyId(int $kumaMediaId): int

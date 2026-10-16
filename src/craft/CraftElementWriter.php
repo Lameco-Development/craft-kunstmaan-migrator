@@ -183,6 +183,18 @@ final class CraftElementWriter implements ElementWriter
         return Craft::$app->elements->getElementById($id, $class, $siteId);
     }
 
+    public function volumeHandleOf(int $assetId): ?string
+    {
+        $handle = (new Query())
+            ->select(['v.handle'])
+            ->from(['a' => Table::ASSETS])
+            ->innerJoin(['v' => Table::VOLUMES], '[[v.id]] = [[a.volumeId]]')
+            ->where(['a.id' => $assetId])
+            ->scalar();
+
+        return is_string($handle) && $handle !== '' ? $handle : null;
+    }
+
     public function invalidateCaches(): void
     {
         Craft::$app->elements->invalidateAllCaches();

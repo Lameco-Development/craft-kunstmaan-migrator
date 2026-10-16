@@ -608,6 +608,11 @@ final class EntryMigrationServiceSaveTest extends TestCase
             {
                 return $this->inner->parentInStructure($entryId);
             }
+
+            public function volumeHandleOf(int $assetId): ?string
+            {
+                return $this->inner->volumeHandleOf($assetId);
+            }
         };
 
         try {

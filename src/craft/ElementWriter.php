@@ -168,6 +168,14 @@ interface ElementWriter
     public function findById(int $id, string $class, ?int $siteId = null): ?ElementInterface;
 
     /**
+     * The handle of the volume an asset lives in, or null when there is no such asset.
+     *
+     * What a `legacy_url:` state row written before those keys named their volume is checked
+     * against: a row pointing into another volume is another site group's asset.
+     */
+    public function volumeHandleOf(int $assetId): ?string;
+
+    /**
      * Invalidates Craft's element caches after a bulk write.
      */
     public function invalidateCaches(): void;

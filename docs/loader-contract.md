@@ -281,7 +281,15 @@ the `/uploads/media/` URL prefix, joins the remainder onto each of the
 environment's `mediaRoot` entries in order (falling back to the
 **`LEGACY_MEDIA_PATH`** env var — a plain filesystem root, no legacy MySQL
 connection needed), and JIT-ingests the file into Craft the first time it's
-seen (cached afterwards by state key `legacy_url:<sha1(path)>`).
+seen (cached afterwards by state key `legacy_url:<volume>:<sha1(path)>`).
+
+The key names the target volume, not the environment. Environments that
+migrate into one volume share one asset per path, which is what the
+`mediaRoot` fallback chain is for. Environments in separate volumes (separate
+site groups, whose paths can coincide) each get their own asset. A row written
+before the key named its volume, `legacy_url:<sha1(path)>`, is still read, but
+only when its asset is in the target volume. It is then also recorded under
+the scoped key.
 
 Any other `/uploads/<dir>/…` path — what `file(<dir>)` emits for catalogue
 files that have no `kuma_media` row — resolves the same way, beside the media
