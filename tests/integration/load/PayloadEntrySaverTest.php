@@ -207,11 +207,32 @@ final class FakeEntryMigrationService extends EntryMigrationService
         return $this->currentFieldValues[sprintf('%d|%d|%s', $entryId, $siteId, $fieldHandle)] ?? null;
     }
 
+    /**
+     * The source-ref => block element id map a real `saveEntryForSites()` persists into the
+     * state row's `meta.blockIds`, keyed by site handle. Set it to give the saver blocks to
+     * write a nested address against.
+     *
+     * @var array<string, array<string, string>>
+     */
+    public array $blockIds = [];
+
+    /**
+     * Element ids `resaveEntryFieldForSite()` refuses, standing in for a block Craft has
+     * already replaced or one that does not support the site being written.
+     *
+     * @var list<int>
+     */
+    public array $unloadableEntryIds = [];
+
     /** @var list<array{entryId: int, site: int, field: string, value: array<array-key, mixed>}> */
     public array $resaved = [];
 
     public function resaveEntryFieldForSite(int $entryId, int $siteId, string $fieldHandle, array $value): bool
     {
+        if (in_array($entryId, $this->unloadableEntryIds, true)) {
+            return false;
+        }
+
         $this->resaved[] = ['entryId' => $entryId, 'site' => $siteId, 'field' => $fieldHandle, 'value' => $value];
 
         return true;
@@ -241,6 +262,7 @@ final class FakeEntryMigrationService extends EntryMigrationService
         if ($existingId !== null) {
             $entry->id = $existingId;
             $entry->uid = (string) $this->stateService->getTargetUid($stateSource, (string) $stateKey);
+            $this->recordBlockIds($stateSource, (string) $stateKey);
 
             return $entry;
         }
@@ -249,8 +271,18 @@ final class FakeEntryMigrationService extends EntryMigrationService
         $entry->id = $id;
         $entry->uid = 'fake-uid-' . $id;
         $this->stateService->record($stateSource, (string) $stateKey, 'entry', $id, $entry->uid);
+        $this->recordBlockIds($stateSource, (string) $stateKey);
 
         return $entry;
+    }
+
+    private function recordBlockIds(string $stateSource, string $stateKey): void
+    {
+        if ($this->blockIds === []) {
+            return;
+        }
+
+        $this->stateService->updateMeta($stateSource, $stateKey, null, ['blockIds' => $this->blockIds]);
     }
 }
 
@@ -922,14 +954,56 @@ final class PayloadEntrySaverTest extends TestCase
         self::assertSame([], $result->droppedAddresses, 'Nothing is left unwritten to report.');
     }
 
-    public function testANestedAddressThatCannotBePlacedIsReportedRatherThanLostSilently(): void
+    public function testANestedAddressOnAPayloadThatNeverNamesThePrimarySiteIsWrittenAgainstItsBlock(): void
     {
+        // Every DE partner page is published in `de` alone, so every address on one — the
+        // branches' included — takes the drop path. A top-level one was rescued and a nested
+        // one was not, which is why 419 partner addresses migrated and no branch address did.
+        // The block that owns it is a nested entry, and the save records its id.
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $entryService->blockIds = ['de' => ['DE:partner_branches:166' => '900']];
+        $saver = $this->makeSaver($entryService, $state);
+
+        $result = $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:11', [
+            'sites' => ['de' => [
+                'title' => 'Teccle Group GmbH',
+                'fieldValues' => [
+                    'partnerBranches' => [[
+                        'type' => 'partnerBranch',
+                        'fields' => [
+                            '_sourcePartRef' => 'DE:partner_branches:166',
+                            'branchAddress' => ['_address' => ['addressLine1' => 'Am Gierath 20d']],
+                        ],
+                    ]],
+                ],
+            ]],
+        ])));
+
+        self::assertCount(1, $entryService->resaved);
+        self::assertSame(900, $entryService->resaved[0]['entryId'], 'The block owns it, not the entry.');
+        self::assertSame(1, $entryService->resaved[0]['site']);
+        self::assertSame('branchAddress', $entryService->resaved[0]['field']);
+        self::assertSame(
+            ['new1' => ['addressLine1' => 'Am Gierath 20d', 'title' => 'Teccle Group GmbH']],
+            $entryService->resaved[0]['value'],
+            'A branch whose own label is blank falls back to the page that owns it.',
+        );
+        self::assertSame([], $result->droppedAddresses, 'Nothing is left unwritten to report.');
+    }
+
+    public function testANestedAddressWhoseBlockWasNeverRecordedIsReportedRatherThanLostSilently(): void
+    {
+        // The rescue needs the block's element id, and the only thing that supplies it is the
+        // `_sourcePartRef` the save records. A block carrying none cannot be found again, so
+        // the address is still reported rather than dropped in silence.
         $state = new InMemoryMigrationStateService();
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
         $saver = $this->makeSaver($entryService, $state);
 
-        $result = $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:11', [
+        $result = $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:12', [
             'sites' => ['de' => ['fieldValues' => [
                 'partnerBranches' => [[
                     'type' => 'partnerBranch',
@@ -938,10 +1012,78 @@ final class PayloadEntrySaverTest extends TestCase
             ]]],
         ])));
 
-        self::assertSame([], $entryService->resaved, 'A nested address has no owner to write against yet.');
+        self::assertSame([], $entryService->resaved, 'There is no owner to write against.');
         self::assertSame(
             [['field' => 'branchAddress', 'site' => 'de']],
             $result->droppedAddresses,
+        );
+    }
+
+    public function testANestedAddressSkipsTheBlockIdsCraftHasAlreadyReplaced(): void
+    {
+        // The save records one block id per site it wrote, and a Matrix that shares one block
+        // set across sites leaves every id but the last naming an element Craft has since
+        // deleted. Writing against the first one found produced a clean run and no address at
+        // all, so each candidate is offered until one takes it.
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $entryService->blockIds = [
+            'en' => ['DE:partner_branches:166' => '862'],
+            'de' => ['DE:partner_branches:166' => '866'],
+        ];
+        $entryService->unloadableEntryIds = [862];
+        $saver = $this->makeSaver($entryService, $state);
+
+        $result = $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:14', [
+            'sites' => ['de' => [
+                'title' => 'Teccle Group GmbH',
+                'fieldValues' => [
+                    'partnerBranches' => [[
+                        'type' => 'partnerBranch',
+                        'fields' => [
+                            '_sourcePartRef' => 'DE:partner_branches:166',
+                            'branchAddress' => ['_address' => ['addressLine1' => 'Am Gierath 20d']],
+                        ],
+                    ]],
+                ],
+            ]],
+        ])));
+
+        self::assertCount(1, $entryService->resaved);
+        self::assertSame(866, $entryService->resaved[0]['entryId'], 'The surviving block, not the first named.');
+        self::assertSame([], $result->droppedAddresses);
+    }
+
+    public function testANestedAddressReusesTheAddressItsBlockAlreadyOwns(): void
+    {
+        // Same reason a top-level one does: an unrecognised key makes Craft delete and recreate
+        // the address element, so a re-run would churn every branch's address id. The block's
+        // id is known by the time this pass runs, so the address it already owns is reused.
+        $state = new InMemoryMigrationStateService();
+        $entryService = new FakeEntryMigrationService();
+        $entryService->stateService = $state;
+        $entryService->blockIds = ['de' => ['DE:partner_branches:166' => '900']];
+        $entryService->currentFieldValues['900|1|branchAddress'] = [
+            4242 => ['addressLine1' => 'Am Gierath 20c'],
+        ];
+        $saver = $this->makeSaver($entryService, $state);
+
+        $this->save($saver, Payload::fromArray($this->payloadArray('kuma:DE:partner_pages:13', [
+            'sites' => ['de' => ['fieldValues' => [
+                'partnerBranches' => [[
+                    'type' => 'partnerBranch',
+                    'fields' => [
+                        '_sourcePartRef' => 'DE:partner_branches:166',
+                        'branchAddress' => ['_address' => ['title' => 'Ratingen', 'addressLine1' => 'Am Gierath 20d']],
+                    ],
+                ]],
+            ]]],
+        ])));
+
+        self::assertSame(
+            [4242 => ['title' => 'Ratingen', 'addressLine1' => 'Am Gierath 20d']],
+            $entryService->resaved[0]['value'],
         );
     }
 
