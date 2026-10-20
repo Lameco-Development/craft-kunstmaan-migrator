@@ -29,7 +29,7 @@
         "phpstan/phpstan": "^2.2",
         "phpunit/phpunit": "^11.0",
         "spicyweb/craft-embedded-assets": "^5.4",
-        "verbb/formie": "^3.1",
+        "verbb/formie": "^3.1 || ^4.0",
         "verbb/navigation": "^3.0"
     },
     "autoload": {

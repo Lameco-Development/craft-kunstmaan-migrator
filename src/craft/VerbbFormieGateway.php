@@ -185,9 +185,9 @@ final class VerbbFormieGateway implements FormGateway
 
         // What the rebuilt layout no longer holds, for Formie to delete once
         // the rest has saved: the old rows, any other page, and a field that
-        // went or changed type.
+        // went or changed type. Formie 4 works this out itself (FormieCompat).
         $kept = array_map(static fn($field): ?int => $field->id, $built);
-        $layout->setDeletedItems([
+        FormieCompat::recordDeletedItems($layout, static fn(): array => [
             'fields' => array_values(array_filter(
                 array_map(static fn($field): ?int => $field->id, $previous),
                 static fn(?int $id): bool => $id !== null && !in_array($id, $kept, true),
@@ -288,11 +288,12 @@ final class VerbbFormieGateway implements FormGateway
         $record->dateCreated = new DateTime($submission['dateCreated']);
         $record->isIncomplete = false;
         $record->isSpam = false;
-        // Formie's afterSave() sends every status-condition notification when
-        // a save changes the status and this is false — which a create with an
-        // explicit status always does. The front-end controller sets it for the
-        // same reason; it gates nothing else.
-        $record->isNewSubmission = true;
+        // Formie 3's afterSave() sends every status-condition notification when
+        // a save changes the status and isNewSubmission is false — which a
+        // create with an explicit status always does. The front-end controller
+        // sets it for the same reason; it gates nothing else. Formie 4 sends
+        // nothing from an element save and has no such property (FormieCompat).
+        FormieCompat::markNewSubmission($record);
 
         // An explicit status on create, the existing one kept on update.
         if ($existing === null) {
@@ -402,7 +403,8 @@ final class VerbbFormieGateway implements FormGateway
             $submission->setForm($form);
 
             try {
-                $folder = $assets->getFolderById($field->resolveDynamicPathToFolderId($submission));
+                $folderId = FormieCompat::uploadFolderId($field, $submission);
+                $folder = $folderId === null ? null : $assets->getFolderById($folderId);
             } catch (Throwable) {
                 $folder = null;
             }
