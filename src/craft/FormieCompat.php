@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Lameco\Kunstmaanmigrator\craft;
 
 /**
- * The three places where VerbbFormieGateway has to tell Formie 3 from Formie 4.
+ * The places where VerbbFormieGateway has to tell Formie 3 from Formie 4.
  *
  * Decided by what the object offers, not by a version string, so the gateway
  * keeps working on either major without importing anything that one of them
@@ -60,5 +60,51 @@ final class FormieCompat
         }
 
         return null;
+    }
+
+    /**
+     * Runs `$save` with every file field's upload policy lifted, then puts it back.
+     *
+     * Formie 4's `FileUpload::beforeElementSave()` enforces the field's file
+     * policy — allowed kinds, file count and sizes — on every save, even
+     * `saveElement($submission, false)`. A legacy form took a .docx CV the
+     * Formie field (images and PDF) would refuse, so an archival submission
+     * whose file is already an asset would not save at all. Same rule as the
+     * skipped validation: the 2016 lead is what it is. Craft's own allowed
+     * extensions and Formie's active-content block still apply. Fields without
+     * the policy (Formie 3 checks it only on validation) pass through unchanged.
+     *
+     * @template T
+     * @param iterable<object> $fields the form's fields, the instances the save will use
+     * @param callable(): T $save
+     * @return T
+     */
+    public static function withoutFilePolicy(iterable $fields, callable $save): mixed
+    {
+        $policy = ['restrictFiles' => false, 'maxFiles' => null, 'minFileSize' => null, 'maxFileSize' => null];
+        $saved = [];
+
+        foreach ($fields as $index => $field) {
+            if (!property_exists($field, 'restrictFiles')) {
+                continue;
+            }
+
+            foreach ($policy as $property => $lifted) {
+                if (property_exists($field, $property)) {
+                    $saved[$index][$property] = $field->$property;
+                    $field->$property = $lifted;
+                }
+            }
+        }
+
+        try {
+            return $save();
+        } finally {
+            foreach ($fields as $index => $field) {
+                foreach ($saved[$index] ?? [] as $property => $value) {
+                    $field->$property = $value;
+                }
+            }
+        }
     }
 }

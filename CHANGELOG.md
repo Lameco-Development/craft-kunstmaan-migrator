@@ -137,6 +137,13 @@ The benchmark slice that found each step is in
   installed Formie offers, so Formie 3 projects keep the old path. The dev
   constraint is `^3.1 || ^4.0`, and a reflection contract test checks every
   Formie member the gateway calls against the installed version.
+- **Archival submissions keep files their form no longer accepts.** Formie 4
+  checks a file field's policy (allowed kinds, file count, sizes) on every
+  save, even one without validation, so a 2016 lead whose CV was a .docx —
+  legacy took it, the Formie field takes images and PDF — did not save: 36 of
+  117 on Berkvens NL's application form. The gateway lifts that policy for the
+  archival save and puts it back (`FormieCompat::withoutFilePolicy()`), as it
+  already skips validation. Craft's allowed extensions still apply.
 
 - **Media state keys are scoped to the environment that read them.**
   `kuma_media.id` restarts at 1 in every legacy database, so a bare

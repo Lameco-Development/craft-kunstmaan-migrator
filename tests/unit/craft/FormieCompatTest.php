@@ -100,4 +100,44 @@ final class FormieCompatTest extends TestCase
     {
         self::assertNull(FormieCompat::uploadFolderId(new \stdClass(), new \stdClass()));
     }
+
+    public function testFilePolicyIsLiftedForTheSaveAndRestored(): void
+    {
+        $file = new class() {
+            public bool $restrictFiles = true;
+            public ?string $maxFiles = '1';
+            public ?string $minFileSize = null;
+            public ?string $maxFileSize = '5';
+        };
+        $text = new class() {
+            public string $handle = 'name';
+        };
+        $during = null;
+
+        $result = FormieCompat::withoutFilePolicy([$file, $text], static function() use ($file, &$during): string {
+            $during = [$file->restrictFiles, $file->maxFiles, $file->maxFileSize];
+
+            return 'saved';
+        });
+
+        self::assertSame('saved', $result);
+        self::assertSame([false, null, null], $during);
+        self::assertSame([true, '1', '5'], [$file->restrictFiles, $file->maxFiles, $file->maxFileSize]);
+        self::assertSame('name', $text->handle);
+    }
+
+    public function testFilePolicyIsRestoredWhenTheSaveThrows(): void
+    {
+        $file = new class() {
+            public bool $restrictFiles = true;
+        };
+
+        try {
+            FormieCompat::withoutFilePolicy([$file], static fn() => throw new \RuntimeException('boom'));
+            self::fail('the exception should reach the caller');
+        } catch (\RuntimeException) {
+        }
+
+        self::assertTrue($file->restrictFiles);
+    }
 }

@@ -311,8 +311,14 @@ final class VerbbFormieGateway implements FormGateway
         }
 
         // Archival data is what it is: a field that was optional in 2016 and
-        // required now must not refuse the 2016 lead.
-        if (!Craft::$app->getElements()->saveElement($record, false)) {
+        // required now must not refuse the 2016 lead, nor a file field that
+        // takes images and PDF the 2016 .docx CV (FormieCompat).
+        $saved = FormieCompat::withoutFilePolicy(
+            $form->getFields(),
+            static fn(): bool => Craft::$app->getElements()->saveElement($record, false),
+        );
+
+        if (!$saved) {
             // The attributes, not the messages: a message can quote the value.
             $warnings[] = sprintf('form %s: Formie refused the submission (%s).', $form->handle, implode(', ', array_keys($record->getErrors())) ?: 'no reason given');
 
