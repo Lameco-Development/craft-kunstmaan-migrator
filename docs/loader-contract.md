@@ -291,6 +291,16 @@ before the key named its volume, `legacy_url:<sha1(path)>`, is still read, but
 only when its asset is in the target volume. It is then also recorded under
 the scoped key.
 
+A file asked for by path and by id is still one asset. Before a path ingests,
+it looks up the environment's live `kuma_media` row at exactly that url and
+reuses the asset its `<ENV>:kuma_media:<id>` key already names. Before an id
+ingests, it reuses the asset its row's url already became under
+`legacy_url:<volume>:…`. Either way the asking key is recorded on that asset,
+with meta `sameFileAs` naming the key it was found under. Without this, the
+only thing that joined the two routes was the folder + filename + size match
+before a save, and a copy that Craft had renamed with its collision suffix
+didn't match it. Berkvens NL's kuma_media 1407 became two assets that way.
+
 Any other `/uploads/<dir>/…` path — what `file(<dir>)` emits for catalogue
 files that have no `kuma_media` row — resolves the same way, beside the media
 root: a root named `…/uploads/media` is read from its parent `…/uploads`, and a

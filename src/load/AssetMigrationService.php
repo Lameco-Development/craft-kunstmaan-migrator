@@ -43,6 +43,10 @@ use yii\base\Component;
  *   meta={ originalUrl, location, contentType, videoId? }
  * A file ingested by its `/uploads/media/…` path is keyed
  * `legacy_url:<volume>:<sha1(path)>` instead (see legacyUrlStateKey()).
+ * The two are two routes to one file: each asks the other's key before it
+ * ingests, and records its own key on the asset it finds there (meta
+ * `sameFileAs`), so one legacy file is one asset whichever route came first
+ * (assetOfSamePath(), assetOfSameMedia()).
  *
  * Re-runs: ids already present in state are skipped unless $opts->force=true.
  *
@@ -302,6 +306,102 @@ class AssetMigrationService extends Component
         return $assetId;
     }
 
+    /**
+     * The asset a `kuma_media` row's file already became by its path, recorded under the row's
+     * own `<ENV>:kuma_media:<id>` key too; null when there is none, or the row already has one.
+     *
+     * The two keys are two routes to one file, and each used to ingest without asking the other.
+     * Their only meeting point was the folder + filename + size match before a save, which a
+     * renamed copy defeats: on Berkvens NL, kuma_media 1407 was ingested by path under Craft's
+     * collision suffix (asset 1260) and then by id as a second asset, 10047. A dry run looks
+     * without recording.
+     *
+     * @param array<string, mixed> $row the kuma_media row
+     */
+    private function assetOfSamePath(array $row, string $key, MigrationOptions $opts): ?int
+    {
+        $url = (string) ($row['url'] ?? '');
+        if ($url === '' || !AssetPathResolver::isMediaPath($url) || $this->migrationState === null) {
+            return null;
+        }
+        if ($this->migrationState->get(self::STATE_SOURCE, $key) !== null) {
+            return null;
+        }
+
+        $path = '/' . ltrim($url, '/');
+        $assetId = $this->legacyUrlTargetId($path);
+        if ($assetId === null || $assetId <= 0) {
+            return null;
+        }
+
+        if (!$opts->dryRun) {
+            $this->migrationState->record(self::STATE_SOURCE, $key, 'asset', $assetId, null, null, [
+                'kind' => 'local-file',
+                'originalUrl' => $url,
+                'location' => $row['location'] ?? null,
+                'contentType' => (string) ($row['content_type'] ?? ''),
+                'sameFileAs' => $this->legacyUrlStateKey($path),
+            ]);
+        }
+
+        return $assetId;
+    }
+
+    /**
+     * The asset this environment's `kuma_media` row for a path already became by id, recorded
+     * under the path's `legacy_url:` key too; null when there is none.
+     *
+     * The other direction of assetOfSamePath(). The row is the one at exactly that url, a live
+     * one before a soft-deleted one, read from the environment's own database: an id names a
+     * different file in every legacy database.
+     */
+    private function assetOfSameMedia(string $path, EnvironmentContext $env): ?int
+    {
+        if ($this->migrationState === null) {
+            return null;
+        }
+
+        $sql = 'SELECT id FROM kuma_media WHERE url = :url ORDER BY deleted ASC, id ASC LIMIT 1';
+        try {
+            if ($env->legacy !== null) {
+                $stmt = $env->legacy->pdo()->prepare($sql);
+                $stmt->execute([':url' => $path]);
+                $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            } else {
+                $row = $this->legacyDb?->queryOne($sql, [':url' => $path]);
+            }
+        } catch (Throwable $e) {
+            Craft::warning("Media lookup failed for {$path}: {$e->getMessage()}", __METHOD__);
+
+            return null;
+        }
+
+        $mediaId = is_array($row) ? (int) ($row['id'] ?? 0) : 0;
+        if ($mediaId <= 0) {
+            return null;
+        }
+
+        $idKey = self::mediaStateKey($mediaId, $env);
+        $idRow = $this->migrationState->get(self::STATE_SOURCE, $idKey);
+        $assetId = (int) ($idRow['targetId'] ?? 0);
+        if ($idRow === null || $assetId <= 0 || ($idRow['targetType'] ?? 'asset') !== 'asset') {
+            return null;
+        }
+
+        $meta = $idRow['meta'] ?? null;
+        $this->migrationState->record(
+            self::STATE_SOURCE,
+            $this->legacyUrlStateKey($path),
+            'asset',
+            $assetId,
+            isset($idRow['targetUid']) ? (string) $idRow['targetUid'] : null,
+            null,
+            ['originalUrl' => $path, 'sameFileAs' => $idKey] + (is_array($meta) ? $meta : []),
+        );
+
+        return $assetId;
+    }
+
     private static function jitOptions(?MigrationOptions $opts): MigrationOptions
     {
         return new MigrationOptions(skipAssets: $opts?->skipAssets ?? false);
@@ -379,6 +479,12 @@ class AssetMigrationService extends Component
         if ($isMedia) {
             $stateKey = $this->legacyUrlStateKey($path);
             $existing = $this->legacyUrlTargetId($path);
+            if ($existing !== null) {
+                return $existing;
+            }
+
+            // The file's media row may already have become an asset by id.
+            $existing = $this->assetOfSameMedia($path, $env);
             if ($existing !== null) {
                 return $existing;
             }
@@ -666,6 +772,18 @@ class AssetMigrationService extends Component
     ): ?Asset {
         $mediaId = (int) $row['id'];
         $key = $stateKey ?? self::mediaStateKey($mediaId, $env);
+
+        // The same file asked for by id after its path already became an asset: that asset, not
+        // a second copy. Ahead of `--skip-assets`, because it ingests nothing.
+        if ($stateKey === null) {
+            $reused = $this->assetOfSamePath($row, $key, $opts);
+            if ($reused !== null) {
+                $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
+                $asset = $this->elements()->findById($reused, Asset::class);
+
+                return $asset instanceof Asset ? $asset : null;
+            }
+        }
 
         // D-08-20 fast-path: `--skip-assets` (CLI: options['skipAssets']=true)
         // short-circuits BEFORE any kuma_media payload read, FS stat, or
