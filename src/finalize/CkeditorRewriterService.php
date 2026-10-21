@@ -14,7 +14,8 @@ use yii\base\Component;
  *
  * Transformations (in order):
  *   1. <img src="/uploads/media/*">   → {asset:<id>@<siteId>:url} ref-token
- *   2. <a href="/uploads/media/*">    → same ref-token (PDFs etc.)
+ *   2. <a href="/uploads/media/*">    → same ref-token (PDFs etc.); a URL carrying
+ *      `?token=[M<id>]` resolves by that token first, then by its path
  *   3. <a href="/some/path">          → {entry:<id>@<siteId>:url} when path maps to a migrated entry
  *   4. Strip class tokens matching /^kma-/ (drops the class attr entirely when all tokens are kma-*)
  *   5. Remove empty <p></p>, <p>&nbsp;</p>, <p> </p>, <p><br></p>
@@ -430,8 +431,8 @@ class CkeditorRewriterService extends Component
      * `link()` hands a legacy button URL over as it found it, so a Link field can hold
      * `/uploads/media/<folder>/<file>?token=[M<id>]` — a path that dead-ends once the site is
      * migrated (19 buttons and image links on Berkvens NL). It resolves the way an `<a href>`
-     * in rich text does: by path first, then by the `[M<id>]` token. Label, target and every
-     * other key of the link are kept.
+     * in rich text does: by the `[M<id>]` token first, then by path (see mediaTokenAssetId()).
+     * Label, target and every other key of the link are kept.
      *
      * Null means "leave the link as it is": not a url link to a legacy file, a file that has no
      * asset, or a field whose link types do not include `asset`. The last two are recorded as
@@ -464,8 +465,8 @@ class CkeditorRewriterService extends Component
             return null;
         }
 
-        $assetId = $isMediaPath ? $this->resolveMediaIdForUrl($url) : null;
-        $assetId ??= $tokenId !== null ? $this->resolveKumaMediaId($tokenId) : null;
+        $assetId = $tokenId !== null ? $this->resolveKumaMediaId($tokenId) : null;
+        $assetId ??= $isMediaPath ? $this->resolveMediaIdForUrl($url) : null;
 
         if ($assetId === null) {
             $this->recordUnresolvedDiagnostic('link_media', $tokenId ?? 0, $siteId, $diagnostic, $diagnostic, 'no matching Craft asset id for legacy media link');
@@ -834,6 +835,24 @@ class CkeditorRewriterService extends Component
         return null;
     }
 
+    /**
+     * The asset of the `[M<id>]` token a media URL carries, or null.
+     *
+     * Kunstmaan links a file as `/uploads/media/<dir>/<file name when linked>?token=[M<id>]` and
+     * renders the token, so live serves the media's current file. A replaced file leaves the old
+     * one on disk and the old name in every saved href, so the path names the old version: on
+     * Berkvens NL, kuma_media 2622's CTA buttons linked the 2024 PDF as an asset of its own. The
+     * token is what the link means; the path is the fallback for a token with no asset.
+     */
+    private function mediaTokenAssetId(string $url): ?int
+    {
+        if (preg_match(self::KUMA_MEDIA_PLACEHOLDER_REGEX, $url, $m) !== 1) {
+            return null;
+        }
+
+        return $this->resolveKumaMediaId((int) $m[1]);
+    }
+
     private function rewriteAssetAttributes(string $html, int $siteId): string
     {
         // Match <img src="..."> and <a href="..."> where the URL contains /uploads/media/
@@ -844,7 +863,7 @@ class CkeditorRewriterService extends Component
             $quote = $m[2];
             $url = $m[3];
 
-            $assetId = $this->resolveMediaIdForUrl($url);
+            $assetId = $this->mediaTokenAssetId($url) ?? $this->resolveMediaIdForUrl($url);
 
             if ($assetId !== null) {
                 $refToken = '{asset:' . $assetId . '@' . $siteId . ':url}';
