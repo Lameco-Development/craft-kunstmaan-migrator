@@ -195,6 +195,17 @@ final class CraftElementWriter implements ElementWriter
         return is_string($handle) && $handle !== '' ? $handle : null;
     }
 
+    public function assetKindOf(int $assetId): ?string
+    {
+        $kind = (new Query())
+            ->select(['kind'])
+            ->from(Table::ASSETS)
+            ->where(['id' => $assetId])
+            ->scalar();
+
+        return is_string($kind) && $kind !== '' ? $kind : null;
+    }
+
     public function invalidateCaches(): void
     {
         Craft::$app->elements->invalidateAllCaches();

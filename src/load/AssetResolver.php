@@ -47,6 +47,15 @@ final class AssetResolver
         return $this->assets->targetVolume;
     }
 
+    /**
+     * An asset's kind (`image`, `json`, …), or null when there is no such asset: what the
+     * rewriter asks before it writes an `<img>`.
+     */
+    public function assetKindOf(int $assetId): ?string
+    {
+        return $this->assets->assetKindOf($assetId);
+    }
+
     /** @param bool $ingestDeleted false: a soft-deleted row resolves only to an asset that exists */
     public function resolveFromLegacyId(int $kumaMediaId, bool $ingestDeleted = true): int
     {

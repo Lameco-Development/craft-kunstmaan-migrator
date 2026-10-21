@@ -186,6 +186,14 @@ class AssetMigrationService extends Component
     }
 
     /**
+     * An asset's kind (`image`, `pdf`, `json`, …), or null when there is no such asset.
+     */
+    public function assetKindOf(int $assetId): ?string
+    {
+        return $this->elements()->assetKindOf($assetId);
+    }
+
+    /**
      * JIT entry point (FH-03 default): materialise one asset by legacy
      * kuma_media id and return the Craft asset id. Returns 0 if the kuma_media
      * row is missing, the file cannot be located, or the asset is a remote

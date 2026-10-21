@@ -16,6 +16,7 @@ use yii\base\Component;
  *   1. <img src="/uploads/media/*">   → {asset:<id>@<siteId>:url} ref-token
  *   2. <a href="/uploads/media/*">    → same ref-token (PDFs etc.); a URL carrying
  *      `?token=[M<id>]` resolves by that token first, then by its path
+ *   2b. <img> of an asset that is not an image (an embedded video) → dropped
  *   3. <a href="/some/path">          → {entry:<id>@<siteId>:url} when path maps to a migrated entry
  *   4. Strip class tokens matching /^kma-/ (drops the class attr entirely when all tokens are kma-*)
  *   5. Remove empty <p></p>, <p>&nbsp;</p>, <p> </p>, <p><br></p>
@@ -118,6 +119,9 @@ class CkeditorRewriterService extends Component
      */
     private array $kumaMediaIdMissCache = [];
 
+    /** @var array<int, string|null> Craft asset id → its kind, null when unknown */
+    private array $assetKindCache = [];
+
     /** @var array<int, int> kuma_node_translations.id → Craft entry numeric id */
     private array $ntToEntryCache = [];
 
@@ -163,6 +167,9 @@ class CkeditorRewriterService extends Component
         // tokens (docs/loader-contract.md), distinct from the legacy
         // `[M<id>]` placeholder handled by Step 1b.
         $html = $this->rewriteCurlyMediaTokens($html, $siteId);
+
+        // Step 1e — drop an `<img>` whose asset is not an image (an embedded video is `json`).
+        $html = $this->dropNonImageImgs($html);
 
         // Step 2 — rewrite <a href="/internal/path"> when path resolves to a migrated entry
         if (!empty($entryUrlToId)) {
@@ -308,6 +315,7 @@ class CkeditorRewriterService extends Component
         $this->kumaMediaIdCache = [];
         $this->kumaMediaCacheWarm = false;
         $this->kumaMediaIdMissCache = [];
+        $this->assetKindCache = [];
         $this->ntToEntryCache = [];
         $this->ntCacheWarm = false;
         $this->unresolvedDiagnostics = [];
@@ -851,6 +859,51 @@ class CkeditorRewriterService extends Component
         }
 
         return $this->resolveKumaMediaId((int) $m[1]);
+    }
+
+    /**
+     * Remove every `<img>` whose `src` is an asset Craft does not treat as an image.
+     *
+     * Kunstmaan's media placeholder takes any media, so rich text can hold `<img src="[M3416]">`
+     * for a Vimeo video. That media migrates as an embedded-video asset, kind `json`, and an
+     * `<img>` of it renders a broken image (four Berkvens NL news blocks). A remote video has no
+     * url, so live printed `<img src="">`: no picture. The tag goes; a paragraph it was alone in
+     * goes with it in the empty-paragraph step. Links (`<a href>`) to such assets are kept, and so
+     * is an `<img>` whose kind cannot be told.
+     */
+    private function dropNonImageImgs(string $html): string
+    {
+        if (stripos($html, '<img') === false || !str_contains($html, '{asset:')) {
+            return $html;
+        }
+
+        return preg_replace_callback(
+            '~<img\b[^>]*?\ssrc=(["\'])\{asset:(\d+)[^"\']*\1[^>]*>~i',
+            function(array $m): string {
+                $assetId = (int) $m[2];
+                $kind = $this->assetKind($assetId);
+                if ($kind === null || $kind === 'image') {
+                    return $m[0];
+                }
+                $this->warn(sprintf('dropped an <img> of asset %d, which is not an image (kind %s)', $assetId, $kind));
+
+                return '';
+            },
+            $html,
+        ) ?? $html;
+    }
+
+    private function assetKind(int $assetId): ?string
+    {
+        if (array_key_exists($assetId, $this->assetKindCache)) {
+            return $this->assetKindCache[$assetId];
+        }
+        if ($this->assetResolver === null || !method_exists($this->assetResolver, 'assetKindOf')) {
+            return null;
+        }
+        $kind = $this->assetResolver->assetKindOf($assetId);
+
+        return $this->assetKindCache[$assetId] = is_string($kind) && $kind !== '' ? $kind : null;
     }
 
     private function rewriteAssetAttributes(string $html, int $siteId): string

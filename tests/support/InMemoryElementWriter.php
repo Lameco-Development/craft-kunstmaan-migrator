@@ -115,6 +115,9 @@ final class InMemoryElementWriter implements ElementWriter
     /** @var array<int, string> asset id => the handle of the volume it lives in */
     private array $assetVolumes = [];
 
+    /** @var array<int, string> asset id => its kind */
+    private array $assetKinds = [];
+
     /** @var list<int> every asset whose volume was asked for, in call order */
     public array $volumeLookups = [];
 
@@ -264,6 +267,11 @@ final class InMemoryElementWriter implements ElementWriter
         return $this->assetVolumes[$assetId] ?? null;
     }
 
+    public function assetKindOf(int $assetId): ?string
+    {
+        return $this->assetKinds[$assetId] ?? null;
+    }
+
     public function invalidateCaches(): void
     {
         $this->cacheInvalidations++;
@@ -316,9 +324,10 @@ final class InMemoryElementWriter implements ElementWriter
         unset($this->findable[$this->key($id, null)]);
     }
 
-    public function willHoldAsset(int $assetId, string $volumeHandle): void
+    public function willHoldAsset(int $assetId, string $volumeHandle, string $kind = 'image'): void
     {
         $this->assetVolumes[$assetId] = $volumeHandle;
+        $this->assetKinds[$assetId] = $kind;
     }
 
     public function willFindSingle(int $sectionId, Entry $entry): void

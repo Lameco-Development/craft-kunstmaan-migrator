@@ -176,6 +176,14 @@ interface ElementWriter
     public function volumeHandleOf(int $assetId): ?string;
 
     /**
+     * An asset's kind (`image`, `pdf`, `json`, …), or null when there is no such asset.
+     *
+     * What the rich-text rewriter asks before it writes an `<img>`: an embedded video is a
+     * `json` asset, and an `<img>` of it renders a broken image.
+     */
+    public function assetKindOf(int $assetId): ?string;
+
+    /**
      * Invalidates Craft's element caches after a bulk write.
      */
     public function invalidateCaches(): void;
