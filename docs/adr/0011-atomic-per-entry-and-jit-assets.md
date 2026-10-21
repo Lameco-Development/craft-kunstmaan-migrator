@@ -29,5 +29,14 @@ pass would need a compile-then-load two-phase run that does not exist.
   `run\WriteConflictRetry` re-runs the payload save, which the state table
   and the `sourceUid` make safe to run twice; the writer adapter retries
   nothing.
+- "When an entry references them" includes its SEO. The SEO pass runs after
+  the entries and resolves `kuma_seo.og_image_id` / `twitter_image_id`
+  through the same bound `AssetResolver` as the rest: the id key, then the
+  file's `legacy_url:` key, then a just-in-time ingest. A file that only
+  `kuma_seo` names is referenced by nothing else, so a state lookup alone
+  never found it. A soft-deleted media row is not ingested there: whether
+  deleted media migrate is the project's decision, so it resolves only to an
+  asset that already exists (the project ingested it on purpose) and is
+  otherwise an accepted loss, logged at info level.
 - A review proposing a preload phase is proposing the two-phase run; that
   is the cost to weigh, not the flag.

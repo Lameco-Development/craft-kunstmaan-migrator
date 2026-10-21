@@ -676,7 +676,7 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
         $assetService = new class() extends AssetMigrationService {
-            public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
+            public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null, bool $ingestDeleted = true): int
             {
                 return $legacyId === 5 ? 501 : 0;
             }
@@ -710,7 +710,7 @@ final class PayloadEntrySaverTest extends TestCase
         $entryService = new FakeEntryMigrationService();
         $entryService->stateService = $state;
         $assetService = new class() extends AssetMigrationService {
-            public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
+            public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null, bool $ingestDeleted = true): int
             {
                 return 0; // genuinely unresolvable
             }

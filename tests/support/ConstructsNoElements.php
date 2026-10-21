@@ -73,4 +73,9 @@ trait ConstructsNoElements
     {
         return null;
     }
+
+    public function assetKindOf(int $assetId): ?string
+    {
+        return null;
+    }
 }

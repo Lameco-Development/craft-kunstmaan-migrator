@@ -613,6 +613,11 @@ final class EntryMigrationServiceSaveTest extends TestCase
             {
                 return $this->inner->volumeHandleOf($assetId);
             }
+
+            public function assetKindOf(int $assetId): ?string
+            {
+                return $this->inner->assetKindOf($assetId);
+            }
         };
 
         try {

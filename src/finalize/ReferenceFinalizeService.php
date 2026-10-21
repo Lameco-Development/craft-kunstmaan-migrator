@@ -286,7 +286,8 @@ final class ReferenceFinalizeService
      *
      * `link()` writes a legacy button URL as it found it, so a Link field can hold
      * `/uploads/media/…?token=[M<id>]` — 19 of them on Berkvens NL, all dead after the
-     * migration. Counted as `linksRewritten`, apart from the rich-text `rewritten`, and a link
+     * migration. The `[M<id>]` token names the file, as on live; the path is the fallback
+     * (`CkeditorRewriterService::rewriteLink()`). Counted as `linksRewritten`, apart from the rich-text `rewritten`, and a link
      * that cannot be rewritten is warned rather than left behind silently.
      */
     private function finalizeLink(ElementInterface $element, LinkField $field, int $elementId, int $siteId, MigrationReport $report): bool

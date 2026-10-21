@@ -14,7 +14,9 @@ use yii\base\Component;
  *
  * Transformations (in order):
  *   1. <img src="/uploads/media/*">   → {asset:<id>@<siteId>:url} ref-token
- *   2. <a href="/uploads/media/*">    → same ref-token (PDFs etc.)
+ *   2. <a href="/uploads/media/*">    → same ref-token (PDFs etc.); a URL carrying
+ *      `?token=[M<id>]` resolves by that token first, then by its path
+ *   2b. <img> of an asset that is not an image (an embedded video) → dropped
  *   3. <a href="/some/path">          → {entry:<id>@<siteId>:url} when path maps to a migrated entry
  *   4. Strip class tokens matching /^kma-/ (drops the class attr entirely when all tokens are kma-*)
  *   5. Remove empty <p></p>, <p>&nbsp;</p>, <p> </p>, <p><br></p>
@@ -117,6 +119,9 @@ class CkeditorRewriterService extends Component
      */
     private array $kumaMediaIdMissCache = [];
 
+    /** @var array<int, string|null> Craft asset id → its kind, null when unknown */
+    private array $assetKindCache = [];
+
     /** @var array<int, int> kuma_node_translations.id → Craft entry numeric id */
     private array $ntToEntryCache = [];
 
@@ -162,6 +167,9 @@ class CkeditorRewriterService extends Component
         // tokens (docs/loader-contract.md), distinct from the legacy
         // `[M<id>]` placeholder handled by Step 1b.
         $html = $this->rewriteCurlyMediaTokens($html, $siteId);
+
+        // Step 1e — drop an `<img>` whose asset is not an image (an embedded video is `json`).
+        $html = $this->dropNonImageImgs($html);
 
         // Step 2 — rewrite <a href="/internal/path"> when path resolves to a migrated entry
         if (!empty($entryUrlToId)) {
@@ -307,6 +315,7 @@ class CkeditorRewriterService extends Component
         $this->kumaMediaIdCache = [];
         $this->kumaMediaCacheWarm = false;
         $this->kumaMediaIdMissCache = [];
+        $this->assetKindCache = [];
         $this->ntToEntryCache = [];
         $this->ntCacheWarm = false;
         $this->unresolvedDiagnostics = [];
@@ -430,8 +439,8 @@ class CkeditorRewriterService extends Component
      * `link()` hands a legacy button URL over as it found it, so a Link field can hold
      * `/uploads/media/<folder>/<file>?token=[M<id>]` — a path that dead-ends once the site is
      * migrated (19 buttons and image links on Berkvens NL). It resolves the way an `<a href>`
-     * in rich text does: by path first, then by the `[M<id>]` token. Label, target and every
-     * other key of the link are kept.
+     * in rich text does: by the `[M<id>]` token first, then by path (see mediaTokenAssetId()).
+     * Label, target and every other key of the link are kept.
      *
      * Null means "leave the link as it is": not a url link to a legacy file, a file that has no
      * asset, or a field whose link types do not include `asset`. The last two are recorded as
@@ -464,8 +473,8 @@ class CkeditorRewriterService extends Component
             return null;
         }
 
-        $assetId = $isMediaPath ? $this->resolveMediaIdForUrl($url) : null;
-        $assetId ??= $tokenId !== null ? $this->resolveKumaMediaId($tokenId) : null;
+        $assetId = $tokenId !== null ? $this->resolveKumaMediaId($tokenId) : null;
+        $assetId ??= $isMediaPath ? $this->resolveMediaIdForUrl($url) : null;
 
         if ($assetId === null) {
             $this->recordUnresolvedDiagnostic('link_media', $tokenId ?? 0, $siteId, $diagnostic, $diagnostic, 'no matching Craft asset id for legacy media link');
@@ -834,6 +843,69 @@ class CkeditorRewriterService extends Component
         return null;
     }
 
+    /**
+     * The asset of the `[M<id>]` token a media URL carries, or null.
+     *
+     * Kunstmaan links a file as `/uploads/media/<dir>/<file name when linked>?token=[M<id>]` and
+     * renders the token, so live serves the media's current file. A replaced file leaves the old
+     * one on disk and the old name in every saved href, so the path names the old version: on
+     * Berkvens NL, kuma_media 2622's CTA buttons linked the 2024 PDF as an asset of its own. The
+     * token is what the link means; the path is the fallback for a token with no asset.
+     */
+    private function mediaTokenAssetId(string $url): ?int
+    {
+        if (preg_match(self::KUMA_MEDIA_PLACEHOLDER_REGEX, $url, $m) !== 1) {
+            return null;
+        }
+
+        return $this->resolveKumaMediaId((int) $m[1]);
+    }
+
+    /**
+     * Remove every `<img>` whose `src` is an asset Craft does not treat as an image.
+     *
+     * Kunstmaan's media placeholder takes any media, so rich text can hold `<img src="[M3416]">`
+     * for a Vimeo video. That media migrates as an embedded-video asset, kind `json`, and an
+     * `<img>` of it renders a broken image (four Berkvens NL news blocks). A remote video has no
+     * url, so live printed `<img src="">`: no picture. The tag goes; a paragraph it was alone in
+     * goes with it in the empty-paragraph step. Links (`<a href>`) to such assets are kept, and so
+     * is an `<img>` whose kind cannot be told.
+     */
+    private function dropNonImageImgs(string $html): string
+    {
+        if (stripos($html, '<img') === false || !str_contains($html, '{asset:')) {
+            return $html;
+        }
+
+        return preg_replace_callback(
+            '~<img\b[^>]*?\ssrc=(["\'])\{asset:(\d+)[^"\']*\1[^>]*>~i',
+            function(array $m): string {
+                $assetId = (int) $m[2];
+                $kind = $this->assetKind($assetId);
+                if ($kind === null || $kind === 'image') {
+                    return $m[0];
+                }
+                $this->warn(sprintf('dropped an <img> of asset %d, which is not an image (kind %s)', $assetId, $kind));
+
+                return '';
+            },
+            $html,
+        ) ?? $html;
+    }
+
+    private function assetKind(int $assetId): ?string
+    {
+        if (array_key_exists($assetId, $this->assetKindCache)) {
+            return $this->assetKindCache[$assetId];
+        }
+        if ($this->assetResolver === null || !method_exists($this->assetResolver, 'assetKindOf')) {
+            return null;
+        }
+        $kind = $this->assetResolver->assetKindOf($assetId);
+
+        return $this->assetKindCache[$assetId] = is_string($kind) && $kind !== '' ? $kind : null;
+    }
+
     private function rewriteAssetAttributes(string $html, int $siteId): string
     {
         // Match <img src="..."> and <a href="..."> where the URL contains /uploads/media/
@@ -844,7 +916,7 @@ class CkeditorRewriterService extends Component
             $quote = $m[2];
             $url = $m[3];
 
-            $assetId = $this->resolveMediaIdForUrl($url);
+            $assetId = $this->mediaTokenAssetId($url) ?? $this->resolveMediaIdForUrl($url);
 
             if ($assetId !== null) {
                 $refToken = '{asset:' . $assetId . '@' . $siteId . ':url}';

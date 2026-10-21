@@ -43,6 +43,10 @@ use yii\base\Component;
  *   meta={ originalUrl, location, contentType, videoId? }
  * A file ingested by its `/uploads/media/…` path is keyed
  * `legacy_url:<volume>:<sha1(path)>` instead (see legacyUrlStateKey()).
+ * The two are two routes to one file: each asks the other's key before it
+ * ingests, and records its own key on the asset it finds there (meta
+ * `sameFileAs`), so one legacy file is one asset whichever route came first
+ * (assetOfSamePath(), assetOfSameMedia()).
  *
  * Re-runs: ids already present in state are skipped unless $opts->force=true.
  *
@@ -182,6 +186,14 @@ class AssetMigrationService extends Component
     }
 
     /**
+     * An asset's kind (`image`, `pdf`, `json`, …), or null when there is no such asset.
+     */
+    public function assetKindOf(int $assetId): ?string
+    {
+        return $this->elements()->assetKindOf($assetId);
+    }
+
+    /**
      * JIT entry point (FH-03 default): materialise one asset by legacy
      * kuma_media id and return the Craft asset id. Returns 0 if the kuma_media
      * row is missing, the file cannot be located, or the asset is a remote
@@ -191,8 +203,12 @@ class AssetMigrationService extends Component
      * stored Craft asset id is returned without re-ingesting. Only `skipAssets`
      * is read off the options: a JIT call never forces, to keep per-entry cost
      * low.
+     *
+     * `$ingestDeleted = false` resolves a soft-deleted row only to an asset that already exists
+     * (under its id key or its path's `legacy_url:` key) and never ingests one: whether deleted
+     * media migrate is the project's decision, not this lookup's (see ingestOne()).
      */
-    public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
+    public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null, bool $ingestDeleted = true): int
     {
         // Fast path: state already has this media id → return its target id.
         $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, self::mediaStateKey($legacyId, $env), null);
@@ -200,7 +216,7 @@ class AssetMigrationService extends Component
             return (int) $existing;
         }
 
-        $asset = $this->ingestOne($legacyId, self::jitOptions($opts), $env);
+        $asset = $this->ingestOne($legacyId, self::jitOptions($opts), $env, $ingestDeleted);
         if ($asset instanceof Asset) {
             return (int) $asset->id;
         }
@@ -302,6 +318,102 @@ class AssetMigrationService extends Component
         return $assetId;
     }
 
+    /**
+     * The asset a `kuma_media` row's file already became by its path, recorded under the row's
+     * own `<ENV>:kuma_media:<id>` key too; null when there is none, or the row already has one.
+     *
+     * The two keys are two routes to one file, and each used to ingest without asking the other.
+     * Their only meeting point was the folder + filename + size match before a save, which a
+     * renamed copy defeats: on Berkvens NL, kuma_media 1407 was ingested by path under Craft's
+     * collision suffix (asset 1260) and then by id as a second asset, 10047. A dry run looks
+     * without recording.
+     *
+     * @param array<string, mixed> $row the kuma_media row
+     */
+    private function assetOfSamePath(array $row, string $key, MigrationOptions $opts): ?int
+    {
+        $url = (string) ($row['url'] ?? '');
+        if ($url === '' || !AssetPathResolver::isMediaPath($url) || $this->migrationState === null) {
+            return null;
+        }
+        if ($this->migrationState->get(self::STATE_SOURCE, $key) !== null) {
+            return null;
+        }
+
+        $path = '/' . ltrim($url, '/');
+        $assetId = $this->legacyUrlTargetId($path);
+        if ($assetId === null || $assetId <= 0) {
+            return null;
+        }
+
+        if (!$opts->dryRun) {
+            $this->migrationState->record(self::STATE_SOURCE, $key, 'asset', $assetId, null, null, [
+                'kind' => 'local-file',
+                'originalUrl' => $url,
+                'location' => $row['location'] ?? null,
+                'contentType' => (string) ($row['content_type'] ?? ''),
+                'sameFileAs' => $this->legacyUrlStateKey($path),
+            ]);
+        }
+
+        return $assetId;
+    }
+
+    /**
+     * The asset this environment's `kuma_media` row for a path already became by id, recorded
+     * under the path's `legacy_url:` key too; null when there is none.
+     *
+     * The other direction of assetOfSamePath(). The row is the one at exactly that url, a live
+     * one before a soft-deleted one, read from the environment's own database: an id names a
+     * different file in every legacy database.
+     */
+    private function assetOfSameMedia(string $path, EnvironmentContext $env): ?int
+    {
+        if ($this->migrationState === null) {
+            return null;
+        }
+
+        $sql = 'SELECT id FROM kuma_media WHERE url = :url ORDER BY deleted ASC, id ASC LIMIT 1';
+        try {
+            if ($env->legacy !== null) {
+                $stmt = $env->legacy->pdo()->prepare($sql);
+                $stmt->execute([':url' => $path]);
+                $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            } else {
+                $row = $this->legacyDb?->queryOne($sql, [':url' => $path]);
+            }
+        } catch (Throwable $e) {
+            Craft::warning("Media lookup failed for {$path}: {$e->getMessage()}", __METHOD__);
+
+            return null;
+        }
+
+        $mediaId = is_array($row) ? (int) ($row['id'] ?? 0) : 0;
+        if ($mediaId <= 0) {
+            return null;
+        }
+
+        $idKey = self::mediaStateKey($mediaId, $env);
+        $idRow = $this->migrationState->get(self::STATE_SOURCE, $idKey);
+        $assetId = (int) ($idRow['targetId'] ?? 0);
+        if ($idRow === null || $assetId <= 0 || ($idRow['targetType'] ?? 'asset') !== 'asset') {
+            return null;
+        }
+
+        $meta = $idRow['meta'] ?? null;
+        $this->migrationState->record(
+            self::STATE_SOURCE,
+            $this->legacyUrlStateKey($path),
+            'asset',
+            $assetId,
+            isset($idRow['targetUid']) ? (string) $idRow['targetUid'] : null,
+            null,
+            ['originalUrl' => $path, 'sameFileAs' => $idKey] + (is_array($meta) ? $meta : []),
+        );
+
+        return $assetId;
+    }
+
     private static function jitOptions(?MigrationOptions $opts): MigrationOptions
     {
         return new MigrationOptions(skipAssets: $opts?->skipAssets ?? false);
@@ -379,6 +491,12 @@ class AssetMigrationService extends Component
         if ($isMedia) {
             $stateKey = $this->legacyUrlStateKey($path);
             $existing = $this->legacyUrlTargetId($path);
+            if ($existing !== null) {
+                return $existing;
+            }
+
+            // The file's media row may already have become an asset by id.
+            $existing = $this->assetOfSameMedia($path, $env);
             if ($existing !== null) {
                 return $existing;
             }
@@ -604,8 +722,14 @@ class AssetMigrationService extends Component
      * Ingests a single kuma_media row by id. Used by CKEditor rewrites that
      * encounter a media reference not captured by the scanner (fallback path)
      * and by the JIT entry point resolveFromLegacyId().
+     *
+     * With `$ingestDeleted = false` a soft-deleted row (`kuma_media.deleted`) is not ingested: it
+     * resolves only to the asset its path already became, and is otherwise an accepted loss,
+     * logged at info level. The SEO pass asks this way: Berkvens migrates no deleted media but
+     * the ones its own allowlist brings back, and leaves e.g. NL 382 without an og:image on
+     * purpose.
      */
-    public function ingestOne(int $kumaMediaId, MigrationOptions $opts, EnvironmentContext $env): ?Asset
+    public function ingestOne(int $kumaMediaId, MigrationOptions $opts, EnvironmentContext $env, bool $ingestDeleted = true): ?Asset
     {
         // Same failure mode as ingestReferenced: an unwired connection is a
         // warned miss, not an uncaught null-dereference three frames deep.
@@ -618,6 +742,17 @@ class AssetMigrationService extends Component
         $row = $this->mediaRowFor($kumaMediaId, $env);
         if (!$row) {
             return null;
+        }
+        if (!$ingestDeleted && (int) ($row['deleted'] ?? 0) === 1) {
+            $reused = $this->assetOfSamePath($row, self::mediaStateKey($kumaMediaId, $env), $opts);
+            if ($reused === null) {
+                Craft::info("kuma_media:{$kumaMediaId} is soft-deleted and has no asset — not ingested", __METHOD__);
+
+                return null;
+            }
+            $asset = $this->elements()->findById($reused, Asset::class);
+
+            return $asset instanceof Asset ? $asset : null;
         }
         $rootDir = $this->mediaRoots($env)[0] ?? '';
         return $this->ingestRow($row, $rootDir, $opts, $counts, null, $env);
@@ -666,6 +801,18 @@ class AssetMigrationService extends Component
     ): ?Asset {
         $mediaId = (int) $row['id'];
         $key = $stateKey ?? self::mediaStateKey($mediaId, $env);
+
+        // The same file asked for by id after its path already became an asset: that asset, not
+        // a second copy. Ahead of `--skip-assets`, because it ingests nothing.
+        if ($stateKey === null) {
+            $reused = $this->assetOfSamePath($row, $key, $opts);
+            if ($reused !== null) {
+                $counts['skipped'] = ($counts['skipped'] ?? 0) + 1;
+                $asset = $this->elements()->findById($reused, Asset::class);
+
+                return $asset instanceof Asset ? $asset : null;
+            }
+        }
 
         // D-08-20 fast-path: `--skip-assets` (CLI: options['skipAssets']=true)
         // short-circuits BEFORE any kuma_media payload read, FS stat, or

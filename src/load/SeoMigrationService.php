@@ -19,8 +19,9 @@ use yii\db\Query;
  * resolve via the state map).
  *
  * Per DEC-17, this runs LAST in the migration sequence so:
- *   - all kuma_seo image references can resolve to migrated legacyMedia
- *     asset ids via state lookup ('media:kuma_media:<id>')
+ *   - most kuma_seo image references resolve to assets the entries already
+ *     ingested, by id or by path; one only `kuma_seo` names is ingested just
+ *     in time (SeomaticPayloadBuilder, through the bound AssetResolver)
  *   - all entries (news / cases / team / contentPages / singletons) already
  *     exist so the per-site Entry::find()->id($targetId)->siteId(...)
  *     reload is guaranteed to return a real Entry object
@@ -48,6 +49,13 @@ class SeoMigrationService extends Component implements MigrationAdapter
     public LegacyDbService $legacyDb;
     public MigrationStateService $stateService;
     public SeomaticPayloadBuilder $seoPayload;
+
+    /**
+     * Resolves og:image and Twitter image ids the way every other media reference resolves,
+     * ingesting just in time a file only `kuma_seo` names. Wired in Plugin::init(); without it the
+     * images come from the `<ENV>:kuma_media:<id>` state key alone.
+     */
+    public ?AssetMigrationService $assets = null;
 
 
 
@@ -193,6 +201,8 @@ class SeoMigrationService extends Component implements MigrationAdapter
             $sources = array_values(array_intersect($sources, $allowedSources));
         }
 
+        $assets = $this->assets?->resolverFor($context, $opts);
+
         $rowCount = 0;
         foreach ($sources as $source) {
             foreach ($this->stateService->all($source) as $stateRow) {
@@ -213,6 +223,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
                         $opts,
                         $report,
                         $context->name,
+                        $assets,
                     );
                     if ($written > 0) {
                         $report->incr('updated', $written);
@@ -263,6 +274,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
         MigrationOptions $opts,
         MigrationReport $report,
         string $environment,
+        ?AssetResolver $assets = null,
         ?array $directRefIdsByLocale = null,
     ): int {
         // Resolve legacy ref_entity_name + canonical ref_id (used as the fallback
@@ -351,7 +363,7 @@ class SeoMigrationService extends Component implements MigrationAdapter
                 continue;
             }
 
-            $payload = $this->seoPayload->build($seoRow, $siteId, $environment);
+            $payload = $this->seoPayload->build($seoRow, $siteId, $environment, $assets);
 
             // A locale with no legacy SEO row gets an explicit empty payload, to clear
             // anything Craft propagated from the primary site during the entry save. That is
