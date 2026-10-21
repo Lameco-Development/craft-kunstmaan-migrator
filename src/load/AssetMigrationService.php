@@ -195,8 +195,12 @@ class AssetMigrationService extends Component
      * stored Craft asset id is returned without re-ingesting. Only `skipAssets`
      * is read off the options: a JIT call never forces, to keep per-entry cost
      * low.
+     *
+     * `$ingestDeleted = false` resolves a soft-deleted row only to an asset that already exists
+     * (under its id key or its path's `legacy_url:` key) and never ingests one: whether deleted
+     * media migrate is the project's decision, not this lookup's (see ingestOne()).
      */
-    public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
+    public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null, bool $ingestDeleted = true): int
     {
         // Fast path: state already has this media id → return its target id.
         $existing = $this->migrationState?->getTargetId(self::STATE_SOURCE, self::mediaStateKey($legacyId, $env), null);
@@ -204,7 +208,7 @@ class AssetMigrationService extends Component
             return (int) $existing;
         }
 
-        $asset = $this->ingestOne($legacyId, self::jitOptions($opts), $env);
+        $asset = $this->ingestOne($legacyId, self::jitOptions($opts), $env, $ingestDeleted);
         if ($asset instanceof Asset) {
             return (int) $asset->id;
         }
@@ -710,8 +714,14 @@ class AssetMigrationService extends Component
      * Ingests a single kuma_media row by id. Used by CKEditor rewrites that
      * encounter a media reference not captured by the scanner (fallback path)
      * and by the JIT entry point resolveFromLegacyId().
+     *
+     * With `$ingestDeleted = false` a soft-deleted row (`kuma_media.deleted`) is not ingested: it
+     * resolves only to the asset its path already became, and is otherwise an accepted loss,
+     * logged at info level. The SEO pass asks this way: Berkvens migrates no deleted media but
+     * the ones its own allowlist brings back, and leaves e.g. NL 382 without an og:image on
+     * purpose.
      */
-    public function ingestOne(int $kumaMediaId, MigrationOptions $opts, EnvironmentContext $env): ?Asset
+    public function ingestOne(int $kumaMediaId, MigrationOptions $opts, EnvironmentContext $env, bool $ingestDeleted = true): ?Asset
     {
         // Same failure mode as ingestReferenced: an unwired connection is a
         // warned miss, not an uncaught null-dereference three frames deep.
@@ -724,6 +734,17 @@ class AssetMigrationService extends Component
         $row = $this->mediaRowFor($kumaMediaId, $env);
         if (!$row) {
             return null;
+        }
+        if (!$ingestDeleted && (int) ($row['deleted'] ?? 0) === 1) {
+            $reused = $this->assetOfSamePath($row, self::mediaStateKey($kumaMediaId, $env), $opts);
+            if ($reused === null) {
+                Craft::info("kuma_media:{$kumaMediaId} is soft-deleted and has no asset — not ingested", __METHOD__);
+
+                return null;
+            }
+            $asset = $this->elements()->findById($reused, Asset::class);
+
+            return $asset instanceof Asset ? $asset : null;
         }
         $rootDir = $this->mediaRoots($env)[0] ?? '';
         return $this->ingestRow($row, $rootDir, $opts, $counts, null, $env);

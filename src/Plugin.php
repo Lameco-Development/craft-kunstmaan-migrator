@@ -264,6 +264,7 @@ class Plugin extends BasePlugin
         $this->seoMigrationService->legacyDb = $this->legacyDbService;
         $this->seoMigrationService->stateService = $this->migrationStateService;
         $this->seoMigrationService->seoPayload = $this->seomaticPayloadBuilder;
+        $this->seoMigrationService->assets = $this->assetMigrationService;
         $this->seoMigrationService->elementWriter = new CraftElementWriter();
 
         // RedirectMigrationService — 3 sibling deps + sites map (per environment).

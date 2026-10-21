@@ -3,7 +3,9 @@
 namespace Lameco\Kunstmaanmigrator\load;
 
 use Closure;
+use Craft;
 use Lameco\Kunstmaanmigrator\Payload\SeomaticValue;
+use Throwable;
 use yii\base\Component;
 
 /**
@@ -51,10 +53,15 @@ use yii\base\Component;
  *     sitewide default. Conditional emit gives that behavior.
  *
  * Image id resolution: og_image_id / twitter_image_id are numeric
- * kuma_media primary keys; resolved to Craft numeric asset ids via
- * MigrationStateService::getTargetId('media', '<ENV>:kuma_media:<id>').
- * Unresolvable ids return null (caller is already warned via the Plan 03
- * asset scanner).
+ * kuma_media primary keys. The SEO pass hands build() the environment's bound
+ * `AssetResolver`, which resolves them the way every other media reference
+ * resolves: the `<ENV>:kuma_media:<id>` key, then the `legacy_url:` key of the
+ * row's url (the key a file reached by path is ingested under), then a
+ * just-in-time ingest, because a file only `kuma_seo` names is referenced by
+ * nothing else. A soft-deleted media row is never ingested here: it resolves
+ * only to an asset that already exists (one the project brought back on
+ * purpose), and is otherwise no image. Without a resolver only the state key
+ * `<ENV>:kuma_media:<id>` is read. An unresolvable id is no image.
  *
  * Other kuma_seo columns (og_type / og_url / meta_author / og_article_* /
  * twitter_site / twitter_creator / extra_metadata) are intentionally
@@ -74,9 +81,12 @@ class SeomaticPayloadBuilder extends Component
      *                            row was read from — part of the media state key,
      *                            because kuma_media ids collide across databases
      *
+     * @param AssetResolver|null $assets the environment's bound asset lookups; without it the
+     *                                    images resolve from the state table alone
+     *
      * @return array<string, mixed>
      */
-    public function build(?array $seoRow, int $siteId, string $environment): array
+    public function build(?array $seoRow, int $siteId, string $environment, ?AssetResolver $assets = null): array
     {
         $row = $seoRow ?? [];
 
@@ -92,8 +102,8 @@ class SeomaticPayloadBuilder extends Component
 
         return SeomaticValue::fromRow(
             $row,
-            $this->resolveMediaId($row['og_image_id'] ?? null, $environment),
-            $this->resolveMediaId($row['twitter_image_id'] ?? null, $environment),
+            $this->resolveMediaId($row['og_image_id'] ?? null, $environment, $assets),
+            $this->resolveMediaId($row['twitter_image_id'] ?? null, $environment, $assets),
         );
     }
 
@@ -112,7 +122,7 @@ class SeomaticPayloadBuilder extends Component
         $this->resolver = Closure::fromCallable($resolver);
     }
 
-    private function resolveMediaId(mixed $kumaMediaId, string $environment): ?int
+    private function resolveMediaId(mixed $kumaMediaId, string $environment, ?AssetResolver $assets): ?int
     {
         if ($kumaMediaId === null || $kumaMediaId === '' || $kumaMediaId === 0) {
             return null;
@@ -121,6 +131,23 @@ class SeomaticPayloadBuilder extends Component
         if ($id <= 0) {
             return null;
         }
+        if ($this->resolver === null && $assets !== null) {
+            // An ingest can throw (a failed copy or save, a project's size cap). The pass catches
+            // per entry, so letting it through would cost every site of the entry its title and
+            // description too: the image is what is lost, and it is said.
+            try {
+                $assetId = $assets->resolveFromLegacyId($id, ingestDeleted: false);
+            } catch (Throwable $e) {
+                if (class_exists(Craft::class, false)) {
+                    Craft::warning("SEO image kuma_media:{$id} could not be resolved: {$e->getMessage()}", __METHOD__);
+                }
+
+                return null;
+            }
+
+            return $assetId > 0 ? $assetId : null;
+        }
+
         return $this->lookupCraftAssetId($id, $environment);
     }
 

@@ -47,9 +47,10 @@ final class AssetResolver
         return $this->assets->targetVolume;
     }
 
-    public function resolveFromLegacyId(int $kumaMediaId): int
+    /** @param bool $ingestDeleted false: a soft-deleted row resolves only to an asset that exists */
+    public function resolveFromLegacyId(int $kumaMediaId, bool $ingestDeleted = true): int
     {
-        return $this->assets->resolveFromLegacyId($kumaMediaId, $this->env, $this->opts);
+        return $this->assets->resolveFromLegacyId($kumaMediaId, $this->env, $this->opts, $ingestDeleted);
     }
 
     public function resolveFromLegacyUrl(string $legacyUrl): int

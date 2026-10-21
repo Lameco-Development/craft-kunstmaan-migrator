@@ -218,7 +218,7 @@ final class FakeAssetMigrationService extends AssetMigrationService
         return $this->resolvedUrlIds[$legacyUrl] ?? 0;
     }
 
-    public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null): int
+    public function resolveFromLegacyId(int $legacyId, EnvironmentContext $env, ?MigrationOptions $opts = null, bool $ingestDeleted = true): int
     {
         return $this->resolvedLegacyIds[$legacyId] ?? 0;
     }
